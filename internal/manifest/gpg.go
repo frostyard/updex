@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"os"
 
-	"golang.org/x/crypto/openpgp"
+	// TODO: Migrate to github.com/ProtonMail/go-crypto/openpgp - this package is deprecated
+	// but still functional for our GPG verification needs.
+	"golang.org/x/crypto/openpgp" //nolint:staticcheck
 )
 
 // Default keyring paths (matching systemd-sysupdate)
@@ -23,7 +25,7 @@ func verifySignature(client *http.Client, sigURL string, content []byte) error {
 	if err != nil {
 		return fmt.Errorf("failed to fetch signature: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("signature fetch failed with status: %s", resp.Status)
@@ -63,12 +65,12 @@ func loadKeyring() (openpgp.EntityList, error) {
 			}
 			return nil, err
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 
 		keyring, err := openpgp.ReadKeyRing(f)
 		if err != nil {
 			// Try armored format
-			f.Seek(0, 0)
+			_, _ = f.Seek(0, 0)
 			keyring, err = openpgp.ReadArmoredKeyRing(f)
 			if err != nil {
 				return nil, fmt.Errorf("failed to read keyring from %s: %w", path, err)

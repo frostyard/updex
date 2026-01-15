@@ -16,13 +16,13 @@ func decompressFile(srcPath, dstPath, compressionType string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open source file: %w", err)
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 
 	dst, err := os.Create(dstPath)
 	if err != nil {
 		return fmt.Errorf("failed to create destination file: %w", err)
 	}
-	defer dst.Close()
+	defer func() { _ = dst.Close() }()
 
 	var reader io.Reader
 
@@ -39,7 +39,7 @@ func decompressFile(srcPath, dstPath, compressionType string) error {
 		if err != nil {
 			return fmt.Errorf("failed to create gzip reader: %w", err)
 		}
-		defer gzReader.Close()
+		defer func() { _ = gzReader.Close() }()
 		reader = gzReader
 
 	case "zstd":

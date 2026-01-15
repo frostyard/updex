@@ -31,7 +31,7 @@ func Fetch(baseURL string, verify bool) (*Manifest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch manifest: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("manifest fetch failed with status: %s", resp.Status)
@@ -108,7 +108,7 @@ func VerifyHash(filePath string, expectedHash string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
@@ -143,7 +143,7 @@ type HashVerifyReader struct {
 func (h *HashVerifyReader) Read(p []byte) (n int, err error) {
 	n, err = h.reader.Read(p)
 	if n > 0 {
-		h.hasher.Write(p[:n])
+		_, _ = h.hasher.Write(p[:n])
 	}
 	if err == io.EOF {
 		// Compute final hash

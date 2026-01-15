@@ -95,17 +95,17 @@ func runDiscover(cmd *cobra.Command, args []string) error {
 
 	// Tabular output
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(w, "EXTENSION\tVERSIONS\n")
+	_, _ = fmt.Fprintf(w, "EXTENSION\tVERSIONS\n")
 	for _, ext := range results {
 		if ext.Error != "" {
-			fmt.Fprintf(w, "%s\t(error: %s)\n", ext.Name, ext.Error)
+			_, _ = fmt.Fprintf(w, "%s\t(error: %s)\n", ext.Name, ext.Error)
 		} else if len(ext.Versions) == 0 {
-			fmt.Fprintf(w, "%s\t(no versions)\n", ext.Name)
+			_, _ = fmt.Fprintf(w, "%s\t(no versions)\n", ext.Name)
 		} else {
-			fmt.Fprintf(w, "%s\t%s\n", ext.Name, strings.Join(ext.Versions, ", "))
+			_, _ = fmt.Fprintf(w, "%s\t%s\n", ext.Name, strings.Join(ext.Versions, ", "))
 		}
 	}
-	w.Flush()
+	_ = w.Flush()
 
 	return nil
 }
@@ -122,7 +122,7 @@ func fetchVersionsFromManifest(baseURL string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP %s", resp.Status)

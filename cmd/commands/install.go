@@ -167,7 +167,7 @@ func fetchIndex(url string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP %s", resp.Status)
@@ -204,7 +204,7 @@ func downloadTransferFile(url, destPath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to fetch: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP %s", resp.Status)
@@ -221,7 +221,7 @@ func downloadTransferFile(url, destPath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create file %s: %w", destPath, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	_, err = io.Copy(f, resp.Body)
 	if err != nil {

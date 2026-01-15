@@ -145,7 +145,7 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	// Table output
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "VERSION\tINSTALLED\tAVAILABLE\tCURRENT\tCOMPONENT")
+	_, _ = fmt.Fprintln(w, "VERSION\tINSTALLED\tAVAILABLE\tCURRENT\tCOMPONENT")
 	for _, v := range allVersions {
 		installed := "-"
 		if v.Installed {
@@ -159,9 +159,9 @@ func runList(cmd *cobra.Command, args []string) error {
 		if v.Current {
 			current = "→"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", v.Version, installed, available, current, v.Component)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", v.Version, installed, available, current, v.Component)
 	}
-	w.Flush()
+	_ = w.Flush()
 
 	return nil
 }

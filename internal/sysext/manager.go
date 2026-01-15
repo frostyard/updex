@@ -11,13 +11,6 @@ import (
 	"github.com/frostyard/updex/internal/version"
 )
 
-// Default sysext directories
-var sysextDirs = []string{
-	"/var/lib/extensions",
-	"/run/extensions",
-	"/etc/extensions",
-}
-
 // GetInstalledVersions returns the list of installed versions for a transfer config
 // Also returns the current version (pointed to by symlink or newest)
 func GetInstalledVersions(t *config.Transfer) ([]string, string, error) {

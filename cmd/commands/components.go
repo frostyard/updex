@@ -63,11 +63,11 @@ func runComponents(cmd *cobra.Command, args []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "COMPONENT\tSOURCE TYPE\tTARGET PATH\tINSTANCES MAX")
+	_, _ = fmt.Fprintln(w, "COMPONENT\tSOURCE TYPE\tTARGET PATH\tINSTANCES MAX")
 	for _, c := range components {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d\n", c.Name, c.SourceType, c.TargetPath, c.InstancesMax)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%d\n", c.Name, c.SourceType, c.TargetPath, c.InstancesMax)
 	}
-	w.Flush()
+	_ = w.Flush()
 
 	return nil
 }

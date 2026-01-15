@@ -138,7 +138,7 @@ func TestGetInstalledVersionsNonexistentDir(t *testing.T) {
 		t.Fatalf("GetInstalledVersions() error = %v", err)
 	}
 
-	if versions != nil && len(versions) != 0 {
+	if len(versions) != 0 {
 		t.Errorf("got %d versions, want nil or empty", len(versions))
 	}
 

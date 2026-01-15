@@ -102,13 +102,13 @@ func TestVerifyHash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	content := []byte("hello world\n")
 	if _, err := tmpFile.Write(content); err != nil {
 		t.Fatalf("failed to write temp file: %v", err)
 	}
-	tmpFile.Close()
+	_ = tmpFile.Close()
 
 	// Compute expected hash
 	h := sha256.New()

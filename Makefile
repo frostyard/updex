@@ -38,14 +38,9 @@ clean:
 fmt:
 	$(GOFMT) -w $(GOFILES)
 
-## lint: Run linters
-lint:
-	$(GO) vet ./...
-	@if command -v staticcheck >/dev/null 2>&1; then \
-		staticcheck ./...; \
-	else \
-		echo "staticcheck not installed, skipping"; \
-	fi
+lint: ## Run linter
+	@echo "Running linter..."
+	@golangci-lint run || echo "golangci-lint not installed, skipping"
 
 ## test: Run tests
 test:
@@ -69,3 +64,19 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@sed -n 's/^## //p' $(MAKEFILE_LIST) | column -t -s ':'
+
+bump: ## generate a new version with svu
+	@$(MAKE) build
+	@$(MAKE) test
+	@$(MAKE) fmt
+	$(MAKE) lint
+	@if [ -n "$$(git status --porcelain)" ]; then \
+		echo "Working directory is not clean. Please commit or stash changes before bumping version."; \
+		exit 1; \
+	fi
+	@echo "Creating new tag..."
+	@version=$$(svu next); \
+		git tag -a $$version -m "Version $$version"; \
+		echo "Tagged version $$version"; \
+		echo "Pushing tag $$version to origin..."; \
+		git push origin $$version

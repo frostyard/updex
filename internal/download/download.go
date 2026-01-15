@@ -29,8 +29,8 @@ func Download(url, targetPath, expectedHash string, mode uint32) error {
 	}
 	tmpPath := tmpFile.Name()
 	defer func() {
-		tmpFile.Close()
-		os.Remove(tmpPath) // Clean up on failure
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath) // Clean up on failure
 	}()
 
 	// Download the file
@@ -42,7 +42,7 @@ func Download(url, targetPath, expectedHash string, mode uint32) error {
 	if err != nil {
 		return fmt.Errorf("failed to download: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download failed with status: %s", resp.Status)
@@ -85,7 +85,7 @@ func Download(url, targetPath, expectedHash string, mode uint32) error {
 	}
 
 	// Close temp file before decompression
-	tmpFile.Close()
+	_ = tmpFile.Close()
 
 	// Determine if decompression is needed and get final path
 	finalPath := targetPath
@@ -95,11 +95,11 @@ func Download(url, targetPath, expectedHash string, mode uint32) error {
 	if compressionType != "" {
 		// Decompress to another temp file
 		if err := decompressFile(tmpPath, decompressedPath, compressionType); err != nil {
-			os.Remove(decompressedPath)
+			_ = os.Remove(decompressedPath)
 			return fmt.Errorf("decompression failed: %w", err)
 		}
 		// Remove compressed temp and use decompressed
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		tmpPath = decompressedPath
 	}
 
@@ -117,7 +117,7 @@ func Download(url, targetPath, expectedHash string, mode uint32) error {
 		if err := copyFile(tmpPath, finalPath, os.FileMode(mode)); err != nil {
 			return fmt.Errorf("failed to move file to target: %w", err)
 		}
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 	}
 
 	return nil
@@ -144,13 +144,13 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	defer srcFile.Close()
+	defer func() { _ = srcFile.Close() }()
 
 	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 	if err != nil {
 		return err
 	}
-	defer dstFile.Close()
+	defer func() { _ = dstFile.Close() }()
 
 	_, err = io.Copy(dstFile, srcFile)
 	return err

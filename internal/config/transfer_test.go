@@ -231,7 +231,7 @@ func TestLoadTransfersEmptyDirectory(t *testing.T) {
 		t.Fatalf("LoadTransfers() error = %v", err)
 	}
 
-	if transfers != nil && len(transfers) != 0 {
+	if len(transfers) != 0 {
 		t.Errorf("expected nil or empty slice, got %d transfers", len(transfers))
 	}
 }
@@ -242,7 +242,7 @@ func TestLoadTransfersNonexistentDirectory(t *testing.T) {
 		t.Fatalf("LoadTransfers() error = %v", err)
 	}
 
-	if transfers != nil && len(transfers) != 0 {
+	if len(transfers) != 0 {
 		t.Errorf("expected nil or empty slice for nonexistent path")
 	}
 }

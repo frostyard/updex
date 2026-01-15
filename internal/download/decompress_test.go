@@ -19,14 +19,14 @@ func TestDecompressReaderGzip(t *testing.T) {
 	if _, err := gw.Write(original); err != nil {
 		t.Fatalf("failed to compress test data: %v", err)
 	}
-	gw.Close()
+	_ = gw.Close()
 
 	// Test decompression
 	reader, err := DecompressReader(&buf, "gz")
 	if err != nil {
 		t.Fatalf("DecompressReader() error = %v", err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	result, err := io.ReadAll(reader)
 	if err != nil {
@@ -49,14 +49,14 @@ func TestDecompressReaderZstd(t *testing.T) {
 	if _, err := zw.Write(original); err != nil {
 		t.Fatalf("failed to compress test data: %v", err)
 	}
-	zw.Close()
+	_ = zw.Close()
 
 	// Test decompression
 	reader, err := DecompressReader(bytes.NewReader(buf.Bytes()), "zstd")
 	if err != nil {
 		t.Fatalf("DecompressReader() error = %v", err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	result, err := io.ReadAll(reader)
 	if err != nil {
@@ -79,14 +79,14 @@ func TestDecompressReaderXZ(t *testing.T) {
 	if _, err := xw.Write(original); err != nil {
 		t.Fatalf("failed to compress test data: %v", err)
 	}
-	xw.Close()
+	_ = xw.Close()
 
 	// Test decompression
 	reader, err := DecompressReader(bytes.NewReader(buf.Bytes()), "xz")
 	if err != nil {
 		t.Fatalf("DecompressReader() error = %v", err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	result, err := io.ReadAll(reader)
 	if err != nil {
@@ -104,7 +104,7 @@ func TestDecompressReaderNoCompression(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecompressReader() error = %v", err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	result, err := io.ReadAll(reader)
 	if err != nil {
@@ -161,7 +161,7 @@ func TestDecompressFile(t *testing.T) {
 	if _, err := gw.Write(original); err != nil {
 		t.Fatalf("failed to compress test data: %v", err)
 	}
-	gw.Close()
+	_ = gw.Close()
 
 	srcPath := tmpDir + "/test.gz"
 	dstPath := tmpDir + "/test.out"
@@ -198,7 +198,7 @@ func TestDecompressFileZstd(t *testing.T) {
 	if _, err := zw.Write(original); err != nil {
 		t.Fatalf("failed to compress test data: %v", err)
 	}
-	zw.Close()
+	_ = zw.Close()
 
 	srcPath := tmpDir + "/test.zst"
 	dstPath := tmpDir + "/test.out"
@@ -233,7 +233,7 @@ func TestDecompressFileXZ(t *testing.T) {
 	if _, err := xw.Write(original); err != nil {
 		t.Fatalf("failed to compress test data: %v", err)
 	}
-	xw.Close()
+	_ = xw.Close()
 
 	srcPath := tmpDir + "/test.xz"
 	dstPath := tmpDir + "/test.out"
