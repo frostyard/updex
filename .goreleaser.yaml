@@ -88,8 +88,7 @@ archives:
   - files:
       - README.md
       - LICENSE
-      - completions/*
-      - manpages/*
+
 
 checksum:
   name_template: "checksums.txt"
