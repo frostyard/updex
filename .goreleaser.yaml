@@ -42,6 +42,7 @@ builds:
     #
     # Default: Project directory name.
     id: "updex"
+    binary: updex
 
     # Path to main.go file or main package.
     # Notice: when used with `gomod.proxy`, this must be a package.
@@ -64,6 +65,7 @@ builds:
     #
     # Default: Project directory name.
     id: "instex"
+    binary: "instex"
 
     # Path to main.go file or main package.
     # Notice: when used with `gomod.proxy`, this must be a package.
