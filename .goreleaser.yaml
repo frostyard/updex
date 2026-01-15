@@ -128,25 +128,6 @@ nfpms:
       Install, update and manage systemd-sysexts on Linux systems.
     license: MIT
 
-
-    contents:
-      - src: ./completions/{{ .ProjectName }}.bash
-        dst: /etc/bash_completion.d/{{ .ProjectName }}
-      - src: ./completions/{{ .ProjectName }}.fish
-        dst: /usr/share/fish/completions/{{ .ProjectName }}.fish
-      - src: ./completions/{{ .ProjectName }}.zsh
-        dst: /usr/local/share/zsh/site-functions/_{{ .ProjectName }}
-      - src: ./manpages/{{ .ProjectName }}.1.gz
-        dst: /usr/share/man/man1/{{ .ProjectName }}.1.gz
-      # Dracut module for /etc overlay persistence
-      - src: ./pkg/dracut/95etc-overlay/module-setup.sh
-        dst: /usr/lib/dracut/modules.d/95etc-overlay/module-setup.sh
-        file_info:
-          mode: 0755
-      - src: ./pkg/dracut/95etc-overlay/etc-overlay-mount.sh
-        dst: /usr/lib/dracut/modules.d/95etc-overlay/etc-overlay-mount.sh
-        file_info:
-          mode: 0755
     formats:
       - deb
       - rpm
