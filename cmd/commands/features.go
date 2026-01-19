@@ -227,7 +227,7 @@ func runFeaturesDisable(cmd *cobra.Command, args []string) error {
 		if f.Name == featureName {
 			found = true
 			if f.Masked {
-				return fmt.Errorf("feature '%s' is masked", featureName)
+				return fmt.Errorf("feature '%s' is masked and cannot be disabled", featureName)
 			}
 			break
 		}
