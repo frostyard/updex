@@ -11,7 +11,8 @@ Designed for systems like Debian Trixie that don't ship with `systemd-sysupdate`
 - Optional GPG signature verification (`--verify`)
 - Automatic decompression (xz, gz, zstd)
 - Version management with configurable retention (`InstancesMax`)
-- Compatible with standard `.transfer` configuration files
+- Optional features support (enable/disable groups of transfers)
+- Compatible with standard `.transfer` and `.feature` configuration files
 - JSON output for scripting (`--json`)
 
 ## Installation
@@ -47,6 +48,15 @@ updex pending
 
 # List configured components
 updex components
+
+# List optional features
+updex features list
+
+# Enable a feature
+sudo updex features enable devel
+
+# Disable a feature
+sudo updex features disable devel
 
 # Discover extensions from a remote repository
 instex discover https://example.com/sysext
@@ -103,12 +113,14 @@ Mode=0644
 
 #### [Transfer] Section
 
-| Option           | Description                                        | Default |
-| ---------------- | -------------------------------------------------- | ------- |
-| `MinVersion`     | Minimum version to consider                        | (none)  |
-| `ProtectVersion` | Version to never remove (supports `%A` specifiers) | (none)  |
-| `Verify`         | Verify GPG signatures                              | `no`    |
-| `InstancesMax`   | Maximum versions to keep                           | `2`     |
+| Option              | Description                                        | Default |
+| ------------------- | -------------------------------------------------- | ------- |
+| `MinVersion`        | Minimum version to consider                        | (none)  |
+| `ProtectVersion`    | Version to never remove (supports `%A` specifiers) | (none)  |
+| `Verify`            | Verify GPG signatures                              | `no`    |
+| `InstancesMax`      | Maximum versions to keep                           | `2`     |
+| `Features`          | Space-separated feature names (OR logic)           | (none)  |
+| `RequisiteFeatures` | Space-separated feature names (AND logic)          | (none)  |
 
 #### [Source] Section
 
@@ -135,6 +147,77 @@ The `@v` placeholder matches version strings in filenames:
 ```
 myext_@v.raw.xz     →  matches myext_1.2.3.raw.xz, myext_2.0.0-rc1.raw.xz
 kernel_@v.efi       →  matches kernel_6.1.0.efi
+```
+
+## Optional Features
+
+Optional features allow grouping transfers that can be enabled or disabled together. This is useful for optional system components like development tools or proprietary drivers.
+
+Features are defined in `.feature` files in the same directories as `.transfer` files.
+
+### Example Feature File
+
+Create `/usr/lib/sysupdate.d/devel.feature`:
+
+```ini
+[Feature]
+Description=Development Tools
+Documentation=https://example.com/docs/devel
+Enabled=false
+```
+
+### Associating Transfers with Features
+
+Add `Features=` to a transfer file to associate it with a feature:
+
+```ini
+[Transfer]
+Features=devel
+InstancesMax=2
+
+[Source]
+Type=url-file
+Path=https://example.com/sysexts
+MatchPattern=devel-tools_@v.raw.xz
+
+[Target]
+Type=regular-file
+Path=/var/lib/extensions
+MatchPattern=devel-tools_@v.raw
+```
+
+Transfers with `Features=` are only active when at least one of the listed features is enabled (OR logic).
+
+Use `RequisiteFeatures=` when ALL listed features must be enabled (AND logic).
+
+### Enabling Features
+
+Features are enabled via drop-in configuration files:
+
+```bash
+# Using updex
+sudo updex features enable devel
+
+# Or manually create a drop-in
+mkdir -p /etc/sysupdate.d/devel.feature.d
+echo -e "[Feature]\nEnabled=true" > /etc/sysupdate.d/devel.feature.d/enable.conf
+```
+
+### Feature Configuration Options
+
+| Option          | Description                        | Default |
+| --------------- | ---------------------------------- | ------- |
+| `Description`   | Human-readable feature description | (none)  |
+| `Documentation` | URL to feature documentation       | (none)  |
+| `AppStream`     | URL to AppStream catalog XML       | (none)  |
+| `Enabled`       | Whether the feature is enabled     | `false` |
+
+### Masking Features
+
+To completely hide a feature, create a symlink to `/dev/null`:
+
+```bash
+ln -s /dev/null /etc/sysupdate.d/devel.feature
 ```
 
 ## Remote Manifest Format

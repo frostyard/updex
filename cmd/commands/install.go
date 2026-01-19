@@ -133,6 +133,37 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Check if the transfer requires features that are not enabled
+	if len(transfer.Transfer.Features) > 0 || len(transfer.Transfer.RequisiteFeatures) > 0 {
+		features, err := config.LoadFeatures(common.Definitions)
+		if err != nil {
+			result.Error = fmt.Sprintf("failed to load features: %v", err)
+			if common.JSONOutput {
+				common.OutputJSON(result)
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: %s\n", result.Error)
+			}
+			return err
+		}
+
+		filtered := config.FilterTransfersByFeatures([]*config.Transfer{transfer}, features)
+		if len(filtered) == 0 {
+			result.Error = "transfer requires features that are not enabled"
+			if common.JSONOutput {
+				common.OutputJSON(result)
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: %s\n", result.Error)
+				if len(transfer.Transfer.Features) > 0 {
+					fmt.Fprintf(os.Stderr, "Required features (any): %v\n", transfer.Transfer.Features)
+				}
+				if len(transfer.Transfer.RequisiteFeatures) > 0 {
+					fmt.Fprintf(os.Stderr, "Required features (all): %v\n", transfer.Transfer.RequisiteFeatures)
+				}
+			}
+			return fmt.Errorf("transfer requires features that are not enabled")
+		}
+	}
+
 	// Run the update logic
 	installedVersion, err := installTransfer(transfer)
 	if err != nil {

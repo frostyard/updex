@@ -60,6 +60,13 @@ func runList(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Filter by enabled features
+	features, err := config.LoadFeatures(common.Definitions)
+	if err != nil {
+		return fmt.Errorf("failed to load features: %w", err)
+	}
+	transfers = config.FilterTransfersByFeatures(transfers, features)
+
 	var allVersions []VersionInfo
 
 	for _, transfer := range transfers {
