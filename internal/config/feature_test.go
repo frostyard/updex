@@ -164,8 +164,8 @@ func TestLoadFeaturesEmpty(t *testing.T) {
 		t.Fatalf("LoadFeatures() error = %v", err)
 	}
 
-	if features != nil && len(features) != 0 {
-		t.Errorf("expected nil or empty slice, got %d features", len(features))
+	if len(features) != 0 {
+		t.Errorf("expected empty slice, got %d features", len(features))
 	}
 }
 
