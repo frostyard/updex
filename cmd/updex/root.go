@@ -60,6 +60,7 @@ func init() {
 	rootCmd.AddCommand(commands.NewVacuumCmd())
 	rootCmd.AddCommand(commands.NewPendingCmd())
 	rootCmd.AddCommand(commands.NewComponentsCmd())
+	rootCmd.AddCommand(commands.NewFeaturesCmd())
 }
 
 // Execute runs the root command

@@ -21,10 +21,12 @@ type Transfer struct {
 
 // TransferSection represents the [Transfer] section of a .transfer file
 type TransferSection struct {
-	MinVersion     string // Minimum version to consider
-	ProtectVersion string // Version to never remove (supports specifiers)
-	Verify         bool   // Verify GPG signatures (default: false for this implementation)
-	InstancesMax   int    // Maximum number of versions to keep (default: 2)
+	MinVersion        string   // Minimum version to consider
+	ProtectVersion    string   // Version to never remove (supports specifiers)
+	Verify            bool     // Verify GPG signatures (default: false for this implementation)
+	InstancesMax      int      // Maximum number of versions to keep (default: 2)
+	Features          []string // Features this transfer belongs to (OR logic: any enabled activates)
+	RequisiteFeatures []string // All of these features must be enabled (AND logic)
 }
 
 // SourceSection represents the [Source] section of a .transfer file
@@ -146,6 +148,12 @@ func parseTransferFile(filePath, component string) (*Transfer, error) {
 		}
 		if key, err := sec.GetKey("InstancesMax"); err == nil {
 			t.Transfer.InstancesMax = key.MustInt(2)
+		}
+		if key, err := sec.GetKey("Features"); err == nil {
+			t.Transfer.Features = strings.Fields(key.String())
+		}
+		if key, err := sec.GetKey("RequisiteFeatures"); err == nil {
+			t.Transfer.RequisiteFeatures = strings.Fields(key.String())
 		}
 	}
 
@@ -283,4 +291,89 @@ func parsePatterns(patterns string) []string {
 		return nil
 	}
 	return strings.Fields(patterns)
+}
+
+// FilterTransfersByFeatures filters transfers based on enabled features.
+// A transfer is included if:
+// - It has no Features and no RequisiteFeatures (standalone, always included)
+// - It has Features and at least one of them is enabled (OR logic)
+// - It has RequisiteFeatures and all of them are enabled (AND logic)
+// Both conditions must be satisfied if both are specified.
+func FilterTransfersByFeatures(transfers []*Transfer, features []*Feature) []*Transfer {
+	if len(features) == 0 {
+		// No features defined, return all transfers
+		return transfers
+	}
+
+	var filtered []*Transfer
+	for _, t := range transfers {
+		if isTransferEnabledByFeatures(t, features) {
+			filtered = append(filtered, t)
+		}
+	}
+	return filtered
+}
+
+// isTransferEnabledByFeatures checks if a transfer should be active based on features
+func isTransferEnabledByFeatures(t *Transfer, features []*Feature) bool {
+	// Standalone transfers (no feature requirements) are always enabled
+	if len(t.Transfer.Features) == 0 && len(t.Transfer.RequisiteFeatures) == 0 {
+		return true
+	}
+
+	// Check Features (OR logic): at least one must be enabled
+	if len(t.Transfer.Features) > 0 {
+		found := false
+		for _, featureName := range t.Transfer.Features {
+			if IsFeatureEnabled(features, featureName) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
+	// Check RequisiteFeatures (AND logic): all must be enabled
+	if len(t.Transfer.RequisiteFeatures) > 0 {
+		for _, featureName := range t.Transfer.RequisiteFeatures {
+			if !IsFeatureEnabled(features, featureName) {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+// GetTransfersForFeature returns all transfers that belong to a specific feature
+func GetTransfersForFeature(transfers []*Transfer, featureName string) []*Transfer {
+	var result []*Transfer
+	for _, t := range transfers {
+		for _, f := range t.Transfer.Features {
+			if f == featureName {
+				result = append(result, t)
+				break
+			}
+		}
+		// Also check RequisiteFeatures
+		for _, f := range t.Transfer.RequisiteFeatures {
+			if f == featureName {
+				// Avoid duplicates
+				alreadyAdded := false
+				for _, r := range result {
+					if r == t {
+						alreadyAdded = true
+						break
+					}
+				}
+				if !alreadyAdded {
+					result = append(result, t)
+				}
+				break
+			}
+		}
+	}
+	return result
 }
