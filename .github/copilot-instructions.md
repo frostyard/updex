@@ -4,6 +4,21 @@
 
 updex is a Go CLI application that replicates `systemd-sysupdate` functionality for managing systemd-sysext images via `url-file` transfers.
 
+### Purpose and Users
+
+- **Target Users**: System administrators managing systemd-based Linux distributions (especially Debian Trixie) that don't ship with `systemd-sysupdate`
+- **Main Use Case**: Automated downloading, verification, and installation of system extension images from remote HTTP sources
+- **Key Value**: Provides a lightweight, secure way to manage system extensions with version control, GPG verification, and automatic cleanup
+
+### Tech Stack
+
+- **Language**: Go 1.25+
+- **CLI Framework**: Cobra (github.com/spf13/cobra)
+- **Configuration**: INI files (gopkg.in/ini.v1)
+- **Compression**: XZ, gzip, zstd support
+- **Security**: GPG signature verification (golang.org/x/crypto/openpgp)
+- **Version Management**: Semantic versioning (github.com/hashicorp/go-version)
+
 ## Build & Development
 
 ### Required Commands
@@ -75,6 +90,9 @@ updex/
 - Follow Go naming conventions (camelCase for private, PascalCase for exported)
 - Error messages should be lowercase and not end with punctuation
 - Wrap errors with `fmt.Errorf("context: %w", err)`
+- Prefer standard library functions over external dependencies when possible
+- Use descriptive variable names; avoid single-letter variables except for very short scopes (loop indices, etc.)
+- Add comments for exported functions and types following Go documentation conventions
 
 ## Key Patterns
 
@@ -130,6 +148,15 @@ For coverage:
 make test-cover
 ```
 
+### Testing Best Practices
+
+- Write table-driven tests for functions with multiple test cases
+- Use descriptive test names that explain what is being tested
+- Test error cases in addition to happy paths
+- Use temporary directories (`t.TempDir()`) for file system operations in tests
+- Mock external dependencies and HTTP requests
+- Ensure tests are idempotent and can run in parallel where possible
+
 ## Common Tasks
 
 ### Adding a New Compression Format
@@ -149,3 +176,42 @@ make test-cover
 1. Update structs in `internal/config/transfer.go`
 2. Update `parseTransferFile()` function
 3. Run `make fmt && make build`
+
+## Security Considerations
+
+- **GPG Verification**: Always support and test GPG signature verification for SHA256SUMS files
+- **File Permissions**: Respect and validate file permissions specified in transfer configurations
+- **Path Validation**: Validate all file paths to prevent directory traversal attacks
+- **Hash Verification**: Always verify SHA256 hashes after downloads before installation
+- **Input Sanitization**: Sanitize all user inputs and configuration values
+- **Error Handling**: Never expose sensitive information (paths, URLs with credentials) in error messages
+- **Symlink Safety**: Validate symlink targets to prevent attacks via malicious symlinks
+
+## Troubleshooting
+
+### Build Issues
+
+- If `make build` fails, ensure Go 1.25+ is installed: `go version`
+- If dependencies fail to download, try: `make tidy` or `go mod tidy`
+- If golangci-lint is not found, it's optional; the build will continue
+
+### Test Failures
+
+- Run `make fmt` before running tests to ensure code is properly formatted
+- If tests fail on file system operations, check directory permissions
+- For verbose test output, use: `go test -v ./...`
+
+### Common Runtime Issues
+
+- **Configuration not found**: Ensure `.transfer` files exist in standard paths (`/etc/sysupdate.d/`, etc.)
+- **Permission denied**: Most operations require root privileges; use `sudo`
+- **GPG verification fails**: Ensure GPG keyring is properly configured or use `--verify=false`
+- **Download failures**: Check network connectivity and source URL accessibility
+
+## Version Management and Releases
+
+- Version numbers follow semantic versioning (MAJOR.MINOR.PATCH)
+- Git tags are used to mark releases
+- Use `make bump` to create a new version tag (requires `svu` tool)
+- Build metadata (version, build time) is embedded during compilation via ldflags
+- The `--version` flag displays the embedded version information
