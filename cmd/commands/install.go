@@ -40,11 +40,12 @@ Example:
 
 // InstallResult represents the result of an install operation
 type InstallResult struct {
-	Component    string `json:"component"`
-	TransferFile string `json:"transfer_file"`
-	Version      string `json:"version,omitempty"`
-	Installed    bool   `json:"installed"`
-	Error        string `json:"error,omitempty"`
+	Component         string `json:"component"`
+	TransferFile      string `json:"transfer_file"`
+	Version           string `json:"version,omitempty"`
+	Installed         bool   `json:"installed"`
+	Error             string `json:"error,omitempty"`
+	NextActionMessage string `json:"next_action_message,omitempty"`
 }
 
 func runInstall(cmd *cobra.Command, args []string) error {
@@ -183,11 +184,13 @@ func runInstall(cmd *cobra.Command, args []string) error {
 
 	result.Version = installedVersion
 	result.Installed = true
+	result.NextActionMessage = "Reboot required to activate changes"
 
 	if common.JSONOutput {
 		common.OutputJSON(result)
 	} else {
 		fmt.Printf("Successfully installed %s version %s\n", common.Component, installedVersion)
+		fmt.Printf("Reboot required to activate changes.\n")
 	}
 
 	return nil
