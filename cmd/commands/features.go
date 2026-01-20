@@ -182,11 +182,11 @@ func runFeaturesEnable(cmd *cobra.Command, args []string) error {
 
 	// Check for root privileges
 	if err := common.RequireRoot(); err != nil {
-		result.Error = "enabling features requires root privileges"
+		result.Error = err.Error()
 		if common.JSONOutput {
 			common.OutputJSON(result)
 		}
-		return fmt.Errorf("%s", result.Error)
+		return err
 	}
 
 	// Verify the feature exists
@@ -264,11 +264,11 @@ func runFeaturesDisable(cmd *cobra.Command, args []string) error {
 
 	// Check for root privileges
 	if err := common.RequireRoot(); err != nil {
-		result.Error = "disabling features requires root privileges"
+		result.Error = err.Error()
 		if common.JSONOutput {
 			common.OutputJSON(result)
 		}
-		return fmt.Errorf("%s", result.Error)
+		return err
 	}
 
 	// Verify the feature exists
