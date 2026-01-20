@@ -55,7 +55,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	if common.Component == "" {
-		return fmt.Errorf("Required flag --component is missing")
+		return fmt.Errorf("required flag --component is missing")
 	}
 
 	baseURL := strings.TrimRight(args[0], "/")
