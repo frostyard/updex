@@ -48,6 +48,11 @@ type InstallResult struct {
 }
 
 func runInstall(cmd *cobra.Command, args []string) error {
+	// Check for root privileges before attempting any operations
+	if err := common.RequireRoot(); err != nil {
+		return err
+	}
+
 	if common.Component == "" {
 		return fmt.Errorf("--component flag is required")
 	}
