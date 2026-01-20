@@ -36,7 +36,11 @@ func runComponents(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(transfers) == 0 {
-		fmt.Println("No components configured.")
+		if common.JSONOutput {
+			common.OutputJSON([]ComponentInfo{})
+		} else {
+			fmt.Println("No components configured.")
+		}
 		return nil
 	}
 
@@ -54,11 +58,7 @@ func runComponents(cmd *cobra.Command, args []string) error {
 	}
 
 	if common.JSONOutput {
-		items := make([]interface{}, len(components))
-		for i, c := range components {
-			items[i] = c
-		}
-		common.OutputJSONLines(items)
+		common.OutputJSON(components)
 		return nil
 	}
 

@@ -235,11 +235,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if common.JSONOutput {
-		items := make([]interface{}, len(results))
-		for i, r := range results {
-			items[i] = r
-		}
-		common.OutputJSONLines(items)
+		common.OutputJSON(results)
 	}
 
 	// Check if any errors occurred

@@ -104,11 +104,7 @@ func runCheck(cmd *cobra.Command, args []string) error {
 	}
 
 	if common.JSONOutput {
-		items := make([]interface{}, len(results))
-		for i, r := range results {
-			items[i] = r
-		}
-		common.OutputJSONLines(items)
+		common.OutputJSON(results)
 	} else {
 		for _, r := range results {
 			if r.UpdateAvailable {
