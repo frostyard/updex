@@ -257,7 +257,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	// Check if any updates were installed and notify about reboot
 	anyInstalled := false
 	for _, r := range results {
-		if r.Installed && r.Error == "" {
+		if r.Downloaded && r.Error == "" {
 			anyInstalled = true
 			break
 		}
