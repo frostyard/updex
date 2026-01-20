@@ -14,8 +14,9 @@ import (
 // NewFeaturesCmd creates the features command with subcommands
 func NewFeaturesCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "features",
-		Short: "Manage optional features",
+		Use:     "features",
+		Aliases: []string{"feature"},
+		Short:   "Manage optional features",
 		Long: `List, enable, and disable optional features defined in .feature files.
 
 Features are optional sets of transfers that can be enabled or disabled by the
