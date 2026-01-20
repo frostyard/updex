@@ -48,6 +48,15 @@ type FeatureInfo struct {
 	Transfers     []string `json:"transfers,omitempty"`
 }
 
+// FeatureActionResult represents the result of a feature enable/disable action
+type FeatureActionResult struct {
+	Feature string `json:"feature"`
+	Action  string `json:"action"`
+	Success bool   `json:"success"`
+	DropIn  string `json:"drop_in,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
 func newFeaturesListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
@@ -94,7 +103,11 @@ func runFeaturesList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(features) == 0 {
-		fmt.Println("No features configured.")
+		if common.JSONOutput {
+			common.OutputJSON([]FeatureInfo{})
+		} else {
+			fmt.Println("No features configured.")
+		}
 		return nil
 	}
 
@@ -127,11 +140,7 @@ func runFeaturesList(cmd *cobra.Command, args []string) error {
 	}
 
 	if common.JSONOutput {
-		items := make([]interface{}, len(featureInfos))
-		for i, f := range featureInfos {
-			items[i] = f
-		}
-		common.OutputJSONLines(items)
+		common.OutputJSON(featureInfos)
 		return nil
 	}
 
@@ -166,15 +175,28 @@ func runFeaturesList(cmd *cobra.Command, args []string) error {
 func runFeaturesEnable(cmd *cobra.Command, args []string) error {
 	featureName := args[0]
 
+	result := FeatureActionResult{
+		Feature: featureName,
+		Action:  "enable",
+	}
+
 	// Check for root privileges
 	if os.Geteuid() != 0 {
-		return fmt.Errorf("enabling features requires root privileges")
+		result.Error = "enabling features requires root privileges"
+		if common.JSONOutput {
+			common.OutputJSON(result)
+		}
+		return fmt.Errorf("%s", result.Error)
 	}
 
 	// Verify the feature exists
 	features, err := config.LoadFeatures(common.Definitions)
 	if err != nil {
-		return fmt.Errorf("failed to load features: %w", err)
+		result.Error = fmt.Sprintf("failed to load features: %v", err)
+		if common.JSONOutput {
+			common.OutputJSON(result)
+		}
+		return fmt.Errorf("%s", result.Error)
 	}
 
 	found := false
@@ -182,14 +204,22 @@ func runFeaturesEnable(cmd *cobra.Command, args []string) error {
 		if f.Name == featureName {
 			found = true
 			if f.Masked {
-				return fmt.Errorf("feature '%s' is masked and cannot be enabled", featureName)
+				result.Error = fmt.Sprintf("feature '%s' is masked and cannot be enabled", featureName)
+				if common.JSONOutput {
+					common.OutputJSON(result)
+				}
+				return fmt.Errorf("%s", result.Error)
 			}
 			break
 		}
 	}
 
 	if !found {
-		return fmt.Errorf("feature '%s' not found", featureName)
+		result.Error = fmt.Sprintf("feature '%s' not found", featureName)
+		if common.JSONOutput {
+			common.OutputJSON(result)
+		}
+		return fmt.Errorf("%s", result.Error)
 	}
 
 	// Create drop-in directory and file
@@ -197,30 +227,58 @@ func runFeaturesEnable(cmd *cobra.Command, args []string) error {
 	dropInFile := filepath.Join(dropInDir, "00-updex.conf")
 
 	if err := os.MkdirAll(dropInDir, 0755); err != nil {
-		return fmt.Errorf("failed to create drop-in directory: %w", err)
+		result.Error = fmt.Sprintf("failed to create drop-in directory: %v", err)
+		if common.JSONOutput {
+			common.OutputJSON(result)
+		}
+		return fmt.Errorf("%s", result.Error)
 	}
 
 	content := "[Feature]\nEnabled=true\n"
 	if err := os.WriteFile(dropInFile, []byte(content), 0644); err != nil {
-		return fmt.Errorf("failed to write drop-in file: %w", err)
+		result.Error = fmt.Sprintf("failed to write drop-in file: %v", err)
+		if common.JSONOutput {
+			common.OutputJSON(result)
+		}
+		return fmt.Errorf("%s", result.Error)
 	}
 
-	fmt.Printf("Feature '%s' enabled.\n", featureName)
+	result.Success = true
+	result.DropIn = dropInFile
+
+	if common.JSONOutput {
+		common.OutputJSON(result)
+	} else {
+		fmt.Printf("Feature '%s' enabled.\n", featureName)
+	}
 	return nil
 }
 
 func runFeaturesDisable(cmd *cobra.Command, args []string) error {
 	featureName := args[0]
 
+	result := FeatureActionResult{
+		Feature: featureName,
+		Action:  "disable",
+	}
+
 	// Check for root privileges
 	if os.Geteuid() != 0 {
-		return fmt.Errorf("disabling features requires root privileges")
+		result.Error = "disabling features requires root privileges"
+		if common.JSONOutput {
+			common.OutputJSON(result)
+		}
+		return fmt.Errorf("%s", result.Error)
 	}
 
 	// Verify the feature exists
 	features, err := config.LoadFeatures(common.Definitions)
 	if err != nil {
-		return fmt.Errorf("failed to load features: %w", err)
+		result.Error = fmt.Sprintf("failed to load features: %v", err)
+		if common.JSONOutput {
+			common.OutputJSON(result)
+		}
+		return fmt.Errorf("%s", result.Error)
 	}
 
 	found := false
@@ -228,14 +286,22 @@ func runFeaturesDisable(cmd *cobra.Command, args []string) error {
 		if f.Name == featureName {
 			found = true
 			if f.Masked {
-				return fmt.Errorf("feature '%s' is masked and cannot be disabled", featureName)
+				result.Error = fmt.Sprintf("feature '%s' is masked and cannot be disabled", featureName)
+				if common.JSONOutput {
+					common.OutputJSON(result)
+				}
+				return fmt.Errorf("%s", result.Error)
 			}
 			break
 		}
 	}
 
 	if !found {
-		return fmt.Errorf("feature '%s' not found", featureName)
+		result.Error = fmt.Sprintf("feature '%s' not found", featureName)
+		if common.JSONOutput {
+			common.OutputJSON(result)
+		}
+		return fmt.Errorf("%s", result.Error)
 	}
 
 	// Create drop-in directory and file
@@ -243,14 +309,29 @@ func runFeaturesDisable(cmd *cobra.Command, args []string) error {
 	dropInFile := filepath.Join(dropInDir, "00-updex.conf")
 
 	if err := os.MkdirAll(dropInDir, 0755); err != nil {
-		return fmt.Errorf("failed to create drop-in directory: %w", err)
+		result.Error = fmt.Sprintf("failed to create drop-in directory: %v", err)
+		if common.JSONOutput {
+			common.OutputJSON(result)
+		}
+		return fmt.Errorf("%s", result.Error)
 	}
 
 	content := "[Feature]\nEnabled=false\n"
 	if err := os.WriteFile(dropInFile, []byte(content), 0644); err != nil {
-		return fmt.Errorf("failed to write drop-in file: %w", err)
+		result.Error = fmt.Sprintf("failed to write drop-in file: %v", err)
+		if common.JSONOutput {
+			common.OutputJSON(result)
+		}
+		return fmt.Errorf("%s", result.Error)
 	}
 
-	fmt.Printf("Feature '%s' disabled.\n", featureName)
+	result.Success = true
+	result.DropIn = dropInFile
+
+	if common.JSONOutput {
+		common.OutputJSON(result)
+	} else {
+		fmt.Printf("Feature '%s' disabled.\n", featureName)
+	}
 	return nil
 }

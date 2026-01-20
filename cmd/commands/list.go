@@ -142,11 +142,7 @@ func runList(cmd *cobra.Command, args []string) error {
 
 	// Output
 	if common.JSONOutput {
-		items := make([]interface{}, len(allVersions))
-		for i, v := range allVersions {
-			items[i] = v
-		}
-		common.OutputJSONLines(items)
+		common.OutputJSON(allVersions)
 		return nil
 	}
 
