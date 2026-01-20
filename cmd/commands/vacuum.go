@@ -29,6 +29,11 @@ type VacuumResult struct {
 }
 
 func runVacuum(cmd *cobra.Command, args []string) error {
+	// Check for root privileges before attempting any operations
+	if err := common.RequireRoot(); err != nil {
+		return err
+	}
+
 	transfers, err := config.LoadTransfers(common.Definitions)
 	if err != nil {
 		return fmt.Errorf("failed to load transfer configs: %w", err)

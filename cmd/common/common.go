@@ -52,3 +52,12 @@ func OutputJSONLines(items []interface{}) bool {
 	}
 	return true
 }
+
+// RequireRoot checks if the current process has root privileges
+// Returns an error if the process is not running as root (EUID != 0)
+func RequireRoot() error {
+	if os.Geteuid() != 0 {
+		return fmt.Errorf("this operation requires root privileges")
+	}
+	return nil
+}
