@@ -17,18 +17,18 @@ type Pattern struct {
 
 // Placeholder definitions for pattern matching
 var placeholders = map[string]string{
-	"@v": `([a-zA-Z0-9._+-]+)`, // Version - required, captured
-	"@u": `[a-fA-F0-9-]+`,      // UUID
-	"@f": `[0-9]+`,             // Flags
-	"@a": `[a-zA-Z0-9_]*`,      // Architecture (amd64, arm64, etc.) - can be empty
-	"@g": `[01]`,               // GrowFileSystem flag
-	"@r": `[01]`,               // Read-only flag
-	"@t": `[0-9]+`,             // Modification time
-	"@m": `[0-7]+`,             // File mode
-	"@s": `[0-9]+`,             // File size
-	"@d": `[0-9]+`,             // Tries done
-	"@l": `[0-9]+`,             // Tries left
-	"@h": `[a-fA-F0-9]+`,       // SHA256 hash
+	"@v": `([a-zA-Z0-9._+:~-]+)`, // Version - required, captured (includes : for epoch, ~ for debian versions)
+	"@u": `[a-fA-F0-9-]+`,        // UUID
+	"@f": `[0-9]+`,               // Flags
+	"@a": `[a-zA-Z0-9_]*`,        // Architecture (amd64, arm64, etc.) - can be empty
+	"@g": `[01]`,                 // GrowFileSystem flag
+	"@r": `[01]`,                 // Read-only flag
+	"@t": `[0-9]+`,               // Modification time
+	"@m": `[0-7]+`,               // File mode
+	"@s": `[0-9]+`,               // File size
+	"@d": `[0-9]+`,               // Tries done
+	"@l": `[0-9]+`,               // Tries left
+	"@h": `[a-fA-F0-9]+`,         // SHA256 hash
 }
 
 // ParsePattern parses a match pattern string into a Pattern struct

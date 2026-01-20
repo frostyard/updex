@@ -116,6 +116,20 @@ func TestPattern_ExtractVersion(t *testing.T) {
 			wantVersion: "20240115",
 			wantOK:      true,
 		},
+		{
+			name:        "debian version with epoch",
+			pattern:     "docker_@v_amd64.raw",
+			filename:    "docker_5:29.1.5-1~debian.13~trixie_amd64.raw",
+			wantVersion: "5:29.1.5-1~debian.13~trixie",
+			wantOK:      true,
+		},
+		{
+			name:        "debian version with tilde",
+			pattern:     "incus_@v_amd64.raw",
+			filename:    "incus_1:6.20-debian13-202601150536_amd64.raw",
+			wantVersion: "1:6.20-debian13-202601150536",
+			wantOK:      true,
+		},
 	}
 
 	for _, tt := range tests {
