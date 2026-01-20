@@ -50,11 +50,12 @@ type FeatureInfo struct {
 
 // FeatureActionResult represents the result of a feature enable/disable action
 type FeatureActionResult struct {
-	Feature string `json:"feature"`
-	Action  string `json:"action"`
-	Success bool   `json:"success"`
-	DropIn  string `json:"drop_in,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Feature           string `json:"feature"`
+	Action            string `json:"action"`
+	Success           bool   `json:"success"`
+	DropIn            string `json:"drop_in,omitempty"`
+	Error             string `json:"error,omitempty"`
+	NextActionMessage string `json:"next_action_message,omitempty"`
 }
 
 func newFeaturesListCmd() *cobra.Command {
@@ -245,11 +246,13 @@ func runFeaturesEnable(cmd *cobra.Command, args []string) error {
 
 	result.Success = true
 	result.DropIn = dropInFile
+	result.NextActionMessage = "Run 'updex update' to apply changes"
 
 	if common.JSONOutput {
 		common.OutputJSON(result)
 	} else {
 		fmt.Printf("Feature '%s' enabled.\n", featureName)
+		fmt.Printf("Run 'updex update' to apply changes.\n")
 	}
 	return nil
 }
@@ -327,11 +330,13 @@ func runFeaturesDisable(cmd *cobra.Command, args []string) error {
 
 	result.Success = true
 	result.DropIn = dropInFile
+	result.NextActionMessage = "Run 'updex update' to apply changes"
 
 	if common.JSONOutput {
 		common.OutputJSON(result)
 	} else {
 		fmt.Printf("Feature '%s' disabled.\n", featureName)
+		fmt.Printf("Run 'updex update' to apply changes.\n")
 	}
 	return nil
 }

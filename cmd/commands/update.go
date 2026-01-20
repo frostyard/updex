@@ -33,11 +33,12 @@ unless --no-vacuum is specified.`,
 
 // UpdateResult represents the result of an update operation
 type UpdateResult struct {
-	Component  string `json:"component"`
-	Version    string `json:"version"`
-	Downloaded bool   `json:"downloaded"`
-	Installed  bool   `json:"installed"`
-	Error      string `json:"error,omitempty"`
+	Component         string `json:"component"`
+	Version           string `json:"version"`
+	Downloaded        bool   `json:"downloaded"`
+	Installed         bool   `json:"installed"`
+	Error             string `json:"error,omitempty"`
+	NextActionMessage string `json:"next_action_message,omitempty"`
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
@@ -202,6 +203,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 		result.Downloaded = true
 		result.Installed = true
+		result.NextActionMessage = "Reboot required to activate changes"
 
 		// Update symlink if configured
 		if transfer.Target.CurrentSymlink != "" {
@@ -250,6 +252,18 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 				fmt.Fprintf(os.Stderr, "%s: %s\n", r.Component, r.Error)
 			}
 		}
+	}
+
+	// Check if any updates were installed and notify about reboot
+	anyInstalled := false
+	for _, r := range results {
+		if r.Downloaded && r.Error == "" {
+			anyInstalled = true
+			break
+		}
+	}
+	if anyInstalled && !common.JSONOutput {
+		fmt.Printf("\nReboot required to activate changes.\n")
 	}
 
 	return nil
