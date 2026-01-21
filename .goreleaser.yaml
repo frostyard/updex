@@ -134,7 +134,7 @@ nfpms:
       - src: ./completions/updex.fish
         dst: /usr/share/fish/completions/updex.fish
       - src: ./completions/updex.zsh
-        dst: /usr/local/share/zsh/site-functions/_updex
+        dst: /usr/share/zsh/site-functions/_updex
       - src: ./manpages/updex.1.gz
         dst: /usr/share/man/man1/updex.1.gz
       - src: ./completions/instex.bash
@@ -142,7 +142,7 @@ nfpms:
       - src: ./completions/instex.fish
         dst: /usr/share/fish/completions/instex.fish
       - src: ./completions/instex.zsh
-        dst: /usr/local/share/zsh/site-functions/_instex
+        dst: /usr/share/zsh/site-functions/_instex
       - src: ./manpages/instex.1.gz
         dst: /usr/share/man/man1/instex.1.gz
     formats:
