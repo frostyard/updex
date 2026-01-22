@@ -437,8 +437,7 @@ func runFeaturesDisable(cmd *cobra.Command, args []string) error {
 		}
 		if featureDisableNow {
 			fmt.Printf("Extensions unmerged immediately.\n")
-		}
-		if !featureDisableRemove && !featureDisableNow {
+		} else if !featureDisableRemove {
 			fmt.Printf("Run 'updex update' to apply changes.\n")
 		}
 	}
