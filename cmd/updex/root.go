@@ -61,6 +61,7 @@ func init() {
 	rootCmd.AddCommand(commands.NewPendingCmd())
 	rootCmd.AddCommand(commands.NewComponentsCmd())
 	rootCmd.AddCommand(commands.NewFeaturesCmd())
+	rootCmd.AddCommand(commands.NewRemoveCmd())
 }
 
 // Execute runs the root command
