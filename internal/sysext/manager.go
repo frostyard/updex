@@ -341,6 +341,66 @@ func UnlinkFromSysext(t *config.Transfer) error {
 	return nil
 }
 
+// RemoveAllVersions removes all versions of a component from the target directory
+// and removes the current symlink if it exists. Returns the list of removed files.
+func RemoveAllVersions(t *config.Transfer) ([]string, error) {
+	// Get all target patterns
+	patterns := t.Target.MatchPatterns
+	if len(patterns) == 0 && t.Target.MatchPattern != "" {
+		patterns = []string{t.Target.MatchPattern}
+	}
+	if len(patterns) == 0 {
+		return nil, fmt.Errorf("no target match patterns defined")
+	}
+
+	targetDir := t.Target.Path
+	if targetDir == "" {
+		targetDir = "/var/lib/extensions"
+	}
+
+	entries, err := os.ReadDir(targetDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read directory: %w", err)
+	}
+
+	var removed []string
+
+	// Remove the current symlink first if it exists
+	if t.Target.CurrentSymlink != "" {
+		symlinkPath := filepath.Join(targetDir, t.Target.CurrentSymlink)
+		if _, err := os.Lstat(symlinkPath); err == nil {
+			if err := os.Remove(symlinkPath); err != nil {
+				return removed, fmt.Errorf("failed to remove symlink %s: %w", symlinkPath, err)
+			}
+			removed = append(removed, symlinkPath)
+		}
+	}
+
+	// Remove all versioned files
+	for _, entry := range entries {
+		name := entry.Name()
+
+		// Skip symlinks (already handled above)
+		if entry.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+
+		// Check if this file matches any of the patterns
+		if _, _, ok := version.ExtractVersionMulti(name, patterns); ok {
+			filePath := filepath.Join(targetDir, name)
+			if err := os.Remove(filePath); err != nil {
+				return removed, fmt.Errorf("failed to remove %s: %w", filePath, err)
+			}
+			removed = append(removed, filePath)
+		}
+	}
+
+	return removed, nil
+}
+
 // Refresh calls systemd-sysext refresh to reload extensions
 func Refresh() error {
 	return runSysextCommand("refresh")
