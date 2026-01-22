@@ -5,7 +5,7 @@ go 1.25.5
 require (
 	github.com/charmbracelet/fang v0.4.4
 	github.com/hashicorp/go-version v1.8.0
-	github.com/klauspost/compress v1.18.2
+	github.com/klauspost/compress v1.18.3
 	github.com/schollz/progressbar/v3 v3.19.0
 	github.com/spf13/cobra v1.10.2
 	github.com/ulikunitz/xz v0.5.15
