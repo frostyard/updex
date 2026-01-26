@@ -3,7 +3,6 @@ package sysext
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -403,26 +402,15 @@ func RemoveAllVersions(t *config.Transfer) ([]string, error) {
 
 // Refresh calls systemd-sysext refresh to reload extensions
 func Refresh() error {
-	return runSysextCommand("refresh")
+	return runner.Refresh()
 }
 
 // Merge calls systemd-sysext merge to merge extensions
 func Merge() error {
-	return runSysextCommand("merge")
+	return runner.Merge()
 }
 
 // Unmerge calls systemd-sysext unmerge to unmerge extensions
 func Unmerge() error {
-	return runSysextCommand("unmerge")
-}
-
-// runSysextCommand executes a systemd-sysext subcommand
-func runSysextCommand(subcommand string) error {
-	cmd := exec.Command("systemd-sysext", subcommand)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("systemd-sysext %s failed: %w", subcommand, err)
-	}
-	return nil
+	return runner.Unmerge()
 }
