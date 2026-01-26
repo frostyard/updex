@@ -21,8 +21,20 @@ func NewDiscoverCmd() *cobra.Command {
 Downloads the index file from {URL}/ext/index to get a list of available
 extensions, then fetches SHA256SUMS for each extension to list available versions.
 
-Example:
-  updex discover https://example.com/sysext`,
+Use this command to explore what extensions are available before installing.
+
+WORKFLOW:
+  1. Fetches {URL}/ext/index for extension list
+  2. For each extension, fetches SHA256SUMS
+  3. Displays available extensions and their versions`,
+		Example: `  # Discover extensions from Frostyard repository
+  updex discover https://repo.frostyard.org
+
+  # Discover extensions from a custom repository
+  updex discover https://example.com/sysext
+
+  # Output as JSON for scripting
+  updex discover https://repo.example.com --json`,
 		Args: cobra.ExactArgs(1),
 		RunE: runDiscover,
 	}

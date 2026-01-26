@@ -28,8 +28,21 @@ func NewDaemonCmd() *cobra.Command {
 The daemon periodically checks for and downloads new extension versions.
 Updates are staged but not activated until next reboot.
 
-Use 'daemon enable' to install the timer, 'daemon disable' to remove it,
-and 'daemon status' to check the current state.`,
+SUBCOMMANDS:
+  enable   Install and start the systemd timer
+  disable  Stop and remove the systemd timer
+  status   Show current timer state
+
+The timer runs daily by default. Extensions are downloaded but not
+activated, allowing safe updates without unexpected system changes.`,
+		Example: `  # Enable automatic updates
+  sudo updex daemon enable
+
+  # Check if auto-update is running
+  updex daemon status
+
+  # Disable automatic updates
+  sudo updex daemon disable`,
 	}
 
 	cmd.AddCommand(newDaemonEnableCmd())
@@ -49,7 +62,14 @@ This creates timer and service unit files in /etc/systemd/system/ and
 enables the timer to run daily. Updates will download new versions but
 not activate them until the next reboot.
 
+WHAT IT DOES:
+  1. Creates updex-update.timer and updex-update.service
+  2. Enables the timer to start on boot
+  3. Starts the timer immediately
+
 Requires root privileges.`,
+		Example: `  # Enable automatic updates
+  sudo updex daemon enable`,
 		Args: cobra.NoArgs,
 		RunE: runDaemonEnable,
 	}
@@ -115,7 +135,14 @@ func newDaemonDisableCmd() *cobra.Command {
 This stops the timer, disables it, and removes both timer and service
 unit files from /etc/systemd/system/.
 
+WHAT IT DOES:
+  1. Stops the running timer
+  2. Disables the timer from starting on boot
+  3. Removes the unit files
+
 Requires root privileges.`,
+		Example: `  # Disable automatic updates
+  sudo updex daemon disable`,
 		Args: cobra.NoArgs,
 		RunE: runDaemonDisable,
 	}
@@ -156,7 +183,18 @@ func newDaemonStatusCmd() *cobra.Command {
 		Long: `Show the current status of the auto-update daemon.
 
 Displays whether the timer is installed, enabled, and active,
-along with the configured schedule.`,
+along with the configured schedule.
+
+OUTPUT:
+  Installed - Whether unit files exist
+  Enabled   - Whether timer starts on boot
+  Active    - Whether timer is currently running
+  Schedule  - When updates run (e.g., daily)`,
+		Example: `  # Check daemon status
+  updex daemon status
+
+  # Check status in JSON format
+  updex daemon status --json`,
 		Args: cobra.NoArgs,
 		RunE: runDaemonStatus,
 	}

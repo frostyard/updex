@@ -16,8 +16,22 @@ func NewComponentsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "components",
 		Short: "List available components",
-		Long:  `List all components defined in transfer configuration files.`,
-		RunE:  runComponents,
+		Long: `List all components defined in transfer configuration files.
+
+Shows components from .transfer files in /etc/sysupdate.d/ and other
+configuration directories.
+
+OUTPUT COLUMNS:
+  COMPONENT      - Component name (from filename)
+  SOURCE TYPE    - How the extension is fetched (url-file, url-tar, etc.)
+  TARGET PATH    - Where the extension is installed
+  INSTANCES MAX  - Maximum versions to keep`,
+		Example: `  # List all configured components
+  updex components
+
+  # Output as JSON
+  updex components --json`,
+		RunE: runComponents,
 	}
 }
 

@@ -26,11 +26,16 @@ and the symlink from /var/lib/extensions.
 Files can be deleted while the system is merged, and things will keep working
 until the next reboot. Use --now to unmerge immediately.
 
-Requires --component flag to specify which extension to remove.
-Requires root privileges.
+REQUIREMENTS:
+  - Root privileges (run with sudo)
 
-Examples:
+BEHAVIOR:
+  - Without --now: Files removed, changes apply after reboot
+  - With --now: Immediately unmerges and removes files`,
+		Example: `  # Remove Docker extension (takes effect after reboot)
   updex remove --component docker
+
+  # Remove and unmerge immediately
   updex remove --component vscode --now`,
 		RunE: runRemove,
 	}
@@ -43,7 +48,7 @@ Examples:
 func runRemove(cmd *cobra.Command, args []string) error {
 	// Check for required flag
 	if common.Component == "" {
-		return fmt.Errorf("required flag --component is missing")
+		return fmt.Errorf("missing --component flag; specify which extension to remove (e.g., --component docker)")
 	}
 
 	// Check for root privileges

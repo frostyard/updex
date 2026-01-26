@@ -1,3 +1,13 @@
+# Requirements Archive: v1 updex hardening
+
+**Archived:** 2026-01-26
+**Status:** SHIPPED
+
+This is the archived requirements specification for v1.
+For current requirements, see `.planning/REQUIREMENTS.md` (created for next milestone).
+
+---
+
 # Requirements: updex
 
 **Defined:** 2026-01-26
@@ -17,22 +27,22 @@ Requirements for this milestone. Each maps to roadmap phases.
 ### Auto-Update
 
 - [x] **AUTO-01**: User can generate systemd timer and service files for scheduled updates
-- [x] **AUTO-02**: User can install generated timer/service to system with `install-timer` command
-- [x] **AUTO-03**: User can check auto-update timer status with status command
+- [x] **AUTO-02**: User can install generated timer/service to system with `daemon enable` command
+- [x] **AUTO-03**: User can check auto-update timer status with `daemon status` command
 - [x] **AUTO-04**: Auto-update only stages files, does not auto-activate merged extensions
 
 ### Testing
 
 - [x] **TEST-01**: Core operations have unit test coverage (list, check, update, install, remove)
 - [x] **TEST-02**: Config parsing has unit test coverage (transfer, feature files)
-- [ ] **TEST-03**: Integration tests validate end-to-end workflows
+- [x] **TEST-03**: Integration tests validate end-to-end workflows
 - [x] **TEST-04**: Tests can run without root (mock filesystem/systemd where needed)
 
 ### Polish
 
-- [ ] **POLISH-01**: Error messages are clear and actionable
-- [ ] **POLISH-02**: Help text is comprehensive and follows conventions
-- [ ] **POLISH-03**: Shell completions work for bash, zsh, and fish
+- [x] **POLISH-01**: Error messages are clear and actionable
+- [x] **POLISH-02**: Help text is comprehensive and follows conventions
+- [x] **POLISH-03**: Shell completions work for bash, zsh, and fish
 
 ## v2 Requirements
 
@@ -77,16 +87,23 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AUTO-03 | Phase 4: Auto-Update CLI | Complete |
 | AUTO-04 | Phase 4: Auto-Update CLI | Complete |
 | UX-04 | Phase 4: Auto-Update CLI | Complete |
-| TEST-03 | Phase 5: Integration & Polish | Pending |
-| POLISH-01 | Phase 5: Integration & Polish | Pending |
-| POLISH-02 | Phase 5: Integration & Polish | Pending |
-| POLISH-03 | Phase 5: Integration & Polish | Pending |
+| TEST-03 | Phase 5: Integration & Polish | Complete |
+| POLISH-01 | Phase 5: Integration & Polish | Complete |
+| POLISH-02 | Phase 5: Integration & Polish | Complete |
+| POLISH-03 | Phase 5: Integration & Polish | Complete |
 
 **Coverage:**
 - v1 requirements: 15 total
-- Mapped to phases: 15 ✓
-- Unmapped: 0
+- Mapped to phases: 15
+- Completed: 15
 
 ---
-*Requirements defined: 2026-01-26*
-*Last updated: 2026-01-26 after Phase 4 completion*
+
+## Milestone Summary
+
+**Shipped:** 15 of 15 v1 requirements
+**Adjusted:** None - all requirements delivered as specified
+**Dropped:** None
+
+---
+*Archived: 2026-01-26 as part of v1 milestone completion*

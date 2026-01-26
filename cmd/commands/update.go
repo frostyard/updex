@@ -26,7 +26,25 @@ After installation, old versions are automatically removed according to Instance
 unless --no-vacuum is specified.
 
 With --reboot flag, the system will reboot after a successful update to activate
-the new extensions.`,
+the new extensions.
+
+REQUIREMENTS:
+  - Root privileges (run with sudo)
+  - Network access to configured repositories`,
+		Example: `  # Update all components to newest versions
+  updex update
+
+  # Update to a specific version
+  updex update 1.2.0
+
+  # Update only a specific component
+  updex update --component docker
+
+  # Update and reboot to activate changes
+  updex update --reboot
+
+  # Update without removing old versions
+  updex update --no-vacuum`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: runUpdate,
 	}

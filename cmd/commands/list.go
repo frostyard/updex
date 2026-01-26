@@ -18,7 +18,26 @@ func NewListCmd() *cobra.Command {
 		Short: "List available and installed versions",
 		Long: `List all available versions from remote sources and installed versions.
 
-If VERSION is specified, show detailed information about that specific version.`,
+If VERSION is specified, show detailed information about that specific version.
+Use --component to filter to a specific extension.
+
+OUTPUT COLUMNS:
+  VERSION    - Version string (e.g., 1.2.0)
+  INSTALLED  - Whether this version is installed locally
+  AVAILABLE  - Whether this version is available from remote
+  CURRENT    - Arrow (→) marks the currently active version
+  COMPONENT  - Extension name`,
+		Example: `  # List all versions for all components
+  updex list
+
+  # List versions for a specific component
+  updex list --component docker
+
+  # Show details for a specific version
+  updex list 1.2.0
+
+  # Output as JSON for scripting
+  updex list --json`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: runList,
 	}

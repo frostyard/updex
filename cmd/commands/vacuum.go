@@ -15,7 +15,22 @@ func NewVacuumCmd() *cobra.Command {
 		Use:   "vacuum",
 		Short: "Remove old versions according to InstancesMax",
 		Long: `Remove old versions of sysext images according to the InstancesMax setting
-in transfer configurations. Protected versions and the current version are never removed.`,
+in transfer configurations. Protected versions and the current version are never removed.
+
+This command is automatically run after updates unless --no-vacuum is specified.
+Use this command to manually clean up old versions.
+
+WHAT IS KEPT:
+  - Current (active) version
+  - Protected versions (marked in configuration)
+  - Up to InstancesMax versions total
+
+Requires root privileges.`,
+		Example: `  # Clean up old versions for all components
+  sudo updex vacuum
+
+  # Clean up old versions for a specific component
+  sudo updex vacuum --component docker`,
 		RunE: runVacuum,
 	}
 }
