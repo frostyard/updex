@@ -12,14 +12,14 @@ Requirements for this milestone. Each maps to roadmap phases.
 - [x] **UX-01**: User can enable a feature with `--now` flag to immediately download extensions
 - [x] **UX-02**: User can disable a feature with `--now` flag to immediately remove extension files
 - [x] **UX-03**: User disabling a feature sees extension files removed (not just update config changed)
-- [ ] **UX-04**: User can pass `--reboot` to update command to reboot after update completes
+- [x] **UX-04**: User can pass `--reboot` to update command to reboot after update completes
 
 ### Auto-Update
 
 - [x] **AUTO-01**: User can generate systemd timer and service files for scheduled updates
-- [ ] **AUTO-02**: User can install generated timer/service to system with `install-timer` command
-- [ ] **AUTO-03**: User can check auto-update timer status with status command
-- [ ] **AUTO-04**: Auto-update only stages files, does not auto-activate merged extensions
+- [x] **AUTO-02**: User can install generated timer/service to system with `install-timer` command
+- [x] **AUTO-03**: User can check auto-update timer status with status command
+- [x] **AUTO-04**: Auto-update only stages files, does not auto-activate merged extensions
 
 ### Testing
 
@@ -73,10 +73,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | UX-02 | Phase 2: Core UX Fixes | Complete |
 | UX-03 | Phase 2: Core UX Fixes | Complete |
 | AUTO-01 | Phase 3: Systemd Unit Infrastructure | Complete |
-| AUTO-02 | Phase 4: Auto-Update CLI | Pending |
-| AUTO-03 | Phase 4: Auto-Update CLI | Pending |
-| AUTO-04 | Phase 4: Auto-Update CLI | Pending |
-| UX-04 | Phase 4: Auto-Update CLI | Pending |
+| AUTO-02 | Phase 4: Auto-Update CLI | Complete |
+| AUTO-03 | Phase 4: Auto-Update CLI | Complete |
+| AUTO-04 | Phase 4: Auto-Update CLI | Complete |
+| UX-04 | Phase 4: Auto-Update CLI | Complete |
 | TEST-03 | Phase 5: Integration & Polish | Pending |
 | POLISH-01 | Phase 5: Integration & Polish | Pending |
 | POLISH-02 | Phase 5: Integration & Polish | Pending |
@@ -89,4 +89,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-26*
-*Last updated: 2026-01-26 after Phase 3 completion*
+*Last updated: 2026-01-26 after Phase 4 completion*
