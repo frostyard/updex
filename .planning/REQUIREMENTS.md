@@ -66,26 +66,26 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| UX-01 | — | Pending |
-| UX-02 | — | Pending |
-| UX-03 | — | Pending |
-| UX-04 | — | Pending |
-| AUTO-01 | — | Pending |
-| AUTO-02 | — | Pending |
-| AUTO-03 | — | Pending |
-| AUTO-04 | — | Pending |
-| TEST-01 | — | Pending |
-| TEST-02 | — | Pending |
-| TEST-03 | — | Pending |
-| TEST-04 | — | Pending |
-| POLISH-01 | — | Pending |
-| POLISH-02 | — | Pending |
-| POLISH-03 | — | Pending |
+| TEST-01 | Phase 1: Test Foundation | Pending |
+| TEST-02 | Phase 1: Test Foundation | Pending |
+| TEST-04 | Phase 1: Test Foundation | Pending |
+| UX-01 | Phase 2: Core UX Fixes | Pending |
+| UX-02 | Phase 2: Core UX Fixes | Pending |
+| UX-03 | Phase 2: Core UX Fixes | Pending |
+| AUTO-01 | Phase 3: Systemd Unit Infrastructure | Pending |
+| AUTO-02 | Phase 4: Auto-Update CLI | Pending |
+| AUTO-03 | Phase 4: Auto-Update CLI | Pending |
+| AUTO-04 | Phase 4: Auto-Update CLI | Pending |
+| UX-04 | Phase 4: Auto-Update CLI | Pending |
+| TEST-03 | Phase 5: Integration & Polish | Pending |
+| POLISH-01 | Phase 5: Integration & Polish | Pending |
+| POLISH-02 | Phase 5: Integration & Polish | Pending |
+| POLISH-03 | Phase 5: Integration & Polish | Pending |
 
 **Coverage:**
 - v1 requirements: 15 total
-- Mapped to phases: 0
-- Unmapped: 15 ⚠️
+- Mapped to phases: 15 ✓
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-01-26*
