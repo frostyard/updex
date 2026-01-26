@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-01-26)
 
 **Core value:** Users can reliably install and update systemd-sysexts from any registry without needing the unavailable updatectl package.
-**Current focus:** Phase 3 - Systemd Unit Infrastructure
+**Current focus:** Phase 4 - Auto-Update CLI
 
 ## Current Position
 
-Phase: 3 of 5 (Systemd Unit Infrastructure)
+Phase: 4 of 5 (Auto-Update CLI)
 Plan: 0 of TBD in current phase
-Status: Not started
-Last activity: 2026-01-26 — Phase 2 verified complete
+Status: Ready to plan
+Last activity: 2026-01-26 — Phase 3 verified complete
 
-Progress: [████░░░░░░] 40%
+Progress: [███████░░░] 70%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
-- Average duration: 9 min
-- Total execution time: 34 min
+- Total plans completed: 7
+- Average duration: 5 min
+- Total execution time: 36 min
 
 **By Phase:**
 
@@ -29,10 +29,11 @@ Progress: [████░░░░░░] 40%
 |-------|-------|-------|----------|
 | 01-test-foundation | 2 | 27 min | 13.5 min |
 | 02-core-ux-fixes | 2 | 7 min | 3.5 min |
+| 03-systemd-unit-infrastructure | 3 | 2 min | 0.7 min |
 
 **Recent Trend:**
-- Last 5 plans: 2min, 25min, 5min, 2min
-- Trend: improving
+- Last 5 plans: 5min, 2min, 0min, 1min, 1min
+- Trend: fast
 
 *Updated after each plan completion*
 
@@ -53,6 +54,10 @@ Recent decisions affecting current work:
 - [02-01]: Merge state check requires --force for active extensions
 - [02-02]: Use DryRun flag to test feature logic without /etc access
 - [02-02]: Simulate merged extensions with CurrentSymlink for testing
+- [03-02]: SystemctlRunner interface mirrors SysextRunner pattern for consistency
+- [03-02]: IsActive/IsEnabled return false (not error) for non-zero exit codes
+- [03-03]: Install fails if files exist - require explicit Remove first
+- [03-03]: Remove ignores stop/disable errors (may not be running)
 
 ### Test Coverage
 
@@ -78,11 +83,11 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-26
-Stopped at: Phase 2 verified, ready for Phase 3
+Stopped at: Phase 3 verified, ready for Phase 4
 Resume file: None
 
 ## Next Steps
 
-Phase 2 verified complete. Ready for:
-- /gsd-discuss-phase 3 — Systemd Unit Infrastructure
-- /gsd-plan-phase 3 — skip discussion, plan directly
+Phase 3 verified complete. Ready for:
+- /gsd-discuss-phase 4 — Auto-Update CLI
+- /gsd-plan-phase 4 — skip discussion, plan directly

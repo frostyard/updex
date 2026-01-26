@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Test Foundation** - Establish testing infrastructure and patterns
 - [x] **Phase 2: Core UX Fixes** - Fix dangerous remove/disable semantics
-- [ ] **Phase 3: Systemd Unit Infrastructure** - Build internal package for timer/service management
+- [x] **Phase 3: Systemd Unit Infrastructure** - Build internal package for timer/service management
 - [ ] **Phase 4: Auto-Update CLI** - Expose auto-update via daemon commands
 - [ ] **Phase 5: Integration & Polish** - End-to-end validation and UX polish
 
@@ -59,10 +59,12 @@ Plans:
   2. Unit files can be installed to /etc/systemd/system (or configurable path)
   3. Unit files can be removed cleanly
   4. Package is fully testable with temp directories (no root required)
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 03-01: TBD
+- [x] 03-01-PLAN.md — Create unit types and generation functions with tests
+- [x] 03-02-PLAN.md — Create SystemctlRunner interface and mock
+- [x] 03-03-PLAN.md — Create Manager with Install/Remove operations and tests
 
 ### Phase 4: Auto-Update CLI
 **Goal**: Users can manage auto-update timer via CLI commands
@@ -104,6 +106,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. Test Foundation | 2/2 | Complete ✓ | 2026-01-26 |
 | 2. Core UX Fixes | 2/2 | Complete ✓ | 2026-01-26 |
-| 3. Systemd Unit Infrastructure | 0/TBD | Not started | - |
+| 3. Systemd Unit Infrastructure | 3/3 | Complete ✓ | 2026-01-26 |
 | 4. Auto-Update CLI | 0/TBD | Not started | - |
 | 5. Integration & Polish | 0/TBD | Not started | - |

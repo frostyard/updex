@@ -58,7 +58,7 @@ Existing test coverage is limited. The tool is functional for core operations bu
 - **Go version**: 1.25+
 - **Compatibility**: Must work with existing .transfer file format
 - **CI verification**: All GitHub Actions "Tests" workflow jobs must pass before work is complete:
-  - lint (golangci-lint)
+  - lint (golangci-lint and `make lint`)
   - security (govulncheck)
   - verify (go mod tidy, go vet, gofmt)
   - unit-test (go test with coverage)
@@ -67,13 +67,14 @@ Existing test coverage is limited. The tool is functional for core operations bu
 
 ## Key Decisions
 
-| Decision | Rationale | Outcome |
-|----------|-----------|---------|
-| Go for implementation | Fast, single binary, good for CLI tools | ✓ Good |
-| Cobra for CLI framework | Industry standard, good docs | ✓ Good |
-| INI format for configs | Matches systemd conventions | ✓ Good |
-| Library + CLI architecture | Enables programmatic use | ✓ Good |
-| Disable = remove files | Simpler mental model for users | — Pending |
+| Decision                   | Rationale                               | Outcome   |
+| -------------------------- | --------------------------------------- | --------- |
+| Go for implementation      | Fast, single binary, good for CLI tools | ✓ Good    |
+| Cobra for CLI framework    | Industry standard, good docs            | ✓ Good    |
+| INI format for configs     | Matches systemd conventions             | ✓ Good    |
+| Library + CLI architecture | Enables programmatic use                | ✓ Good    |
+| Disable = remove files     | Simpler mental model for users          | — Pending |
 
 ---
-*Last updated: 2026-01-26 after adding CI constraint*
+
+_Last updated: 2026-01-26 after adding CI constraint_
