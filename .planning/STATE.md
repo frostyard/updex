@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-01-26)
 ## Current Position
 
 Phase: 4 of 5 (Auto-Update CLI)
-Plan: 0 of TBD in current phase
-Status: Ready to plan
-Last activity: 2026-01-26 — Phase 3 verified complete
+Plan: 1 of 1 in current phase
+Status: Phase complete
+Last activity: 2026-01-26 — Completed 04-01-PLAN.md
 
-Progress: [███████░░░] 70%
+Progress: [████████░░] 80%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 7
+- Total plans completed: 8
 - Average duration: 5 min
-- Total execution time: 36 min
+- Total execution time: 38 min
 
 **By Phase:**
 
@@ -30,9 +30,10 @@ Progress: [███████░░░] 70%
 | 01-test-foundation | 2 | 27 min | 13.5 min |
 | 02-core-ux-fixes | 2 | 7 min | 3.5 min |
 | 03-systemd-unit-infrastructure | 3 | 2 min | 0.7 min |
+| 04-auto-update-cli | 1 | 2 min | 2 min |
 
 **Recent Trend:**
-- Last 5 plans: 5min, 2min, 0min, 1min, 1min
+- Last 5 plans: 2min, 0min, 1min, 1min, 2min
 - Trend: fast
 
 *Updated after each plan completion*
@@ -58,6 +59,9 @@ Recent decisions affecting current work:
 - [03-02]: IsActive/IsEnabled return false (not error) for non-zero exit codes
 - [03-03]: Install fails if files exist - require explicit Remove first
 - [03-03]: Remove ignores stop/disable errors (may not be running)
+- [04-01]: Fixed daily schedule for timer (configurable deferred to v2)
+- [04-01]: Service uses --no-refresh to stage files only (AUTO-04)
+- [04-01]: Reboot only triggers when anyInstalled && err == nil
 
 ### Test Coverage
 
@@ -82,12 +86,12 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-01-26
-Stopped at: Phase 3 verified, ready for Phase 4
+Last session: 2026-01-26T19:36:30Z
+Stopped at: Completed 04-01-PLAN.md, Phase 4 complete
 Resume file: None
 
 ## Next Steps
 
-Phase 3 verified complete. Ready for:
-- /gsd-discuss-phase 4 — Auto-Update CLI
-- /gsd-plan-phase 4 — skip discussion, plan directly
+Phase 4 complete. Ready for:
+- /gsd-discuss-phase 5 — Integration & Polish
+- /gsd-plan-phase 5 — skip discussion, plan directly
