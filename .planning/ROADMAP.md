@@ -44,11 +44,11 @@ Plans:
   2. User can `features disable --now` to immediately remove extension files
   3. Disabling a feature removes extension files (not just config changes)
   4. Remove operations check merge state before deleting files
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 02-01: TBD
-- [ ] 02-02: TBD
+- [ ] 02-01-PLAN.md — Implement --now for enable (downloads) and fix disable semantics (file removal + merge state)
+- [ ] 02-02-PLAN.md — Add unit tests for enable/disable with --now, --force, --dry-run
 
 ### Phase 3: Systemd Unit Infrastructure
 **Goal**: Internal package can generate, install, and manage systemd timer/service files
@@ -103,7 +103,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Test Foundation | 2/2 | Complete ✓ | 2026-01-26 |
-| 2. Core UX Fixes | 0/TBD | Not started | - |
+| 2. Core UX Fixes | 0/2 | Not started | - |
 | 3. Systemd Unit Infrastructure | 0/TBD | Not started | - |
 | 4. Auto-Update CLI | 0/TBD | Not started | - |
 | 5. Integration & Polish | 0/TBD | Not started | - |
