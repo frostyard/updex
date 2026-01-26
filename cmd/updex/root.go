@@ -70,6 +70,7 @@ func init() {
 	// Remote discovery and installation commands (formerly instex)
 	rootCmd.AddCommand(commands.NewDiscoverCmd())
 	rootCmd.AddCommand(commands.NewInstallCmd())
+	rootCmd.AddCommand(commands.NewDaemonCmd())
 }
 
 // Execute runs the root command
