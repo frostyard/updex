@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Test Foundation** - Establish testing infrastructure and patterns
 - [x] **Phase 2: Core UX Fixes** - Fix dangerous remove/disable semantics
 - [x] **Phase 3: Systemd Unit Infrastructure** - Build internal package for timer/service management
-- [ ] **Phase 4: Auto-Update CLI** - Expose auto-update via daemon commands
+- [x] **Phase 4: Auto-Update CLI** - Expose auto-update via daemon commands
 - [ ] **Phase 5: Integration & Polish** - End-to-end validation and UX polish
 
 ## Phase Details
@@ -79,7 +79,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 04-01-PLAN.md — Create daemon command (enable/disable/status) and add --reboot to update
+- [x] 04-01-PLAN.md — Create daemon command (enable/disable/status) and add --reboot to update
 
 ### Phase 5: Integration & Polish
 **Goal**: End-to-end workflows are validated and user experience is polished
@@ -106,5 +106,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. Test Foundation | 2/2 | Complete ✓ | 2026-01-26 |
 | 2. Core UX Fixes | 2/2 | Complete ✓ | 2026-01-26 |
 | 3. Systemd Unit Infrastructure | 3/3 | Complete ✓ | 2026-01-26 |
-| 4. Auto-Update CLI | 0/TBD | Not started | - |
+| 4. Auto-Update CLI | 1/1 | Complete ✓ | 2026-01-26 |
 | 5. Integration & Polish | 0/TBD | Not started | - |
