@@ -29,11 +29,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Unit tests exist for config parsing (transfer files, feature files)
   3. Tests run without root using mocked filesystem/systemd
   4. Test helper utilities are available for HTTP server mocking
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 01-01: TBD
-- [ ] 01-02: TBD
+- [ ] 01-01-PLAN.md — Create test infrastructure (SysextRunner interface, HTTP test helpers)
+- [ ] 01-02-PLAN.md — Add unit tests for core operations (list, check, update, install, remove)
 
 ### Phase 2: Core UX Fixes
 **Goal**: Users can safely enable/disable features with immediate effect
@@ -102,7 +102,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Test Foundation | 0/TBD | Not started | - |
+| 1. Test Foundation | 0/2 | Planned | - |
 | 2. Core UX Fixes | 0/TBD | Not started | - |
 | 3. Systemd Unit Infrastructure | 0/TBD | Not started | - |
 | 4. Auto-Update CLI | 0/TBD | Not started | - |
