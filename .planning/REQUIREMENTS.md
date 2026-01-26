@@ -9,9 +9,9 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Core UX
 
-- [ ] **UX-01**: User can enable a feature with `--now` flag to immediately download extensions
-- [ ] **UX-02**: User can disable a feature with `--now` flag to immediately remove extension files
-- [ ] **UX-03**: User disabling a feature sees extension files removed (not just update config changed)
+- [x] **UX-01**: User can enable a feature with `--now` flag to immediately download extensions
+- [x] **UX-02**: User can disable a feature with `--now` flag to immediately remove extension files
+- [x] **UX-03**: User disabling a feature sees extension files removed (not just update config changed)
 - [ ] **UX-04**: User can pass `--reboot` to update command to reboot after update completes
 
 ### Auto-Update
@@ -69,9 +69,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TEST-01 | Phase 1: Test Foundation | Complete |
 | TEST-02 | Phase 1: Test Foundation | Complete |
 | TEST-04 | Phase 1: Test Foundation | Complete |
-| UX-01 | Phase 2: Core UX Fixes | Pending |
-| UX-02 | Phase 2: Core UX Fixes | Pending |
-| UX-03 | Phase 2: Core UX Fixes | Pending |
+| UX-01 | Phase 2: Core UX Fixes | Complete |
+| UX-02 | Phase 2: Core UX Fixes | Complete |
+| UX-03 | Phase 2: Core UX Fixes | Complete |
 | AUTO-01 | Phase 3: Systemd Unit Infrastructure | Pending |
 | AUTO-02 | Phase 4: Auto-Update CLI | Pending |
 | AUTO-03 | Phase 4: Auto-Update CLI | Pending |
@@ -89,4 +89,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-26*
-*Last updated: 2026-01-26 after initial definition*
+*Last updated: 2026-01-26 after Phase 2 completion*

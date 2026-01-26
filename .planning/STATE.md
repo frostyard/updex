@@ -5,14 +5,14 @@
 See: .planning/PROJECT.md (updated 2026-01-26)
 
 **Core value:** Users can reliably install and update systemd-sysexts from any registry without needing the unavailable updatectl package.
-**Current focus:** Phase 2 - Core UX Fixes
+**Current focus:** Phase 3 - Systemd Unit Infrastructure
 
 ## Current Position
 
-Phase: 2 of 5 (Core UX Fixes) - COMPLETE
-Plan: 2 of 2 in current phase (COMPLETE)
-Status: Phase complete
-Last activity: 2026-01-26 — Completed 02-02-PLAN.md
+Phase: 3 of 5 (Systemd Unit Infrastructure)
+Plan: 0 of TBD in current phase
+Status: Not started
+Last activity: 2026-01-26 — Phase 2 verified complete
 
 Progress: [████░░░░░░] 40%
 
@@ -78,10 +78,11 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-26
-Stopped at: Completed 02-02-PLAN.md - Phase 2 complete
+Stopped at: Phase 2 verified, ready for Phase 3
 Resume file: None
 
 ## Next Steps
 
-Phase 2 complete. Ready for:
-- Phase 3: Systemd Unit Infrastructure
+Phase 2 verified complete. Ready for:
+- /gsd-discuss-phase 3 — Systemd Unit Infrastructure
+- /gsd-plan-phase 3 — skip discussion, plan directly
