@@ -64,7 +64,7 @@ Plans:
 Plans:
 - [x] 03-01-PLAN.md — Create unit types and generation functions with tests
 - [x] 03-02-PLAN.md — Create SystemctlRunner interface and mock
-- [ ] 03-03-PLAN.md — Create Manager with Install/Remove operations and tests
+- [x] 03-03-PLAN.md — Create Manager with Install/Remove operations and tests
 
 ### Phase 4: Auto-Update CLI
 **Goal**: Users can manage auto-update timer via CLI commands
@@ -106,6 +106,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. Test Foundation | 2/2 | Complete ✓ | 2026-01-26 |
 | 2. Core UX Fixes | 2/2 | Complete ✓ | 2026-01-26 |
-| 3. Systemd Unit Infrastructure | 2/3 | In progress | - |
+| 3. Systemd Unit Infrastructure | 3/3 | Complete ✓ | 2026-01-26 |
 | 4. Auto-Update CLI | 0/TBD | Not started | - |
 | 5. Integration & Polish | 0/TBD | Not started | - |
