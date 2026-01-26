@@ -12,7 +12,7 @@ This milestone hardens updex from functional to reliable. We fix dangerous UX is
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Test Foundation** - Establish testing infrastructure and patterns
+- [x] **Phase 1: Test Foundation** - Establish testing infrastructure and patterns
 - [ ] **Phase 2: Core UX Fixes** - Fix dangerous remove/disable semantics
 - [ ] **Phase 3: Systemd Unit Infrastructure** - Build internal package for timer/service management
 - [ ] **Phase 4: Auto-Update CLI** - Expose auto-update via daemon commands
@@ -102,7 +102,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Test Foundation | 1/2 | In progress | - |
+| 1. Test Foundation | 2/2 | Complete ✓ | 2026-01-26 |
 | 2. Core UX Fixes | 0/TBD | Not started | - |
 | 3. Systemd Unit Infrastructure | 0/TBD | Not started | - |
 | 4. Auto-Update CLI | 0/TBD | Not started | - |

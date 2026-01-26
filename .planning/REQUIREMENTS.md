@@ -23,10 +23,10 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Testing
 
-- [ ] **TEST-01**: Core operations have unit test coverage (list, check, update, install, remove)
-- [ ] **TEST-02**: Config parsing has unit test coverage (transfer, feature files)
+- [x] **TEST-01**: Core operations have unit test coverage (list, check, update, install, remove)
+- [x] **TEST-02**: Config parsing has unit test coverage (transfer, feature files)
 - [ ] **TEST-03**: Integration tests validate end-to-end workflows
-- [ ] **TEST-04**: Tests can run without root (mock filesystem/systemd where needed)
+- [x] **TEST-04**: Tests can run without root (mock filesystem/systemd where needed)
 
 ### Polish
 
@@ -66,9 +66,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TEST-01 | Phase 1: Test Foundation | Pending |
-| TEST-02 | Phase 1: Test Foundation | Pending |
-| TEST-04 | Phase 1: Test Foundation | Pending |
+| TEST-01 | Phase 1: Test Foundation | Complete |
+| TEST-02 | Phase 1: Test Foundation | Complete |
+| TEST-04 | Phase 1: Test Foundation | Complete |
 | UX-01 | Phase 2: Core UX Fixes | Pending |
 | UX-02 | Phase 2: Core UX Fixes | Pending |
 | UX-03 | Phase 2: Core UX Fixes | Pending |
