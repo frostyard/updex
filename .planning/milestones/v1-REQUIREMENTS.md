@@ -1,3 +1,13 @@
+# Requirements Archive: v1 updex hardening
+
+**Archived:** 2026-01-26
+**Status:** SHIPPED
+
+This is the archived requirements specification for v1.
+For current requirements, see `.planning/REQUIREMENTS.md` (created for next milestone).
+
+---
+
 # Requirements: updex
 
 **Defined:** 2026-01-26
@@ -17,8 +27,8 @@ Requirements for this milestone. Each maps to roadmap phases.
 ### Auto-Update
 
 - [x] **AUTO-01**: User can generate systemd timer and service files for scheduled updates
-- [x] **AUTO-02**: User can install generated timer/service to system with `install-timer` command
-- [x] **AUTO-03**: User can check auto-update timer status with status command
+- [x] **AUTO-02**: User can install generated timer/service to system with `daemon enable` command
+- [x] **AUTO-03**: User can check auto-update timer status with `daemon status` command
 - [x] **AUTO-04**: Auto-update only stages files, does not auto-activate merged extensions
 
 ### Testing
@@ -84,9 +94,16 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 **Coverage:**
 - v1 requirements: 15 total
-- Mapped to phases: 15 ✓
-- Unmapped: 0
+- Mapped to phases: 15
+- Completed: 15
 
 ---
-*Requirements defined: 2026-01-26*
-*Last updated: 2026-01-26 after Phase 5 completion (milestone complete)*
+
+## Milestone Summary
+
+**Shipped:** 15 of 15 v1 requirements
+**Adjusted:** None - all requirements delivered as specified
+**Dropped:** None
+
+---
+*Archived: 2026-01-26 as part of v1 milestone completion*
