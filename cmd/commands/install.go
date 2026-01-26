@@ -35,7 +35,7 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	if common.Component == "" {
-		return fmt.Errorf("required flag --component is missing")
+		return fmt.Errorf("missing --component flag; specify which extension to install (e.g., --component docker)")
 	}
 
 	client := newClient()

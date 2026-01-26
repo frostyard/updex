@@ -43,7 +43,7 @@ Examples:
 func runRemove(cmd *cobra.Command, args []string) error {
 	// Check for required flag
 	if common.Component == "" {
-		return fmt.Errorf("required flag --component is missing")
+		return fmt.Errorf("missing --component flag; specify which extension to remove (e.g., --component docker)")
 	}
 
 	// Check for root privileges
