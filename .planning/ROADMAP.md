@@ -90,11 +90,12 @@ Plans:
   2. Error messages are clear and actionable (no cryptic stack traces)
   3. Help text is comprehensive and follows conventions
   4. Shell completions work for bash, zsh, and fish
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 05-01: TBD
-- [ ] 05-02: TBD
+- [ ] 05-01-PLAN.md — Create integration tests for end-to-end workflows
+- [ ] 05-02-PLAN.md — Polish error messages and help text across all commands
+- [ ] 05-03-PLAN.md — Verify shell completions for bash, zsh, and fish
 
 ## Progress
 
@@ -107,4 +108,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 2. Core UX Fixes | 2/2 | Complete ✓ | 2026-01-26 |
 | 3. Systemd Unit Infrastructure | 3/3 | Complete ✓ | 2026-01-26 |
 | 4. Auto-Update CLI | 1/1 | Complete ✓ | 2026-01-26 |
-| 5. Integration & Polish | 0/TBD | Not started | - |
+| 5. Integration & Polish | 0/3 | Not started | - |
