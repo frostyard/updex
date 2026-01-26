@@ -12,26 +12,17 @@ GOFILES := $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 
 all: fmt build
 
-## build: Build both binaries
-build: build-updex build-instex
+## build: Build the updex binary
+build:
+	$(GO) build $(LDFLAGS) -o build/updex ./cmd/updex-cli
 
-## build-updex: Build the updex binary
-build-updex:
-	$(GO) build $(LDFLAGS) -o build/updex ./updex
-
-
-## build-instex: Build the instex binary
-build-instex:
-	$(GO) build $(LDFLAGS) -o build/instex ./instex
-
-## install: Install both binaries to GOPATH/bin
+## install: Install updex binary to GOPATH/bin
 install:
-	$(GO) install $(LDFLAGS) ./updex
-	$(GO) install $(LDFLAGS) ./instex
+	$(GO) install $(LDFLAGS) ./cmd/updex-cli
 
 ## clean: Remove build artifacts
 clean:
-	rm -f updex instex
+	rm -f updex
 	$(GO) clean
 
 ## fmt: Format Go source files

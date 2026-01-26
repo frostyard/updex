@@ -49,30 +49,7 @@ builds:
     # Notice: when used with `gomod.proxy`, this must be a package.
     #
     # Default: `.`.
-    main: ./updex
-    env:
-      - CGO_ENABLED=0
-    goos:
-      - linux
-    goarch:
-      - amd64
-    mod_timestamp: "{{ .CommitTimestamp }}"
-    flags:
-      - -trimpath
-    ldflags:
-      - -s -w -X main.version={{ .Version }} -X main.commit={{ .Commit }} -X main.date={{ .CommitDate }} -X main.builtBy=goreleaser
-  - #
-    # ID of the build.
-    #
-    # Default: Project directory name.
-    id: "instex"
-    binary: "instex"
-
-    # Path to main.go file or main package.
-    # Notice: when used with `gomod.proxy`, this must be a package.
-    #
-    # Default: `.`.
-    main: ./instex
+    main: ./cmd/updex-cli
     env:
       - CGO_ENABLED=0
     goos:
@@ -137,14 +114,10 @@ nfpms:
         dst: /usr/share/zsh/site-functions/_updex
       - src: ./manpages/updex.1.gz
         dst: /usr/share/man/man1/updex.1.gz
-      - src: ./completions/instex.bash
-        dst: /etc/bash_completion.d/instex
-      - src: ./completions/instex.fish
-        dst: /usr/share/fish/completions/instex.fish
-      - src: ./completions/instex.zsh
-        dst: /usr/share/zsh/site-functions/_instex
-      - src: ./manpages/instex.1.gz
-        dst: /usr/share/man/man1/instex.1.gz
+      # Backward compatibility symlink for instex
+      - dst: /usr/bin/instex
+        type: "symlink"
+        src: /usr/bin/updex
     formats:
       - deb
       - rpm

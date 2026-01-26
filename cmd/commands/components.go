@@ -1,12 +1,13 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"text/tabwriter"
 
 	"github.com/frostyard/updex/cmd/common"
-	"github.com/frostyard/updex/internal/config"
+	"github.com/frostyard/updex/updex"
 	"github.com/spf13/cobra"
 )
 
@@ -20,45 +21,21 @@ func NewComponentsCmd() *cobra.Command {
 	}
 }
 
-// ComponentInfo represents component information for output
-type ComponentInfo struct {
-	Name         string `json:"name"`
-	Source       string `json:"source"`
-	SourceType   string `json:"source_type"`
-	TargetPath   string `json:"target_path"`
-	InstancesMax int    `json:"instances_max"`
-}
-
 func runComponents(cmd *cobra.Command, args []string) error {
-	transfers, err := config.LoadTransfers(common.Definitions)
+	client := newClient()
+
+	components, err := client.Components(context.Background())
 	if err != nil {
-		return fmt.Errorf("failed to load transfer configs: %w", err)
-	}
-
-	if len(transfers) == 0 {
-		if common.JSONOutput {
-			common.OutputJSON([]ComponentInfo{})
-		} else {
-			fmt.Println("No components configured.")
-		}
-		return nil
-	}
-
-	var components []ComponentInfo
-
-	for _, t := range transfers {
-		info := ComponentInfo{
-			Name:         t.Component,
-			Source:       t.Source.Path,
-			SourceType:   t.Source.Type,
-			TargetPath:   t.Target.Path,
-			InstancesMax: t.Transfer.InstancesMax,
-		}
-		components = append(components, info)
+		return err
 	}
 
 	if common.JSONOutput {
 		common.OutputJSON(components)
+		return nil
+	}
+
+	if len(components) == 0 {
+		fmt.Println("No components configured.")
 		return nil
 	}
 
@@ -70,4 +47,23 @@ func runComponents(cmd *cobra.Command, args []string) error {
 	_ = w.Flush()
 
 	return nil
+}
+
+// newClient creates a new updex client with the appropriate progress reporter.
+func newClient() *updex.Client {
+	var reporter interface{}
+	if !common.JSONOutput {
+		reporter = common.NewTextReporter()
+	}
+
+	cfg := updex.ClientConfig{
+		Definitions: common.Definitions,
+		Verify:      common.Verify,
+	}
+
+	if reporter != nil {
+		cfg.Progress = reporter.(*common.TextReporter)
+	}
+
+	return updex.NewClient(cfg)
 }

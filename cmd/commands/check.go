@@ -1,13 +1,12 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	"github.com/frostyard/updex/cmd/common"
-	"github.com/frostyard/updex/internal/config"
-	"github.com/frostyard/updex/internal/sysext"
-	"github.com/frostyard/updex/internal/version"
+	"github.com/frostyard/updex/updex"
 	"github.com/spf13/cobra"
 )
 
@@ -26,81 +25,24 @@ Exit codes:
 	}
 }
 
-// CheckResult represents the result of a check operation
-type CheckResult struct {
-	Component       string `json:"component"`
-	CurrentVersion  string `json:"current_version,omitempty"`
-	NewestVersion   string `json:"newest_version"`
-	UpdateAvailable bool   `json:"update_available"`
-}
-
 func runCheck(cmd *cobra.Command, args []string) error {
-	transfers, err := config.LoadTransfers(common.Definitions)
+	client := newClient()
+
+	opts := updex.CheckOptions{
+		Component: common.Component,
+	}
+
+	results, err := client.CheckNew(context.Background(), opts)
 	if err != nil {
-		return fmt.Errorf("failed to load transfer configs: %w", err)
+		return err
 	}
-
-	if len(transfers) == 0 {
-		return fmt.Errorf("no transfer configurations found")
-	}
-
-	// Filter by component if specified
-	if common.Component != "" {
-		filtered := make([]*config.Transfer, 0)
-		for _, t := range transfers {
-			if t.Component == common.Component {
-				filtered = append(filtered, t)
-			}
-		}
-		transfers = filtered
-	}
-
-	// Filter by enabled features
-	features, err := config.LoadFeatures(common.Definitions)
-	if err != nil {
-		return fmt.Errorf("failed to load features: %w", err)
-	}
-	transfers = config.FilterTransfersByFeatures(transfers, features)
 
 	updateAvailable := false
-	var results []CheckResult
-
-	for _, transfer := range transfers {
-		available, err := GetAvailableVersions(transfer)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to get available versions for %s: %v\n", transfer.Component, err)
-			continue
-		}
-
-		if len(available) == 0 {
-			continue
-		}
-
-		version.Sort(available)
-		newest := available[0] // After sorting, newest is first
-
-		installed, current, err := sysext.GetInstalledVersions(transfer)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to get installed versions for %s: %v\n", transfer.Component, err)
-		}
-
-		result := CheckResult{
-			Component:      transfer.Component,
-			CurrentVersion: current,
-			NewestVersion:  newest,
-		}
-
-		// Check if update is available
-		if len(installed) == 0 {
-			// Nothing installed, update available
-			result.UpdateAvailable = true
+	for _, r := range results {
+		if r.UpdateAvailable {
 			updateAvailable = true
-		} else if version.Compare(newest, current) > 0 {
-			result.UpdateAvailable = true
-			updateAvailable = true
+			break
 		}
-
-		results = append(results, result)
 	}
 
 	if common.JSONOutput {

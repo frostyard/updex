@@ -2,11 +2,18 @@
 
 ## Project Overview
 
-updex is a Go CLI application that replicates `systemd-sysupdate` functionality for managing systemd-sysext images via `url-file` transfers.
+updex is a Go library (SDK) and CLI tool for managing systemd-sysext images, replicating `systemd-sysupdate` functionality for `url-file` transfers.
+
+### Architecture
+
+- **Core SDK**: All operations are implemented as a public Go library in the `updex/` package
+- **CLI Tool**: `updex` is a thin wrapper around the SDK, providing a CLI interface
+- **Reusability**: The SDK can be imported and used by other Go applications for programmatic sysext management
 
 ### Purpose and Users
 
-- **Target Users**: System administrators managing systemd-based Linux distributions (especially Debian Trixie) that don't ship with `systemd-sysupdate`
+- **Library Users**: Go developers building automation tools or system management applications
+- **CLI Users**: System administrators managing systemd-based Linux distributions (especially Debian Trixie) that don't ship with `systemd-sysupdate`
 - **Main Use Case**: Automated downloading, verification, and installation of system extension images from remote HTTP sources
 - **Key Value**: Provides a lightweight, secure way to manage system extensions with version control, GPG verification, and automatic cleanup
 
@@ -54,26 +61,39 @@ This formats all Go source files with `gofmt`.
 
 ```
 updex/
-├── cmd/
-│   ├── commands/             # Shared Cobra subcommands
-│   │   ├── check.go          # check-new command
-│   │   ├── components.go     # components command
-│   │   ├── discover.go       # discover command
-│   │   ├── install.go        # install command
-│   │   ├── list.go           # list command
-│   │   ├── pending.go        # pending command
-│   │   ├── update.go         # update command
-│   │   └── vacuum.go         # vacuum command
-│   ├── common/               # Shared utilities (JSON output, etc.)
-│   ├── updex/                # updex root command
+├── updex/                    # PUBLIC SDK - Core library (importable)
+│   ├── updex.go              # Main SDK entry point and types
+│   ├── options.go            # SDK options and configuration
+│   ├── results.go            # Result types returned by SDK
+│   ├── check.go              # Check-new operation
+│   ├── components.go         # Components operation
+│   ├── discover.go           # Discover operation
+│   ├── features.go           # Features operations
+│   ├── install.go            # Install operation
+│   ├── list.go               # List operation
+│   ├── pending.go            # Pending operation
+│   ├── remove.go             # Remove operation
+│   ├── update.go             # Update operation
+│   ├── vacuum.go             # Vacuum operation
+│   └── sysext.go             # Sysext utilities
+├── cmd/                      # CLI layer (thin wrappers)
+│   ├── commands/             # Cobra command wrappers
+│   │   ├── check.go          # Wraps updex.CheckNew()
+│   │   ├── components.go     # Wraps updex.Components()
+│   │   ├── discover.go       # Wraps updex.Discover()
+│   │   ├── features.go       # Wraps updex.Features*()
+│   │   ├── install.go        # Wraps updex.Install()
+│   │   ├── list.go           # Wraps updex.List()
+│   │   ├── pending.go        # Wraps updex.Pending()
+│   │   ├── remove.go         # Wraps updex.Remove()
+│   │   ├── update.go         # Wraps updex.Update()
+│   │   └── vacuum.go         # Wraps updex.Vacuum()
+│   ├── common/               # CLI utilities (flags, formatting, etc.)
+│   ├── updex/                # updex CLI root command
 │   │   └── root.go
-│   └── instex/               # instex root command
-│       └── root.go
-├── updex/                    # updex binary entry point
-│   └── main.go
-├── instex/                   # instex binary entry point
-│   └── main.go
-├── internal/
+│   └── updex-cli/            # updex binary entry point
+│       └── main.go
+├── internal/                 # Internal implementation (used by SDK)
 │   ├── config/               # .transfer file parsing
 │   ├── manifest/             # SHA256SUMS handling, GPG verification
 │   ├── download/             # HTTP downloads, decompression
@@ -96,16 +116,73 @@ updex/
 
 ## Key Patterns
 
-### Adding a New Command
+### SDK-First Development
 
-1. Create `cmd/commands/<command>.go`
-2. Define a `*cobra.Command` variable
-3. Register with the appropriate root command in `cmd/updex/root.go` or `cmd/instex/root.go`
-4. Implement `RunE` function
+**IMPORTANT**: All operations must be implemented in the public SDK (`updex/` package) first, then wrapped by CLI commands.
+
+#### Adding a New Operation
+
+1. **Implement in SDK** (`updex/<operation>.go`):
+   - Define a public function (e.g., `func MyOperation(opts Options) ([]Result, error)`)
+   - Implement all business logic in the SDK
+   - Return structured results that can be consumed programmatically
+   - Use the `Options` struct for configuration
+   - Document with Go doc comments
+
+2. **Create CLI Wrapper** (`cmd/commands/<operation>.go`):
+   - Create a thin Cobra command that calls the SDK function
+   - Parse CLI flags into `updex.Options`
+   - Call the SDK function: `results, err := updex.MyOperation(opts)`
+   - Format output (text or JSON) using `cmd/common` utilities
+   - Handle errors and exit codes
+
+3. **Register Command**:
+   - Register with root command in `cmd/updex/root.go`
+
+### SDK Design Principles
+
+- **No CLI Dependencies**: SDK code must NOT import Cobra, pflag, or CLI-specific packages
+- **Structured Returns**: Return typed structs, not formatted strings
+- **Options Pattern**: Use `Options` struct for configuration instead of global variables
+- **Error Wrapping**: Use `fmt.Errorf()` to wrap errors with context
+- **Pure Functions**: Avoid side effects where possible; use callbacks for progress reporting
+
+### CLI Command Pattern
+
+CLI commands should be thin wrappers:
+
+```go
+var myCmd = &cobra.Command{
+    Use:   "my-command",
+    Short: "Description",
+    RunE: func(cmd *cobra.Command, args []string) error {
+        // 1. Build options from flags
+        opts := updex.Options{
+            DefinitionsPath: definitionsPath,
+            Component:       component,
+            Verify:          verify,
+            Reporter:        createReporter(jsonOutput),
+        }
+
+        // 2. Call SDK
+        results, err := updex.MyOperation(opts)
+        if err != nil {
+            return err
+        }
+
+        // 3. Format output
+        if jsonOutput {
+            return outputJSON(results)
+        }
+        outputText(results)
+        return nil
+    },
+}
+```
 
 ### JSON Output
 
-All commands support `--json` flag. Use the pattern:
+All SDK functions return structured data. CLI commands handle formatting:
 
 ```go
 if jsonOutput {
@@ -121,6 +198,40 @@ if jsonOutput {
 ### Transfer Configuration
 
 Configuration is read from `.transfer` files. The `config.LoadTransfers()` function handles loading from standard paths or a custom `--definitions` path.
+
+### Using the SDK Programmatically
+
+Other Go applications can import and use updex as a library:
+
+```go
+import "github.com/frostyard/updex/updex"
+
+func main() {
+    opts := updex.Options{
+        DefinitionsPath: "/etc/sysupdate.d",
+        Component:       "myext",
+        Verify:          true,
+    }
+
+    // Check for updates
+    hasUpdate, err := updex.CheckNew(opts)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    if hasUpdate {
+        // Download and install
+        results, err := updex.Update(opts)
+        if err != nil {
+            log.Fatal(err)
+        }
+
+        for _, r := range results {
+            fmt.Printf("Updated %s to %s\n", r.Component, r.Version)
+        }
+    }
+}
+```
 
 ## Dependencies
 
@@ -159,6 +270,25 @@ make test-cover
 
 ## Common Tasks
 
+### Adding a New Operation
+
+1. **Create SDK function** in `updex/<operation>.go`:
+   - Implement public function with `Options` parameter
+   - Return structured results and error
+   - Add comprehensive doc comments
+2. **Create CLI wrapper** in `cmd/commands/<operation>.go`:
+   - Create Cobra command that calls SDK function
+   - Handle flag parsing and output formatting
+3. **Register command** in `cmd/updex/root.go` or `cmd/instex/root.go`
+4. Run `make fmt && make build`
+
+### Adding a New Option
+
+1. Add field to `updex.Options` struct in `updex/options.go`
+2. Add corresponding flag in CLI command files
+3. Update SDK functions to use the new option
+4. Run `make fmt && make build`
+
 ### Adding a New Compression Format
 
 1. Add decompressor in `internal/download/decompress.go`
@@ -167,9 +297,11 @@ make test-cover
 
 ### Adding a New Global Flag
 
-1. Add variable in `cmd/updex/root.go` or `cmd/instex/root.go`
-2. Register in `init()` with `rootCmd.PersistentFlags()`
-3. Run `make fmt && make build`
+1. Add field to `updex.Options` in `updex/options.go` (SDK)
+2. Add CLI variable in `cmd/updex/root.go` or `cmd/instex/root.go`
+3. Register in `init()` with `rootCmd.PersistentFlags()`
+4. Pass flag value to SDK via Options struct
+5. Run `make fmt && make build`
 
 ### Modifying Transfer Config Parsing
 
