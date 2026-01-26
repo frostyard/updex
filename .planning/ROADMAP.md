@@ -76,11 +76,10 @@ Plans:
   3. User can run `updex daemon status` to check timer state
   4. Auto-update only stages files, does not auto-activate merged extensions
   5. User can pass `--reboot` to update command to reboot after update
-**Plans**: TBD
+**Plans**: 1 plan
 
 Plans:
-- [ ] 04-01: TBD
-- [ ] 04-02: TBD
+- [ ] 04-01-PLAN.md — Create daemon command (enable/disable/status) and add --reboot to update
 
 ### Phase 5: Integration & Polish
 **Goal**: End-to-end workflows are validated and user experience is polished
