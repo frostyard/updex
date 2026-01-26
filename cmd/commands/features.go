@@ -14,6 +14,8 @@ import (
 var (
 	featureDisableRemove bool
 	featureDisableNow    bool
+	featureDisableForce  bool
+	featureDisableDryRun bool
 	featureEnableNow     bool
 	featureEnableDryRun  bool
 	featureEnableRetry   bool
@@ -87,16 +89,20 @@ func newFeaturesDisableCmd() *cobra.Command {
 This creates a file at /etc/sysupdate.d/<feature>.feature.d/00-updex.conf
 that sets Enabled=false for the specified feature.
 
-With --remove flag, also removes all downloaded files for transfers in this feature.
-With --now flag, unmerges extensions immediately.
+With --now flag, immediately unmerges AND removes extension files.
+With --remove flag, removes files (same behavior as --now for backward compat).
+With --force flag, allows removal of merged extensions (requires reboot).
+With --dry-run flag, shows what would happen without making changes.
 
 Requires root privileges.`,
 		Args: cobra.ExactArgs(1),
 		RunE: runFeaturesDisable,
 	}
 
-	cmd.Flags().BoolVar(&featureDisableRemove, "remove", false, "Remove downloaded files for this feature's transfers")
-	cmd.Flags().BoolVar(&featureDisableNow, "now", false, "Unmerge extensions immediately")
+	cmd.Flags().BoolVar(&featureDisableRemove, "remove", false, "Remove downloaded files (same as --now)")
+	cmd.Flags().BoolVar(&featureDisableNow, "now", false, "Immediately unmerge and remove extension files")
+	cmd.Flags().BoolVar(&featureDisableForce, "force", false, "Allow removal of merged extensions (requires reboot)")
+	cmd.Flags().BoolVar(&featureDisableDryRun, "dry-run", false, "Preview changes without modifying filesystem")
 
 	return cmd
 }
@@ -200,6 +206,8 @@ func runFeaturesDisable(cmd *cobra.Command, args []string) error {
 	opts := updex.DisableFeatureOptions{
 		Remove:    featureDisableRemove,
 		Now:       featureDisableNow,
+		Force:     featureDisableForce,
+		DryRun:    featureDisableDryRun,
 		NoRefresh: common.NoRefresh,
 	}
 
@@ -211,14 +219,24 @@ func runFeaturesDisable(cmd *cobra.Command, args []string) error {
 		if result.Error != "" {
 			fmt.Printf("Error: %s\n", result.Error)
 		} else if result.Success {
-			fmt.Printf("Feature '%s' disabled.\n", result.Feature)
-			if featureDisableRemove {
-				fmt.Printf("Removed %d file(s).\n", len(result.RemovedFiles))
-			}
-			if featureDisableNow {
-				fmt.Printf("Extensions unmerged immediately.\n")
-			} else if !featureDisableRemove {
-				fmt.Printf("Run 'updex update' to apply changes.\n")
+			if result.DryRun {
+				fmt.Printf("[DRY RUN] %s\n", result.NextActionMessage)
+			} else {
+				fmt.Printf("Feature '%s' disabled.\n", result.Feature)
+				if result.Unmerged {
+					fmt.Printf("Extensions unmerged.\n")
+				}
+				if len(result.RemovedFiles) > 0 {
+					fmt.Printf("Removed %d file(s):\n", len(result.RemovedFiles))
+					for _, f := range result.RemovedFiles {
+						fmt.Printf("  - %s\n", f)
+					}
+				}
+				if featureDisableForce {
+					fmt.Printf("Warning: Reboot required for changes to take effect.\n")
+				} else if !featureDisableNow && !featureDisableRemove {
+					fmt.Printf("Run 'updex update' to apply changes.\n")
+				}
 			}
 		}
 	}
