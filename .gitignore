@@ -2,3 +2,4 @@
 dist/
 completions/
 manpages/
+coverage.out
