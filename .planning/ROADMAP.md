@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Test Foundation** - Establish testing infrastructure and patterns
 - [x] **Phase 2: Core UX Fixes** - Fix dangerous remove/disable semantics
-- [ ] **Phase 3: Systemd Unit Infrastructure** - Build internal package for timer/service management
+- [x] **Phase 3: Systemd Unit Infrastructure** - Build internal package for timer/service management
 - [ ] **Phase 4: Auto-Update CLI** - Expose auto-update via daemon commands
 - [ ] **Phase 5: Integration & Polish** - End-to-end validation and UX polish
 

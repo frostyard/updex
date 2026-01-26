@@ -5,14 +5,14 @@
 See: .planning/PROJECT.md (updated 2026-01-26)
 
 **Core value:** Users can reliably install and update systemd-sysexts from any registry without needing the unavailable updatectl package.
-**Current focus:** Phase 3 - Systemd Unit Infrastructure
+**Current focus:** Phase 4 - Auto-Update CLI
 
 ## Current Position
 
-Phase: 3 of 5 (Systemd Unit Infrastructure)
-Plan: 3 of 3 in current phase
-Status: Phase complete
-Last activity: 2026-01-26 — Completed 03-03-PLAN.md
+Phase: 4 of 5 (Auto-Update CLI)
+Plan: 0 of TBD in current phase
+Status: Ready to plan
+Last activity: 2026-01-26 — Phase 3 verified complete
 
 Progress: [███████░░░] 70%
 
@@ -82,11 +82,12 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-01-26T19:12:16Z
-Stopped at: Completed 03-03-PLAN.md (Phase 3 complete)
+Last session: 2026-01-26
+Stopped at: Phase 3 verified, ready for Phase 4
 Resume file: None
 
 ## Next Steps
 
-Phase 3 complete. Ready for:
-- Phase 4: Auto-Update CLI (daemon enable/disable/status commands)
+Phase 3 verified complete. Ready for:
+- /gsd-discuss-phase 4 — Auto-Update CLI
+- /gsd-plan-phase 4 — skip discussion, plan directly

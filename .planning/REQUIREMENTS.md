@@ -16,7 +16,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Auto-Update
 
-- [ ] **AUTO-01**: User can generate systemd timer and service files for scheduled updates
+- [x] **AUTO-01**: User can generate systemd timer and service files for scheduled updates
 - [ ] **AUTO-02**: User can install generated timer/service to system with `install-timer` command
 - [ ] **AUTO-03**: User can check auto-update timer status with status command
 - [ ] **AUTO-04**: Auto-update only stages files, does not auto-activate merged extensions
@@ -72,7 +72,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | UX-01 | Phase 2: Core UX Fixes | Complete |
 | UX-02 | Phase 2: Core UX Fixes | Complete |
 | UX-03 | Phase 2: Core UX Fixes | Complete |
-| AUTO-01 | Phase 3: Systemd Unit Infrastructure | Pending |
+| AUTO-01 | Phase 3: Systemd Unit Infrastructure | Complete |
 | AUTO-02 | Phase 4: Auto-Update CLI | Pending |
 | AUTO-03 | Phase 4: Auto-Update CLI | Pending |
 | AUTO-04 | Phase 4: Auto-Update CLI | Pending |
@@ -89,4 +89,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-26*
-*Last updated: 2026-01-26 after Phase 2 completion*
+*Last updated: 2026-01-26 after Phase 3 completion*
