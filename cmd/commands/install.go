@@ -19,10 +19,23 @@ func NewInstallCmd() *cobra.Command {
 Downloads the transfer file from the repository and places it in /etc/sysupdate.d/,
 then downloads and installs the extension.
 
-Requires --component flag to specify which extension to install.
+REQUIREMENTS:
+  - Root privileges (run with sudo)
+  - Network access to repository
 
-Example:
-  updex install https://repo.frostyard.org --component vscode`,
+WORKFLOW:
+  1. Fetches extension list from URL/ext/index
+  2. Downloads .transfer configuration to /etc/sysupdate.d/
+  3. Downloads the extension image to staging directory
+  4. Extension becomes active after reboot`,
+		Example: `  # Install Docker extension from repository
+  updex install https://repo.frostyard.org --component docker
+
+  # Install VSCode extension
+  updex install https://repo.frostyard.org --component vscode
+
+  # Install without automatic refresh
+  updex install https://repo.example.com --component myext --no-refresh`,
 		Args: cobra.ExactArgs(1),
 		RunE: runInstall,
 	}

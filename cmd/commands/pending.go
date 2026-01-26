@@ -20,10 +20,22 @@ func NewPendingCmd() *cobra.Command {
 This typically happens when a new sysext image has been downloaded but
 systemd-sysext has not been refreshed or the system has not been rebooted.
 
-Exit codes:
-  0 - A pending update exists
+Useful for scripting reboot notifications or showing pending updates.
+
+EXIT CODES:
+  0 - A pending update exists (reboot recommended)
   1 - An error occurred
-  2 - No pending update`,
+  2 - No pending update (system is current)`,
+		Example: `  # Check for pending updates
+  updex pending
+
+  # Check a specific component
+  updex pending --component docker
+
+  # Use in a script
+  if updex pending; then
+    echo "Reboot to activate pending updates"
+  fi`,
 		RunE: runPending,
 	}
 }

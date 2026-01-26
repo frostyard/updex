@@ -33,11 +33,24 @@ Features are optional sets of transfers that can be enabled or disabled by the
 system administrator. When a feature is enabled, its associated transfers will
 be considered during updates. When disabled, they are skipped.
 
-Configuration files are read from:
+CONFIGURATION FILES:
   - /etc/sysupdate.d/*.feature
   - /run/sysupdate.d/*.feature
   - /usr/local/lib/sysupdate.d/*.feature
-  - /usr/lib/sysupdate.d/*.feature`,
+  - /usr/lib/sysupdate.d/*.feature
+
+SUBCOMMANDS:
+  list     Show all features and their status
+  enable   Enable a feature (optionally download immediately)
+  disable  Disable a feature (optionally remove files)`,
+		Example: `  # List all features
+  updex features list
+
+  # Enable a feature and download its extensions
+  sudo updex features enable docker --now
+
+  # Disable a feature and remove its files
+  sudo updex features disable docker --now`,
 	}
 
 	cmd.AddCommand(newFeaturesListCmd())
@@ -51,8 +64,19 @@ func newFeaturesListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List available features",
-		Long:  `List all features defined in .feature configuration files with their status and associated transfers.`,
-		RunE:  runFeaturesList,
+		Long: `List all features defined in .feature configuration files with their status and associated transfers.
+
+OUTPUT COLUMNS:
+  FEATURE      - Feature name
+  DESCRIPTION  - Human-readable description
+  ENABLED      - yes/no/masked
+  TRANSFERS    - Associated transfer configurations`,
+		Example: `  # List all features
+  updex features list
+
+  # List in JSON format
+  updex features list --json`,
+		RunE: runFeaturesList,
 	}
 }
 
@@ -65,10 +89,20 @@ func newFeaturesEnableCmd() *cobra.Command {
 This creates a file at /etc/sysupdate.d/<feature>.feature.d/00-updex.conf
 that sets Enabled=true for the specified feature.
 
-With --now flag, immediately downloads extensions for this feature.
-With --dry-run flag, shows what would happen without making changes.
+OPTIONS:
+  --now      Immediately download extensions for this feature
+  --dry-run  Preview changes without modifying filesystem
+  --retry    Retry on network failures (3 attempts)
 
 Requires root privileges.`,
+		Example: `  # Enable a feature (downloads on next update)
+  sudo updex features enable docker
+
+  # Enable and download immediately
+  sudo updex features enable docker --now
+
+  # Preview what would happen
+  updex features enable docker --dry-run`,
 		Args: cobra.ExactArgs(1),
 		RunE: runFeaturesEnable,
 	}
@@ -89,12 +123,24 @@ func newFeaturesDisableCmd() *cobra.Command {
 This creates a file at /etc/sysupdate.d/<feature>.feature.d/00-updex.conf
 that sets Enabled=false for the specified feature.
 
-With --now flag, immediately unmerges AND removes extension files.
-With --remove flag, removes files (same behavior as --now for backward compat).
-With --force flag, allows removal of merged extensions (requires reboot).
-With --dry-run flag, shows what would happen without making changes.
+OPTIONS:
+  --now      Immediately unmerge AND remove extension files
+  --remove   Remove files (same behavior as --now for backward compat)
+  --force    Allow removal of merged extensions (requires reboot)
+  --dry-run  Preview changes without modifying filesystem
 
 Requires root privileges.`,
+		Example: `  # Disable a feature (stops future updates)
+  sudo updex features disable docker
+
+  # Disable and remove files immediately
+  sudo updex features disable docker --now
+
+  # Force removal of merged extension
+  sudo updex features disable docker --now --force
+
+  # Preview what would be removed
+  updex features disable docker --now --dry-run`,
 		Args: cobra.ExactArgs(1),
 		RunE: runFeaturesDisable,
 	}

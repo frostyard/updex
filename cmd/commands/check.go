@@ -17,10 +17,23 @@ func NewCheckCmd() *cobra.Command {
 		Short: "Check if a newer version is available",
 		Long: `Check if a newer version is available for download.
 
-Exit codes:
+Compares installed versions against available versions from configured
+repositories. Useful for scripting update notifications.
+
+EXIT CODES:
   0 - A newer version is available
   1 - An error occurred
-  2 - No newer version is available`,
+  2 - No newer version is available (already up to date)`,
+		Example: `  # Check all components for updates
+  updex check-new
+
+  # Check a specific component
+  updex check-new --component docker
+
+  # Use in a script
+  if updex check-new --component docker; then
+    echo "Update available!"
+  fi`,
 		RunE: runCheck,
 	}
 }
