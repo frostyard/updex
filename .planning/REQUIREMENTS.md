@@ -25,14 +25,14 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 - [x] **TEST-01**: Core operations have unit test coverage (list, check, update, install, remove)
 - [x] **TEST-02**: Config parsing has unit test coverage (transfer, feature files)
-- [ ] **TEST-03**: Integration tests validate end-to-end workflows
+- [x] **TEST-03**: Integration tests validate end-to-end workflows
 - [x] **TEST-04**: Tests can run without root (mock filesystem/systemd where needed)
 
 ### Polish
 
-- [ ] **POLISH-01**: Error messages are clear and actionable
-- [ ] **POLISH-02**: Help text is comprehensive and follows conventions
-- [ ] **POLISH-03**: Shell completions work for bash, zsh, and fish
+- [x] **POLISH-01**: Error messages are clear and actionable
+- [x] **POLISH-02**: Help text is comprehensive and follows conventions
+- [x] **POLISH-03**: Shell completions work for bash, zsh, and fish
 
 ## v2 Requirements
 
@@ -77,10 +77,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AUTO-03 | Phase 4: Auto-Update CLI | Complete |
 | AUTO-04 | Phase 4: Auto-Update CLI | Complete |
 | UX-04 | Phase 4: Auto-Update CLI | Complete |
-| TEST-03 | Phase 5: Integration & Polish | Pending |
-| POLISH-01 | Phase 5: Integration & Polish | Pending |
-| POLISH-02 | Phase 5: Integration & Polish | Pending |
-| POLISH-03 | Phase 5: Integration & Polish | Pending |
+| TEST-03 | Phase 5: Integration & Polish | Complete |
+| POLISH-01 | Phase 5: Integration & Polish | Complete |
+| POLISH-02 | Phase 5: Integration & Polish | Complete |
+| POLISH-03 | Phase 5: Integration & Polish | Complete |
 
 **Coverage:**
 - v1 requirements: 15 total
@@ -89,4 +89,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-26*
-*Last updated: 2026-01-26 after Phase 4 completion*
+*Last updated: 2026-01-26 after Phase 5 completion (milestone complete)*
