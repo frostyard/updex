@@ -5,23 +5,23 @@
 See: .planning/PROJECT.md (updated 2026-01-26)
 
 **Core value:** Users can reliably install and update systemd-sysexts from any registry without needing the unavailable updatectl package.
-**Current focus:** Phase 4 - Auto-Update CLI
+**Current focus:** Phase 5 - Integration & Polish
 
 ## Current Position
 
-Phase: 4 of 5 (Auto-Update CLI)
-Plan: 1 of 1 in current phase
-Status: Phase complete
-Last activity: 2026-01-26 — Completed 04-01-PLAN.md
+Phase: 5 of 5 (Integration & Polish)
+Plan: 2 of 3 in current phase
+Status: In progress
+Last activity: 2026-01-26 — Completed 05-02-PLAN.md
 
-Progress: [████████░░] 80%
+Progress: [█████████░] 90%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 8
-- Average duration: 5 min
-- Total execution time: 38 min
+- Total plans completed: 10
+- Average duration: 4 min
+- Total execution time: 43 min
 
 **By Phase:**
 
@@ -31,9 +31,10 @@ Progress: [████████░░] 80%
 | 02-core-ux-fixes | 2 | 7 min | 3.5 min |
 | 03-systemd-unit-infrastructure | 3 | 2 min | 0.7 min |
 | 04-auto-update-cli | 1 | 2 min | 2 min |
+| 05-integration-polish | 2 | 5 min | 2.5 min |
 
 **Recent Trend:**
-- Last 5 plans: 2min, 0min, 1min, 1min, 2min
+- Last 5 plans: 1min, 1min, 2min, 2min, 3min
 - Trend: fast
 
 *Updated after each plan completion*
@@ -62,6 +63,8 @@ Recent decisions affecting current work:
 - [04-01]: Fixed daily schedule for timer (configurable deferred to v2)
 - [04-01]: Service uses --no-refresh to stage files only (AUTO-04)
 - [04-01]: Reboot only triggers when anyInstalled && err == nil
+- [05-02]: Error messages follow pattern: what happened + actionable suggestion
+- [05-02]: Help text includes REQUIREMENTS/WORKFLOW sections + Example with 2-3 examples
 
 ### Test Coverage
 
@@ -86,12 +89,11 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-01-26T19:36:30Z
-Stopped at: Completed 04-01-PLAN.md, Phase 4 complete
+Last session: 2026-01-26T20:09:43Z
+Stopped at: Completed 05-02-PLAN.md
 Resume file: None
 
 ## Next Steps
 
-Phase 4 complete. Ready for:
-- /gsd-discuss-phase 5 — Integration & Polish
-- /gsd-plan-phase 5 — skip discussion, plan directly
+Phase 5 in progress. Ready for:
+- 05-03-PLAN.md — Shell completions verification
