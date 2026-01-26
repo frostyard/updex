@@ -38,7 +38,7 @@ func TestInstall(t *testing.T) {
 					if strings.HasSuffix(r.URL.Path, "/ext/index") {
 						// Return index without the requested component
 						w.WriteHeader(http.StatusOK)
-						w.Write([]byte("other-ext\nanother-ext\n"))
+						_, _ = w.Write([]byte("other-ext\nanother-ext\n"))
 						return
 					}
 					w.WriteHeader(http.StatusNotFound)

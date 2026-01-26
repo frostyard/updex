@@ -31,12 +31,12 @@ func NewTestServer(t *testing.T, files TestServerFiles) *httptest.Server {
 			for filename, hash := range files.Files {
 				lines = append(lines, fmt.Sprintf("%s  %s", hash, filename))
 			}
-			w.Write([]byte(strings.Join(lines, "\n")))
+			_, _ = w.Write([]byte(strings.Join(lines, "\n")))
 			return
 		}
 
 		if content, ok := files.Content[path]; ok {
-			w.Write(content)
+			_, _ = w.Write(content)
 			return
 		}
 
