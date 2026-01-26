@@ -14,6 +14,9 @@ import (
 var (
 	featureDisableRemove bool
 	featureDisableNow    bool
+	featureEnableNow     bool
+	featureEnableDryRun  bool
+	featureEnableRetry   bool
 )
 
 // NewFeaturesCmd creates the features command with subcommands
@@ -52,7 +55,7 @@ func newFeaturesListCmd() *cobra.Command {
 }
 
 func newFeaturesEnableCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "enable FEATURE",
 		Short: "Enable a feature",
 		Long: `Enable a feature by creating a drop-in configuration file.
@@ -60,10 +63,19 @@ func newFeaturesEnableCmd() *cobra.Command {
 This creates a file at /etc/sysupdate.d/<feature>.feature.d/00-updex.conf
 that sets Enabled=true for the specified feature.
 
+With --now flag, immediately downloads extensions for this feature.
+With --dry-run flag, shows what would happen without making changes.
+
 Requires root privileges.`,
 		Args: cobra.ExactArgs(1),
 		RunE: runFeaturesEnable,
 	}
+
+	cmd.Flags().BoolVar(&featureEnableNow, "now", false, "Immediately download extensions")
+	cmd.Flags().BoolVar(&featureEnableDryRun, "dry-run", false, "Preview changes without modifying filesystem")
+	cmd.Flags().BoolVar(&featureEnableRetry, "retry", false, "Retry on network failures (3 attempts)")
+
+	return cmd
 }
 
 func newFeaturesDisableCmd() *cobra.Command {
@@ -143,7 +155,14 @@ func runFeaturesEnable(cmd *cobra.Command, args []string) error {
 
 	client := newClient()
 
-	result, err := client.EnableFeature(context.Background(), args[0])
+	opts := updex.EnableFeatureOptions{
+		Now:       featureEnableNow,
+		DryRun:    featureEnableDryRun,
+		Retry:     featureEnableRetry,
+		NoRefresh: common.NoRefresh,
+	}
+
+	result, err := client.EnableFeature(context.Background(), args[0], opts)
 
 	if common.JSONOutput {
 		common.OutputJSON(result)
@@ -151,8 +170,19 @@ func runFeaturesEnable(cmd *cobra.Command, args []string) error {
 		if result.Error != "" {
 			fmt.Printf("Error: %s\n", result.Error)
 		} else if result.Success {
-			fmt.Printf("Feature '%s' enabled.\n", result.Feature)
-			fmt.Printf("Run 'updex update' to apply changes.\n")
+			if result.DryRun {
+				fmt.Printf("[DRY RUN] %s\n", result.NextActionMessage)
+			} else {
+				fmt.Printf("Feature '%s' enabled.\n", result.Feature)
+				if len(result.DownloadedFiles) > 0 {
+					fmt.Printf("Downloaded %d extension(s):\n", len(result.DownloadedFiles))
+					for _, f := range result.DownloadedFiles {
+						fmt.Printf("  - %s\n", f)
+					}
+				} else if !featureEnableNow {
+					fmt.Printf("Run 'updex update' to download extensions.\n")
+				}
+			}
 		}
 	}
 

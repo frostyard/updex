@@ -86,6 +86,8 @@ type FeatureActionResult struct {
 	Error             string   `json:"error,omitempty"`
 	NextActionMessage string   `json:"next_action_message,omitempty"`
 	RemovedFiles      []string `json:"removed_files,omitempty"`
+	DownloadedFiles   []string `json:"downloaded_files,omitempty"`
+	DryRun            bool     `json:"dry_run,omitempty"`
 	Unmerged          bool     `json:"unmerged,omitempty"`
 }
 

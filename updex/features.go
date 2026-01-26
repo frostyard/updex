@@ -65,8 +65,12 @@ func (c *Client) Features(ctx context.Context) ([]FeatureInfo, error) {
 }
 
 // EnableFeature enables a feature by creating a drop-in configuration file.
-func (c *Client) EnableFeature(ctx context.Context, name string) (*FeatureActionResult, error) {
-	c.helper.BeginAction("Enable feature")
+func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeatureOptions) (*FeatureActionResult, error) {
+	actionName := "Enable feature"
+	if opts.DryRun {
+		actionName = "Enable feature (dry run)"
+	}
+	c.helper.BeginAction(actionName)
 	defer c.helper.EndAction()
 
 	c.helper.BeginTask(fmt.Sprintf("Enabling %s", name))
@@ -74,6 +78,7 @@ func (c *Client) EnableFeature(ctx context.Context, name string) (*FeatureAction
 	result := &FeatureActionResult{
 		Feature: name,
 		Action:  "enable",
+		DryRun:  opts.DryRun,
 	}
 
 	// Verify the feature exists
@@ -110,27 +115,93 @@ func (c *Client) EnableFeature(ctx context.Context, name string) (*FeatureAction
 	dropInDir := filepath.Join("/etc/sysupdate.d", name+".feature.d")
 	dropInFile := filepath.Join(dropInDir, "00-updex.conf")
 
-	if err := os.MkdirAll(dropInDir, 0755); err != nil {
-		result.Error = fmt.Sprintf("failed to create drop-in directory: %v", err)
-		c.helper.Warning(result.Error)
-		c.helper.EndTask()
-		return result, fmt.Errorf("%s", result.Error)
-	}
+	if opts.DryRun {
+		c.helper.Info(fmt.Sprintf("Would create drop-in: %s", dropInFile))
+	} else {
+		if err := os.MkdirAll(dropInDir, 0755); err != nil {
+			result.Error = fmt.Sprintf("failed to create drop-in directory: %v", err)
+			c.helper.Warning(result.Error)
+			c.helper.EndTask()
+			return result, fmt.Errorf("%s", result.Error)
+		}
 
-	content := "[Feature]\nEnabled=true\n"
-	if err := os.WriteFile(dropInFile, []byte(content), 0644); err != nil {
-		result.Error = fmt.Sprintf("failed to write drop-in file: %v", err)
-		c.helper.Warning(result.Error)
-		c.helper.EndTask()
-		return result, fmt.Errorf("%s", result.Error)
+		content := "[Feature]\nEnabled=true\n"
+		if err := os.WriteFile(dropInFile, []byte(content), 0644); err != nil {
+			result.Error = fmt.Sprintf("failed to write drop-in file: %v", err)
+			c.helper.Warning(result.Error)
+			c.helper.EndTask()
+			return result, fmt.Errorf("%s", result.Error)
+		}
+
+		result.DropIn = dropInFile
+		c.helper.Info(fmt.Sprintf("Created drop-in: %s", dropInFile))
+	}
+	c.helper.EndTask()
+
+	// Handle --now flag: download extensions immediately
+	if opts.Now {
+		c.helper.BeginTask("Downloading extensions")
+
+		// Load transfers to find which ones belong to this feature
+		transfers, err := config.LoadTransfers(c.config.Definitions)
+		if err != nil {
+			result.Error = fmt.Sprintf("failed to load transfers: %v", err)
+			c.helper.Warning(result.Error)
+			c.helper.EndTask()
+			return result, fmt.Errorf("%s", result.Error)
+		}
+
+		featureTransfers := config.GetTransfersForFeature(transfers, name)
+
+		if len(featureTransfers) == 0 {
+			c.helper.Info("No transfers associated with this feature")
+			c.helper.EndTask()
+		} else {
+			for _, transfer := range featureTransfers {
+				c.helper.Info(fmt.Sprintf("Processing %s", transfer.Component))
+
+				if opts.DryRun {
+					c.helper.Info(fmt.Sprintf("Would download: %s", transfer.Component))
+					result.DownloadedFiles = append(result.DownloadedFiles, transfer.Component+" (would download)")
+				} else {
+					// Use installTransfer which handles all the download logic
+					version, err := c.installTransfer(transfer, true) // noRefresh=true, we'll refresh once at the end
+					if err != nil {
+						result.Error = fmt.Sprintf("failed to download %s: %v", transfer.Component, err)
+						c.helper.Warning(result.Error)
+						c.helper.EndTask()
+						return result, fmt.Errorf("%s", result.Error)
+					}
+					result.DownloadedFiles = append(result.DownloadedFiles, fmt.Sprintf("%s@%s", transfer.Component, version))
+					c.helper.Info(fmt.Sprintf("Downloaded %s version %s", transfer.Component, version))
+				}
+			}
+			c.helper.EndTask()
+
+			// Refresh if we downloaded (unless --no-refresh or --dry-run)
+			if !opts.NoRefresh && !opts.DryRun {
+				c.helper.BeginTask("Refreshing sysext")
+				if err := sysext.Refresh(); err != nil {
+					c.helper.Warning(fmt.Sprintf("sysext refresh failed: %v", err))
+				}
+				c.helper.EndTask()
+			}
+		}
 	}
 
 	result.Success = true
-	result.DropIn = dropInFile
-	result.NextActionMessage = "Run 'updex update' to apply changes"
 
-	c.helper.Info(fmt.Sprintf("Created drop-in: %s", dropInFile))
-	c.helper.EndTask()
+	// Set appropriate NextActionMessage
+	if opts.DryRun {
+		result.NextActionMessage = fmt.Sprintf("Dry run complete. Would enable feature '%s'", name)
+		if opts.Now {
+			result.NextActionMessage += " and download extensions"
+		}
+	} else if opts.Now && len(result.DownloadedFiles) > 0 {
+		result.NextActionMessage = fmt.Sprintf("Feature '%s' enabled and %d extension(s) downloaded", name, len(result.DownloadedFiles))
+	} else {
+		result.NextActionMessage = fmt.Sprintf("Feature '%s' enabled. Run 'updex update' to download extensions.", name)
+	}
 
 	return result, nil
 }
