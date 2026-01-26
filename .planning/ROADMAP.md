@@ -33,7 +33,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 Plans:
 - [x] 01-01-PLAN.md — Create test infrastructure (SysextRunner interface, HTTP test helpers)
-- [ ] 01-02-PLAN.md — Add unit tests for core operations (list, check, update, install, remove)
+- [x] 01-02-PLAN.md — Add unit tests for core operations (list, check, update, install, remove)
 
 ### Phase 2: Core UX Fixes
 **Goal**: Users can safely enable/disable features with immediate effect
