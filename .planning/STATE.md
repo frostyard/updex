@@ -9,29 +9,29 @@ See: .planning/PROJECT.md (updated 2026-01-26)
 
 ## Current Position
 
-Phase: 2 of 5 (Core UX Fixes)
-Plan: 1 of 2 in current phase (COMPLETE)
-Status: In progress
-Last activity: 2026-01-26 — Completed 02-01-PLAN.md
+Phase: 2 of 5 (Core UX Fixes) - COMPLETE
+Plan: 2 of 2 in current phase (COMPLETE)
+Status: Phase complete
+Last activity: 2026-01-26 — Completed 02-02-PLAN.md
 
-Progress: [███░░░░░░░] 30%
+Progress: [████░░░░░░] 40%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 3
-- Average duration: 11 min
-- Total execution time: 32 min
+- Total plans completed: 4
+- Average duration: 9 min
+- Total execution time: 34 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01-test-foundation | 2 | 27 min | 13.5 min |
-| 02-core-ux-fixes | 1 | 5 min | 5 min |
+| 02-core-ux-fixes | 2 | 7 min | 3.5 min |
 
 **Recent Trend:**
-- Last 5 plans: 2min, 25min, 5min
+- Last 5 plans: 2min, 25min, 5min, 2min
 - Trend: improving
 
 *Updated after each plan completion*
@@ -51,6 +51,8 @@ Recent decisions affecting current work:
 - [01-02]: Helper functions (createTransferFile, updateTransferTargetPath) shared across test files
 - [02-01]: --now on disable combines unmerge AND file removal
 - [02-01]: Merge state check requires --force for active extensions
+- [02-02]: Use DryRun flag to test feature logic without /etc access
+- [02-02]: Simulate merged extensions with CurrentSymlink for testing
 
 ### Test Coverage
 
@@ -76,10 +78,10 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-26
-Stopped at: Session resumed, proceeding to execute 02-02-PLAN.md
+Stopped at: Completed 02-02-PLAN.md - Phase 2 complete
 Resume file: None
 
 ## Next Steps
 
-Plan 1 of Phase 2 complete. Ready for:
-- 02-02-PLAN.md: Unit tests for enable/disable with --now, --force, --dry-run
+Phase 2 complete. Ready for:
+- Phase 3: Systemd Unit Infrastructure

@@ -13,7 +13,7 @@ This milestone hardens updex from functional to reliable. We fix dangerous UX is
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Test Foundation** - Establish testing infrastructure and patterns
-- [ ] **Phase 2: Core UX Fixes** - Fix dangerous remove/disable semantics
+- [x] **Phase 2: Core UX Fixes** - Fix dangerous remove/disable semantics
 - [ ] **Phase 3: Systemd Unit Infrastructure** - Build internal package for timer/service management
 - [ ] **Phase 4: Auto-Update CLI** - Expose auto-update via daemon commands
 - [ ] **Phase 5: Integration & Polish** - End-to-end validation and UX polish
@@ -48,7 +48,7 @@ Plans:
 
 Plans:
 - [x] 02-01-PLAN.md — Implement --now for enable (downloads) and fix disable semantics (file removal + merge state)
-- [ ] 02-02-PLAN.md — Add unit tests for enable/disable with --now, --force, --dry-run
+- [x] 02-02-PLAN.md — Add unit tests for enable/disable with --now, --force, --dry-run
 
 ### Phase 3: Systemd Unit Infrastructure
 **Goal**: Internal package can generate, install, and manage systemd timer/service files
@@ -103,7 +103,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Test Foundation | 2/2 | Complete ✓ | 2026-01-26 |
-| 2. Core UX Fixes | 1/2 | In progress | - |
+| 2. Core UX Fixes | 2/2 | Complete ✓ | 2026-01-26 |
 | 3. Systemd Unit Infrastructure | 0/TBD | Not started | - |
 | 4. Auto-Update CLI | 0/TBD | Not started | - |
 | 5. Integration & Polish | 0/TBD | Not started | - |
