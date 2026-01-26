@@ -57,6 +57,13 @@ Existing test coverage is limited. The tool is functional for core operations bu
 - **Architecture**: Primary target is amd64, arm64 for testing
 - **Go version**: 1.25+
 - **Compatibility**: Must work with existing .transfer file format
+- **CI verification**: All GitHub Actions "Tests" workflow jobs must pass before work is complete:
+  - lint (golangci-lint)
+  - security (govulncheck)
+  - verify (go mod tidy, go vet, gofmt)
+  - unit-test (go test with coverage)
+  - race-test (go test -race)
+  - build (cross-compile linux/amd64, linux/arm64)
 
 ## Key Decisions
 
@@ -69,4 +76,4 @@ Existing test coverage is limited. The tool is functional for core operations bu
 | Disable = remove files | Simpler mental model for users | — Pending |
 
 ---
-*Last updated: 2026-01-26 after initialization*
+*Last updated: 2026-01-26 after adding CI constraint*
