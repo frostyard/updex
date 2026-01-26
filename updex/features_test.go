@@ -31,22 +31,6 @@ Enabled=` + enabledStr + `
 	return path
 }
 
-// createMaskedFeatureFile creates a masked .feature file (symlink to /dev/null)
-func createMaskedFeatureFile(t *testing.T, configDir, featureName string) string {
-	t.Helper()
-	path := filepath.Join(configDir, featureName+".feature")
-	// For testing, we create a regular file instead of symlink to /dev/null
-	// since the actual masking logic checks for symlink target
-	content := `[Feature]
-Description=Masked feature
-Enabled=false
-`
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("failed to create feature file: %v", err)
-	}
-	return path
-}
-
 // createFeatureTransferFile creates a .transfer file with Features set
 func createFeatureTransferFile(t *testing.T, configDir, component, featureName, baseURL string) {
 	t.Helper()
