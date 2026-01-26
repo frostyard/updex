@@ -1,6 +1,13 @@
 # updex
 
-A Go CLI tool for managing systemd-sysext images, replicating the functionality of `systemd-sysupdate` for `url-file` transfers.
+A Go library (SDK) and CLI tool for managing systemd-sysext images, replicating the functionality of `systemd-sysupdate` for `url-file` transfers.
+
+## What is updex?
+
+**updex** provides two ways to manage system extensions:
+
+1. **Go Library (SDK)**: Import `github.com/frostyard/updex/updex` in your Go applications for programmatic control
+2. **CLI Tool**: Use the `updex` command-line tool as a thin wrapper around the SDK
 
 Designed for systems like Debian Trixie that don't ship with `systemd-sysupdate`.
 
@@ -17,6 +24,14 @@ Designed for systems like Debian Trixie that don't ship with `systemd-sysupdate`
 
 ## Installation
 
+### As a Library
+
+```bash
+go get github.com/frostyard/updex/updex
+```
+
+### As CLI Tools
+
 ```bash
 # Build from source
 make build
@@ -25,7 +40,86 @@ make build
 make install
 ```
 
-## Usage
+The `updex` binary provides all commands for both local management and remote discovery/installation.
+
+## Library (SDK) Usage
+
+Import updex in your Go applications:
+
+```go
+import "github.com/frostyard/updex/updex"
+
+func main() {
+    // Configure options
+    opts := updex.Options{
+        DefinitionsPath: "/etc/sysupdate.d",
+        Component:       "myext",
+        Verify:          true,
+    }
+
+    // List available versions
+    versions, err := updex.List(opts)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    for _, v := range versions {
+        fmt.Printf("%s: %s (installed: %v, current: %v)\n",
+            v.Component, v.Version, v.Installed, v.Current)
+    }
+
+    // Check for updates
+    hasUpdate, err := updex.CheckNew(opts)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    if hasUpdate {
+        // Perform update
+        results, err := updex.Update(opts)
+        if err != nil {
+            log.Fatal(err)
+        }
+
+        for _, r := range results {
+            fmt.Printf("Updated %s to %s\n", r.Component, r.Version)
+        }
+    }
+}
+```
+
+### Available SDK Functions
+
+| Function                                         | Description                                |
+| ------------------------------------------------ | ------------------------------------------ |
+| `List(opts Options) ([]VersionResult, error)`    | List available and installed versions      |
+| `CheckNew(opts Options) (bool, error)`           | Check if updates are available             |
+| `Update(opts Options) ([]UpdateResult, error)`   | Download and install newest version        |
+| `Install(opts Options) ([]InstallResult, error)` | Install specific version or extension      |
+| `Pending(opts Options) ([]VersionResult, error)` | Check for pending (not active) updates     |
+| `Vacuum(opts Options) ([]VacuumResult, error)`   | Remove old versions per InstancesMax       |
+| `Components(opts Options) ([]Component, error)`  | List configured components                 |
+| `Discover(opts Options) ([]Extension, error)`    | Discover extensions from remote repository |
+| `Features(opts Options) ([]Feature, error)`      | List optional features                     |
+| `FeatureEnable(opts Options) error`              | Enable a feature                           |
+| `FeatureDisable(opts Options) error`             | Disable a feature                          |
+
+### SDK Options
+
+Configure SDK behavior via the `Options` struct:
+
+```go
+type Options struct {
+    DefinitionsPath string        // Path to .transfer files
+    Component       string        // Specific component to operate on
+    Verify          bool          // Verify GPG signatures
+    Version         string        // Target version (for Update/Install)
+    Reporter        Reporter      // Progress reporting callback
+    // ... additional fields
+}
+```
+
+## CLI Usage
 
 ```bash
 # List available and installed versions
@@ -59,13 +153,13 @@ sudo updex features enable devel
 sudo updex features disable devel
 
 # Discover extensions from a remote repository
-instex discover https://example.com/sysext
+updex discover https://example.com/sysext
 
 # Discover with JSON output
-instex discover https://example.com/sysext --json
+updex discover https://example.com/sysext --json
 
 # Install an extension from a remote repository
-instex install https://example.com/sysext myext
+updex install https://example.com/sysext myext
 ```
 
 ### Global Flags
@@ -234,7 +328,7 @@ For GPG verification, also provide `SHA256SUMS.gpg` (detached signature).
 
 ## Extension Repository Format
 
-When using `instex discover`, the repository should have this structure:
+When using `updex discover`, the repository should have this structure:
 
 ```
 {URL}/ext/index              # List of extension names, one per line
@@ -277,8 +371,23 @@ Example output:
 
 ## Development
 
+### Architecture
+
+updex follows an **SDK-first** architecture:
+
+- **SDK Layer** (`updex/` package): All operations are implemented as public Go functions
+- **CLI Layer** (`cmd/` package): Thin wrappers that call SDK functions and format output
+
+When adding features:
+
+1. Implement in the SDK first (`updex/*.go`)
+2. Create CLI wrapper in `cmd/commands/*.go`
+3. CLI commands should only handle argument parsing and output formatting
+
+### Build Commands
+
 ```bash
-# Format code
+# Format code (always run after changes)
 make fmt
 
 # Run linters
@@ -290,9 +399,22 @@ make test
 # Format, lint, and test
 make check
 
+# Build binaries
+make build
+
 # Clean build artifacts
 make clean
 ```
+
+### Contributing
+
+When contributing:
+
+- Keep the SDK layer free of CLI dependencies (no Cobra, pflag, etc.)
+- SDK functions should return structured data, not formatted output
+- CLI commands should be thin wrappers around SDK functions
+- Write tests for both SDK and CLI layers
+- Run `make check` before submitting PRs
 
 ## License
 

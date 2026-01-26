@@ -18,11 +18,16 @@ var (
 )
 var rootCmd = &cobra.Command{
 	Use:   "updex",
-	Short: "Manage systemd-sysext images",
-	Long: `updex is a tool for managing systemd-sysext images.
+	Short: "Manage and install systemd-sysext extensions",
+	Long: `updex is a tool for managing and installing systemd-sysext extensions.
 
 It replicates the functionality of systemd-sysupdate for url-file transfers,
-allowing you to download, verify, and manage sysext images from remote sources.
+allowing you to discover, download, verify, and manage sysext images from
+remote sources.
+
+Use 'discover' to find available extensions from remote repositories, 'install'
+to download and configure them on your system, and other commands to manage
+already installed extensions.
 
 Configuration is read from .transfer files in:
   - /etc/sysupdate.d/*.transfer
@@ -62,6 +67,9 @@ func init() {
 	rootCmd.AddCommand(commands.NewComponentsCmd())
 	rootCmd.AddCommand(commands.NewFeaturesCmd())
 	rootCmd.AddCommand(commands.NewRemoveCmd())
+	// Remote discovery and installation commands (formerly instex)
+	rootCmd.AddCommand(commands.NewDiscoverCmd())
+	rootCmd.AddCommand(commands.NewInstallCmd())
 }
 
 // Execute runs the root command

@@ -1,14 +1,13 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"text/tabwriter"
 
 	"github.com/frostyard/updex/cmd/common"
-	"github.com/frostyard/updex/internal/config"
-	"github.com/frostyard/updex/internal/sysext"
+	"github.com/frostyard/updex/updex"
 	"github.com/spf13/cobra"
 )
 
@@ -41,29 +40,6 @@ Configuration files are read from:
 	cmd.AddCommand(newFeaturesDisableCmd())
 
 	return cmd
-}
-
-// FeatureInfo represents feature information for JSON output
-type FeatureInfo struct {
-	Name          string   `json:"name"`
-	Description   string   `json:"description,omitempty"`
-	Documentation string   `json:"documentation,omitempty"`
-	Enabled       bool     `json:"enabled"`
-	Masked        bool     `json:"masked,omitempty"`
-	Source        string   `json:"source"`
-	Transfers     []string `json:"transfers,omitempty"`
-}
-
-// FeatureActionResult represents the result of a feature enable/disable action
-type FeatureActionResult struct {
-	Feature           string   `json:"feature"`
-	Action            string   `json:"action"`
-	Success           bool     `json:"success"`
-	DropIn            string   `json:"drop_in,omitempty"`
-	Error             string   `json:"error,omitempty"`
-	NextActionMessage string   `json:"next_action_message,omitempty"`
-	RemovedFiles      []string `json:"removed_files,omitempty"`
-	Unmerged          bool     `json:"unmerged,omitempty"`
 }
 
 func newFeaturesListCmd() *cobra.Command {
@@ -114,56 +90,26 @@ Requires root privileges.`,
 }
 
 func runFeaturesList(cmd *cobra.Command, args []string) error {
-	features, err := config.LoadFeatures(common.Definitions)
+	client := newClient()
+
+	features, err := client.Features(context.Background())
 	if err != nil {
-		return fmt.Errorf("failed to load features: %w", err)
-	}
-
-	if len(features) == 0 {
-		if common.JSONOutput {
-			common.OutputJSON([]FeatureInfo{})
-		} else {
-			fmt.Println("No features configured.")
-		}
-		return nil
-	}
-
-	// Load transfers to show which belong to each feature
-	transfers, err := config.LoadTransfers(common.Definitions)
-	if err != nil {
-		return fmt.Errorf("failed to load transfers: %w", err)
-	}
-
-	var featureInfos []FeatureInfo
-
-	for _, f := range features {
-		// Get transfers associated with this feature
-		featureTransfers := config.GetTransfersForFeature(transfers, f.Name)
-		var transferNames []string
-		for _, t := range featureTransfers {
-			transferNames = append(transferNames, t.Component)
-		}
-
-		info := FeatureInfo{
-			Name:          f.Name,
-			Description:   f.Description,
-			Documentation: f.Documentation,
-			Enabled:       f.Enabled,
-			Masked:        f.Masked,
-			Source:        f.FilePath,
-			Transfers:     transferNames,
-		}
-		featureInfos = append(featureInfos, info)
+		return err
 	}
 
 	if common.JSONOutput {
-		common.OutputJSON(featureInfos)
+		common.OutputJSON(features)
+		return nil
+	}
+
+	if len(features) == 0 {
+		fmt.Println("No features configured.")
 		return nil
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "FEATURE\tDESCRIPTION\tENABLED\tTRANSFERS")
-	for _, f := range featureInfos {
+	for _, f := range features {
 		status := "no"
 		if f.Masked {
 			status = "masked"
@@ -190,256 +136,62 @@ func runFeaturesList(cmd *cobra.Command, args []string) error {
 }
 
 func runFeaturesEnable(cmd *cobra.Command, args []string) error {
-	featureName := args[0]
-
-	result := FeatureActionResult{
-		Feature: featureName,
-		Action:  "enable",
-	}
-
 	// Check for root privileges
 	if err := common.RequireRoot(); err != nil {
-		result.Error = err.Error()
-		if common.JSONOutput {
-			common.OutputJSON(result)
-		}
 		return err
 	}
 
-	// Verify the feature exists
-	features, err := config.LoadFeatures(common.Definitions)
-	if err != nil {
-		result.Error = fmt.Sprintf("failed to load features: %v", err)
-		if common.JSONOutput {
-			common.OutputJSON(result)
-		}
-		return fmt.Errorf("%s", result.Error)
-	}
+	client := newClient()
 
-	found := false
-	for _, f := range features {
-		if f.Name == featureName {
-			found = true
-			if f.Masked {
-				result.Error = fmt.Sprintf("feature '%s' is masked and cannot be enabled", featureName)
-				if common.JSONOutput {
-					common.OutputJSON(result)
-				}
-				return fmt.Errorf("%s", result.Error)
-			}
-			break
-		}
-	}
-
-	if !found {
-		result.Error = fmt.Sprintf("feature '%s' not found", featureName)
-		if common.JSONOutput {
-			common.OutputJSON(result)
-		}
-		return fmt.Errorf("%s", result.Error)
-	}
-
-	// Create drop-in directory and file
-	dropInDir := filepath.Join("/etc/sysupdate.d", featureName+".feature.d")
-	dropInFile := filepath.Join(dropInDir, "00-updex.conf")
-
-	if err := os.MkdirAll(dropInDir, 0755); err != nil {
-		result.Error = fmt.Sprintf("failed to create drop-in directory: %v", err)
-		if common.JSONOutput {
-			common.OutputJSON(result)
-		}
-		return fmt.Errorf("%s", result.Error)
-	}
-
-	content := "[Feature]\nEnabled=true\n"
-	if err := os.WriteFile(dropInFile, []byte(content), 0644); err != nil {
-		result.Error = fmt.Sprintf("failed to write drop-in file: %v", err)
-		if common.JSONOutput {
-			common.OutputJSON(result)
-		}
-		return fmt.Errorf("%s", result.Error)
-	}
-
-	result.Success = true
-	result.DropIn = dropInFile
-	result.NextActionMessage = "Run 'updex update' to apply changes"
+	result, err := client.EnableFeature(context.Background(), args[0])
 
 	if common.JSONOutput {
 		common.OutputJSON(result)
-	} else {
-		fmt.Printf("Feature '%s' enabled.\n", featureName)
-		fmt.Printf("Run 'updex update' to apply changes.\n")
-	}
-	return nil
-}
-
-func runFeaturesDisable(cmd *cobra.Command, args []string) error {
-	featureName := args[0]
-
-	result := FeatureActionResult{
-		Feature: featureName,
-		Action:  "disable",
-	}
-
-	// Check for root privileges
-	if err := common.RequireRoot(); err != nil {
-		result.Error = err.Error()
-		if common.JSONOutput {
-			common.OutputJSON(result)
-		}
-		return err
-	}
-
-	// Verify the feature exists
-	features, err := config.LoadFeatures(common.Definitions)
-	if err != nil {
-		result.Error = fmt.Sprintf("failed to load features: %v", err)
-		if common.JSONOutput {
-			common.OutputJSON(result)
-		}
-		return fmt.Errorf("%s", result.Error)
-	}
-
-	found := false
-	for _, f := range features {
-		if f.Name == featureName {
-			found = true
-			if f.Masked {
-				result.Error = fmt.Sprintf("feature '%s' is masked and cannot be disabled", featureName)
-				if common.JSONOutput {
-					common.OutputJSON(result)
-				}
-				return fmt.Errorf("%s", result.Error)
-			}
-			break
-		}
-	}
-
-	if !found {
-		result.Error = fmt.Sprintf("feature '%s' not found", featureName)
-		if common.JSONOutput {
-			common.OutputJSON(result)
-		}
-		return fmt.Errorf("%s", result.Error)
-	}
-
-	// Create drop-in directory and file
-	dropInDir := filepath.Join("/etc/sysupdate.d", featureName+".feature.d")
-	dropInFile := filepath.Join(dropInDir, "00-updex.conf")
-
-	if err := os.MkdirAll(dropInDir, 0755); err != nil {
-		result.Error = fmt.Sprintf("failed to create drop-in directory: %v", err)
-		if common.JSONOutput {
-			common.OutputJSON(result)
-		}
-		return fmt.Errorf("%s", result.Error)
-	}
-
-	content := "[Feature]\nEnabled=false\n"
-	if err := os.WriteFile(dropInFile, []byte(content), 0644); err != nil {
-		result.Error = fmt.Sprintf("failed to write drop-in file: %v", err)
-		if common.JSONOutput {
-			common.OutputJSON(result)
-		}
-		return fmt.Errorf("%s", result.Error)
-	}
-
-	result.Success = true
-	result.DropIn = dropInFile
-
-	// Handle --now and --remove flags
-	if featureDisableNow || featureDisableRemove {
-		// Load transfers to find which ones belong to this feature
-		transfers, err := config.LoadTransfers(common.Definitions)
-		if err != nil {
-			result.Error = fmt.Sprintf("failed to load transfers: %v", err)
-			if common.JSONOutput {
-				common.OutputJSON(result)
-			}
-			return fmt.Errorf("%s", result.Error)
-		}
-
-		featureTransfers := config.GetTransfersForFeature(transfers, featureName)
-
-		// If --now is specified, unmerge first
-		if featureDisableNow {
-			if !common.JSONOutput {
-				fmt.Printf("Unmerging extensions...\n")
-			}
-			if err := sysext.Unmerge(); err != nil {
-				result.Error = fmt.Sprintf("failed to unmerge: %v", err)
-				if common.JSONOutput {
-					common.OutputJSON(result)
-				}
-				return fmt.Errorf("%s", result.Error)
-			}
-			result.Unmerged = true
-		}
-
-		// If --remove is specified, remove files for each transfer in this feature
-		if featureDisableRemove {
-			var allRemoved []string
-			for _, t := range featureTransfers {
-				if !common.JSONOutput {
-					fmt.Printf("Removing files for component '%s'...\n", t.Component)
-				}
-
-				// Remove the symlink from /var/lib/extensions
-				if err := sysext.UnlinkFromSysext(t); err != nil {
-					// Not a fatal error if symlink doesn't exist
-					if !common.JSONOutput {
-						fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
-					}
-				}
-
-				// Remove all versions
-				removed, err := sysext.RemoveAllVersions(t)
-				if err != nil {
-					result.Error = fmt.Sprintf("failed to remove files for %s: %v", t.Component, err)
-					if common.JSONOutput {
-						common.OutputJSON(result)
-					}
-					return fmt.Errorf("%s", result.Error)
-				}
-				allRemoved = append(allRemoved, removed...)
-			}
-			result.RemovedFiles = allRemoved
-		}
-
-		// Refresh if we unmerged (unless --no-refresh)
-		if featureDisableNow && !common.NoRefresh {
-			if !common.JSONOutput {
-				fmt.Printf("Refreshing systemd-sysext...\n")
-			}
-			if err := sysext.Refresh(); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: sysext refresh failed: %v\n", err)
-			}
-		}
-	}
-
-	// Set the next action message based on what was done
-	if featureDisableRemove && featureDisableNow {
-		result.NextActionMessage = "Feature disabled, files removed, and extensions unmerged"
-	} else if featureDisableRemove {
-		result.NextActionMessage = "Feature disabled and files removed. Changes will take effect after reboot."
-	} else if featureDisableNow {
-		result.NextActionMessage = "Feature disabled and extensions unmerged"
-	} else {
-		result.NextActionMessage = "Run 'updex update' to apply changes"
-	}
-
-	if common.JSONOutput {
-		common.OutputJSON(result)
-	} else {
-		fmt.Printf("Feature '%s' disabled.\n", featureName)
-		if featureDisableRemove {
-			fmt.Printf("Removed %d file(s).\n", len(result.RemovedFiles))
-		}
-		if featureDisableNow {
-			fmt.Printf("Extensions unmerged immediately.\n")
-		} else if !featureDisableRemove {
+	} else if result != nil {
+		if result.Error != "" {
+			fmt.Printf("Error: %s\n", result.Error)
+		} else if result.Success {
+			fmt.Printf("Feature '%s' enabled.\n", result.Feature)
 			fmt.Printf("Run 'updex update' to apply changes.\n")
 		}
 	}
-	return nil
+
+	return err
+}
+
+func runFeaturesDisable(cmd *cobra.Command, args []string) error {
+	// Check for root privileges
+	if err := common.RequireRoot(); err != nil {
+		return err
+	}
+
+	client := newClient()
+
+	opts := updex.DisableFeatureOptions{
+		Remove:    featureDisableRemove,
+		Now:       featureDisableNow,
+		NoRefresh: common.NoRefresh,
+	}
+
+	result, err := client.DisableFeature(context.Background(), args[0], opts)
+
+	if common.JSONOutput {
+		common.OutputJSON(result)
+	} else if result != nil {
+		if result.Error != "" {
+			fmt.Printf("Error: %s\n", result.Error)
+		} else if result.Success {
+			fmt.Printf("Feature '%s' disabled.\n", result.Feature)
+			if featureDisableRemove {
+				fmt.Printf("Removed %d file(s).\n", len(result.RemovedFiles))
+			}
+			if featureDisableNow {
+				fmt.Printf("Extensions unmerged immediately.\n")
+			} else if !featureDisableRemove {
+				fmt.Printf("Run 'updex update' to apply changes.\n")
+			}
+		}
+	}
+
+	return err
 }

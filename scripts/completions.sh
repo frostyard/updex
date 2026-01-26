@@ -2,12 +2,7 @@
 set -e
 rm -rf completions
 mkdir completions
-go build -o build/updex ./updex
+go build -o build/updex ./cmd/updex-cli
 for sh in bash zsh fish; do
   ./build/updex completion "$sh" >"completions/updex.$sh"
-done
-
-go build -o build/instex ./instex
-for sh in bash zsh fish; do
-  ./build/instex completion "$sh" >"completions/instex.$sh"
 done
