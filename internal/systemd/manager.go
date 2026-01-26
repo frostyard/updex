@@ -57,7 +57,7 @@ func (m *Manager) Install(timer *TimerConfig, service *ServiceConfig) error {
 	// Write service file
 	if err := os.WriteFile(servicePath, []byte(serviceContent), 0644); err != nil {
 		// Clean up timer file on partial failure
-		os.Remove(timerPath)
+		_ = os.Remove(timerPath)
 		return fmt.Errorf("failed to write service: %w", err)
 	}
 

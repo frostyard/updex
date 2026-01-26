@@ -196,7 +196,7 @@ func TestGenerateTimerSectionOrder(t *testing.T) {
 		t.Fatalf("Missing required sections in output:\n%s", result)
 	}
 
-	if !(unitIdx < timerIdx && timerIdx < installIdx) {
+	if unitIdx >= timerIdx || timerIdx >= installIdx {
 		t.Errorf("Sections not in correct order. Expected [Unit] < [Timer] < [Install]\nUnitIdx=%d, TimerIdx=%d, InstallIdx=%d\nGot:\n%s",
 			unitIdx, timerIdx, installIdx, result)
 	}
@@ -220,7 +220,7 @@ func TestGenerateServiceSectionOrder(t *testing.T) {
 		t.Fatalf("Missing required sections in output:\n%s", result)
 	}
 
-	if !(unitIdx < serviceIdx) {
+	if unitIdx >= serviceIdx {
 		t.Errorf("Sections not in correct order. Expected [Unit] < [Service]\nUnitIdx=%d, ServiceIdx=%d\nGot:\n%s",
 			unitIdx, serviceIdx, result)
 	}

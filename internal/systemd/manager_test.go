@@ -65,10 +65,10 @@ func TestInstall(t *testing.T) {
 
 			// Create pre-existing files if needed
 			if tt.timerExists {
-				os.WriteFile(filepath.Join(tmpDir, "updex-update.timer"), []byte("existing"), 0644)
+				_ = os.WriteFile(filepath.Join(tmpDir, "updex-update.timer"), []byte("existing"), 0644)
 			}
 			if tt.serviceExists {
-				os.WriteFile(filepath.Join(tmpDir, "updex-update.service"), []byte("existing"), 0644)
+				_ = os.WriteFile(filepath.Join(tmpDir, "updex-update.service"), []byte("existing"), 0644)
 			}
 
 			mgr := NewTestManager(tmpDir, mockRunner)
@@ -243,10 +243,10 @@ func TestRemove(t *testing.T) {
 
 			// Create files if they should exist
 			if tt.timerExists {
-				os.WriteFile(filepath.Join(tmpDir, "updex-update.timer"), []byte("timer"), 0644)
+				_ = os.WriteFile(filepath.Join(tmpDir, "updex-update.timer"), []byte("timer"), 0644)
 			}
 			if tt.serviceExists {
-				os.WriteFile(filepath.Join(tmpDir, "updex-update.service"), []byte("service"), 0644)
+				_ = os.WriteFile(filepath.Join(tmpDir, "updex-update.service"), []byte("service"), 0644)
 			}
 
 			mgr := NewTestManager(tmpDir, mockRunner)
@@ -340,10 +340,10 @@ func TestExists(t *testing.T) {
 			mgr := NewTestManager(tmpDir, &MockSystemctlRunner{})
 
 			if tt.timerExists {
-				os.WriteFile(filepath.Join(tmpDir, "updex-update.timer"), []byte("timer"), 0644)
+				_ = os.WriteFile(filepath.Join(tmpDir, "updex-update.timer"), []byte("timer"), 0644)
 			}
 			if tt.serviceExists {
-				os.WriteFile(filepath.Join(tmpDir, "updex-update.service"), []byte("service"), 0644)
+				_ = os.WriteFile(filepath.Join(tmpDir, "updex-update.service"), []byte("service"), 0644)
 			}
 
 			got := mgr.Exists("updex-update")
