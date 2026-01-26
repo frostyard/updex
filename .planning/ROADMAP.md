@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Core UX Fixes** - Fix dangerous remove/disable semantics
 - [x] **Phase 3: Systemd Unit Infrastructure** - Build internal package for timer/service management
 - [x] **Phase 4: Auto-Update CLI** - Expose auto-update via daemon commands
-- [ ] **Phase 5: Integration & Polish** - End-to-end validation and UX polish
+- [x] **Phase 5: Integration & Polish** - End-to-end validation and UX polish
 
 ## Phase Details
 
@@ -95,7 +95,7 @@ Plans:
 Plans:
 - [x] 05-01-PLAN.md — Create integration tests for end-to-end workflows
 - [x] 05-02-PLAN.md — Polish error messages and help text across all commands
-- [ ] 05-03-PLAN.md — Verify shell completions for bash, zsh, and fish
+- [x] 05-03-PLAN.md — Verify shell completions for bash, zsh, and fish
 
 ## Progress
 
@@ -108,4 +108,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 2. Core UX Fixes | 2/2 | Complete ✓ | 2026-01-26 |
 | 3. Systemd Unit Infrastructure | 3/3 | Complete ✓ | 2026-01-26 |
 | 4. Auto-Update CLI | 1/1 | Complete ✓ | 2026-01-26 |
-| 5. Integration & Polish | 2/3 | In progress | - |
+| 5. Integration & Polish | 3/3 | Complete ✓ | 2026-01-26 | |
