@@ -8,22 +8,20 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Global flags shared by both updex and instex
+// Global flags shared across commands
 var (
 	Definitions string
 	JSONOutput  bool
-	Verify      bool
 	Component   string
 	NoRefresh   bool
 )
 
 // RegisterCommonFlags adds the common flags to a root command
 func RegisterCommonFlags(cmd *cobra.Command) {
-	cmd.PersistentFlags().StringVarP(&Definitions, "definitions", "C", "", "Path to directory containing .transfer files")
+	cmd.PersistentFlags().StringVarP(&Definitions, "definitions", "C", "", "Path to directory containing .transfer and .feature files")
 	cmd.PersistentFlags().BoolVar(&JSONOutput, "json", false, "Output in JSON format (jq-compatible)")
-	cmd.PersistentFlags().BoolVar(&Verify, "verify", false, "Verify GPG signatures on SHA256SUMS")
 	cmd.PersistentFlags().StringVar(&Component, "component", "", "Select a specific component to operate on")
-	cmd.PersistentFlags().BoolVar(&NoRefresh, "no-refresh", false, "Skip running systemd-sysext refresh after install/update")
+	cmd.PersistentFlags().BoolVar(&NoRefresh, "no-refresh", false, "Skip running systemd-sysext refresh after update")
 }
 
 // OutputJSON prints data as JSON if --json flag is set, otherwise returns false

@@ -2,92 +2,34 @@ package updex
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/frostyard/updex/internal/sysext"
-	"github.com/frostyard/updex/internal/testutil"
+	"github.com/frostyard/updex/internal/sysupdate"
 )
 
-// createFeatureFile creates a .feature file in the config directory
-func createFeatureFile(t *testing.T, configDir, featureName string, enabled bool) string {
-	t.Helper()
-	enabledStr := "false"
-	if enabled {
-		enabledStr = "true"
-	}
-	content := `[Feature]
-Description=Test feature
-Enabled=` + enabledStr + `
-`
-	path := filepath.Join(configDir, featureName+".feature")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("failed to create feature file: %v", err)
-	}
-	return path
-}
-
-// createFeatureTransferFile creates a .transfer file with Features set
-func createFeatureTransferFile(t *testing.T, configDir, component, featureName, baseURL string) {
-	t.Helper()
-	content := `[Transfer]
-Features=` + featureName + `
-
-[Source]
-Type=url-file
-Path=` + baseURL + `
-MatchPattern=` + component + `_@v.raw
-
-[Target]
-MatchPattern=` + component + `_@v.raw
-CurrentSymlink=` + component + `.raw
-`
-	path := filepath.Join(configDir, component+".transfer")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("failed to create transfer file: %v", err)
-	}
-}
-
-// hashContent returns the SHA256 hash of the given content
-func hashContent(content []byte) string {
-	h := sha256.Sum256(content)
-	return hex.EncodeToString(h[:])
-}
-
-// TestEnableFeature_DryRun_ShowsDownloads verifies that --dry-run with --now shows what would be downloaded
+// TestEnableFeature_DryRun_ShowsDownloads verifies that --dry-run with --now shows what would be updated
 func TestEnableFeature_DryRun_ShowsDownloads(t *testing.T) {
 	configDir := t.TempDir()
 	targetDir := t.TempDir()
 
-	// Set up mock runner
-	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
+	// Set up mock runners
+	mockSysext := &sysext.MockRunner{}
+	cleanupSysext := sysext.SetRunner(mockSysext)
+	defer cleanupSysext()
 
-	// Create test extension content
-	extContent := []byte("fake extension content for dry run test")
-	extHash := hashContent(extContent)
-
-	// Set up HTTP server
-	server := testutil.NewTestServer(t, testutil.TestServerFiles{
-		Files: map[string]string{
-			"testext_1.0.0.raw": extHash,
-		},
-		Content: map[string][]byte{
-			"testext_1.0.0.raw": extContent,
-		},
-	})
-	defer server.Close()
+	mockSysupdate := &sysupdate.MockRunner{}
+	cleanupSysupdate := sysupdate.SetRunner(mockSysupdate)
+	defer cleanupSysupdate()
 
 	// Create feature file (disabled)
 	createFeatureFile(t, configDir, "testfeature", false)
 
 	// Create transfer file
-	createFeatureTransferFile(t, configDir, "testext", "testfeature", server.URL)
+	createFeatureTransferFile(t, configDir, "testext", "testfeature", "http://localhost")
 
 	// Update transfer target path
 	updateTransferTargetPath(t, configDir, targetDir)
@@ -110,15 +52,14 @@ func TestEnableFeature_DryRun_ShowsDownloads(t *testing.T) {
 		t.Errorf("expected Success=true, got false. Error: %s", result.Error)
 	}
 
-	// DryRun should list what would be downloaded
+	// DryRun should list what would be updated
 	if len(result.DownloadedFiles) == 0 {
-		t.Error("expected DownloadedFiles to list what would be downloaded")
+		t.Error("expected DownloadedFiles to list what would be updated")
 	}
 
-	// Check no files were downloaded
-	extPath := filepath.Join(targetDir, "testext_1.0.0.raw")
-	if _, err := os.Stat(extPath); !os.IsNotExist(err) {
-		t.Error("expected extension file to NOT exist in dry-run mode")
+	// systemd-sysupdate should NOT have been called (dry-run)
+	if mockSysupdate.UpdateCalled {
+		t.Error("expected systemd-sysupdate to NOT be called in dry-run mode")
 	}
 }
 
@@ -127,31 +68,20 @@ func TestEnableFeature_DryRun_NoNow_ShowsConfig(t *testing.T) {
 	configDir := t.TempDir()
 	targetDir := t.TempDir()
 
-	// Set up mock runner
-	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
+	// Set up mock runners
+	mockSysext := &sysext.MockRunner{}
+	cleanupSysext := sysext.SetRunner(mockSysext)
+	defer cleanupSysext()
 
-	// Create test extension content
-	extContent := []byte("fake extension content")
-	extHash := hashContent(extContent)
-
-	// Set up HTTP server (shouldn't be called without --now)
-	server := testutil.NewTestServer(t, testutil.TestServerFiles{
-		Files: map[string]string{
-			"testext_1.0.0.raw": extHash,
-		},
-		Content: map[string][]byte{
-			"testext_1.0.0.raw": extContent,
-		},
-	})
-	defer server.Close()
+	mockSysupdate := &sysupdate.MockRunner{}
+	cleanupSysupdate := sysupdate.SetRunner(mockSysupdate)
+	defer cleanupSysupdate()
 
 	// Create feature file
 	createFeatureFile(t, configDir, "testfeature", false)
 
 	// Create transfer file
-	createFeatureTransferFile(t, configDir, "testext", "testfeature", server.URL)
+	createFeatureTransferFile(t, configDir, "testext", "testfeature", "http://localhost")
 
 	// Update transfer target path
 	updateTransferTargetPath(t, configDir, targetDir)
@@ -179,10 +109,9 @@ func TestEnableFeature_DryRun_NoNow_ShowsConfig(t *testing.T) {
 		t.Error("expected no DownloadedFiles without --now flag")
 	}
 
-	// Check no files were downloaded
-	extPath := filepath.Join(targetDir, "testext_1.0.0.raw")
-	if _, err := os.Stat(extPath); !os.IsNotExist(err) {
-		t.Error("expected extension file to NOT exist")
+	// systemd-sysupdate should NOT have been called
+	if mockSysupdate.UpdateCalled {
+		t.Error("expected systemd-sysupdate to NOT be called without --now")
 	}
 }
 
@@ -191,9 +120,9 @@ func TestEnableFeature_FeatureNotFound(t *testing.T) {
 	configDir := t.TempDir()
 
 	// Set up mock runner
-	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
+	mockSysext := &sysext.MockRunner{}
+	cleanupSysext := sysext.SetRunner(mockSysext)
+	defer cleanupSysext()
 
 	// No features created
 
@@ -219,9 +148,9 @@ func TestDisableFeature_DryRun_ShowsRemovals(t *testing.T) {
 	targetDir := t.TempDir()
 
 	// Set up mock runner
-	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
+	mockSysext := &sysext.MockRunner{}
+	cleanupSysext := sysext.SetRunner(mockSysext)
+	defer cleanupSysext()
 
 	// Create feature file (enabled)
 	createFeatureFile(t, configDir, "testfeature", true)
@@ -267,7 +196,7 @@ func TestDisableFeature_DryRun_ShowsRemovals(t *testing.T) {
 	}
 
 	// Check Unmerge was NOT called
-	if mockRunner.UnmergeCalled {
+	if mockSysext.UnmergeCalled {
 		t.Error("expected Unmerge to NOT be called in dry-run mode")
 	}
 }
@@ -278,9 +207,9 @@ func TestDisableFeature_DryRun_NoNow_ShowsConfig(t *testing.T) {
 	targetDir := t.TempDir()
 
 	// Set up mock runner
-	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
+	mockSysext := &sysext.MockRunner{}
+	cleanupSysext := sysext.SetRunner(mockSysext)
+	defer cleanupSysext()
 
 	// Create feature file (enabled)
 	createFeatureFile(t, configDir, "testfeature", true)
@@ -326,7 +255,7 @@ func TestDisableFeature_DryRun_NoNow_ShowsConfig(t *testing.T) {
 	}
 
 	// Check Unmerge was NOT called
-	if mockRunner.UnmergeCalled {
+	if mockSysext.UnmergeCalled {
 		t.Error("expected Unmerge to NOT be called without --now flag")
 	}
 }
@@ -337,14 +266,14 @@ func TestDisableFeature_MergedExtension_RequiresForce(t *testing.T) {
 	targetDir := t.TempDir()
 
 	// Set up mock runner
-	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
+	mockSysext := &sysext.MockRunner{}
+	cleanupSysext := sysext.SetRunner(mockSysext)
+	defer cleanupSysext()
 
 	// Create feature file (enabled)
 	createFeatureFile(t, configDir, "testfeature", true)
 
-	// Create transfer file with CurrentSymlink (indicates installable extension)
+	// Create transfer file with CurrentSymlink
 	content := `[Transfer]
 Features=testfeature
 
@@ -369,23 +298,23 @@ Path=` + targetDir + `
 		t.Fatalf("failed to create extension file: %v", err)
 	}
 
-	// Create symlink (this triggers GetActiveVersion to return a version)
+	// Create symlink (this triggers IsExtensionActive to return true)
 	symlinkPath := filepath.Join(targetDir, "testext.raw")
 	if err := os.Symlink("testext_1.0.0.raw", symlinkPath); err != nil {
 		t.Fatalf("failed to create symlink: %v", err)
 	}
 
-	// Act with Force=false and DryRun=false (but we'll get blocked by merge check before /etc write)
+	// Act with Force=false
 	client := NewClient(ClientConfig{Definitions: configDir})
 	result, err := client.DisableFeature(context.Background(), "testfeature", DisableFeatureOptions{
 		Now:   true,
 		Force: false,
 	})
 
-	// Assert - Since we have a CurrentSymlink pointing to a version, GetActiveVersion returns that version
-	// and the function should require --force (returning error before trying to write to /etc)
+	// Assert - Since we have a CurrentSymlink pointing to a file, IsExtensionActive returns true
+	// and the function should require --force
 	if err == nil {
-		t.Error("expected error for merged extension without --force")
+		t.Error("expected error for active extension without --force")
 	}
 	if result.Error == "" {
 		t.Error("expected result.Error to be set")
@@ -406,9 +335,9 @@ func TestDisableFeature_Force_DryRun_WithMerged(t *testing.T) {
 	targetDir := t.TempDir()
 
 	// Set up mock runner
-	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
+	mockSysext := &sysext.MockRunner{}
+	cleanupSysext := sysext.SetRunner(mockSysext)
+	defer cleanupSysext()
 
 	// Create feature file (enabled)
 	createFeatureFile(t, configDir, "testfeature", true)
@@ -479,9 +408,9 @@ func TestDisableFeature_FeatureNotFound(t *testing.T) {
 	configDir := t.TempDir()
 
 	// Set up mock runner
-	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
+	mockSysext := &sysext.MockRunner{}
+	cleanupSysext := sysext.SetRunner(mockSysext)
+	defer cleanupSysext()
 
 	// No features created
 
@@ -505,10 +434,14 @@ func TestDisableFeature_FeatureNotFound(t *testing.T) {
 func TestEnableFeature_NoTransfers(t *testing.T) {
 	configDir := t.TempDir()
 
-	// Set up mock runner
-	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
+	// Set up mock runners
+	mockSysext := &sysext.MockRunner{}
+	cleanupSysext := sysext.SetRunner(mockSysext)
+	defer cleanupSysext()
+
+	mockSysupdate := &sysupdate.MockRunner{}
+	cleanupSysupdate := sysupdate.SetRunner(mockSysupdate)
+	defer cleanupSysupdate()
 
 	// Create feature file (disabled) with no associated transfers
 	createFeatureFile(t, configDir, "testfeature", false)
@@ -531,6 +464,11 @@ func TestEnableFeature_NoTransfers(t *testing.T) {
 	if len(result.DownloadedFiles) > 0 {
 		t.Errorf("expected no DownloadedFiles for feature with no transfers, got: %v", result.DownloadedFiles)
 	}
+
+	// systemd-sysupdate should NOT have been called
+	if mockSysupdate.UpdateCalled {
+		t.Error("expected systemd-sysupdate to NOT be called with no transfers")
+	}
 }
 
 // TestDisableFeature_NoTransfers verifies disable works when feature has no transfers
@@ -538,9 +476,9 @@ func TestDisableFeature_NoTransfers(t *testing.T) {
 	configDir := t.TempDir()
 
 	// Set up mock runner
-	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
+	mockSysext := &sysext.MockRunner{}
+	cleanupSysext := sysext.SetRunner(mockSysext)
+	defer cleanupSysext()
 
 	// Create feature file (enabled) with no associated transfers
 	createFeatureFile(t, configDir, "testfeature", true)
@@ -570,9 +508,9 @@ func TestFeatures_ListAllFeatures(t *testing.T) {
 	configDir := t.TempDir()
 
 	// Set up mock runner
-	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
+	mockSysext := &sysext.MockRunner{}
+	cleanupSysext := sysext.SetRunner(mockSysext)
+	defer cleanupSysext()
 
 	// Create multiple feature files
 	createFeatureFile(t, configDir, "feature1", true)
@@ -582,7 +520,7 @@ func TestFeatures_ListAllFeatures(t *testing.T) {
 	createFeatureTransferFile(t, configDir, "ext1", "feature1", "http://localhost")
 	createFeatureTransferFile(t, configDir, "ext2", "feature2", "http://localhost")
 
-	// Update transfer target paths (not strictly needed for listing, but good practice)
+	// Update transfer target paths
 	targetDir := t.TempDir()
 	updateTransferTargetPath(t, configDir, targetDir)
 

@@ -10,51 +10,36 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	noVacuum bool
-	reboot   bool
-)
+var reboot bool
 
-// NewUpdateCmd creates the update command
+// NewUpdateCmd creates the update command.
 func NewUpdateCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "update [VERSION]",
-		Short: "Download and install a new version",
-		Long: `Download and install the newest available version, or a specific version if specified.
+		Use:   "update",
+		Short: "Update extensions via systemd-sysupdate",
+		Long: `Run systemd-sysupdate to pull latest versions for all enabled features,
+or for a specific component if --component is specified.
 
-After installation, old versions are automatically removed according to InstancesMax
-unless --no-vacuum is specified.
-
-With --reboot flag, the system will reboot after a successful update to activate
-the new extensions.
+After a successful update, a reboot is required to activate changes.
+Use --reboot to automatically reboot after updating.
 
 REQUIREMENTS:
-  - Root privileges (run with sudo)
-  - Network access to configured repositories`,
-		Example: `  # Update all components to newest versions
-  updex update
-
-  # Update to a specific version
-  updex update 1.2.0
+  - Root privileges (run with sudo)`,
+		Example: `  # Update all enabled extensions
+  sudo updex update
 
   # Update only a specific component
-  updex update --component docker
+  sudo updex update --component docker
 
   # Update and reboot to activate changes
-  updex update --reboot
-
-  # Update without removing old versions
-  updex update --no-vacuum`,
-		Args: cobra.MaximumNArgs(1),
+  sudo updex update --reboot`,
 		RunE: runUpdate,
 	}
-	cmd.Flags().BoolVar(&noVacuum, "no-vacuum", false, "Do not remove old versions after update")
 	cmd.Flags().BoolVar(&reboot, "reboot", false, "Reboot system after successful update")
 	return cmd
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
-	// Check for root privileges before attempting any operations
 	if err := common.RequireRoot(); err != nil {
 		return err
 	}
@@ -63,12 +48,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 
 	opts := updex.UpdateOptions{
 		Component: common.Component,
-		NoVacuum:  noVacuum,
 		NoRefresh: common.NoRefresh,
-	}
-
-	if len(args) == 1 {
-		opts.Version = args[0]
 	}
 
 	results, err := client.Update(context.Background(), opts)

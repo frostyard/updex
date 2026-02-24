@@ -7,31 +7,17 @@ import (
 	"text/tabwriter"
 
 	"github.com/frostyard/updex/cmd/common"
-	"github.com/frostyard/updex/updex"
 	"github.com/spf13/cobra"
 )
 
-var (
-	featureDisableRemove bool
-	featureDisableNow    bool
-	featureDisableForce  bool
-	featureDisableDryRun bool
-	featureEnableNow     bool
-	featureEnableDryRun  bool
-	featureEnableRetry   bool
-)
-
-// NewFeaturesCmd creates the features command with subcommands
+// NewFeaturesCmd creates the features command (list only).
 func NewFeaturesCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "features",
-		Aliases: []string{"feature"},
-		Short:   "Manage optional features",
-		Long: `List, enable, and disable optional features defined in .feature files.
-
-Features are optional sets of transfers that can be enabled or disabled by the
-system administrator. When a feature is enabled, its associated transfers will
-be considered during updates. When disabled, they are skipped.
+		Aliases: []string{"feature", "list"},
+		Short:   "List available features and their status",
+		Long: `List all features defined in .feature configuration files with their status
+and associated transfers.
 
 CONFIGURATION FILES:
   - /etc/sysupdate.d/*.feature
@@ -39,116 +25,18 @@ CONFIGURATION FILES:
   - /usr/local/lib/sysupdate.d/*.feature
   - /usr/lib/sysupdate.d/*.feature
 
-SUBCOMMANDS:
-  list     Show all features and their status
-  enable   Enable a feature (optionally download immediately)
-  disable  Disable a feature (optionally remove files)`,
-		Example: `  # List all features
-  updex features list
-
-  # Enable a feature and download its extensions
-  sudo updex features enable docker --now
-
-  # Disable a feature and remove its files
-  sudo updex features disable docker --now`,
-	}
-
-	cmd.AddCommand(newFeaturesListCmd())
-	cmd.AddCommand(newFeaturesEnableCmd())
-	cmd.AddCommand(newFeaturesDisableCmd())
-
-	return cmd
-}
-
-func newFeaturesListCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "list",
-		Short: "List available features",
-		Long: `List all features defined in .feature configuration files with their status and associated transfers.
-
 OUTPUT COLUMNS:
   FEATURE      - Feature name
   DESCRIPTION  - Human-readable description
   ENABLED      - yes/no/masked
   TRANSFERS    - Associated transfer configurations`,
 		Example: `  # List all features
-  updex features list
+  updex features
 
   # List in JSON format
-  updex features list --json`,
+  updex features --json`,
 		RunE: runFeaturesList,
 	}
-}
-
-func newFeaturesEnableCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "enable FEATURE",
-		Short: "Enable a feature",
-		Long: `Enable a feature by creating a drop-in configuration file.
-
-This creates a file at /etc/sysupdate.d/<feature>.feature.d/00-updex.conf
-that sets Enabled=true for the specified feature.
-
-OPTIONS:
-  --now      Immediately download extensions for this feature
-  --dry-run  Preview changes without modifying filesystem
-  --retry    Retry on network failures (3 attempts)
-
-Requires root privileges.`,
-		Example: `  # Enable a feature (downloads on next update)
-  sudo updex features enable docker
-
-  # Enable and download immediately
-  sudo updex features enable docker --now
-
-  # Preview what would happen
-  updex features enable docker --dry-run`,
-		Args: cobra.ExactArgs(1),
-		RunE: runFeaturesEnable,
-	}
-
-	cmd.Flags().BoolVar(&featureEnableNow, "now", false, "Immediately download extensions")
-	cmd.Flags().BoolVar(&featureEnableDryRun, "dry-run", false, "Preview changes without modifying filesystem")
-	cmd.Flags().BoolVar(&featureEnableRetry, "retry", false, "Retry on network failures (3 attempts)")
-
-	return cmd
-}
-
-func newFeaturesDisableCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "disable FEATURE",
-		Short: "Disable a feature",
-		Long: `Disable a feature by creating a drop-in configuration file.
-
-This creates a file at /etc/sysupdate.d/<feature>.feature.d/00-updex.conf
-that sets Enabled=false for the specified feature.
-
-OPTIONS:
-  --now      Immediately unmerge AND remove extension files
-  --remove   Remove files (same behavior as --now for backward compat)
-  --force    Allow removal of merged extensions (requires reboot)
-  --dry-run  Preview changes without modifying filesystem
-
-Requires root privileges.`,
-		Example: `  # Disable a feature (stops future updates)
-  sudo updex features disable docker
-
-  # Disable and remove files immediately
-  sudo updex features disable docker --now
-
-  # Force removal of merged extension
-  sudo updex features disable docker --now --force
-
-  # Preview what would be removed
-  updex features disable docker --now --dry-run`,
-		Args: cobra.ExactArgs(1),
-		RunE: runFeaturesDisable,
-	}
-
-	cmd.Flags().BoolVar(&featureDisableRemove, "remove", false, "Remove downloaded files (same as --now)")
-	cmd.Flags().BoolVar(&featureDisableNow, "now", false, "Immediately unmerge and remove extension files")
-	cmd.Flags().BoolVar(&featureDisableForce, "force", false, "Allow removal of merged extensions (requires reboot)")
-	cmd.Flags().BoolVar(&featureDisableDryRun, "dry-run", false, "Preview changes without modifying filesystem")
 
 	return cmd
 }
@@ -197,95 +85,4 @@ func runFeaturesList(cmd *cobra.Command, args []string) error {
 	_ = w.Flush()
 
 	return nil
-}
-
-func runFeaturesEnable(cmd *cobra.Command, args []string) error {
-	// Check for root privileges
-	if err := common.RequireRoot(); err != nil {
-		return err
-	}
-
-	client := newClient()
-
-	opts := updex.EnableFeatureOptions{
-		Now:       featureEnableNow,
-		DryRun:    featureEnableDryRun,
-		Retry:     featureEnableRetry,
-		NoRefresh: common.NoRefresh,
-	}
-
-	result, err := client.EnableFeature(context.Background(), args[0], opts)
-
-	if common.JSONOutput {
-		common.OutputJSON(result)
-	} else if result != nil {
-		if result.Error != "" {
-			fmt.Printf("Error: %s\n", result.Error)
-		} else if result.Success {
-			if result.DryRun {
-				fmt.Printf("[DRY RUN] %s\n", result.NextActionMessage)
-			} else {
-				fmt.Printf("Feature '%s' enabled.\n", result.Feature)
-				if len(result.DownloadedFiles) > 0 {
-					fmt.Printf("Downloaded %d extension(s):\n", len(result.DownloadedFiles))
-					for _, f := range result.DownloadedFiles {
-						fmt.Printf("  - %s\n", f)
-					}
-				} else if !featureEnableNow {
-					fmt.Printf("Run 'updex update' to download extensions.\n")
-				}
-			}
-		}
-	}
-
-	return err
-}
-
-func runFeaturesDisable(cmd *cobra.Command, args []string) error {
-	// Check for root privileges
-	if err := common.RequireRoot(); err != nil {
-		return err
-	}
-
-	client := newClient()
-
-	opts := updex.DisableFeatureOptions{
-		Remove:    featureDisableRemove,
-		Now:       featureDisableNow,
-		Force:     featureDisableForce,
-		DryRun:    featureDisableDryRun,
-		NoRefresh: common.NoRefresh,
-	}
-
-	result, err := client.DisableFeature(context.Background(), args[0], opts)
-
-	if common.JSONOutput {
-		common.OutputJSON(result)
-	} else if result != nil {
-		if result.Error != "" {
-			fmt.Printf("Error: %s\n", result.Error)
-		} else if result.Success {
-			if result.DryRun {
-				fmt.Printf("[DRY RUN] %s\n", result.NextActionMessage)
-			} else {
-				fmt.Printf("Feature '%s' disabled.\n", result.Feature)
-				if result.Unmerged {
-					fmt.Printf("Extensions unmerged.\n")
-				}
-				if len(result.RemovedFiles) > 0 {
-					fmt.Printf("Removed %d file(s):\n", len(result.RemovedFiles))
-					for _, f := range result.RemovedFiles {
-						fmt.Printf("  - %s\n", f)
-					}
-				}
-				if featureDisableForce {
-					fmt.Printf("Warning: Reboot required for changes to take effect.\n")
-				} else if !featureDisableNow && !featureDisableRemove {
-					fmt.Printf("Run 'updex update' to apply changes.\n")
-				}
-			}
-		}
-	}
-
-	return err
 }

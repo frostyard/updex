@@ -18,22 +18,20 @@ var (
 )
 var rootCmd = &cobra.Command{
 	Use:   "updex",
-	Short: "Manage and install systemd-sysext extensions",
-	Long: `updex is a tool for managing and installing systemd-sysext extensions.
+	Short: "Enable, disable, and update systemd-sysext features",
+	Long: `updex is a tool for managing systemd-sysext features.
 
-It replicates the functionality of systemd-sysupdate for url-file transfers,
-allowing you to discover, download, verify, and manage sysext images from
-remote sources.
+It provides a simple interface to enable, disable, and update sysext features
+using systemd-sysupdate and systemd-sysext under the hood.
 
-Use 'discover' to find available extensions from remote repositories, 'install'
-to download and configure them on your system, and other commands to manage
-already installed extensions.
+Use 'features' to list available features, 'enable' and 'disable' to toggle
+them, and 'update' to pull the latest versions via systemd-sysupdate.
 
-Configuration is read from .transfer files in:
-  - /etc/sysupdate.d/*.transfer
-  - /run/sysupdate.d/*.transfer
-  - /usr/local/lib/sysupdate.d/*.transfer
-  - /usr/lib/sysupdate.d/*.transfer`,
+Configuration is read from .transfer and .feature files in:
+  - /etc/sysupdate.d/
+  - /run/sysupdate.d/
+  - /usr/local/lib/sysupdate.d/
+  - /usr/lib/sysupdate.d/`,
 }
 
 // SetVersion sets the version for the root command
@@ -58,19 +56,10 @@ func makeVersionString() string {
 func init() {
 	common.RegisterCommonFlags(rootCmd)
 
-	// Register all updex subcommands
-	rootCmd.AddCommand(commands.NewListCmd())
-	rootCmd.AddCommand(commands.NewCheckCmd())
-	rootCmd.AddCommand(commands.NewUpdateCmd())
-	rootCmd.AddCommand(commands.NewVacuumCmd())
-	rootCmd.AddCommand(commands.NewPendingCmd())
-	rootCmd.AddCommand(commands.NewComponentsCmd())
 	rootCmd.AddCommand(commands.NewFeaturesCmd())
-	rootCmd.AddCommand(commands.NewRemoveCmd())
-	// Remote discovery and installation commands (formerly instex)
-	rootCmd.AddCommand(commands.NewDiscoverCmd())
-	rootCmd.AddCommand(commands.NewInstallCmd())
-	rootCmd.AddCommand(commands.NewDaemonCmd())
+	rootCmd.AddCommand(commands.NewEnableCmd())
+	rootCmd.AddCommand(commands.NewDisableCmd())
+	rootCmd.AddCommand(commands.NewUpdateCmd())
 }
 
 // Execute runs the root command
