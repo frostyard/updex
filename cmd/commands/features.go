@@ -19,6 +19,7 @@ var (
 	featureEnableNow     bool
 	featureEnableDryRun  bool
 	featureEnableRetry   bool
+	featureUpdateNoVac   bool
 )
 
 // NewFeaturesCmd creates the features command with subcommands
@@ -42,7 +43,9 @@ CONFIGURATION FILES:
 SUBCOMMANDS:
   list     Show all features and their status
   enable   Enable a feature (optionally download immediately)
-  disable  Disable a feature (optionally remove files)`,
+  disable  Disable a feature (optionally remove files)
+  update   Download newest versions for all enabled features
+  check    Check for available updates across all enabled features`,
 		Example: `  # List all features
   updex features list
 
@@ -50,12 +53,20 @@ SUBCOMMANDS:
   sudo updex features enable docker --now
 
   # Disable a feature and remove its files
-  sudo updex features disable docker --now`,
+  sudo updex features disable docker --now
+
+  # Update all enabled features
+  sudo updex features update
+
+  # Check for available updates
+  updex features check`,
 	}
 
 	cmd.AddCommand(newFeaturesListCmd())
 	cmd.AddCommand(newFeaturesEnableCmd())
 	cmd.AddCommand(newFeaturesDisableCmd())
+	cmd.AddCommand(newFeaturesUpdateCmd())
+	cmd.AddCommand(newFeaturesCheckCmd())
 
 	return cmd
 }
@@ -232,11 +243,141 @@ func runFeaturesEnable(cmd *cobra.Command, args []string) error {
 						fmt.Printf("  - %s\n", f)
 					}
 				} else if !featureEnableNow {
-					fmt.Printf("Run 'updex update' to download extensions.\n")
+					fmt.Printf("Run 'updex features update' to download extensions.\n")
 				}
 			}
 		}
 	}
+
+	return err
+}
+
+func newFeaturesUpdateCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "update",
+		Short: "Update all enabled features",
+		Long: `Download and install newest versions for all enabled features.
+
+Iterates over all enabled features and their associated transfers,
+downloading the newest available version for each component.
+
+OPTIONS:
+  --no-refresh  Skip running systemd-sysext refresh after update
+  --no-vacuum   Skip removing old versions after update
+
+Requires root privileges.`,
+		Example: `  # Update all enabled features
+  sudo updex features update
+
+  # Update without refreshing sysext
+  sudo updex features update --no-refresh
+
+  # Update in JSON format
+  sudo updex features update --json`,
+		Args: cobra.NoArgs,
+		RunE: runFeaturesUpdate,
+	}
+
+	cmd.Flags().BoolVar(&featureUpdateNoVac, "no-vacuum", false, "Skip removing old versions after update")
+
+	return cmd
+}
+
+func newFeaturesCheckCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "check",
+		Short: "Check for available updates",
+		Long: `Check if newer versions are available for all enabled features.
+
+Iterates over all enabled features and their associated transfers,
+comparing installed versions against the newest available versions.
+
+This is a read-only operation that does not download or install anything.`,
+		Example: `  # Check for updates
+  updex features check
+
+  # Check in JSON format
+  updex features check --json`,
+		Args: cobra.NoArgs,
+		RunE: runFeaturesCheck,
+	}
+}
+
+func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
+	if err := common.RequireRoot(); err != nil {
+		return err
+	}
+
+	client := newClient()
+
+	opts := updex.UpdateFeaturesOptions{
+		NoRefresh: common.NoRefresh,
+		NoVacuum:  featureUpdateNoVac,
+	}
+
+	results, err := client.UpdateFeatures(context.Background(), opts)
+
+	if common.JSONOutput {
+		common.OutputJSON(results)
+		return err
+	}
+
+	if len(results) == 0 {
+		fmt.Println("No enabled features with transfers found.")
+		return err
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "FEATURE\tCOMPONENT\tVERSION\tSTATUS")
+	for _, fr := range results {
+		for _, r := range fr.Results {
+			status := "error"
+			if r.Error != "" {
+				status = r.Error
+			} else if r.Downloaded {
+				status = "downloaded"
+			} else if r.Installed {
+				status = "up to date"
+			}
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", fr.Feature, r.Component, r.Version, status)
+		}
+	}
+	_ = w.Flush()
+
+	return err
+}
+
+func runFeaturesCheck(cmd *cobra.Command, args []string) error {
+	client := newClient()
+
+	results, err := client.CheckFeatures(context.Background(), updex.CheckFeaturesOptions{})
+
+	if common.JSONOutput {
+		common.OutputJSON(results)
+		return err
+	}
+
+	if len(results) == 0 {
+		fmt.Println("No enabled features with transfers found.")
+		return err
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "FEATURE\tCOMPONENT\tCURRENT\tNEWEST\tUPDATE")
+	for _, fr := range results {
+		for _, r := range fr.Results {
+			update := "no"
+			if r.UpdateAvailable {
+				update = "yes"
+			}
+			current := r.CurrentVersion
+			if current == "" {
+				current = "-"
+			}
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", fr.Feature, r.Component, current, r.NewestVersion, update)
+		}
+	}
+	_ = w.Flush()
 
 	return err
 }
@@ -281,7 +422,7 @@ func runFeaturesDisable(cmd *cobra.Command, args []string) error {
 				if featureDisableForce {
 					fmt.Printf("Warning: Reboot required for changes to take effect.\n")
 				} else if !featureDisableNow && !featureDisableRemove {
-					fmt.Printf("Run 'updex update' to apply changes.\n")
+					fmt.Printf("Run 'updex features update' to apply changes.\n")
 				}
 			}
 		}

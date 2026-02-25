@@ -16,11 +16,7 @@ func createTestRootCmd() *cobra.Command {
 	}
 
 	// Add commands that should appear in completions
-	rootCmd.AddCommand(NewListCmd())
-	rootCmd.AddCommand(NewCheckCmd())
-	rootCmd.AddCommand(NewUpdateCmd())
-	rootCmd.AddCommand(NewInstallCmd())
-	rootCmd.AddCommand(NewRemoveCmd())
+	rootCmd.AddCommand(NewFeaturesCmd())
 	rootCmd.AddCommand(NewDaemonCmd())
 
 	return rootCmd

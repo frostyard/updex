@@ -618,3 +618,215 @@ func TestFeatures_ListAllFeatures(t *testing.T) {
 		t.Error("expected to find both features")
 	}
 }
+
+// TestUpdateFeatures_DownloadsForEnabledFeatures verifies UpdateFeatures downloads for enabled features
+func TestUpdateFeatures_DownloadsForEnabledFeatures(t *testing.T) {
+	configDir := t.TempDir()
+	targetDir := t.TempDir()
+
+	// Set up mock runner
+	mockRunner := &sysext.MockRunner{}
+	cleanup := sysext.SetRunner(mockRunner)
+	defer cleanup()
+
+	// Create test extension content
+	extContent := []byte("fake extension content for update test")
+	extHash := hashContent(extContent)
+
+	// Set up HTTP server
+	server := testutil.NewTestServer(t, testutil.TestServerFiles{
+		Files: map[string]string{
+			"testext_1.0.0.raw": extHash,
+		},
+		Content: map[string][]byte{
+			"testext_1.0.0.raw": extContent,
+		},
+	})
+	defer server.Close()
+
+	// Create enabled feature
+	createFeatureFile(t, configDir, "testfeature", true)
+
+	// Create transfer file
+	createFeatureTransferFile(t, configDir, "testext", "testfeature", server.URL)
+
+	// Update transfer target path
+	updateTransferTargetPath(t, configDir, targetDir)
+
+	// Act
+	client := NewClient(ClientConfig{Definitions: configDir})
+	results, err := client.UpdateFeatures(context.Background(), UpdateFeaturesOptions{
+		NoRefresh: true,
+	})
+
+	// Assert
+	if err != nil {
+		t.Fatalf("UpdateFeatures failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 feature result, got %d", len(results))
+	}
+	if results[0].Feature != "testfeature" {
+		t.Errorf("expected feature 'testfeature', got %q", results[0].Feature)
+	}
+	if len(results[0].Results) != 1 {
+		t.Fatalf("expected 1 component result, got %d", len(results[0].Results))
+	}
+	r := results[0].Results[0]
+	if !r.Downloaded {
+		t.Error("expected Downloaded=true")
+	}
+	if r.Version != "1.0.0" {
+		t.Errorf("expected Version=1.0.0, got %q", r.Version)
+	}
+
+	// Verify file was downloaded
+	extPath := filepath.Join(targetDir, "testext_1.0.0.raw")
+	if _, err := os.Stat(extPath); os.IsNotExist(err) {
+		t.Error("expected extension file to exist after update")
+	}
+}
+
+// TestUpdateFeatures_SkipsDisabledFeatures verifies UpdateFeatures skips disabled features
+func TestUpdateFeatures_SkipsDisabledFeatures(t *testing.T) {
+	configDir := t.TempDir()
+	targetDir := t.TempDir()
+
+	// Set up mock runner
+	mockRunner := &sysext.MockRunner{}
+	cleanup := sysext.SetRunner(mockRunner)
+	defer cleanup()
+
+	extContent := []byte("fake extension content")
+	extHash := hashContent(extContent)
+
+	server := testutil.NewTestServer(t, testutil.TestServerFiles{
+		Files: map[string]string{
+			"testext_1.0.0.raw": extHash,
+		},
+		Content: map[string][]byte{
+			"testext_1.0.0.raw": extContent,
+		},
+	})
+	defer server.Close()
+
+	// Create DISABLED feature
+	createFeatureFile(t, configDir, "testfeature", false)
+	createFeatureTransferFile(t, configDir, "testext", "testfeature", server.URL)
+	updateTransferTargetPath(t, configDir, targetDir)
+
+	// Act
+	client := NewClient(ClientConfig{Definitions: configDir})
+	results, err := client.UpdateFeatures(context.Background(), UpdateFeaturesOptions{
+		NoRefresh: true,
+	})
+
+	// Assert - no results because feature is disabled
+	if err != nil {
+		t.Fatalf("UpdateFeatures failed: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 feature results for disabled feature, got %d", len(results))
+	}
+}
+
+// TestCheckFeatures_FindsUpdates verifies CheckFeatures finds available updates
+func TestCheckFeatures_FindsUpdates(t *testing.T) {
+	configDir := t.TempDir()
+	targetDir := t.TempDir()
+
+	// Set up mock runner
+	mockRunner := &sysext.MockRunner{}
+	cleanup := sysext.SetRunner(mockRunner)
+	defer cleanup()
+
+	// Server has v1 and v2 available
+	server := testutil.NewTestServer(t, testutil.TestServerFiles{
+		Files: map[string]string{
+			"testext_1.0.0.raw": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+			"testext_2.0.0.raw": "b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3",
+		},
+	})
+	defer server.Close()
+
+	// Create enabled feature
+	createFeatureFile(t, configDir, "testfeature", true)
+	createFeatureTransferFile(t, configDir, "testext", "testfeature", server.URL)
+	updateTransferTargetPath(t, configDir, targetDir)
+
+	// Install v1 locally
+	if err := os.WriteFile(filepath.Join(targetDir, "testext_1.0.0.raw"), []byte("test"), 0644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	// Act
+	client := NewClient(ClientConfig{Definitions: configDir})
+	results, err := client.CheckFeatures(context.Background(), CheckFeaturesOptions{})
+
+	// Assert
+	if err != nil {
+		t.Fatalf("CheckFeatures failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 feature result, got %d", len(results))
+	}
+	if results[0].Feature != "testfeature" {
+		t.Errorf("expected feature 'testfeature', got %q", results[0].Feature)
+	}
+	if len(results[0].Results) != 1 {
+		t.Fatalf("expected 1 component result, got %d", len(results[0].Results))
+	}
+	r := results[0].Results[0]
+	if !r.UpdateAvailable {
+		t.Error("expected UpdateAvailable=true")
+	}
+	if r.CurrentVersion != "1.0.0" {
+		t.Errorf("expected CurrentVersion=1.0.0, got %q", r.CurrentVersion)
+	}
+	if r.NewestVersion != "2.0.0" {
+		t.Errorf("expected NewestVersion=2.0.0, got %q", r.NewestVersion)
+	}
+}
+
+// TestCheckFeatures_UpToDate verifies CheckFeatures reports up to date
+func TestCheckFeatures_UpToDate(t *testing.T) {
+	configDir := t.TempDir()
+	targetDir := t.TempDir()
+
+	// Set up mock runner
+	mockRunner := &sysext.MockRunner{}
+	cleanup := sysext.SetRunner(mockRunner)
+	defer cleanup()
+
+	server := testutil.NewTestServer(t, testutil.TestServerFiles{
+		Files: map[string]string{
+			"testext_1.0.0.raw": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+		},
+	})
+	defer server.Close()
+
+	createFeatureFile(t, configDir, "testfeature", true)
+	createFeatureTransferFile(t, configDir, "testext", "testfeature", server.URL)
+	updateTransferTargetPath(t, configDir, targetDir)
+
+	// Install v1 locally (same as newest available)
+	if err := os.WriteFile(filepath.Join(targetDir, "testext_1.0.0.raw"), []byte("test"), 0644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	client := NewClient(ClientConfig{Definitions: configDir})
+	results, err := client.CheckFeatures(context.Background(), CheckFeaturesOptions{})
+
+	if err != nil {
+		t.Fatalf("CheckFeatures failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 feature result, got %d", len(results))
+	}
+	if len(results[0].Results) != 1 {
+		t.Fatalf("expected 1 component result, got %d", len(results[0].Results))
+	}
+	if results[0].Results[0].UpdateAvailable {
+		t.Error("expected UpdateAvailable=false when up to date")
+	}
+}
