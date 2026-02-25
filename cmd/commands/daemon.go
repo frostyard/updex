@@ -96,7 +96,7 @@ func runDaemonEnable(cmd *cobra.Command, args []string) error {
 	service := &systemd.ServiceConfig{
 		Name:        unitName,
 		Description: "Automatic sysext update service",
-		ExecStart:   "/usr/bin/updex update --no-refresh",
+		ExecStart:   "/usr/bin/updex features update --no-refresh",
 		Type:        "oneshot",
 	}
 

@@ -1,6 +1,6 @@
 module github.com/frostyard/updex
 
-go 1.25.6
+go 1.25.7
 
 require (
 	github.com/charmbracelet/fang v0.4.4

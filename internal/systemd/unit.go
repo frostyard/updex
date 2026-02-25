@@ -41,17 +41,17 @@ func GenerateTimer(cfg *TimerConfig) string {
 
 	// [Unit] section
 	b.WriteString("[Unit]\n")
-	b.WriteString(fmt.Sprintf("Description=%s\n", cfg.Description))
+	fmt.Fprintf(&b, "Description=%s\n", cfg.Description)
 	b.WriteString("\n")
 
 	// [Timer] section
 	b.WriteString("[Timer]\n")
-	b.WriteString(fmt.Sprintf("OnCalendar=%s\n", cfg.OnCalendar))
+	fmt.Fprintf(&b, "OnCalendar=%s\n", cfg.OnCalendar)
 	if cfg.Persistent {
 		b.WriteString("Persistent=true\n")
 	}
 	if cfg.RandomDelaySec > 0 {
-		b.WriteString(fmt.Sprintf("RandomizedDelaySec=%ds\n", cfg.RandomDelaySec))
+		fmt.Fprintf(&b, "RandomizedDelaySec=%ds\n", cfg.RandomDelaySec)
 	}
 	b.WriteString("\n")
 
@@ -71,13 +71,13 @@ func GenerateService(cfg *ServiceConfig) string {
 
 	// [Unit] section
 	b.WriteString("[Unit]\n")
-	b.WriteString(fmt.Sprintf("Description=%s\n", cfg.Description))
+	fmt.Fprintf(&b, "Description=%s\n", cfg.Description)
 	b.WriteString("\n")
 
 	// [Service] section
 	b.WriteString("[Service]\n")
-	b.WriteString(fmt.Sprintf("Type=%s\n", cfg.Type))
-	b.WriteString(fmt.Sprintf("ExecStart=%s\n", cfg.ExecStart))
+	fmt.Fprintf(&b, "Type=%s\n", cfg.Type)
+	fmt.Fprintf(&b, "ExecStart=%s\n", cfg.ExecStart)
 
 	return b.String()
 }

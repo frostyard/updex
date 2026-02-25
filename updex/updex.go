@@ -1,7 +1,8 @@
-// Package updex provides a programmatic API for managing systemd-sysext images.
+// Package updex provides a programmatic API for managing systemd-sysext images
+// through a feature-based interface.
 //
-// This package allows you to download, verify, and manage sysext images from remote sources.
-// It replicates the functionality of systemd-sysupdate for url-file transfers.
+// Features are the primary unit of management. Each feature groups related
+// sysext transfers that can be enabled, disabled, updated, and checked together.
 //
 // Basic usage:
 //
@@ -9,7 +10,7 @@
 //	    Verify: true,
 //	})
 //
-//	results, err := client.List(ctx, updex.ListOptions{})
+//	results, err := client.UpdateFeatures(ctx, updex.UpdateFeaturesOptions{})
 //	if err != nil {
 //	    log.Fatal(err)
 //	}

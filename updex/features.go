@@ -7,7 +7,10 @@ import (
 	"path/filepath"
 
 	"github.com/frostyard/updex/internal/config"
+	"github.com/frostyard/updex/internal/download"
+	"github.com/frostyard/updex/internal/manifest"
 	"github.com/frostyard/updex/internal/sysext"
+	"github.com/frostyard/updex/internal/version"
 )
 
 // Features returns all configured features with their status.
@@ -200,7 +203,7 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 	} else if opts.Now && len(result.DownloadedFiles) > 0 {
 		result.NextActionMessage = fmt.Sprintf("Feature '%s' enabled and %d extension(s) downloaded", name, len(result.DownloadedFiles))
 	} else {
-		result.NextActionMessage = fmt.Sprintf("Feature '%s' enabled. Run 'updex update' to download extensions.", name)
+		result.NextActionMessage = fmt.Sprintf("Feature '%s' enabled. Run 'updex features update' to download extensions.", name)
 	}
 
 	return result, nil
@@ -397,8 +400,275 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 	} else if willRemoveFiles {
 		result.NextActionMessage = fmt.Sprintf("Feature '%s' disabled and %d extension file(s) removed.", name, len(result.RemovedFiles))
 	} else {
-		result.NextActionMessage = fmt.Sprintf("Feature '%s' disabled. Run 'updex update' to apply changes.", name)
+		result.NextActionMessage = fmt.Sprintf("Feature '%s' disabled. Run 'updex features update' to apply changes.", name)
 	}
 
 	return result, nil
+}
+
+// UpdateFeatures downloads and installs new versions for all enabled features.
+func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions) ([]UpdateFeaturesResult, error) {
+	c.helper.BeginAction("Update features")
+	defer c.helper.EndAction()
+
+	features, err := config.LoadFeatures(c.config.Definitions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load features: %w", err)
+	}
+
+	transfers, err := config.LoadTransfers(c.config.Definitions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load transfers: %w", err)
+	}
+
+	var allResults []UpdateFeaturesResult
+	var hasErrors bool
+
+	for _, f := range features {
+		if !f.Enabled || f.Masked {
+			continue
+		}
+
+		featureTransfers := config.GetTransfersForFeature(transfers, f.Name)
+		if len(featureTransfers) == 0 {
+			continue
+		}
+
+		featureResult := UpdateFeaturesResult{
+			Feature: f.Name,
+		}
+
+		for _, transfer := range featureTransfers {
+			c.helper.BeginTask(fmt.Sprintf("Processing %s/%s", f.Name, transfer.Component))
+
+			result := UpdateResult{
+				Component: transfer.Component,
+			}
+
+			available, err := c.getAvailableVersions(transfer)
+			if err != nil {
+				result.Error = fmt.Sprintf("failed to get available versions: %v", err)
+				c.helper.Warning(result.Error)
+				featureResult.Results = append(featureResult.Results, result)
+				hasErrors = true
+				c.helper.EndTask()
+				continue
+			}
+
+			if len(available) == 0 {
+				result.Error = "no versions available"
+				c.helper.Warning(result.Error)
+				featureResult.Results = append(featureResult.Results, result)
+				hasErrors = true
+				c.helper.EndTask()
+				continue
+			}
+
+			version.Sort(available)
+			versionToInstall := available[0]
+			result.Version = versionToInstall
+
+			installed, current, _ := sysext.GetInstalledVersions(transfer)
+			alreadyInstalled := false
+			for _, v := range installed {
+				if v == versionToInstall {
+					alreadyInstalled = true
+					break
+				}
+			}
+
+			if alreadyInstalled && versionToInstall == current {
+				result.Installed = true
+				c.helper.Info(fmt.Sprintf("Version %s already installed and current", versionToInstall))
+				featureResult.Results = append(featureResult.Results, result)
+				c.helper.EndTask()
+				continue
+			}
+
+			m, err := manifest.Fetch(transfer.Source.Path, c.config.Verify || transfer.Transfer.Verify)
+			if err != nil {
+				result.Error = fmt.Sprintf("failed to fetch manifest: %v", err)
+				c.helper.Warning(result.Error)
+				featureResult.Results = append(featureResult.Results, result)
+				hasErrors = true
+				c.helper.EndTask()
+				continue
+			}
+
+			patterns := transfer.Source.MatchPatterns
+			if len(patterns) == 0 && transfer.Source.MatchPattern != "" {
+				patterns = []string{transfer.Source.MatchPattern}
+			}
+
+			var sourceFile string
+			var expectedHash string
+			for filename, hash := range m.Files {
+				if v, _, ok := version.ExtractVersionMulti(filename, patterns); ok && v == versionToInstall {
+					sourceFile = filename
+					expectedHash = hash
+					break
+				}
+			}
+
+			if sourceFile == "" {
+				result.Error = fmt.Sprintf("no file found for version %s", versionToInstall)
+				c.helper.Warning(result.Error)
+				featureResult.Results = append(featureResult.Results, result)
+				hasErrors = true
+				c.helper.EndTask()
+				continue
+			}
+
+			targetPatterns := transfer.Target.MatchPatterns
+			if len(targetPatterns) == 0 && transfer.Target.MatchPattern != "" {
+				targetPatterns = []string{transfer.Target.MatchPattern}
+			}
+
+			targetPattern, err := version.ParsePattern(targetPatterns[0])
+			if err != nil {
+				result.Error = fmt.Sprintf("invalid target pattern: %v", err)
+				c.helper.Warning(result.Error)
+				featureResult.Results = append(featureResult.Results, result)
+				hasErrors = true
+				c.helper.EndTask()
+				continue
+			}
+
+			targetFile := targetPattern.BuildFilename(versionToInstall)
+			targetPath := fmt.Sprintf("%s/%s", transfer.Target.Path, targetFile)
+
+			c.helper.Info(fmt.Sprintf("Downloading version %s", versionToInstall))
+			downloadURL := transfer.Source.Path + "/" + sourceFile
+			err = download.Download(downloadURL, targetPath, expectedHash, transfer.Target.Mode)
+			if err != nil {
+				result.Error = fmt.Sprintf("download failed: %v", err)
+				c.helper.Warning(result.Error)
+				featureResult.Results = append(featureResult.Results, result)
+				hasErrors = true
+				c.helper.EndTask()
+				continue
+			}
+
+			result.Downloaded = true
+			result.Installed = true
+			result.NextActionMessage = "Reboot required to activate changes"
+
+			if transfer.Target.CurrentSymlink != "" {
+				err = sysext.UpdateSymlink(transfer.Target.Path, transfer.Target.CurrentSymlink, targetFile)
+				if err != nil {
+					c.helper.Warning(fmt.Sprintf("failed to update symlink: %v", err))
+				}
+			}
+
+			if err := sysext.LinkToSysext(transfer); err != nil {
+				c.helper.Warning(fmt.Sprintf("failed to link to sysext: %v", err))
+			}
+
+			c.helper.Info(fmt.Sprintf("Installed version %s", versionToInstall))
+			featureResult.Results = append(featureResult.Results, result)
+
+			if !opts.NoVacuum {
+				if err := sysext.Vacuum(transfer); err != nil {
+					c.helper.Warning(fmt.Sprintf("vacuum failed: %v", err))
+				}
+			}
+
+			c.helper.EndTask()
+		}
+
+		allResults = append(allResults, featureResult)
+	}
+
+	if !opts.NoRefresh {
+		if err := sysext.Refresh(); err != nil {
+			c.helper.Warning(fmt.Sprintf("sysext refresh failed: %v", err))
+		}
+	} else {
+		c.helper.Info("Skipping sysext refresh (--no-refresh)")
+	}
+
+	if hasErrors {
+		return allResults, fmt.Errorf("one or more components failed to update")
+	}
+	return allResults, nil
+}
+
+// CheckFeatures checks if newer versions are available for all enabled features.
+func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) ([]CheckFeaturesResult, error) {
+	c.helper.BeginAction("Check features for updates")
+	defer c.helper.EndAction()
+
+	features, err := config.LoadFeatures(c.config.Definitions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load features: %w", err)
+	}
+
+	transfers, err := config.LoadTransfers(c.config.Definitions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load transfers: %w", err)
+	}
+
+	var allResults []CheckFeaturesResult
+
+	for _, f := range features {
+		if !f.Enabled || f.Masked {
+			continue
+		}
+
+		featureTransfers := config.GetTransfersForFeature(transfers, f.Name)
+		if len(featureTransfers) == 0 {
+			continue
+		}
+
+		featureResult := CheckFeaturesResult{
+			Feature: f.Name,
+		}
+
+		for _, transfer := range featureTransfers {
+			c.helper.BeginTask(fmt.Sprintf("Checking %s/%s", f.Name, transfer.Component))
+
+			available, err := c.getAvailableVersions(transfer)
+			if err != nil {
+				c.helper.Warning(fmt.Sprintf("failed to get available versions: %v", err))
+				c.helper.EndTask()
+				continue
+			}
+
+			if len(available) == 0 {
+				c.helper.EndTask()
+				continue
+			}
+
+			version.Sort(available)
+			newest := available[0]
+
+			installed, current, err := sysext.GetInstalledVersions(transfer)
+			if err != nil {
+				c.helper.Warning(fmt.Sprintf("failed to get installed versions: %v", err))
+			}
+
+			result := CheckResult{
+				Component:      transfer.Component,
+				CurrentVersion: current,
+				NewestVersion:  newest,
+			}
+
+			if len(installed) == 0 {
+				result.UpdateAvailable = true
+				c.helper.Info(fmt.Sprintf("New version available: %s", newest))
+			} else if version.Compare(newest, current) > 0 {
+				result.UpdateAvailable = true
+				c.helper.Info(fmt.Sprintf("Update available: %s → %s", current, newest))
+			} else {
+				c.helper.Info(fmt.Sprintf("Up to date: %s", current))
+			}
+
+			featureResult.Results = append(featureResult.Results, result)
+			c.helper.EndTask()
+		}
+
+		allResults = append(allResults, featureResult)
+	}
+
+	return allResults, nil
 }
