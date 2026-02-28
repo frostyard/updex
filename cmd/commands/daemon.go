@@ -113,7 +113,7 @@ func runDaemonEnable(cmd *cobra.Command, args []string) error {
 	}
 
 	if common.JSONOutput {
-		common.OutputJSON(map[string]interface{}{
+		common.OutputJSON(map[string]any{
 			"success": true,
 			"message": "Auto-update daemon enabled",
 		})
@@ -164,7 +164,7 @@ func runDaemonDisable(cmd *cobra.Command, args []string) error {
 	}
 
 	if common.JSONOutput {
-		common.OutputJSON(map[string]interface{}{
+		common.OutputJSON(map[string]any{
 			"success": true,
 			"message": "Auto-update daemon disabled",
 		})

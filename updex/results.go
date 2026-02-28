@@ -38,7 +38,7 @@ type FeatureInfo struct {
 	Enabled       bool     `json:"enabled"`
 	Masked        bool     `json:"masked,omitempty"`
 	Source        string   `json:"source"`
-	Transfers     []string `json:"transfers,omitempty"`
+	Transfers     []string `json:"transfers,omitzero"`
 }
 
 // FeatureActionResult represents the result of a feature enable/disable action.
@@ -49,8 +49,8 @@ type FeatureActionResult struct {
 	DropIn            string   `json:"drop_in,omitempty"`
 	Error             string   `json:"error,omitempty"`
 	NextActionMessage string   `json:"next_action_message,omitempty"`
-	RemovedFiles      []string `json:"removed_files,omitempty"`
-	DownloadedFiles   []string `json:"downloaded_files,omitempty"`
+	RemovedFiles      []string `json:"removed_files,omitzero"`
+	DownloadedFiles   []string `json:"downloaded_files,omitzero"`
 	DryRun            bool     `json:"dry_run,omitempty"`
 	Unmerged          bool     `json:"unmerged,omitempty"`
 }

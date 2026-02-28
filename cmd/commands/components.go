@@ -7,7 +7,7 @@ import (
 
 // newClient creates a new updex client with the appropriate progress reporter.
 func newClient() *updex.Client {
-	var reporter interface{}
+	var reporter any
 	if !common.JSONOutput {
 		reporter = common.NewTextReporter()
 	}

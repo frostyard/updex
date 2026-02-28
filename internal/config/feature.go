@@ -1,10 +1,12 @@
 package config
 
 import (
+	"cmp"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"gopkg.in/ini.v1"
@@ -77,8 +79,8 @@ func LoadFeatures(customPath string) ([]*Feature, error) {
 	}
 
 	// Sort by feature name for consistent ordering
-	sort.Slice(features, func(i, j int) bool {
-		return features[i].Name < features[j].Name
+	slices.SortFunc(features, func(a, b *Feature) int {
+		return cmp.Compare(a.Name, b.Name)
 	})
 
 	return features, nil
@@ -166,11 +168,7 @@ func applyFeatureDropIns(f *Feature, name string, searchPaths []string) error {
 	}
 
 	// Sort drop-in files alphabetically and apply in order
-	var sortedNames []string
-	for name := range dropInFiles {
-		sortedNames = append(sortedNames, name)
-	}
-	sort.Strings(sortedNames)
+	sortedNames := slices.Sorted(maps.Keys(dropInFiles))
 
 	for _, dropInName := range sortedNames {
 		dropInPath := dropInFiles[dropInName]
