@@ -1,7 +1,6 @@
 package updex
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -94,7 +93,7 @@ func TestEnableFeature_DryRun_ShowsDownloads(t *testing.T) {
 
 	// Act
 	client := NewClient(ClientConfig{Definitions: configDir})
-	result, err := client.EnableFeature(context.Background(), "testfeature", EnableFeatureOptions{
+	result, err := client.EnableFeature(t.Context(), "testfeature", EnableFeatureOptions{
 		Now:    true,
 		DryRun: true,
 	})
@@ -158,7 +157,7 @@ func TestEnableFeature_DryRun_NoNow_ShowsConfig(t *testing.T) {
 
 	// Act
 	client := NewClient(ClientConfig{Definitions: configDir})
-	result, err := client.EnableFeature(context.Background(), "testfeature", EnableFeatureOptions{
+	result, err := client.EnableFeature(t.Context(), "testfeature", EnableFeatureOptions{
 		Now:    false, // without --now
 		DryRun: true,
 	})
@@ -199,7 +198,7 @@ func TestEnableFeature_FeatureNotFound(t *testing.T) {
 
 	// Act
 	client := NewClient(ClientConfig{Definitions: configDir})
-	result, err := client.EnableFeature(context.Background(), "nonexistent", EnableFeatureOptions{})
+	result, err := client.EnableFeature(t.Context(), "nonexistent", EnableFeatureOptions{})
 
 	// Assert
 	if err == nil {
@@ -240,7 +239,7 @@ func TestDisableFeature_DryRun_ShowsRemovals(t *testing.T) {
 
 	// Act
 	client := NewClient(ClientConfig{Definitions: configDir})
-	result, err := client.DisableFeature(context.Background(), "testfeature", DisableFeatureOptions{
+	result, err := client.DisableFeature(t.Context(), "testfeature", DisableFeatureOptions{
 		Now:    true,
 		DryRun: true,
 	})
@@ -299,7 +298,7 @@ func TestDisableFeature_DryRun_NoNow_ShowsConfig(t *testing.T) {
 
 	// Act without --now
 	client := NewClient(ClientConfig{Definitions: configDir})
-	result, err := client.DisableFeature(context.Background(), "testfeature", DisableFeatureOptions{
+	result, err := client.DisableFeature(t.Context(), "testfeature", DisableFeatureOptions{
 		Now:    false, // without --now
 		DryRun: true,
 	})
@@ -377,7 +376,7 @@ Path=` + targetDir + `
 
 	// Act with Force=false and DryRun=false (but we'll get blocked by merge check before /etc write)
 	client := NewClient(ClientConfig{Definitions: configDir})
-	result, err := client.DisableFeature(context.Background(), "testfeature", DisableFeatureOptions{
+	result, err := client.DisableFeature(t.Context(), "testfeature", DisableFeatureOptions{
 		Now:   true,
 		Force: false,
 	})
@@ -446,7 +445,7 @@ Path=` + targetDir + `
 
 	// Act with Force=true and DryRun=true
 	client := NewClient(ClientConfig{Definitions: configDir})
-	result, err := client.DisableFeature(context.Background(), "testfeature", DisableFeatureOptions{
+	result, err := client.DisableFeature(t.Context(), "testfeature", DisableFeatureOptions{
 		Now:    true,
 		Force:  true,
 		DryRun: true,
@@ -487,7 +486,7 @@ func TestDisableFeature_FeatureNotFound(t *testing.T) {
 
 	// Act
 	client := NewClient(ClientConfig{Definitions: configDir})
-	result, err := client.DisableFeature(context.Background(), "nonexistent", DisableFeatureOptions{})
+	result, err := client.DisableFeature(t.Context(), "nonexistent", DisableFeatureOptions{})
 
 	// Assert
 	if err == nil {
@@ -515,7 +514,7 @@ func TestEnableFeature_NoTransfers(t *testing.T) {
 
 	// Act (dry-run to avoid /etc access)
 	client := NewClient(ClientConfig{Definitions: configDir})
-	result, err := client.EnableFeature(context.Background(), "testfeature", EnableFeatureOptions{
+	result, err := client.EnableFeature(t.Context(), "testfeature", EnableFeatureOptions{
 		Now:    true,
 		DryRun: true,
 	})
@@ -547,7 +546,7 @@ func TestDisableFeature_NoTransfers(t *testing.T) {
 
 	// Act (dry-run to avoid /etc access)
 	client := NewClient(ClientConfig{Definitions: configDir})
-	result, err := client.DisableFeature(context.Background(), "testfeature", DisableFeatureOptions{
+	result, err := client.DisableFeature(t.Context(), "testfeature", DisableFeatureOptions{
 		Now:    true,
 		DryRun: true,
 	})
@@ -588,7 +587,7 @@ func TestFeatures_ListAllFeatures(t *testing.T) {
 
 	// Act
 	client := NewClient(ClientConfig{Definitions: configDir})
-	features, err := client.Features(context.Background())
+	features, err := client.Features(t.Context())
 
 	// Assert
 	if err != nil {
@@ -655,7 +654,7 @@ func TestUpdateFeatures_DownloadsForEnabledFeatures(t *testing.T) {
 
 	// Act
 	client := NewClient(ClientConfig{Definitions: configDir})
-	results, err := client.UpdateFeatures(context.Background(), UpdateFeaturesOptions{
+	results, err := client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{
 		NoRefresh: true,
 	})
 
@@ -717,7 +716,7 @@ func TestUpdateFeatures_SkipsDisabledFeatures(t *testing.T) {
 
 	// Act
 	client := NewClient(ClientConfig{Definitions: configDir})
-	results, err := client.UpdateFeatures(context.Background(), UpdateFeaturesOptions{
+	results, err := client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{
 		NoRefresh: true,
 	})
 
@@ -761,7 +760,7 @@ func TestCheckFeatures_FindsUpdates(t *testing.T) {
 
 	// Act
 	client := NewClient(ClientConfig{Definitions: configDir})
-	results, err := client.CheckFeatures(context.Background(), CheckFeaturesOptions{})
+	results, err := client.CheckFeatures(t.Context(), CheckFeaturesOptions{})
 
 	// Assert
 	if err != nil {
@@ -815,7 +814,7 @@ func TestCheckFeatures_UpToDate(t *testing.T) {
 	}
 
 	client := NewClient(ClientConfig{Definitions: configDir})
-	results, err := client.CheckFeatures(context.Background(), CheckFeaturesOptions{})
+	results, err := client.CheckFeatures(t.Context(), CheckFeaturesOptions{})
 
 	if err != nil {
 		t.Fatalf("CheckFeatures failed: %v", err)

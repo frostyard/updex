@@ -2,7 +2,7 @@ package version
 
 import (
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 
 	goversion "github.com/hashicorp/go-version"
@@ -137,8 +137,8 @@ func Compare(v1, v2 string) int {
 
 // Sort sorts version strings in descending order (newest first)
 func Sort(versions []string) {
-	sort.Slice(versions, func(i, j int) bool {
-		return Compare(versions[i], versions[j]) > 0
+	slices.SortFunc(versions, func(a, b string) int {
+		return Compare(b, a) // Reversed for descending order
 	})
 }
 

@@ -25,7 +25,7 @@ func RegisterCommonFlags(cmd *cobra.Command) {
 }
 
 // OutputJSON prints data as JSON if --json flag is set, otherwise returns false
-func OutputJSON(data interface{}) bool {
+func OutputJSON(data any) bool {
 	if !JSONOutput {
 		return false
 	}
@@ -38,7 +38,7 @@ func OutputJSON(data interface{}) bool {
 }
 
 // OutputJSONLines prints each item as a separate JSON line (for streaming)
-func OutputJSONLines(items []interface{}) bool {
+func OutputJSONLines(items []any) bool {
 	if !JSONOutput {
 		return false
 	}

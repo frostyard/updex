@@ -1,10 +1,11 @@
 package config
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"gopkg.in/ini.v1"
@@ -109,8 +110,8 @@ func LoadTransfers(customPath string) ([]*Transfer, error) {
 	}
 
 	// Sort by component name for consistent ordering
-	sort.Slice(transfers, func(i, j int) bool {
-		return transfers[i].Component < transfers[j].Component
+	slices.SortFunc(transfers, func(a, b *Transfer) int {
+		return cmp.Compare(a.Component, b.Component)
 	})
 
 	return transfers, nil
@@ -264,7 +265,7 @@ func readOSRelease() map[string]string {
 		}
 	}
 
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -351,28 +352,13 @@ func isTransferEnabledByFeatures(t *Transfer, features []*Feature) bool {
 func GetTransfersForFeature(transfers []*Transfer, featureName string) []*Transfer {
 	var result []*Transfer
 	for _, t := range transfers {
-		for _, f := range t.Transfer.Features {
-			if f == featureName {
-				result = append(result, t)
-				break
-			}
+		if slices.Contains(t.Transfer.Features, featureName) {
+			result = append(result, t)
+			continue
 		}
 		// Also check RequisiteFeatures
-		for _, f := range t.Transfer.RequisiteFeatures {
-			if f == featureName {
-				// Avoid duplicates
-				alreadyAdded := false
-				for _, r := range result {
-					if r == t {
-						alreadyAdded = true
-						break
-					}
-				}
-				if !alreadyAdded {
-					result = append(result, t)
-				}
-				break
-			}
+		if slices.Contains(t.Transfer.RequisiteFeatures, featureName) && !slices.Contains(result, t) {
+			result = append(result, t)
 		}
 	}
 	return result
