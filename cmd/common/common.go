@@ -1,54 +1,24 @@
 package common
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 )
 
-// Global flags
+// App-specific flags (not provided by clix)
 var (
 	Definitions string
-	JSONOutput  bool
 	Verify      bool
 	NoRefresh   bool
 )
 
-// RegisterCommonFlags adds the common flags to a root command
-func RegisterCommonFlags(cmd *cobra.Command) {
+// RegisterAppFlags adds updex-specific persistent flags to the root command.
+func RegisterAppFlags(cmd *cobra.Command) {
 	cmd.PersistentFlags().StringVarP(&Definitions, "definitions", "C", "", "Path to directory containing .transfer and .feature files")
-	cmd.PersistentFlags().BoolVar(&JSONOutput, "json", false, "Output in JSON format (jq-compatible)")
 	cmd.PersistentFlags().BoolVar(&Verify, "verify", false, "Verify GPG signatures on SHA256SUMS")
 	cmd.PersistentFlags().BoolVar(&NoRefresh, "no-refresh", false, "Skip running systemd-sysext refresh after install/update")
-}
-
-// OutputJSON prints data as JSON if --json flag is set, otherwise returns false
-func OutputJSON(data any) bool {
-	if !JSONOutput {
-		return false
-	}
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(data); err != nil {
-		fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
-	}
-	return true
-}
-
-// OutputJSONLines prints each item as a separate JSON line (for streaming)
-func OutputJSONLines(items []any) bool {
-	if !JSONOutput {
-		return false
-	}
-	enc := json.NewEncoder(os.Stdout)
-	for _, item := range items {
-		if err := enc.Encode(item); err != nil {
-			fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
-		}
-	}
-	return true
 }
 
 // RequireRoot checks if the current process has root privileges
