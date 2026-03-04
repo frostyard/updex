@@ -51,7 +51,6 @@ updex/
 - Contains: Global flags, JSON output helpers, progress reporters
 - Key files:
   - `cmd/common/common.go` - global flags (--definitions, --json, --verify, --component, --no-refresh)
-  - `cmd/common/reporter.go` - TextReporter for CLI progress output
 
 **`updex/`:**
 - Purpose: Public API package for programmatic use
