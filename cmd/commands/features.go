@@ -6,6 +6,7 @@ import (
 	"os"
 	"text/tabwriter"
 
+	"github.com/frostyard/clix"
 	"github.com/frostyard/updex/cmd/common"
 	"github.com/frostyard/updex/updex"
 	"github.com/spf13/cobra"
@@ -15,9 +16,7 @@ var (
 	featureDisableRemove bool
 	featureDisableNow    bool
 	featureDisableForce  bool
-	featureDisableDryRun bool
 	featureEnableNow     bool
-	featureEnableDryRun  bool
 	featureEnableRetry   bool
 	featureUpdateNoVac   bool
 )
@@ -119,7 +118,6 @@ Requires root privileges.`,
 	}
 
 	cmd.Flags().BoolVar(&featureEnableNow, "now", false, "Immediately download extensions")
-	cmd.Flags().BoolVar(&featureEnableDryRun, "dry-run", false, "Preview changes without modifying filesystem")
 	cmd.Flags().BoolVar(&featureEnableRetry, "retry", false, "Retry on network failures (3 attempts)")
 
 	return cmd
@@ -159,7 +157,6 @@ Requires root privileges.`,
 	cmd.Flags().BoolVar(&featureDisableRemove, "remove", false, "Remove downloaded files (same as --now)")
 	cmd.Flags().BoolVar(&featureDisableNow, "now", false, "Immediately unmerge and remove extension files")
 	cmd.Flags().BoolVar(&featureDisableForce, "force", false, "Allow removal of merged extensions (requires reboot)")
-	cmd.Flags().BoolVar(&featureDisableDryRun, "dry-run", false, "Preview changes without modifying filesystem")
 
 	return cmd
 }
@@ -172,8 +169,8 @@ func runFeaturesList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if common.JSONOutput {
-		common.OutputJSON(features)
+	if clix.JSONOutput {
+		clix.OutputJSON(features)
 		return nil
 	}
 
@@ -220,15 +217,15 @@ func runFeaturesEnable(cmd *cobra.Command, args []string) error {
 
 	opts := updex.EnableFeatureOptions{
 		Now:       featureEnableNow,
-		DryRun:    featureEnableDryRun,
+		DryRun:    clix.DryRun,
 		Retry:     featureEnableRetry,
 		NoRefresh: common.NoRefresh,
 	}
 
 	result, err := client.EnableFeature(context.Background(), args[0], opts)
 
-	if common.JSONOutput {
-		common.OutputJSON(result)
+	if clix.JSONOutput {
+		clix.OutputJSON(result)
 	} else if result != nil {
 		if result.Error != "" {
 			fmt.Printf("Error: %s\n", result.Error)
@@ -317,8 +314,8 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 
 	results, err := client.UpdateFeatures(context.Background(), opts)
 
-	if common.JSONOutput {
-		common.OutputJSON(results)
+	if clix.JSONOutput {
+		clix.OutputJSON(results)
 		return err
 	}
 
@@ -352,8 +349,8 @@ func runFeaturesCheck(cmd *cobra.Command, args []string) error {
 
 	results, err := client.CheckFeatures(context.Background(), updex.CheckFeaturesOptions{})
 
-	if common.JSONOutput {
-		common.OutputJSON(results)
+	if clix.JSONOutput {
+		clix.OutputJSON(results)
 		return err
 	}
 
@@ -394,14 +391,14 @@ func runFeaturesDisable(cmd *cobra.Command, args []string) error {
 		Remove:    featureDisableRemove,
 		Now:       featureDisableNow,
 		Force:     featureDisableForce,
-		DryRun:    featureDisableDryRun,
+		DryRun:    clix.DryRun,
 		NoRefresh: common.NoRefresh,
 	}
 
 	result, err := client.DisableFeature(context.Background(), args[0], opts)
 
-	if common.JSONOutput {
-		common.OutputJSON(result)
+	if clix.JSONOutput {
+		clix.OutputJSON(result)
 	} else if result != nil {
 		if result.Error != "" {
 			fmt.Printf("Error: %s\n", result.Error)

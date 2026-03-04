@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 
+	"github.com/frostyard/clix"
 	"github.com/frostyard/updex/cmd/common"
 	"github.com/frostyard/updex/internal/systemd"
 	"github.com/spf13/cobra"
@@ -112,8 +113,8 @@ func runDaemonEnable(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to start timer: %w", err)
 	}
 
-	if common.JSONOutput {
-		common.OutputJSON(map[string]any{
+	if clix.JSONOutput {
+		clix.OutputJSON(map[string]any{
 			"success": true,
 			"message": "Auto-update daemon enabled",
 		})
@@ -163,8 +164,8 @@ func runDaemonDisable(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to remove timer: %w", err)
 	}
 
-	if common.JSONOutput {
-		common.OutputJSON(map[string]any{
+	if clix.JSONOutput {
+		clix.OutputJSON(map[string]any{
 			"success": true,
 			"message": "Auto-update daemon disabled",
 		})
@@ -214,8 +215,8 @@ func runDaemonStatus(cmd *cobra.Command, args []string) error {
 		status.Schedule = "daily"
 	}
 
-	if common.JSONOutput {
-		common.OutputJSON(status)
+	if clix.JSONOutput {
+		clix.OutputJSON(status)
 		return nil
 	}
 
