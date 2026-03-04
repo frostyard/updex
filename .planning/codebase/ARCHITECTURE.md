@@ -140,7 +140,7 @@
 
 ## Cross-Cutting Concerns
 
-**Logging:** Progress reporting via `github.com/frostyard/pm/progress` interface. CLI uses `TextReporter` for human output. JSON mode suppresses progress, outputs structured results only.
+**Logging:** Progress reporting via `github.com/frostyard/std/reporter` interface. CLI uses the `TextReporter` from the external std/reporter package for human output. JSON mode suppresses progress, outputs structured results only.
 
 **Validation:** Required fields checked in config parsing. API methods validate required options (e.g., component name for Install). Transfer files validated for required sections and fields.
 

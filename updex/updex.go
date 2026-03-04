@@ -17,14 +17,14 @@
 package updex
 
 import (
-	"github.com/frostyard/pm/progress"
+	"github.com/frostyard/std/reporter"
 	"github.com/frostyard/updex/internal/sysext"
 )
 
 // Client provides programmatic access to updex operations.
 type Client struct {
-	config ClientConfig
-	helper *progress.ProgressHelper
+	config   ClientConfig
+	reporter reporter.Reporter
 }
 
 // ClientConfig holds configuration for the Client.
@@ -42,7 +42,7 @@ type ClientConfig struct {
 
 	// Progress is an optional progress reporter for receiving progress updates.
 	// If nil, no progress is reported.
-	Progress progress.ProgressReporter
+	Progress reporter.Reporter
 
 	// SysextRunner is an optional runner for systemd-sysext commands.
 	// If nil, uses the default runner that executes real commands.
@@ -55,8 +55,20 @@ func NewClient(cfg ClientConfig) *Client {
 	if cfg.SysextRunner != nil {
 		sysext.SetRunner(cfg.SysextRunner)
 	}
-	return &Client{
-		config: cfg,
-		helper: progress.NewProgressHelper(nil, cfg.Progress),
+	r := cfg.Progress
+	if r == nil {
+		r = reporter.NoopReporter{}
 	}
+	return &Client{
+		config:   cfg,
+		reporter: r,
+	}
+}
+
+func (c *Client) msg(format string, a ...any) {
+	c.reporter.Message(format, a...)
+}
+
+func (c *Client) warn(format string, a ...any) {
+	c.reporter.Warning(format, a...)
 }

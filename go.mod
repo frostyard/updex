@@ -1,10 +1,10 @@
 module github.com/frostyard/updex
 
-go 1.25.7
+go 1.26
 
 require (
 	github.com/charmbracelet/fang v0.4.4
-	github.com/frostyard/pm/progress v0.2.1
+	github.com/frostyard/std v0.1.0
 	github.com/hashicorp/go-version v1.8.0
 	github.com/klauspost/compress v1.18.4
 	github.com/schollz/progressbar/v3 v3.19.0
@@ -26,7 +26,6 @@ require (
 	github.com/clipperhouse/displaywidth v0.8.0 // indirect
 	github.com/clipperhouse/stringish v0.1.1 // indirect
 	github.com/clipperhouse/uax29/v2 v2.4.0 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
 	github.com/mattn/go-runewidth v0.0.19 // indirect
