@@ -1,25 +1,23 @@
 package commands
 
 import (
+	"os"
+
+	"github.com/frostyard/std/reporter"
 	"github.com/frostyard/updex/cmd/common"
 	"github.com/frostyard/updex/updex"
 )
 
 // newClient creates a new updex client with the appropriate progress reporter.
 func newClient() *updex.Client {
-	var reporter any
+	var r reporter.Reporter
 	if !common.JSONOutput {
-		reporter = common.NewTextReporter()
+		r = reporter.NewTextReporter(os.Stderr)
 	}
 
-	cfg := updex.ClientConfig{
+	return updex.NewClient(updex.ClientConfig{
 		Definitions: common.Definitions,
 		Verify:      common.Verify,
-	}
-
-	if reporter != nil {
-		cfg.Progress = reporter.(*common.TextReporter)
-	}
-
-	return updex.NewClient(cfg)
+		Progress:    r,
+	})
 }
