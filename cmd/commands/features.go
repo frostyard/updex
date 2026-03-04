@@ -101,8 +101,9 @@ that sets Enabled=true for the specified feature.
 
 OPTIONS:
   --now      Immediately download extensions for this feature
-  --dry-run  Preview changes without modifying filesystem
   --retry    Retry on network failures (3 attempts)
+
+Use --dry-run (global flag) to preview changes without modifying filesystem.
 
 Requires root privileges.`,
 		Example: `  # Enable a feature (downloads on next update)
@@ -112,7 +113,7 @@ Requires root privileges.`,
   sudo updex features enable docker --now
 
   # Preview what would happen
-  updex features enable docker --dry-run`,
+  updex features enable --dry-run docker`,
 		Args: cobra.ExactArgs(1),
 		RunE: runFeaturesEnable,
 	}
@@ -136,7 +137,8 @@ OPTIONS:
   --now      Immediately unmerge AND remove extension files
   --remove   Remove files (same behavior as --now for backward compat)
   --force    Allow removal of merged extensions (requires reboot)
-  --dry-run  Preview changes without modifying filesystem
+
+Use --dry-run (global flag) to preview changes without modifying filesystem.
 
 Requires root privileges.`,
 		Example: `  # Disable a feature (stops future updates)
@@ -149,7 +151,7 @@ Requires root privileges.`,
   sudo updex features disable docker --now --force
 
   # Preview what would be removed
-  updex features disable docker --now --dry-run`,
+  updex features disable --dry-run docker --now`,
 		Args: cobra.ExactArgs(1),
 		RunE: runFeaturesDisable,
 	}
