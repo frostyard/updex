@@ -15,27 +15,21 @@ import (
 
 // Features returns all configured features with their status.
 func (c *Client) Features(ctx context.Context) ([]FeatureInfo, error) {
-	c.helper.BeginAction("List features")
-	defer c.helper.EndAction()
-
-	c.helper.BeginTask("Loading configurations")
+	c.msg("Loading configurations")
 
 	features, err := config.LoadFeatures(c.config.Definitions)
 	if err != nil {
-		c.helper.EndTask()
 		return nil, fmt.Errorf("failed to load features: %w", err)
 	}
 
 	if len(features) == 0 {
-		c.helper.Info("No features configured")
-		c.helper.EndTask()
+		c.msg("No features configured")
 		return []FeatureInfo{}, nil
 	}
 
 	// Load transfers to show which belong to each feature
 	transfers, err := config.LoadTransfers(c.config.Definitions)
 	if err != nil {
-		c.helper.EndTask()
 		return nil, fmt.Errorf("failed to load transfers: %w", err)
 	}
 
@@ -61,22 +55,14 @@ func (c *Client) Features(ctx context.Context) ([]FeatureInfo, error) {
 		featureInfos = append(featureInfos, info)
 	}
 
-	c.helper.Info(fmt.Sprintf("Found %d feature(s)", len(featureInfos)))
-	c.helper.EndTask()
+	c.msg("Found %d feature(s)", len(featureInfos))
 
 	return featureInfos, nil
 }
 
 // EnableFeature enables a feature by creating a drop-in configuration file.
 func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeatureOptions) (*FeatureActionResult, error) {
-	actionName := "Enable feature"
-	if opts.DryRun {
-		actionName = "Enable feature (dry run)"
-	}
-	c.helper.BeginAction(actionName)
-	defer c.helper.EndAction()
-
-	c.helper.BeginTask(fmt.Sprintf("Enabling %s", name))
+	c.msg("Enabling %s", name)
 
 	result := &FeatureActionResult{
 		Feature: name,
@@ -88,8 +74,7 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 	features, err := config.LoadFeatures(c.config.Definitions)
 	if err != nil {
 		result.Error = fmt.Sprintf("failed to load features: %v", err)
-		c.helper.Warning(result.Error)
-		c.helper.EndTask()
+		c.warn("%s", result.Error)
 		return result, fmt.Errorf("%s", result.Error)
 	}
 
@@ -99,8 +84,7 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 			found = true
 			if f.Masked {
 				result.Error = fmt.Sprintf("feature '%s' is masked and cannot be enabled", name)
-				c.helper.Warning(result.Error)
-				c.helper.EndTask()
+				c.warn("%s", result.Error)
 				return result, fmt.Errorf("%s", result.Error)
 			}
 			break
@@ -109,8 +93,7 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 
 	if !found {
 		result.Error = fmt.Sprintf("feature '%s' not found", name)
-		c.helper.Warning(result.Error)
-		c.helper.EndTask()
+		c.warn("%s", result.Error)
 		return result, fmt.Errorf("%s", result.Error)
 	}
 
@@ -119,75 +102,67 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 	dropInFile := filepath.Join(dropInDir, "00-updex.conf")
 
 	if opts.DryRun {
-		c.helper.Info(fmt.Sprintf("Would create drop-in: %s", dropInFile))
+		c.msg("Would create drop-in: %s", dropInFile)
 	} else {
 		if err := os.MkdirAll(dropInDir, 0755); err != nil {
 			result.Error = fmt.Sprintf("failed to create drop-in directory: %v", err)
-			c.helper.Warning(result.Error)
-			c.helper.EndTask()
+			c.warn("%s", result.Error)
 			return result, fmt.Errorf("%s", result.Error)
 		}
 
 		content := "[Feature]\nEnabled=true\n"
 		if err := os.WriteFile(dropInFile, []byte(content), 0644); err != nil {
 			result.Error = fmt.Sprintf("failed to write drop-in file: %v", err)
-			c.helper.Warning(result.Error)
-			c.helper.EndTask()
+			c.warn("%s", result.Error)
 			return result, fmt.Errorf("%s", result.Error)
 		}
 
 		result.DropIn = dropInFile
-		c.helper.Info(fmt.Sprintf("Created drop-in: %s", dropInFile))
+		c.msg("Created drop-in: %s", dropInFile)
 	}
-	c.helper.EndTask()
 
 	// Handle --now flag: download extensions immediately
 	if opts.Now {
-		c.helper.BeginTask("Downloading extensions")
+		c.msg("Downloading extensions")
 
 		// Load transfers to find which ones belong to this feature
 		transfers, err := config.LoadTransfers(c.config.Definitions)
 		if err != nil {
 			result.Error = fmt.Sprintf("failed to load transfers: %v", err)
-			c.helper.Warning(result.Error)
-			c.helper.EndTask()
+			c.warn("%s", result.Error)
 			return result, fmt.Errorf("%s", result.Error)
 		}
 
 		featureTransfers := config.GetTransfersForFeature(transfers, name)
 
 		if len(featureTransfers) == 0 {
-			c.helper.Info("No transfers associated with this feature")
-			c.helper.EndTask()
+			c.msg("No transfers associated with this feature")
 		} else {
 			for _, transfer := range featureTransfers {
-				c.helper.Info(fmt.Sprintf("Processing %s", transfer.Component))
+				c.msg("Processing %s", transfer.Component)
 
 				if opts.DryRun {
-					c.helper.Info(fmt.Sprintf("Would download: %s", transfer.Component))
+					c.msg("Would download: %s", transfer.Component)
 					result.DownloadedFiles = append(result.DownloadedFiles, transfer.Component+" (would download)")
 				} else {
 					// Use installTransfer which handles all the download logic
 					version, err := c.installTransfer(transfer, true) // noRefresh=true, we'll refresh once at the end
 					if err != nil {
 						result.Error = fmt.Sprintf("failed to download %s: %v", transfer.Component, err)
-						c.helper.Warning(result.Error)
-						c.helper.EndTask()
+						c.warn("%s", result.Error)
 						return result, fmt.Errorf("%s", result.Error)
 					}
 					result.DownloadedFiles = append(result.DownloadedFiles, fmt.Sprintf("%s@%s", transfer.Component, version))
-					c.helper.Info(fmt.Sprintf("Downloaded %s version %s", transfer.Component, version))
+					c.msg("Downloaded %s version %s", transfer.Component, version)
 				}
 			}
-			c.helper.EndTask()
 
 			// Refresh if we downloaded (unless --no-refresh or --dry-run)
 			if !opts.NoRefresh && !opts.DryRun {
-				c.helper.BeginTask("Refreshing sysext")
+				c.msg("Refreshing sysext")
 				if err := sysext.Refresh(); err != nil {
-					c.helper.Warning(fmt.Sprintf("sysext refresh failed: %v", err))
+					c.warn("sysext refresh failed: %v", err)
 				}
-				c.helper.EndTask()
 			}
 		}
 	}
@@ -211,14 +186,7 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 
 // DisableFeature disables a feature by creating a drop-in configuration file.
 func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFeatureOptions) (*FeatureActionResult, error) {
-	actionName := "Disable feature"
-	if opts.DryRun {
-		actionName = "Disable feature (dry run)"
-	}
-	c.helper.BeginAction(actionName)
-	defer c.helper.EndAction()
-
-	c.helper.BeginTask(fmt.Sprintf("Disabling %s", name))
+	c.msg("Disabling %s", name)
 
 	result := &FeatureActionResult{
 		Feature: name,
@@ -230,8 +198,7 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 	features, err := config.LoadFeatures(c.config.Definitions)
 	if err != nil {
 		result.Error = fmt.Sprintf("failed to load features: %v", err)
-		c.helper.Warning(result.Error)
-		c.helper.EndTask()
+		c.warn("%s", result.Error)
 		return result, fmt.Errorf("%s", result.Error)
 	}
 
@@ -241,8 +208,7 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 			found = true
 			if f.Masked {
 				result.Error = fmt.Sprintf("feature '%s' is masked and cannot be disabled", name)
-				c.helper.Warning(result.Error)
-				c.helper.EndTask()
+				c.warn("%s", result.Error)
 				return result, fmt.Errorf("%s", result.Error)
 			}
 			break
@@ -251,8 +217,7 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 
 	if !found {
 		result.Error = fmt.Sprintf("feature '%s' not found", name)
-		c.helper.Warning(result.Error)
-		c.helper.EndTask()
+		c.warn("%s", result.Error)
 		return result, fmt.Errorf("%s", result.Error)
 	}
 
@@ -260,8 +225,7 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 	transfers, err := config.LoadTransfers(c.config.Definitions)
 	if err != nil {
 		result.Error = fmt.Sprintf("failed to load transfers: %v", err)
-		c.helper.Warning(result.Error)
-		c.helper.EndTask()
+		c.warn("%s", result.Error)
 		return result, fmt.Errorf("%s", result.Error)
 	}
 
@@ -277,7 +241,7 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 		for _, t := range featureTransfers {
 			activeVersion, err := sysext.GetActiveVersion(t)
 			if err != nil {
-				c.helper.Warning(fmt.Sprintf("could not check merge state for %s: %v", t.Component, err))
+				c.warn("could not check merge state for %s: %v", t.Component, err)
 				continue
 			}
 			if activeVersion != "" {
@@ -293,13 +257,12 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 				errMsg = fmt.Sprintf("Extensions are active: %v. Removing requires --force and a reboot to take effect.", mergedExtensions)
 			}
 			result.Error = errMsg
-			c.helper.Warning(errMsg)
-			c.helper.EndTask()
+			c.warn("%s", errMsg)
 			return result, fmt.Errorf("%s", errMsg)
 		}
 
 		if len(mergedExtensions) > 0 && opts.Force {
-			c.helper.Warning("Extensions are currently active. Changes will take effect after reboot.")
+			c.warn("Extensions are currently active. Changes will take effect after reboot.")
 		}
 	}
 
@@ -308,64 +271,58 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 	dropInFile := filepath.Join(dropInDir, "00-updex.conf")
 
 	if opts.DryRun {
-		c.helper.Info(fmt.Sprintf("Would create drop-in: %s", dropInFile))
+		c.msg("Would create drop-in: %s", dropInFile)
 	} else {
 		if err := os.MkdirAll(dropInDir, 0755); err != nil {
 			result.Error = fmt.Sprintf("failed to create drop-in directory: %v", err)
-			c.helper.Warning(result.Error)
-			c.helper.EndTask()
+			c.warn("%s", result.Error)
 			return result, fmt.Errorf("%s", result.Error)
 		}
 
 		content := "[Feature]\nEnabled=false\n"
 		if err := os.WriteFile(dropInFile, []byte(content), 0644); err != nil {
 			result.Error = fmt.Sprintf("failed to write drop-in file: %v", err)
-			c.helper.Warning(result.Error)
-			c.helper.EndTask()
+			c.warn("%s", result.Error)
 			return result, fmt.Errorf("%s", result.Error)
 		}
 
 		result.DropIn = dropInFile
-		c.helper.Info(fmt.Sprintf("Created drop-in: %s", dropInFile))
+		c.msg("Created drop-in: %s", dropInFile)
 	}
-	c.helper.EndTask()
 
 	// Handle --now (or --remove for backward compat): remove files and unmerge
 	if willRemoveFiles && len(featureTransfers) > 0 {
 		// If --now is specified, unmerge first (unless dry-run)
 		if opts.Now && !opts.DryRun {
-			c.helper.BeginTask("Unmerging extensions")
+			c.msg("Unmerging extensions")
 			if err := sysext.Unmerge(); err != nil {
 				result.Error = fmt.Sprintf("failed to unmerge: %v", err)
-				c.helper.Warning(result.Error)
-				c.helper.EndTask()
+				c.warn("%s", result.Error)
 				return result, fmt.Errorf("%s", result.Error)
 			}
 			result.Unmerged = true
-			c.helper.EndTask()
 		} else if opts.Now && opts.DryRun {
-			c.helper.Info("Would unmerge extensions")
+			c.msg("Would unmerge extensions")
 		}
 
 		// Remove files for each transfer
-		c.helper.BeginTask("Removing files")
+		c.msg("Removing files")
 		var allRemoved []string
 		for _, t := range featureTransfers {
 			if opts.DryRun {
-				c.helper.Info(fmt.Sprintf("Would remove files for: %s", t.Component))
+				c.msg("Would remove files for: %s", t.Component)
 				allRemoved = append(allRemoved, t.Component+" (would remove)")
 			} else {
 				// Remove the symlink from /var/lib/extensions
 				if err := sysext.UnlinkFromSysext(t); err != nil {
-					c.helper.Warning(fmt.Sprintf("failed to unlink %s: %v", t.Component, err))
+					c.warn("failed to unlink %s: %v", t.Component, err)
 				}
 
 				// Remove all versions
 				removed, err := sysext.RemoveAllVersions(t)
 				if err != nil {
 					result.Error = fmt.Sprintf("failed to remove files for %s: %v", t.Component, err)
-					c.helper.Warning(result.Error)
-					c.helper.EndTask()
+					c.warn("%s", result.Error)
 					return result, fmt.Errorf("%s", result.Error)
 				}
 				allRemoved = append(allRemoved, removed...)
@@ -373,17 +330,15 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 		}
 		result.RemovedFiles = allRemoved
 		if !opts.DryRun {
-			c.helper.Info(fmt.Sprintf("Removed %d file(s)", len(allRemoved)))
+			c.msg("Removed %d file(s)", len(allRemoved))
 		}
-		c.helper.EndTask()
 
 		// Refresh if we unmerged (unless --no-refresh or --dry-run)
 		if opts.Now && !opts.NoRefresh && !opts.DryRun {
-			c.helper.BeginTask("Refreshing sysext")
+			c.msg("Refreshing sysext")
 			if err := sysext.Refresh(); err != nil {
-				c.helper.Warning(fmt.Sprintf("sysext refresh failed: %v", err))
+				c.warn("sysext refresh failed: %v", err)
 			}
-			c.helper.EndTask()
 		}
 	}
 
@@ -408,9 +363,6 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 
 // UpdateFeatures downloads and installs new versions for all enabled features.
 func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions) ([]UpdateFeaturesResult, error) {
-	c.helper.BeginAction("Update features")
-	defer c.helper.EndAction()
-
 	features, err := config.LoadFeatures(c.config.Definitions)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load features: %w", err)
@@ -439,7 +391,7 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 		}
 
 		for _, transfer := range featureTransfers {
-			c.helper.BeginTask(fmt.Sprintf("Processing %s/%s", f.Name, transfer.Component))
+			c.msg("Processing %s/%s", f.Name, transfer.Component)
 
 			result := UpdateResult{
 				Component: transfer.Component,
@@ -448,19 +400,17 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 			available, err := c.getAvailableVersions(transfer)
 			if err != nil {
 				result.Error = fmt.Sprintf("failed to get available versions: %v", err)
-				c.helper.Warning(result.Error)
+				c.warn("%s", result.Error)
 				featureResult.Results = append(featureResult.Results, result)
 				hasErrors = true
-				c.helper.EndTask()
 				continue
 			}
 
 			if len(available) == 0 {
 				result.Error = "no versions available"
-				c.helper.Warning(result.Error)
+				c.warn("%s", result.Error)
 				featureResult.Results = append(featureResult.Results, result)
 				hasErrors = true
-				c.helper.EndTask()
 				continue
 			}
 
@@ -479,19 +429,17 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 
 			if alreadyInstalled && versionToInstall == current {
 				result.Installed = true
-				c.helper.Info(fmt.Sprintf("Version %s already installed and current", versionToInstall))
+				c.msg("Version %s already installed and current", versionToInstall)
 				featureResult.Results = append(featureResult.Results, result)
-				c.helper.EndTask()
 				continue
 			}
 
 			m, err := manifest.Fetch(transfer.Source.Path, c.config.Verify || transfer.Transfer.Verify)
 			if err != nil {
 				result.Error = fmt.Sprintf("failed to fetch manifest: %v", err)
-				c.helper.Warning(result.Error)
+				c.warn("%s", result.Error)
 				featureResult.Results = append(featureResult.Results, result)
 				hasErrors = true
-				c.helper.EndTask()
 				continue
 			}
 
@@ -512,10 +460,9 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 
 			if sourceFile == "" {
 				result.Error = fmt.Sprintf("no file found for version %s", versionToInstall)
-				c.helper.Warning(result.Error)
+				c.warn("%s", result.Error)
 				featureResult.Results = append(featureResult.Results, result)
 				hasErrors = true
-				c.helper.EndTask()
 				continue
 			}
 
@@ -527,25 +474,23 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 			targetPattern, err := version.ParsePattern(targetPatterns[0])
 			if err != nil {
 				result.Error = fmt.Sprintf("invalid target pattern: %v", err)
-				c.helper.Warning(result.Error)
+				c.warn("%s", result.Error)
 				featureResult.Results = append(featureResult.Results, result)
 				hasErrors = true
-				c.helper.EndTask()
 				continue
 			}
 
 			targetFile := targetPattern.BuildFilename(versionToInstall)
 			targetPath := fmt.Sprintf("%s/%s", transfer.Target.Path, targetFile)
 
-			c.helper.Info(fmt.Sprintf("Downloading version %s", versionToInstall))
+			c.msg("Downloading version %s", versionToInstall)
 			downloadURL := transfer.Source.Path + "/" + sourceFile
 			err = download.Download(downloadURL, targetPath, expectedHash, transfer.Target.Mode)
 			if err != nil {
 				result.Error = fmt.Sprintf("download failed: %v", err)
-				c.helper.Warning(result.Error)
+				c.warn("%s", result.Error)
 				featureResult.Results = append(featureResult.Results, result)
 				hasErrors = true
-				c.helper.EndTask()
 				continue
 			}
 
@@ -556,24 +501,22 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 			if transfer.Target.CurrentSymlink != "" {
 				err = sysext.UpdateSymlink(transfer.Target.Path, transfer.Target.CurrentSymlink, targetFile)
 				if err != nil {
-					c.helper.Warning(fmt.Sprintf("failed to update symlink: %v", err))
+					c.warn("failed to update symlink: %v", err)
 				}
 			}
 
 			if err := sysext.LinkToSysext(transfer); err != nil {
-				c.helper.Warning(fmt.Sprintf("failed to link to sysext: %v", err))
+				c.warn("failed to link to sysext: %v", err)
 			}
 
-			c.helper.Info(fmt.Sprintf("Installed version %s", versionToInstall))
+			c.msg("Installed version %s", versionToInstall)
 			featureResult.Results = append(featureResult.Results, result)
 
 			if !opts.NoVacuum {
 				if err := sysext.Vacuum(transfer); err != nil {
-					c.helper.Warning(fmt.Sprintf("vacuum failed: %v", err))
+					c.warn("vacuum failed: %v", err)
 				}
 			}
-
-			c.helper.EndTask()
 		}
 
 		allResults = append(allResults, featureResult)
@@ -581,10 +524,10 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 
 	if !opts.NoRefresh {
 		if err := sysext.Refresh(); err != nil {
-			c.helper.Warning(fmt.Sprintf("sysext refresh failed: %v", err))
+			c.warn("sysext refresh failed: %v", err)
 		}
 	} else {
-		c.helper.Info("Skipping sysext refresh (--no-refresh)")
+		c.msg("Skipping sysext refresh (--no-refresh)")
 	}
 
 	if hasErrors {
@@ -595,9 +538,6 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 
 // CheckFeatures checks if newer versions are available for all enabled features.
 func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) ([]CheckFeaturesResult, error) {
-	c.helper.BeginAction("Check features for updates")
-	defer c.helper.EndAction()
-
 	features, err := config.LoadFeatures(c.config.Definitions)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load features: %w", err)
@@ -625,17 +565,15 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 		}
 
 		for _, transfer := range featureTransfers {
-			c.helper.BeginTask(fmt.Sprintf("Checking %s/%s", f.Name, transfer.Component))
+			c.msg("Checking %s/%s", f.Name, transfer.Component)
 
 			available, err := c.getAvailableVersions(transfer)
 			if err != nil {
-				c.helper.Warning(fmt.Sprintf("failed to get available versions: %v", err))
-				c.helper.EndTask()
+				c.warn("failed to get available versions: %v", err)
 				continue
 			}
 
 			if len(available) == 0 {
-				c.helper.EndTask()
 				continue
 			}
 
@@ -644,7 +582,7 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 
 			installed, current, err := sysext.GetInstalledVersions(transfer)
 			if err != nil {
-				c.helper.Warning(fmt.Sprintf("failed to get installed versions: %v", err))
+				c.warn("failed to get installed versions: %v", err)
 			}
 
 			result := CheckResult{
@@ -655,16 +593,15 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 
 			if len(installed) == 0 {
 				result.UpdateAvailable = true
-				c.helper.Info(fmt.Sprintf("New version available: %s", newest))
+				c.msg("New version available: %s", newest)
 			} else if version.Compare(newest, current) > 0 {
 				result.UpdateAvailable = true
-				c.helper.Info(fmt.Sprintf("Update available: %s → %s", current, newest))
+				c.msg("Update available: %s → %s", current, newest)
 			} else {
-				c.helper.Info(fmt.Sprintf("Up to date: %s", current))
+				c.msg("Up to date: %s", current)
 			}
 
 			featureResult.Results = append(featureResult.Results, result)
-			c.helper.EndTask()
 		}
 
 		allResults = append(allResults, featureResult)

@@ -94,27 +94,27 @@ func (c *Client) installTransfer(transfer *config.Transfer, noRefresh bool) (str
 	if transfer.Target.CurrentSymlink != "" {
 		err = sysext.UpdateSymlink(transfer.Target.Path, transfer.Target.CurrentSymlink, targetFile)
 		if err != nil {
-			c.helper.Warning(fmt.Sprintf("failed to update symlink: %v", err))
+			c.warn("failed to update symlink: %v", err)
 		}
 	}
 
 	// Link to /var/lib/extensions for systemd-sysext
 	if err := sysext.LinkToSysext(transfer); err != nil {
-		c.helper.Warning(fmt.Sprintf("failed to link to sysext: %v", err))
+		c.warn("failed to link to sysext: %v", err)
 	}
 
 	// Refresh systemd-sysext (unless --no-refresh)
 	if !noRefresh {
 		if err := sysext.Refresh(); err != nil {
-			c.helper.Warning(fmt.Sprintf("sysext refresh failed: %v", err))
+			c.warn("sysext refresh failed: %v", err)
 		}
 	} else {
-		c.helper.Info("Skipping sysext refresh (--no-refresh)")
+		c.msg("Skipping sysext refresh (--no-refresh)")
 	}
 
 	// Run vacuum
 	if err := sysext.Vacuum(transfer); err != nil {
-		c.helper.Warning(fmt.Sprintf("vacuum failed: %v", err))
+		c.warn("vacuum failed: %v", err)
 	}
 
 	return versionToInstall, nil
