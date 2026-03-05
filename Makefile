@@ -23,7 +23,7 @@ install:
 
 ## clean: Remove build artifacts
 clean:
-	rm -f updex
+	rm -rf build/
 	$(GO) clean
 
 ## fmt: Format Go source files
