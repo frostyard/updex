@@ -19,7 +19,7 @@ updex is a Go library (SDK) and CLI tool for managing systemd-sysext images, rep
 
 ### Tech Stack
 
-- **Language**: Go 1.25+
+- **Language**: Go 1.25
 - **CLI Framework**: Cobra (github.com/spf13/cobra) with clix for unified CLI functionality
 - **Configuration**: INI files (gopkg.in/ini.v1)
 - **Compression**: XZ, gzip, zstd support
@@ -40,22 +40,23 @@ This formats all Go source files with `gofmt`.
 
 ### Common Make Targets
 
-| Target       | Purpose                          |
-| ------------ | -------------------------------- |
-| `make build` | Build the binary                 |
-| `make fmt`   | Format Go code (run after edits) |
-| `make lint`  | Run go vet and staticcheck       |
-| `make test`  | Run tests                        |
-| `make check` | Run fmt, lint, and test together |
-| `make clean` | Remove build artifacts           |
-| `make tidy`  | Run go mod tidy                  |
+| Target            | Purpose                               |
+| ----------------- | ------------------------------------- |
+| `make build`      | Build binary to `build/updex`         |
+| `make fmt`        | Format Go code (run after edits)      |
+| `make lint`       | Run golangci-lint                     |
+| `make test`       | Run tests                             |
+| `make test-cover` | Run tests with HTML coverage report   |
+| `make check`      | Run fmt, lint, and test together      |
+| `make clean`      | Remove build artifacts                |
+| `make tidy`       | Run go mod tidy                       |
 
 ### Build Workflow
 
 1. Make code changes
 2. Run `make fmt` to format
 3. Run `make build` to compile
-4. Test with `./updex --help`
+4. Test with `./build/updex --help`
 
 ## Project Structure
 
@@ -105,6 +106,18 @@ updex/
 - Prefer standard library functions over external dependencies when possible
 - Use descriptive variable names; avoid single-letter variables except for very short scopes (loop indices, etc.)
 - Add comments for exported functions and types following Go documentation conventions
+
+## Go 1.25 Modern Idioms
+
+Use these modern Go patterns throughout the codebase:
+
+- `any` instead of `interface{}`
+- `slices`, `maps`, `cmp` packages for collection operations
+- `slices.SortFunc` for sorting with a comparator
+- `strings.SplitSeq` for iterating over split strings
+- `t.Context()` in tests (not `context.Background()`)
+- `wg.Go()` for goroutine management with `sync.WaitGroup`
+- `omitzero` struct tag for JSON fields that should be omitted when zero (slices, maps, structs)
 
 ## Key Patterns
 
@@ -253,7 +266,7 @@ go test -v -run TestName ./updex/
 - Use descriptive test names that explain what is being tested
 - Test error cases in addition to happy paths
 - Use temporary directories (`t.TempDir()`) for file system operations in tests
-- Use `t.Context()` for test contexts
+- Use `t.Context()` for test contexts (not `context.Background()`)
 - Mock external dependencies and HTTP requests using mockable `Runner` interfaces
 - Ensure tests are idempotent and can run in parallel where possible
 
@@ -269,6 +282,10 @@ Manages systemd-sysext features:
 - `features update` — Download and install updates for enabled features
 - `features check` — Check for available updates without installing
 
+### `components` command
+
+Lists available systemd-sysext components.
+
 ### `daemon` command
 
 Manages the updex systemd daemon:
@@ -278,18 +295,6 @@ Manages the updex systemd daemon:
 - `daemon status` — Show daemon status
 
 ## Common Tasks
-
-### Adding a New Operation
-
-1. **Create SDK method** on `Client` in `updex/<operation>.go`:
-   - Implement method with `context.Context` and options parameter
-   - Return structured results and error
-   - Add comprehensive doc comments
-2. **Create CLI wrapper** in `cmd/commands/<operation>.go`:
-   - Create Cobra command that calls the SDK method
-   - Handle flag parsing and output formatting
-3. **Register command** in `cmd/updex/root.go`
-4. Run `make fmt && make build`
 
 ### Adding a New Option
 
