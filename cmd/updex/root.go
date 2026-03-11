@@ -1,10 +1,30 @@
 package updex
 
 import (
-	"github.com/frostyard/updex/cmd/commands"
-	"github.com/frostyard/updex/cmd/common"
+	"fmt"
+	"os"
+
 	"github.com/spf13/cobra"
 )
+
+var (
+	definitions string
+	verify      bool
+	noRefresh   bool
+)
+
+func registerAppFlags(cmd *cobra.Command) {
+	cmd.PersistentFlags().StringVarP(&definitions, "definitions", "C", "", "Path to directory containing .transfer and .feature files")
+	cmd.PersistentFlags().BoolVar(&verify, "verify", false, "Verify GPG signatures on SHA256SUMS")
+	cmd.PersistentFlags().BoolVar(&noRefresh, "no-refresh", false, "Skip running systemd-sysext refresh after install/update")
+}
+
+func requireRoot() error {
+	if os.Geteuid() != 0 {
+		return fmt.Errorf("this operation requires root privileges")
+	}
+	return nil
+}
 
 // NewRootCmd creates and returns the root cobra command with all subcommands registered.
 func NewRootCmd() *cobra.Command {
@@ -23,9 +43,9 @@ Configuration is read from .feature and .transfer files in:
   - /usr/lib/sysupdate.d/`,
 	}
 
-	common.RegisterAppFlags(cmd)
-	cmd.AddCommand(commands.NewFeaturesCmd())
-	cmd.AddCommand(commands.NewDaemonCmd())
+	registerAppFlags(cmd)
+	cmd.AddCommand(newFeaturesCmd())
+	cmd.AddCommand(newDaemonCmd())
 
 	return cmd
 }
