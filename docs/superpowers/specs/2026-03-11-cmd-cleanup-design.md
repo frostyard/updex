@@ -25,9 +25,9 @@ cmd/updex/
   client.go            newClient() helper
   features.go          NewFeaturesCmd() + subcommand builders + flag vars
   features_run.go      run* handlers + output formatting
-  daemon.go            daemon commands + handlers (moved as-is)
-  completion_test.go   shell completion tests (moved, package renamed)
-  root_test.go         requireRoot() test (moved from common_test.go)
+  daemon.go            daemon commands + handlers
+  completion_test.go   shell completion tests
+  root_test.go         requireRoot() test
 ```
 
 ## Deleted
@@ -37,27 +37,43 @@ cmd/updex/
 
 ## File Origins
 
-| Target file | Source |
-|---|---|
-| `root.go` | Merge of `cmd/updex/root.go` + `cmd/common/common.go` |
-| `client.go` | `cmd/commands/components.go` (renamed) |
-| `features.go` | Top half of `cmd/commands/features.go` (builders + flag vars) |
-| `features_run.go` | Bottom half of `cmd/commands/features.go` (handlers) |
-| `daemon.go` | `cmd/commands/daemon.go` (moved) |
-| `completion_test.go` | `cmd/commands/completion_test.go` (moved) |
-| `root_test.go` | `cmd/common/common_test.go` (moved) |
+| Target file | Source | Changes required |
+|---|---|---|
+| `root.go` | Merge of `cmd/updex/root.go` + `cmd/common/common.go` | Remove `cmd/commands` and `cmd/common` imports; inline all references |
+| `client.go` | `cmd/commands/components.go` | Rename file; change package to `updex`; remove `cmd/common` import; `common.Definitions` -> `definitions`, `common.Verify` -> `verify` |
+| `features.go` | `cmd/commands/features.go` — command builders (`NewFeaturesCmd`, all `newFeatures*Cmd` funcs) + flag vars | Change package to `updex`; remove `cmd/common` import |
+| `features_run.go` | `cmd/commands/features.go` — handler functions (`runFeaturesList`, `runFeaturesEnable`, `runFeaturesDisable`, `runFeaturesUpdate`, `runFeaturesCheck`) | Change package to `updex`; `common.RequireRoot()` -> `requireRoot()`; `common.NoRefresh` -> `noRefresh` |
+| `daemon.go` | `cmd/commands/daemon.go` | Change package to `updex`; remove `cmd/common` import; `common.RequireRoot()` -> `requireRoot()` |
+| `completion_test.go` | `cmd/commands/completion_test.go` | Change package to `updex` |
+| `root_test.go` | `cmd/common/common_test.go` | Change package to `updex` |
+
+## Import Removals
+
+All moved files currently import `"github.com/frostyard/updex/cmd/common"` —
+this import is removed from every file since all symbols are now package-local.
+
+`root.go` currently imports `"github.com/frostyard/updex/cmd/commands"` — this
+import is removed; calls change from `commands.NewFeaturesCmd()` to
+`NewFeaturesCmd()`.
 
 ## Symbol Visibility Changes
 
 Once cross-package access is eliminated, exported symbols become unexported:
 
+From `cmd/common`:
 - `Definitions` -> `definitions`
 - `Verify` -> `verify`
 - `NoRefresh` -> `noRefresh`
 - `RegisterAppFlags()` -> `registerAppFlags()`
 - `RequireRoot()` -> `requireRoot()`
 
-Feature flag vars (`featureDisableRemove`, etc.) are already unexported.
+From `cmd/commands`:
+- `NewFeaturesCmd()` -> `newFeaturesCmd()`
+- `NewDaemonCmd()` -> `newDaemonCmd()`
+- `DaemonStatus` -> `daemonStatus`
+
+Feature flag vars (`featureDisableRemove`, etc.) and `newClient()` are already
+unexported.
 
 ## Invariants
 
