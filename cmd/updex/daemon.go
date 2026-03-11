@@ -1,26 +1,23 @@
-package commands
+package updex
 
 import (
 	"fmt"
 
 	"github.com/frostyard/clix"
-	"github.com/frostyard/updex/cmd/common"
 	"github.com/frostyard/updex/internal/systemd"
 	"github.com/spf13/cobra"
 )
 
 const unitName = "updex-update"
 
-// DaemonStatus represents the current state of the auto-update daemon
-type DaemonStatus struct {
+type daemonStatus struct {
 	Installed bool   `json:"installed"`
 	Enabled   bool   `json:"enabled"`
 	Active    bool   `json:"active"`
 	Schedule  string `json:"schedule,omitempty"`
 }
 
-// NewDaemonCmd creates the daemon command with subcommands
-func NewDaemonCmd() *cobra.Command {
+func newDaemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Manage auto-update daemon",
@@ -77,7 +74,7 @@ Requires root privileges.`,
 }
 
 func runDaemonEnable(cmd *cobra.Command, args []string) error {
-	if err := common.RequireRoot(); err != nil {
+	if err := requireRoot(); err != nil {
 		return err
 	}
 
@@ -150,7 +147,7 @@ Requires root privileges.`,
 }
 
 func runDaemonDisable(cmd *cobra.Command, args []string) error {
-	if err := common.RequireRoot(); err != nil {
+	if err := requireRoot(); err != nil {
 		return err
 	}
 
@@ -205,7 +202,7 @@ func runDaemonStatus(cmd *cobra.Command, args []string) error {
 	mgr := systemd.NewManager()
 	runner := &systemd.DefaultSystemctlRunner{}
 
-	status := DaemonStatus{
+	status := daemonStatus{
 		Installed: mgr.Exists(unitName),
 	}
 

@@ -1,4 +1,4 @@
-package commands
+package updex
 
 import (
 	"bytes"
@@ -8,21 +8,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// createTestRootCmd creates a root command with subcommands for testing
 func createTestRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:   "updex",
 		Short: "Test root command",
 	}
 
-	// Add commands that should appear in completions
-	rootCmd.AddCommand(NewFeaturesCmd())
-	rootCmd.AddCommand(NewDaemonCmd())
+	rootCmd.AddCommand(newFeaturesCmd())
+	rootCmd.AddCommand(newDaemonCmd())
 
 	return rootCmd
 }
 
-// TestCompletionBash verifies bash completion script generation
 func TestCompletionBash(t *testing.T) {
 	rootCmd := createTestRootCmd()
 
@@ -36,8 +33,6 @@ func TestCompletionBash(t *testing.T) {
 
 	output := buf.String()
 
-	// Bash completion V2 uses dynamic completion, calling the binary
-	// at runtime. The script itself contains infrastructure functions.
 	tests := []struct {
 		name     string
 		contains string
@@ -56,14 +51,12 @@ func TestCompletionBash(t *testing.T) {
 		})
 	}
 
-	// Verify script is non-trivial (at least 100 lines)
 	lines := strings.Count(output, "\n")
 	if lines < 100 {
 		t.Errorf("bash completion script too short: %d lines", lines)
 	}
 }
 
-// TestCompletionZsh verifies zsh completion script generation
 func TestCompletionZsh(t *testing.T) {
 	rootCmd := createTestRootCmd()
 
@@ -85,7 +78,6 @@ func TestCompletionZsh(t *testing.T) {
 	}
 }
 
-// TestCompletionFish verifies fish completion script generation
 func TestCompletionFish(t *testing.T) {
 	rootCmd := createTestRootCmd()
 
