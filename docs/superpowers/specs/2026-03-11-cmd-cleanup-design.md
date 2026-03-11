@@ -44,7 +44,7 @@ cmd/updex/
 | `features.go` | `cmd/commands/features.go` — command builders (`NewFeaturesCmd`, all `newFeatures*Cmd` funcs) + flag vars | Change package to `updex`; remove `cmd/common` import |
 | `features_run.go` | `cmd/commands/features.go` — handler functions (`runFeaturesList`, `runFeaturesEnable`, `runFeaturesDisable`, `runFeaturesUpdate`, `runFeaturesCheck`) | Change package to `updex`; `common.RequireRoot()` -> `requireRoot()`; `common.NoRefresh` -> `noRefresh` |
 | `daemon.go` | `cmd/commands/daemon.go` | Change package to `updex`; remove `cmd/common` import; `common.RequireRoot()` -> `requireRoot()` |
-| `completion_test.go` | `cmd/commands/completion_test.go` | Change package to `updex` |
+| `completion_test.go` | `cmd/commands/completion_test.go` | Change package to `updex`; `NewFeaturesCmd()` -> `newFeaturesCmd()`, `NewDaemonCmd()` -> `newDaemonCmd()` |
 | `root_test.go` | `cmd/common/common_test.go` | Change package to `updex` |
 
 ## Import Removals
