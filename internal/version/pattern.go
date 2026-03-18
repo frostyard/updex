@@ -20,7 +20,7 @@ var placeholders = map[string]string{
 	"@v": `([a-zA-Z0-9._+:~-]+)`, // Version - required, captured (includes : for epoch, ~ for debian versions)
 	"@u": `[a-fA-F0-9-]+`,        // UUID
 	"@f": `[0-9]+`,               // Flags
-	"@a": `[a-zA-Z0-9_]*`,        // Architecture (amd64, arm64, etc.) - can be empty
+	"@a": `[01]`,                 // GPT NoAuto flag (0 or 1)
 	"@g": `[01]`,                 // GrowFileSystem flag
 	"@r": `[01]`,                 // Read-only flag
 	"@t": `[0-9]+`,               // Modification time

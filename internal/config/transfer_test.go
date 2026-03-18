@@ -6,6 +6,109 @@ import (
 	"testing"
 )
 
+func TestExpandSpecifiersLiteralPercent(t *testing.T) {
+	// %% must always expand to a literal %, regardless of system state.
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"foo-%%v-bar", "foo-%v-bar"},
+		{"%%", "%"},
+		{"100%%", "100%"},
+		{"%%%%", "%%"},
+		{"no-specifiers", "no-specifiers"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := expandSpecifiers(tt.input)
+			if got != tt.want {
+				t.Errorf("expandSpecifiers(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExpandSpecifiersUnknownPassThrough(t *testing.T) {
+	// Unknown specifiers must be left unchanged.
+	got := expandSpecifiers("foo-%Z-bar")
+	if got != "foo-%Z-bar" {
+		t.Errorf("expandSpecifiers(%q) = %q, want unchanged %q", "foo-%Z-bar", got, "foo-%Z-bar")
+	}
+}
+
+func TestExpandSpecifiersTemporaryDirs(t *testing.T) {
+	// %T and %V are always /tmp and /var/tmp.
+	if got := expandSpecifiers("%T"); got != "/tmp" {
+		t.Errorf("expandSpecifiers(%%T) = %q, want /tmp", got)
+	}
+	if got := expandSpecifiers("%V"); got != "/var/tmp" {
+		t.Errorf("expandSpecifiers(%%V) = %q, want /var/tmp", got)
+	}
+}
+
+func TestGoarchToSystemdArchMap(t *testing.T) {
+	// Verify the key entries in the mapping table.
+	tests := []struct {
+		goarch string
+		want   string
+	}{
+		{"amd64", "x86-64"},
+		{"386", "x86"},
+		{"arm64", "arm64"},
+		{"arm", "arm"},
+		{"riscv64", "riscv64"},
+		{"ppc64", "ppc64"},
+		{"ppc64le", "ppc64-le"},
+		{"s390x", "s390x"},
+		{"loong64", "loongarch64"},
+	}
+	for _, tt := range tests {
+		got := goarchToSystemd[tt.goarch]
+		if got != tt.want {
+			t.Errorf("goarchToSystemd[%q] = %q, want %q", tt.goarch, got, tt.want)
+		}
+	}
+	// Unknown arch should map to empty string (not present in map).
+	if got := goarchToSystemd["unknownarch"]; got != "" {
+		t.Errorf("goarchToSystemd[unknownarch] = %q, want empty", got)
+	}
+}
+
+func TestMatchPatternSpecifierExpansion(t *testing.T) {
+	// Using %% (always expands to %) gives us a deterministic test that
+	// verifies expandSpecifiers is actually called on MatchPattern values.
+	tmpDir := t.TempDir()
+
+	content := `[Source]
+Type=url-file
+Path=https://example.com
+MatchPattern=myext-%%v-@v.raw
+
+[Target]
+MatchPattern=myext-%%v-@v.raw
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "test.transfer"), []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	transfers, err := LoadTransfers(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadTransfers() error = %v", err)
+	}
+	if len(transfers) != 1 {
+		t.Fatalf("expected 1 transfer, got %d", len(transfers))
+	}
+
+	// %%v in the file should have become %v (literal) in the parsed pattern.
+	const want = "myext-%v-@v.raw"
+	if got := transfers[0].Source.MatchPattern; got != want {
+		t.Errorf("Source.MatchPattern = %q, want %q", got, want)
+	}
+	if got := transfers[0].Target.MatchPattern; got != want {
+		t.Errorf("Target.MatchPattern = %q, want %q", got, want)
+	}
+}
+
 func TestLoadTransfers(t *testing.T) {
 	// Create temp directory with test transfer files
 	tmpDir := t.TempDir()

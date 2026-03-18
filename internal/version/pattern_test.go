@@ -1,6 +1,7 @@
 package version
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -319,6 +320,36 @@ func TestCompare(t *testing.T) {
 				t.Errorf("Compare(%q, %q) = %v, want %v", tt.v1, tt.v2, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestAtAPlaceholderGPTFlag(t *testing.T) {
+	// @a is the GPT NoAuto flag: it must match exactly "0" or "1", not
+	// architecture strings like "arm64" or "amd64".
+	const pattern = "mypart-@v_@a.raw"
+	p, err := ParsePattern(pattern)
+	if err != nil {
+		t.Fatalf("ParsePattern(%q) error = %v", pattern, err)
+	}
+
+	for _, flag := range []string{"0", "1"} {
+		filename := fmt.Sprintf("mypart-1.0.0_%s.raw", flag)
+		v, ok := p.ExtractVersion(filename)
+		if !ok {
+			t.Errorf("ExtractVersion(%q) should match", filename)
+			continue
+		}
+		if v != "1.0.0" {
+			t.Errorf("ExtractVersion(%q) version = %q, want %q", filename, v, "1.0.0")
+		}
+	}
+
+	// Architecture strings should not be accepted as @a values.
+	for _, arch := range []string{"amd64", "arm64", "x86-64", "riscv64"} {
+		filename := fmt.Sprintf("mypart-1.0.0_%s.raw", arch)
+		if p.Matches(filename) {
+			t.Errorf("Matches(%q) = true, want false (arch strings are not valid @a flags)", filename)
+		}
 	}
 }
 
