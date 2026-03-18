@@ -40,6 +40,9 @@ type ClientConfig struct {
 	// Verify enables GPG signature verification on SHA256SUMS files.
 	Verify bool
 
+	// Verbose enables debug-level output through the Progress reporter.
+	Verbose bool
+
 	// Progress is an optional progress reporter for receiving progress updates.
 	// If nil, no progress is reported.
 	Progress reporter.Reporter
@@ -71,4 +74,10 @@ func (c *Client) msg(format string, a ...any) {
 
 func (c *Client) warn(format string, a ...any) {
 	c.reporter.Warning(format, a...)
+}
+
+func (c *Client) debug(format string, a ...any) {
+	if c.config.Verbose {
+		c.reporter.Message("debug: "+format, a...)
+	}
 }
