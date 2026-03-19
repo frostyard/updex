@@ -13,7 +13,7 @@ updex supports two pattern styles for sysext transfers:
 
 **After specifier expansion on Fedora 39/x86-64:**
 ```
-docker_1.0.0_39_x86-64.raw
+docker_@v_39_x86-64.raw
 ```
 
 **Components:**
@@ -42,7 +42,7 @@ docker_1.0.0_39_x86-64.raw
 
 **After specifier expansion on Fedora 39/x86-64:**
 ```
-docker-7.2.0-39-x86-64.raw
+docker-@v-39-x86-64.raw
 ```
 
 **Components:**
