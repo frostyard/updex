@@ -3,6 +3,7 @@ package updex
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -828,4 +829,24 @@ func TestCheckFeatures_UpToDate(t *testing.T) {
 	if results[0].Results[0].UpdateAvailable {
 		t.Error("expected UpdateAvailable=false when up to date")
 	}
+}
+
+// compareVersions compares two semantic versions: returns > 0 if v1 > v2, < 0 if v1 < v2, 0 if equal
+// Simple version comparison for test purposes
+func compareVersions(v1, v2 string) int {
+	// Simple numeric comparison for semver (x.y.z format)
+	v1parts := strings.Split(v1, ".")
+	v2parts := strings.Split(v2, ".")
+	for i := 0; i < len(v1parts) && i < len(v2parts); i++ {
+		var v1val, v2val int
+		fmt.Sscanf(v1parts[i], "%d", &v1val)
+		fmt.Sscanf(v2parts[i], "%d", &v2val)
+		if v1val > v2val {
+			return 1
+		}
+		if v1val < v2val {
+			return -1
+		}
+	}
+	return 0
 }

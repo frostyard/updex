@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -326,6 +327,87 @@ Type=regular-file
 	}
 }
 
+func TestMatchPatternMultiplePatternsWithSpecifierExpansion(t *testing.T) {
+	// Test MatchPattern with both frostyard and fedora-sysexts patterns
+	// Verify that both patterns are parsed, stored in MatchPatterns,
+	// and that specifiers are expanded correctly for all of them.
+	content := `[Source]
+Type=url-file
+Path=https://example.com
+MatchPattern=docker_@v_%a.raw docker-@v-%w-%a.raw
+
+[Target]
+Type=url-file
+Path=/var/lib/sysext/docker.raw
+MatchPattern=docker_@v_%a.raw docker-@v-%w-%a.raw
+`
+
+	// Write test transfer file to temp directory
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "docker.transfer"), []byte(content), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	// Load transfers from temp directory
+	transfers, err := LoadTransfers(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadTransfers failed: %v", err)
+	}
+
+	if len(transfers) != 1 {
+		t.Fatalf("Expected 1 transfer, got %d", len(transfers))
+	}
+
+	tr := transfers[0]
+
+	// Verify MatchPatterns contains both patterns (with specifiers expanded)
+	if len(tr.Source.MatchPatterns) != 2 {
+		t.Errorf("Source.MatchPatterns has %d patterns, want 2", len(tr.Source.MatchPatterns))
+	}
+	if len(tr.Target.MatchPatterns) != 2 {
+		t.Errorf("Target.MatchPatterns has %d patterns, want 2", len(tr.Target.MatchPatterns))
+	}
+
+	// First pattern should be frostyard with %a expanded (but not %w since it's not in the pattern)
+	// e.g., "docker_@v_x86-64.raw"
+	// Second pattern should be fedora-sysexts with both %w and %a expanded
+	// e.g., "docker-@v-43-x86-64.raw" (where 43 is the OS version)
+
+	// Verify first pattern (frostyard) has @v placeholder but %a is expanded
+	if !strings.Contains(tr.Source.MatchPatterns[0], "docker_@v_") {
+		t.Errorf("Source.MatchPatterns[0] should contain 'docker_@v_', got %q", tr.Source.MatchPatterns[0])
+	}
+	if strings.Contains(tr.Source.MatchPatterns[0], "%a") {
+		t.Errorf("Source.MatchPatterns[0] should have %%a expanded, got %q", tr.Source.MatchPatterns[0])
+	}
+	if strings.Contains(tr.Source.MatchPatterns[0], ".raw") {
+		// Good, has expected suffix
+	}
+
+	// Verify second pattern (fedora-sysexts) has @v placeholder but %w and %a are expanded
+	if !strings.Contains(tr.Source.MatchPatterns[1], "docker-@v-") {
+		t.Errorf("Source.MatchPatterns[1] should contain 'docker-@v-', got %q", tr.Source.MatchPatterns[1])
+	}
+	if strings.Contains(tr.Source.MatchPatterns[1], "%a") {
+		t.Errorf("Source.MatchPatterns[1] should have %%a expanded, got %q", tr.Source.MatchPatterns[1])
+	}
+	if strings.Contains(tr.Source.MatchPatterns[1], "%w") {
+		t.Errorf("Source.MatchPatterns[1] should have %%w expanded, got %q", tr.Source.MatchPatterns[1])
+	}
+
+	// Verify MatchPattern (first pattern is stored there)
+	if tr.Source.MatchPattern != tr.Source.MatchPatterns[0] {
+		t.Errorf("Source.MatchPattern should equal first MatchPatterns entry: %q != %q",
+			tr.Source.MatchPattern, tr.Source.MatchPatterns[0])
+	}
+
+	// Same checks for Target
+	if tr.Target.MatchPattern != tr.Target.MatchPatterns[0] {
+		t.Errorf("Target.MatchPattern should equal first MatchPatterns entry: %q != %q",
+			tr.Target.MatchPattern, tr.Target.MatchPatterns[0])
+	}
+}
+
 func TestLoadTransfersEmptyDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -468,5 +550,95 @@ ReadOnly=true
 
 	if !transfers[0].Target.ReadOnly {
 		t.Error("ReadOnly = false, want true")
+	}
+}
+
+func TestLoadTransfers_FrostyardPattern(t *testing.T) {
+	// Test loading transfer file with frostyard pattern
+	// Frostyard pattern includes OS version (%w) and architecture (%a)
+	// Example: docker_@v_%w_%a.raw matches files like docker_1.0.0_39_x86-64.raw
+	//
+	// The specifiers %w and %a are expanded during parsing:
+	// - %w expands to VERSION_ID from /etc/os-release
+	// - %a expands to the system architecture (e.g., x86-64, arm64)
+	// - The @v placeholder remains for later version matching
+	content := `[Transfer]
+Protect=no
+
+[Source]
+Type=url-file
+Path=https://example.com/docker/
+MatchPattern=docker_@v_%w_%a.raw
+
+[Target]
+Type=url-file
+Path=/var/lib/sysext/docker.raw
+MatchPattern=docker_@v_%w_%a.raw
+`
+
+	// Write test transfer file
+	tmpdir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpdir, "docker.transfer"), []byte(content), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	// Load transfer file
+	transfers, err := LoadTransfers(tmpdir)
+	if err != nil {
+		t.Fatalf("LoadTransfers failed: %v", err)
+	}
+
+	if len(transfers) != 1 {
+		t.Fatalf("Expected 1 transfer, got %d", len(transfers))
+	}
+
+	tr := transfers[0]
+
+	// Verify MatchPattern contains @v placeholder and has %w, %a expanded
+	// Pattern should look like: docker_@v_<osversion>_<arch>.raw
+	// Example: docker_@v_43_x86-64.raw on Fedora 43 x86-64
+	if !strings.Contains(tr.Source.MatchPattern, "docker_@v_") {
+		t.Errorf("Source.MatchPattern = %q, should contain 'docker_@v_'", tr.Source.MatchPattern)
+	}
+	if strings.Contains(tr.Source.MatchPattern, "%w") {
+		t.Errorf("Source.MatchPattern = %q, should have %%w expanded", tr.Source.MatchPattern)
+	}
+	if strings.Contains(tr.Source.MatchPattern, "%a") {
+		t.Errorf("Source.MatchPattern = %q, should have %%a expanded", tr.Source.MatchPattern)
+	}
+	if !strings.HasSuffix(tr.Source.MatchPattern, ".raw") {
+		t.Errorf("Source.MatchPattern = %q, should end with .raw", tr.Source.MatchPattern)
+	}
+
+	// Same checks for Target
+	if !strings.Contains(tr.Target.MatchPattern, "docker_@v_") {
+		t.Errorf("Target.MatchPattern = %q, should contain 'docker_@v_'", tr.Target.MatchPattern)
+	}
+	if strings.Contains(tr.Target.MatchPattern, "%w") {
+		t.Errorf("Target.MatchPattern = %q, should have %%w expanded", tr.Target.MatchPattern)
+	}
+	if strings.Contains(tr.Target.MatchPattern, "%a") {
+		t.Errorf("Target.MatchPattern = %q, should have %%a expanded", tr.Target.MatchPattern)
+	}
+	if !strings.HasSuffix(tr.Target.MatchPattern, ".raw") {
+		t.Errorf("Target.MatchPattern = %q, should end with .raw", tr.Target.MatchPattern)
+	}
+
+	// Verify MatchPatterns array contains exactly one pattern
+	if len(tr.Source.MatchPatterns) != 1 {
+		t.Errorf("Source.MatchPatterns has %d patterns, want 1", len(tr.Source.MatchPatterns))
+	}
+	if len(tr.Target.MatchPatterns) != 1 {
+		t.Errorf("Target.MatchPatterns has %d patterns, want 1", len(tr.Target.MatchPatterns))
+	}
+
+	// Verify MatchPattern equals first MatchPatterns entry
+	if tr.Source.MatchPattern != tr.Source.MatchPatterns[0] {
+		t.Errorf("Source.MatchPattern should equal first MatchPatterns entry: %q != %q",
+			tr.Source.MatchPattern, tr.Source.MatchPatterns[0])
+	}
+	if tr.Target.MatchPattern != tr.Target.MatchPatterns[0] {
+		t.Errorf("Target.MatchPattern should equal first MatchPatterns entry: %q != %q",
+			tr.Target.MatchPattern, tr.Target.MatchPatterns[0])
 	}
 }

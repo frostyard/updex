@@ -2,6 +2,7 @@ package version
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -350,6 +351,173 @@ func TestAtAPlaceholderGPTFlag(t *testing.T) {
 		if p.Matches(filename) {
 			t.Errorf("Matches(%q) = true, want false (arch strings are not valid @a flags)", filename)
 		}
+	}
+}
+
+func TestPattern_FedoraSysextsStyleWithSpecifierExpansion(t *testing.T) {
+	// Fedora-sysexts pattern: <name>-@v-%w-%a.raw
+	// Example: docker-1.0.0-39-x86-64.raw (version 39 = Fedora 39)
+	tests := []struct {
+		name            string
+		originalPattern string // Pattern with %w and %a specifiers
+		osVersion       string // Expanded %w value (VERSION_ID from os-release)
+		arch            string // Expanded %a value (systemd arch)
+		filename        string // Filename to match
+		expectVersion   string // Expected extracted version
+		expectMatch     bool
+	}{
+		{
+			name:            "fedora-sysexts pattern fedora 39 x86-64",
+			originalPattern: "docker-@v-%w-%a.raw",
+			osVersion:       "39",
+			arch:            "x86-64",
+			filename:        "docker-1.0.0-39-x86-64.raw",
+			expectVersion:   "1.0.0",
+			expectMatch:     true,
+		},
+		{
+			name:            "fedora-sysexts pattern ubuntu 22.04 arm64",
+			originalPattern: "htop-@v-%w-%a.raw",
+			osVersion:       "22.04",
+			arch:            "arm64",
+			filename:        "htop-7.2.0-22.04-arm64.raw",
+			expectVersion:   "7.2.0",
+			expectMatch:     true,
+		},
+		{
+			name:            "fedora-sysexts pattern with complex version",
+			originalPattern: "docker-@v-%w-%a.raw",
+			osVersion:       "39",
+			arch:            "x86-64",
+			filename:        "docker-5:29.1.5-rc1-39-x86-64.raw",
+			expectVersion:   "5:29.1.5-rc1",
+			expectMatch:     true,
+		},
+		{
+			name:            "fedora-sysexts pattern with xz compression",
+			originalPattern: "docker-@v-%w-%a.raw.xz",
+			osVersion:       "39",
+			arch:            "arm64",
+			filename:        "docker-29.0.0-39-arm64.raw.xz",
+			expectVersion:   "29.0.0",
+			expectMatch:     true,
+		},
+		{
+			name:            "fedora-sysexts pattern os version mismatch",
+			originalPattern: "docker-@v-%w-%a.raw",
+			osVersion:       "39",
+			arch:            "x86-64",
+			filename:        "docker-1.0.0-38-x86-64.raw",
+			expectVersion:   "",
+			expectMatch:     false,
+		},
+		{
+			name:            "fedora-sysexts pattern arch mismatch",
+			originalPattern: "docker-@v-%w-%a.raw",
+			osVersion:       "39",
+			arch:            "x86-64",
+			filename:        "docker-1.0.0-39-arm64.raw",
+			expectVersion:   "",
+			expectMatch:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Simulate specifier expansion for both %w and %a
+			expandedPattern := strings.ReplaceAll(tt.originalPattern, "%w", tt.osVersion)
+			expandedPattern = strings.ReplaceAll(expandedPattern, "%a", tt.arch)
+
+			p, err := ParsePattern(expandedPattern)
+			if err != nil {
+				t.Fatalf("ParsePattern failed: %v", err)
+			}
+
+			if p.Matches(tt.filename) != tt.expectMatch {
+				t.Errorf("Matches(%q) = %v, want %v", tt.filename, p.Matches(tt.filename), tt.expectMatch)
+			}
+
+			if tt.expectMatch {
+				version, ok := p.ExtractVersion(tt.filename)
+				if !ok {
+					t.Errorf("ExtractVersion(%q) returned ok=false, want true", tt.filename)
+				}
+				if version != tt.expectVersion {
+					t.Errorf("ExtractVersion(%q) = %q, want %q", tt.filename, version, tt.expectVersion)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractVersionMulti_FedoraSysextsPattern(t *testing.T) {
+	// Test ExtractVersionMulti with fedora-sysexts pattern
+	// This test verifies that ExtractVersionMulti correctly matches and extracts versions
+	tests := []struct {
+		name              string
+		originalPatterns  []string // Patterns with unexpanded specifiers
+		expandedPatterns  []string // Patterns after specifier expansion
+		filename          string   // Filename to match
+		expectVersion     string   // Expected version
+		expectOrigPattern string   // Expected matched pattern (original, unexpanded)
+		expectOK          bool
+	}{
+		{
+			name:              "fedora-sysexts pattern matches",
+			originalPatterns:  []string{"docker-@v-%w-%a.raw"},
+			expandedPatterns:  []string{"docker-@v-39-x86-64.raw"},
+			filename:          "docker-1.0.0-39-x86-64.raw",
+			expectVersion:     "1.0.0",
+			expectOrigPattern: "docker-@v-%w-%a.raw",
+			expectOK:          true,
+		},
+		{
+			name:              "fedora-sysexts pattern with compression",
+			originalPatterns:  []string{"docker-@v-%w-%a.raw.xz"},
+			expandedPatterns:  []string{"docker-@v-39-x86-64.raw.xz"},
+			filename:          "docker-1.0.0-39-x86-64.raw.xz",
+			expectVersion:     "1.0.0",
+			expectOrigPattern: "docker-@v-%w-%a.raw.xz",
+			expectOK:          true,
+		},
+		{
+			name:              "no pattern matches",
+			originalPatterns:  []string{"docker-@v-%w-%a.raw"},
+			expandedPatterns:  []string{"docker-@v-39-x86-64.raw"},
+			filename:          "htop-1.0.0.raw",
+			expectVersion:     "",
+			expectOrigPattern: "",
+			expectOK:          false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// In real usage, patterns would be expanded first (specifiers replaced).
+			// We test with the expanded patterns and track which original pattern matched.
+			version, matched, ok := ExtractVersionMulti(tt.filename, tt.expandedPatterns)
+
+			if ok != tt.expectOK {
+				t.Errorf("ExtractVersionMulti() ok = %v, want %v", ok, tt.expectOK)
+			}
+
+			if ok {
+				if version != tt.expectVersion {
+					t.Errorf("ExtractVersionMulti() version = %q, want %q", version, tt.expectVersion)
+				}
+				// Find which original pattern corresponds to the matched expanded pattern
+				var matchedOrig string
+				for i, exp := range tt.expandedPatterns {
+					if exp == matched {
+						matchedOrig = tt.originalPatterns[i]
+						break
+					}
+				}
+				if matchedOrig != tt.expectOrigPattern {
+					t.Errorf("ExtractVersionMulti() matched original = %q, want %q", matchedOrig, tt.expectOrigPattern)
+				}
+			}
+		})
 	}
 }
 
