@@ -171,8 +171,8 @@ docker-1.0.0-39-x86-64.raw.gz       ✓ (fedora-sysexts, gzip compressed)
 | Delimiter Style | Underscores (`_`) | Hyphens (`-`) |
 | OS Version | Included (`%w`) | Included (`%w`) |
 | Architecture | Included (`%a`) | Included (`%a`) |
-| Example (Fedora 39/x86-64) | `docker_1.0.0_39_x86-64.raw` | `docker-1.0.0-39-x86-64.raw` |
-| Example (Ubuntu 22.04/arm64) | `htop_7.2.0_22.04_arm64.raw` | `htop-7.2.0-22.04-arm64.raw` |
+| Example filename (Fedora 39/x86-64) | `docker_1.0.0_39_x86-64.raw` | `docker-1.0.0-39-x86-64.raw` |
+| Example filename (Ubuntu 22.04/arm64) | `htop_7.2.0_22.04_arm64.raw` | `htop-7.2.0-22.04-arm64.raw` |
 
 ## Migration Note
 
