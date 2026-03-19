@@ -380,8 +380,8 @@ MatchPattern=docker_@v_%a.raw docker-@v-%w-%a.raw
 	if strings.Contains(tr.Source.MatchPatterns[0], "%a") {
 		t.Errorf("Source.MatchPatterns[0] should have %%a expanded, got %q", tr.Source.MatchPatterns[0])
 	}
-	if strings.Contains(tr.Source.MatchPatterns[0], ".raw") {
-		// Good, has expected suffix
+	if !strings.Contains(tr.Source.MatchPatterns[0], ".raw") {
+		t.Errorf("Source.MatchPatterns[0] should contain '.raw', got %q", tr.Source.MatchPatterns[0])
 	}
 
 	// Verify second pattern (fedora-sysexts) has @v placeholder but %w and %a are expanded
