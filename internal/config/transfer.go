@@ -322,7 +322,10 @@ var goarchToSystemd = map[string]string{
 }
 
 func goarchToSystemdArch() string {
-	return goarchToSystemd[runtime.GOARCH]
+	if arch, ok := goarchToSystemd[runtime.GOARCH]; ok && arch != "" {
+		return arch
+	}
+	return runtime.GOARCH
 }
 
 // readFileOneLine returns the first (and usually only) line of a file, trimmed.
