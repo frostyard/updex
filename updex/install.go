@@ -24,6 +24,7 @@ func (c *Client) installTransfer(transfer *config.Transfer, noRefresh bool) (str
 	if len(patterns) == 0 && transfer.Source.MatchPattern != "" {
 		patterns = []string{transfer.Source.MatchPattern}
 	}
+	c.debug("source patterns: %v", patterns)
 
 	// Find available versions using all patterns
 	versionSet := make(map[string]bool)
@@ -45,6 +46,7 @@ func (c *Client) installTransfer(transfer *config.Transfer, noRefresh bool) (str
 	// Sort and get newest
 	version.Sort(available)
 	versionToInstall := available[0]
+	c.debug("selected version %s (from %d available)", versionToInstall, len(available))
 
 	// Check if already installed
 	installed, current, _ := sysext.GetInstalledVersions(transfer)
@@ -85,6 +87,7 @@ func (c *Client) installTransfer(transfer *config.Transfer, noRefresh bool) (str
 
 	// Download
 	downloadURL := transfer.Source.Path + "/" + sourceFile
+	c.debug("downloading %s → %s", downloadURL, targetPath)
 	err = download.Download(downloadURL, targetPath, expectedHash, transfer.Target.Mode)
 	if err != nil {
 		return "", fmt.Errorf("download failed: %w", err)

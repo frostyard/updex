@@ -15,16 +15,19 @@ func (c *Client) getAvailableVersions(transfer *config.Transfer) ([]string, erro
 	}
 
 	// Fetch manifest
+	c.debug("fetching manifest from %s", transfer.Source.Path)
 	m, err := manifest.Fetch(transfer.Source.Path, c.config.Verify || transfer.Transfer.Verify)
 	if err != nil {
 		return nil, err
 	}
+	c.debug("manifest has %d file(s)", len(m.Files))
 
 	// Extract versions from filenames using all patterns
 	patterns := transfer.Source.MatchPatterns
 	if len(patterns) == 0 && transfer.Source.MatchPattern != "" {
 		patterns = []string{transfer.Source.MatchPattern}
 	}
+	c.debug("matching against pattern(s): %v", patterns)
 
 	versionSet := make(map[string]bool)
 	for filename := range m.Files {
@@ -43,6 +46,7 @@ func (c *Client) getAvailableVersions(transfer *config.Transfer) ([]string, erro
 	for v := range versionSet {
 		versions = append(versions, v)
 	}
+	c.debug("found %d matching version(s): %v", len(versions), versions)
 
 	return versions, nil
 }

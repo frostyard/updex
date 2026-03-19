@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -167,8 +168,12 @@ func parseTransferFile(filePath, component string) (*Transfer, error) {
 			t.Source.Path = strings.TrimRight(key.String(), "/")
 		}
 		if key, err := sec.GetKey("MatchPattern"); err == nil {
-			// Handle multiple patterns (space-separated alternatives)
+			// Handle multiple patterns (space-separated alternatives).
+			// Specifiers (%a, %v, %w, …) are expanded before the patterns are used.
 			patterns := parsePatterns(key.String())
+			for i, p := range patterns {
+				patterns[i] = expandSpecifiers(p)
+			}
 			t.Source.MatchPatterns = patterns
 			if len(patterns) > 0 {
 				t.Source.MatchPattern = patterns[0] // Keep first for backward compat
@@ -187,8 +192,12 @@ func parseTransferFile(filePath, component string) (*Transfer, error) {
 			t.Target.Path = key.String()
 		}
 		if key, err := sec.GetKey("MatchPattern"); err == nil {
-			// Handle multiple patterns (space-separated alternatives)
+			// Handle multiple patterns (space-separated alternatives).
+			// Specifiers are expanded here for the same reason as Source.MatchPattern.
 			patterns := parsePatterns(key.String())
+			for i, p := range patterns {
+				patterns[i] = expandSpecifiers(p)
+			}
 			t.Target.MatchPatterns = patterns
 			if len(patterns) > 0 {
 				t.Target.MatchPattern = patterns[0] // Keep first for backward compat
@@ -227,32 +236,109 @@ func parseTransferFile(filePath, component string) (*Transfer, error) {
 	return t, nil
 }
 
-// expandSpecifiers expands systemd-style specifiers in a string
+// expandSpecifiers expands systemd-style %x specifiers per sysupdate.d(5).
+// It performs a single left-to-right scan so that %% → % cannot trigger
+// a second round of expansion.
 func expandSpecifiers(s string) string {
-	// Read os-release for specifier values
+	if !strings.ContainsRune(s, '%') {
+		return s
+	}
+
 	osRelease := readOSRelease()
 
-	replacements := map[string]string{
-		"%A": osRelease["IMAGE_VERSION"], // OS image version
-		"%a": osRelease["ARCHITECTURE"],  // Architecture
-		"%B": osRelease["BUILD_ID"],      // OS build ID
-		"%M": osRelease["IMAGE_ID"],      // OS image ID
-		"%m": osRelease["ID"],            // OS ID
-		"%o": osRelease["ID"],            // OS ID (alternative)
-		"%v": osRelease["VERSION_ID"],    // OS version ID
-		"%w": osRelease["VARIANT_ID"],    // OS variant ID
-		"%%": "%",                        // Literal %
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		if s[i] != '%' || i+1 >= len(s) {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		// We have a % followed by at least one character.
+		var repl string
+		switch s[i+1] {
+		case 'A':
+			repl = osRelease["IMAGE_VERSION"]
+		case 'a':
+			repl = goarchToSystemdArch()
+		case 'B':
+			repl = osRelease["BUILD_ID"]
+		case 'b':
+			repl = readFileOneLine("/proc/sys/kernel/random/boot_id")
+		case 'H':
+			repl, _ = os.Hostname()
+		case 'l':
+			h, _ := os.Hostname()
+			if dot := strings.IndexByte(h, '.'); dot >= 0 {
+				h = h[:dot]
+			}
+			repl = h
+		case 'M':
+			repl = osRelease["IMAGE_ID"]
+		case 'm':
+			repl = readFileOneLine("/etc/machine-id")
+		case 'o':
+			repl = osRelease["ID"]
+		case 'T':
+			repl = "/tmp"
+		case 'V':
+			repl = "/var/tmp"
+		case 'v':
+			repl = readFileOneLine("/proc/sys/kernel/osrelease")
+		case 'w':
+			repl = osRelease["VERSION_ID"]
+		case 'W':
+			repl = osRelease["VARIANT_ID"]
+		case '%':
+			repl = "%"
+		default:
+			// Unknown specifier — leave as-is.
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		b.WriteString(repl)
+		i += 2
 	}
-
-	result := s
-	for spec, value := range replacements {
-		result = strings.ReplaceAll(result, spec, value)
-	}
-
-	return result
+	return b.String()
 }
 
-// readOSRelease reads /etc/os-release and returns key-value pairs
+// goarchToSystemd maps Go architecture identifiers to systemd's naming convention.
+// See the systemd architecture table in systemd.unit(5).
+var goarchToSystemd = map[string]string{
+	"amd64":    "x86-64",
+	"386":      "x86",
+	"arm64":    "arm64",
+	"arm":      "arm",
+	"riscv64":  "riscv64",
+	"ppc64":    "ppc64",
+	"ppc64le":  "ppc64-le",
+	"s390x":    "s390x",
+	"mips":     "mips",
+	"mipsle":   "mips-le",
+	"mips64":   "mips64",
+	"mips64le": "mips64-le",
+	"loong64":  "loongarch64",
+}
+
+func goarchToSystemdArch() string {
+	if arch, ok := goarchToSystemd[runtime.GOARCH]; ok && arch != "" {
+		return arch
+	}
+	return runtime.GOARCH
+}
+
+// readFileOneLine returns the first (and usually only) line of a file, trimmed.
+func readFileOneLine(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	line, _, _ := strings.Cut(strings.TrimRight(string(data), "\n"), "\n")
+	return strings.TrimSpace(line)
+}
+
+// readOSRelease reads /etc/os-release and returns key-value pairs.
 func readOSRelease() map[string]string {
 	result := make(map[string]string)
 

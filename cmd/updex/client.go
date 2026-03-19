@@ -10,6 +10,7 @@ func newClient() *updex.Client {
 	return updex.NewClient(updex.ClientConfig{
 		Definitions: definitions,
 		Verify:      verify,
+		Verbose:     clix.Verbose,
 		Progress:    clix.NewReporter(),
 	})
 }
