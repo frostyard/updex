@@ -50,7 +50,8 @@ type TargetSection struct {
 	ReadOnly       bool     // Whether to set read-only flag
 }
 
-// Patterns returns MatchPatterns if non-empty, falling back to []string{MatchPattern}.
+// Patterns returns MatchPatterns if non-empty, falling back to
+// []string{MatchPattern} if MatchPattern is set. Returns nil when both are empty.
 func (s SourceSection) Patterns() []string {
 	if len(s.MatchPatterns) > 0 {
 		return s.MatchPatterns
@@ -61,7 +62,8 @@ func (s SourceSection) Patterns() []string {
 	return nil
 }
 
-// Patterns returns MatchPatterns if non-empty, falling back to []string{MatchPattern}.
+// Patterns returns MatchPatterns if non-empty, falling back to
+// []string{MatchPattern} if MatchPattern is set. Returns nil when both are empty.
 func (t TargetSection) Patterns() []string {
 	if len(t.MatchPatterns) > 0 {
 		return t.MatchPatterns
