@@ -1,6 +1,7 @@
 package updex
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/frostyard/updex/internal/config"
@@ -9,14 +10,14 @@ import (
 )
 
 // getAvailableVersions retrieves available versions for a transfer from remote manifest.
-func (c *Client) getAvailableVersions(transfer *config.Transfer) ([]string, error) {
+func (c *Client) getAvailableVersions(ctx context.Context, transfer *config.Transfer) ([]string, error) {
 	if transfer.Source.Type != "url-file" {
 		return nil, fmt.Errorf("unsupported source type: %s", transfer.Source.Type)
 	}
 
 	// Fetch manifest
 	c.debug("fetching manifest from %s", transfer.Source.Path)
-	m, err := manifest.Fetch(transfer.Source.Path, c.config.Verify || transfer.Transfer.Verify)
+	m, err := manifest.Fetch(ctx, transfer.Source.Path, c.config.Verify || transfer.Transfer.Verify)
 	if err != nil {
 		return nil, err
 	}
