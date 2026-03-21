@@ -26,7 +26,7 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 		patternStrs = []string{transfer.Source.MatchPattern}
 	}
 	c.debug("source patterns: %v", patternStrs)
-	patterns := version.ParsePatterns(patternStrs)
+	patterns, _ := version.ParsePatterns(patternStrs)
 
 	// Find available versions using all patterns
 	versionSet := make(map[string]bool)

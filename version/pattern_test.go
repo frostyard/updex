@@ -523,7 +523,10 @@ func TestExtractVersionMulti_FedoraSysextsPattern(t *testing.T) {
 
 func TestParsePatterns(t *testing.T) {
 	t.Run("valid patterns", func(t *testing.T) {
-		patterns := ParsePatterns([]string{"app_@v.raw", "app_@v.raw.xz"})
+		patterns, err := ParsePatterns([]string{"app_@v.raw", "app_@v.raw.xz"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if len(patterns) != 2 {
 			t.Fatalf("expected 2 patterns, got %d", len(patterns))
 		}
@@ -533,22 +536,41 @@ func TestParsePatterns(t *testing.T) {
 	})
 
 	t.Run("skips invalid patterns", func(t *testing.T) {
-		patterns := ParsePatterns([]string{"app_@v.raw", "no-version", ""})
+		patterns, err := ParsePatterns([]string{"app_@v.raw", "no-version", ""})
 		if len(patterns) != 1 {
 			t.Fatalf("expected 1 pattern, got %d", len(patterns))
+		}
+		if err == nil {
+			t.Fatal("expected error for invalid patterns")
+		}
+	})
+
+	t.Run("all invalid returns first error", func(t *testing.T) {
+		patterns, err := ParsePatterns([]string{"no-version", ""})
+		if len(patterns) != 0 {
+			t.Fatalf("expected 0 patterns, got %d", len(patterns))
+		}
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if err != ErrMissingVersionPlaceholder {
+			t.Errorf("expected ErrMissingVersionPlaceholder, got %v", err)
 		}
 	})
 
 	t.Run("empty input", func(t *testing.T) {
-		patterns := ParsePatterns(nil)
+		patterns, err := ParsePatterns(nil)
 		if len(patterns) != 0 {
 			t.Fatalf("expected 0 patterns, got %d", len(patterns))
+		}
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
 	})
 }
 
 func TestExtractVersionParsed(t *testing.T) {
-	patterns := ParsePatterns([]string{"app_@v.raw", "app_@v.raw.xz"})
+	patterns, _ := ParsePatterns([]string{"app_@v.raw", "app_@v.raw.xz"})
 
 	t.Run("matches first pattern", func(t *testing.T) {
 		v, matched, ok := ExtractVersionParsed("app_1.2.3.raw", patterns)

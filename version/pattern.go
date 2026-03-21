@@ -118,14 +118,22 @@ func ExtractVersionMulti(filename string, patternStrs []string) (version string,
 }
 
 // ParsePatterns parses multiple pattern strings, skipping any that fail to parse.
-func ParsePatterns(patternStrs []string) []*Pattern {
+// It returns the first parse error encountered so callers can surface it when all
+// patterns fail.
+func ParsePatterns(patternStrs []string) ([]*Pattern, error) {
 	patterns := make([]*Pattern, 0, len(patternStrs))
+	var firstErr error
 	for _, s := range patternStrs {
-		if p, err := ParsePattern(s); err == nil {
-			patterns = append(patterns, p)
+		p, err := ParsePattern(s)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
 		}
+		patterns = append(patterns, p)
 	}
-	return patterns
+	return patterns, firstErr
 }
 
 // ExtractVersionParsed tries to extract a version from a filename using pre-parsed patterns.

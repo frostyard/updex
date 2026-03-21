@@ -437,7 +437,7 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 			if len(patternStrs) == 0 && transfer.Source.MatchPattern != "" {
 				patternStrs = []string{transfer.Source.MatchPattern}
 			}
-			patterns := version.ParsePatterns(patternStrs)
+			patterns, _ := version.ParsePatterns(patternStrs)
 
 			var sourceFile string
 			var expectedHash string

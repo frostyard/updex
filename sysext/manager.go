@@ -22,9 +22,9 @@ func GetInstalledVersions(t *config.Transfer) ([]string, string, error) {
 		return nil, "", fmt.Errorf("no target match patterns defined")
 	}
 
-	patterns := version.ParsePatterns(patternStrs)
+	patterns, firstErr := version.ParsePatterns(patternStrs)
 	if len(patterns) == 0 {
-		return nil, "", fmt.Errorf("invalid target pattern: %w", version.ErrEmptyPattern)
+		return nil, "", fmt.Errorf("invalid target pattern: %w", firstErr)
 	}
 
 	targetDir := t.Target.Path
@@ -49,8 +49,6 @@ func GetInstalledVersions(t *config.Transfer) ([]string, string, error) {
 		if target, err := os.Readlink(symlinkPath); err == nil {
 			// Extract version from symlink target using any pattern
 			if v, _, ok := version.ExtractVersionParsed(filepath.Base(target), patterns); ok {
-				current = v
-			} else if v, ok := patterns[0].ExtractVersion(filepath.Base(target)); ok {
 				current = v
 			}
 		}
@@ -90,9 +88,9 @@ func GetActiveVersion(t *config.Transfer) (string, error) {
 		return "", fmt.Errorf("no target match patterns defined")
 	}
 
-	patterns := version.ParsePatterns(patternStrs)
+	patterns, firstErr := version.ParsePatterns(patternStrs)
 	if len(patterns) == 0 {
-		return "", fmt.Errorf("invalid target pattern: %w", version.ErrEmptyPattern)
+		return "", fmt.Errorf("invalid target pattern: %w", firstErr)
 	}
 
 	// First try the current symlink in the target directory
@@ -100,8 +98,6 @@ func GetActiveVersion(t *config.Transfer) (string, error) {
 		symlinkPath := filepath.Join(t.Target.Path, t.Target.CurrentSymlink)
 		if target, err := os.Readlink(symlinkPath); err == nil {
 			if v, _, ok := version.ExtractVersionParsed(filepath.Base(target), patterns); ok {
-				return v, nil
-			} else if v, ok := patterns[0].ExtractVersion(filepath.Base(target)); ok {
 				return v, nil
 			}
 		}
@@ -162,7 +158,7 @@ func VacuumWithDetails(t *config.Transfer) (removed []string, kept []string, err
 		return nil, nil, fmt.Errorf("no target match patterns defined")
 	}
 
-	patterns := version.ParsePatterns(patternStrs)
+	patterns, _ := version.ParsePatterns(patternStrs)
 
 	targetDir := t.Target.Path
 	if targetDir == "" {
@@ -352,7 +348,7 @@ func RemoveAllVersions(t *config.Transfer) ([]string, error) {
 		return nil, fmt.Errorf("no target match patterns defined")
 	}
 
-	patterns := version.ParsePatterns(patternStrs)
+	patterns, _ := version.ParsePatterns(patternStrs)
 
 	targetDir := t.Target.Path
 	if targetDir == "" {

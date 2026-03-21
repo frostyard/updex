@@ -31,7 +31,7 @@ func (c *Client) getAvailableVersions(ctx context.Context, transfer *config.Tran
 		patternStrs = []string{transfer.Source.MatchPattern}
 	}
 	c.debug("matching against pattern(s): %v", patternStrs)
-	patterns := version.ParsePatterns(patternStrs)
+	patterns, _ := version.ParsePatterns(patternStrs)
 
 	versionSet := make(map[string]bool)
 	for filename := range m.Files {
