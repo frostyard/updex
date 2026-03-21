@@ -222,7 +222,7 @@ func VacuumWithDetails(t *config.Transfer) (removed []string, kept []string, err
 
 	for i, v := range versions {
 		filename := versionToFile[v]
-		filepath := filepath.Join(targetDir, filename)
+		fullPath := filepath.Join(targetDir, filename)
 
 		// Always keep protected versions
 		if t.Transfer.ProtectVersion != "" && v == t.Transfer.ProtectVersion {
@@ -237,7 +237,7 @@ func VacuumWithDetails(t *config.Transfer) (removed []string, kept []string, err
 		}
 
 		// Remove old version
-		if err := os.Remove(filepath); err != nil {
+		if err := os.Remove(fullPath); err != nil {
 			return removed, kept, fmt.Errorf("failed to remove %s: %w", filename, err)
 		}
 		removed = append(removed, v)
