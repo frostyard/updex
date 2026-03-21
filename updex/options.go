@@ -24,6 +24,15 @@ type EnableFeatureOptions struct {
 	NoRefresh bool
 }
 
+// installTransferOptions configures the installTransfer operation.
+type installTransferOptions struct {
+	// NoVacuum skips removing old versions after install.
+	NoVacuum bool
+
+	// NoRefresh skips running systemd-sysext refresh after install.
+	NoRefresh bool
+}
+
 // DisableFeatureOptions configures the DisableFeature operation.
 type DisableFeatureOptions struct {
 	// Remove deletes downloaded files for this feature's transfers.

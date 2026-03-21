@@ -7,39 +7,21 @@ import (
 
 	"github.com/frostyard/updex/config"
 	"github.com/frostyard/updex/download"
-	"github.com/frostyard/updex/manifest"
 	"github.com/frostyard/updex/sysext"
 	"github.com/frostyard/updex/version"
 )
 
 // installTransfer performs the update/install logic for a single transfer.
-func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer, noRefresh bool) (string, error) {
-	// Get available versions
-	m, err := manifest.Fetch(ctx, transfer.Source.Path, c.config.Verify || transfer.Transfer.Verify)
+// It returns the version selected, whether a download occurred, and any error.
+func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer, opts installTransferOptions) (string, bool, error) {
+	// Get available versions (applies MinVersion filter)
+	available, m, err := c.getAvailableVersions(ctx, transfer)
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch manifest: %w", err)
+		return "", false, fmt.Errorf("failed to get available versions: %w", err)
 	}
 
-	// Get all patterns
-	patternStrs := transfer.Source.Patterns()
-	c.debug("source patterns: %v", patternStrs)
-	patterns, _ := version.ParsePatterns(patternStrs)
-
-	// Find available versions using all patterns
-	versionSet := make(map[string]bool)
-	for filename := range m.Files {
-		if v, _, ok := version.ExtractVersionParsed(filename, patterns); ok {
-			versionSet[v] = true
-		}
-	}
-
-	if len(versionSet) == 0 {
-		return "", fmt.Errorf("no versions available")
-	}
-
-	available := make([]string, 0, len(versionSet))
-	for v := range versionSet {
-		available = append(available, v)
+	if len(available) == 0 {
+		return "", false, fmt.Errorf("no versions available")
 	}
 
 	// Sort and get newest
@@ -47,15 +29,18 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 	versionToInstall := available[0]
 	c.debug("selected version %s (from %d available)", versionToInstall, len(available))
 
-	// Check if already installed
+	// Check if already installed and current
 	installed, current, _ := sysext.GetInstalledVersions(transfer)
 	for _, v := range installed {
 		if v == versionToInstall && v == current {
-			return versionToInstall, nil // Already installed and current
+			return versionToInstall, false, nil
 		}
 	}
 
 	// Find the file for this version
+	patternStrs := transfer.Source.Patterns()
+	patterns, _ := version.ParsePatterns(patternStrs)
+
 	var sourceFile string
 	var expectedHash string
 	for filename, hash := range m.Files {
@@ -67,7 +52,7 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 	}
 
 	if sourceFile == "" {
-		return "", fmt.Errorf("no file found for version %s", versionToInstall)
+		return "", false, fmt.Errorf("no file found for version %s", versionToInstall)
 	}
 
 	// Build target path using first target pattern
@@ -75,7 +60,7 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 
 	targetPattern, err := version.ParsePattern(targetPatterns[0])
 	if err != nil {
-		return "", fmt.Errorf("invalid target pattern: %w", err)
+		return "", false, fmt.Errorf("invalid target pattern: %w", err)
 	}
 
 	targetFile := targetPattern.BuildFilename(versionToInstall)
@@ -86,7 +71,7 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 	c.debug("downloading %s → %s", downloadURL, targetPath)
 	err = download.Download(ctx, downloadURL, targetPath, expectedHash, transfer.Target.Mode)
 	if err != nil {
-		return "", fmt.Errorf("download failed: %w", err)
+		return "", false, fmt.Errorf("download failed: %w", err)
 	}
 
 	// Update symlink if configured
@@ -102,19 +87,19 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 		c.warn("failed to link to sysext: %v", err)
 	}
 
-	// Refresh systemd-sysext (unless --no-refresh)
-	if !noRefresh {
+	// Refresh systemd-sysext
+	if !opts.NoRefresh {
 		if err := c.runner.Refresh(); err != nil {
 			c.warn("sysext refresh failed: %v", err)
 		}
-	} else {
-		c.msg("Skipping sysext refresh (--no-refresh)")
 	}
 
 	// Run vacuum
-	if err := sysext.Vacuum(transfer); err != nil {
-		c.warn("vacuum failed: %v", err)
+	if !opts.NoVacuum {
+		if err := sysext.Vacuum(transfer); err != nil {
+			c.warn("vacuum failed: %v", err)
+		}
 	}
 
-	return versionToInstall, nil
+	return versionToInstall, true, nil
 }
