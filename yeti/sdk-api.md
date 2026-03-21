@@ -178,12 +178,18 @@ type CheckResult struct {
 - `Refresh() / Merge() / Unmerge()` — `systemd-sysext` commands
 - `SetRunner(r SysextRunner) func()` — Inject mock runner (returns cleanup)
 - `GetInstalledVersions(t *config.Transfer) ([]string, string, error)` — List installed + current version
+- `GetActiveVersion(t *config.Transfer) (string, error)` — Get version currently active in systemd-sysext (checks current symlink and `/run/extensions`)
 - `UpdateSymlink(targetDir, symlinkName, targetFile string) error`
 - `LinkToSysext(t *config.Transfer) / UnlinkFromSysext(t *config.Transfer)` — Manage `/var/lib/extensions` symlinks
 - `Vacuum(t *config.Transfer) / VacuumWithDetails(t *config.Transfer)` — Clean old versions
+- `RemoveAllVersions(t *config.Transfer) ([]string, error)` — Remove all versions and current symlink for a component
+- `GetExtensionName(filename string) string` — Extract extension name from filename (strips version and compression suffixes)
+- `SysextDir` — Constant: `/var/lib/extensions`
 
 ### `systemd`
 
+- `NewManager() *Manager` — Create manager with default paths (`/etc/systemd/system`)
+- `NewTestManager(unitPath string, runner SystemctlRunner) *Manager` — Create manager with custom paths and runner for testing
 - `GenerateTimer(cfg *TimerConfig) string` — Generate systemd timer unit content
 - `GenerateService(cfg *ServiceConfig) string` — Generate systemd service unit content
 - `Manager.Install(timer, service) / Remove(name) / Exists(name)` — Unit lifecycle

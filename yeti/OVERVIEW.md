@@ -106,7 +106,7 @@ When enabled, fetches `SHA256SUMS.gpg` (detached signature) and verifies against
 1. `/etc/systemd/import-pubring.gpg`
 2. `/usr/lib/systemd/import-pubring.gpg`
 
-Uses `golang.org/x/crypto/openpgp` (deprecated; migration to ProtonMail/go-crypto planned).
+Uses `github.com/ProtonMail/go-crypto/openpgp` for signature verification. Supports both binary and armored keyring formats.
 
 ### Systemd specifiers
 
@@ -119,7 +119,7 @@ Transfer file values support systemd-style `%` specifiers. See [Configuration Re
 1. Load all `.feature` and `.transfer` files from search paths
 2. Filter transfers to those matching enabled features
 3. For each transfer:
-   - Fetch `SHA256SUMS` manifest from source URL (+ GPG verify if configured)
+   - Fetch `SHA256SUMS` manifest from source URL (+ GPG verify if configured); the manifest is retained and reused for file lookup, avoiding a redundant HTTP request
    - Extract available versions using pattern matching (`@v` placeholder)
    - Select newest version via semver comparison
    - Skip if already installed (check target directory)
@@ -173,4 +173,4 @@ Global flags:
 | `gopkg.in/ini.v1` | INI file parsing |
 | `github.com/ulikunitz/xz` | XZ decompression |
 | `github.com/klauspost/compress` | ZSTD decompression |
-| `golang.org/x/crypto/openpgp` | GPG signature verification |
+| `github.com/ProtonMail/go-crypto` | GPG signature verification (openpgp) |

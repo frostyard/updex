@@ -65,9 +65,7 @@ Features=devel
 [Source]
 Type=url-file
 Path=https://example.com/releases/
-MatchPattern=component_@v.raw.xz
-MatchPattern=component_@v.raw.gz
-MatchPattern=component_@v.raw
+MatchPattern=component_@v.raw.xz component_@v.raw.gz component_@v.raw
 
 [Target]
 Type=regular-file
@@ -94,7 +92,7 @@ Mode=0644
 |-----|------|-------------|
 | `Type` | string | Source type (currently `url-file` supported) |
 | `Path` | string | Base URL for downloads (must end with `/`) |
-| `MatchPattern` | string | Filename pattern with `@v` placeholder. Multiple entries create compression variants tried in order |
+| `MatchPattern` | string | Filename pattern(s) with `@v` placeholder. Space-separated values define compression variants tried in order |
 
 ### `[Target]` section
 
@@ -107,9 +105,15 @@ Mode=0644
 | `Mode` | uint32 | `0644` | File permissions |
 | `ReadOnly` | bool | `false` | Whether target should be read-only |
 
-### Multiple `MatchPattern` entries
+### Multiple `MatchPattern` values
 
-Both `[Source]` and `[Target]` support multiple `MatchPattern` lines. The first is the primary pattern; additional entries are compression variants. During download, patterns are tried in order to find a matching file in the manifest.
+`MatchPattern` accepts space-separated patterns on a single line. The first is the primary pattern; additional entries are compression variants. During download, patterns are tried in order to find a matching file in the manifest.
+
+```ini
+MatchPattern=component_@v.raw.xz component_@v.raw.gz component_@v.raw
+```
+
+Specifiers (`%a`, `%v`, `%w`, etc.) are expanded on each pattern after splitting.
 
 ## Pattern Placeholders
 
@@ -136,13 +140,13 @@ String values in transfer files support systemd-style `%` specifiers, expanded a
 
 | Specifier | Source | Description |
 |-----------|--------|-------------|
-| `%A` | `IMAGE_VERSION` env | Image version |
+| `%A` | `/etc/os-release` `IMAGE_VERSION=` | Image version |
 | `%a` | Go `GOARCH` → systemd | Architecture (e.g., `x86-64`, `arm64`) |
-| `%B` | `BUILD_ID` env | Build ID |
+| `%B` | `/etc/os-release` `BUILD_ID=` | Build ID |
 | `%b` | `/proc/sys/kernel/random/boot_id` | Boot ID |
 | `%H` | `os.Hostname()` | Full hostname |
 | `%l` | `os.Hostname()` | Short hostname (before first `.`) |
-| `%M` | `IMAGE_ID` env | Image ID |
+| `%M` | `/etc/os-release` `IMAGE_ID=` | Image ID |
 | `%m` | `/etc/machine-id` | Machine ID |
 | `%o` | `/etc/os-release` `ID=` | OS ID |
 | `%T` | — | `/tmp` |
