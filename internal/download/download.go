@@ -1,6 +1,7 @@
 package download
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -15,7 +16,7 @@ import (
 
 // Download fetches a file from URL, verifies its hash, decompresses if needed,
 // and atomically writes it to the target path
-func Download(url, targetPath, expectedHash string, mode uint32) error {
+func Download(ctx context.Context, url, targetPath, expectedHash string, mode uint32) error {
 	// Create target directory if needed
 	targetDir := filepath.Dir(targetPath)
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
@@ -38,7 +39,12 @@ func Download(url, targetPath, expectedHash string, mode uint32) error {
 		Timeout: 10 * time.Minute, // Long timeout for large files
 	}
 
-	resp, err := client.Get(url)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to download: %w", err)
 	}
