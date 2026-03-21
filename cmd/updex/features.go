@@ -8,8 +8,8 @@ var (
 	featureDisableRemove bool
 	featureDisableNow    bool
 	featureDisableForce  bool
-	featureEnableNow   bool
-	featureUpdateNoVac bool
+	featureEnableNow     bool
+	featureUpdateNoVac   bool
 )
 
 func newFeaturesCmd() *cobra.Command {
