@@ -17,6 +17,8 @@
 package updex
 
 import (
+	"reflect"
+
 	"github.com/frostyard/std/reporter"
 	"github.com/frostyard/updex/sysext"
 )
@@ -61,7 +63,7 @@ func NewClient(cfg ClientConfig) *Client {
 		r = reporter.NoopReporter{}
 	}
 	sr := cfg.SysextRunner
-	if sr == nil {
+	if sr == nil || reflect.ValueOf(sr).IsNil() {
 		sr = &sysext.DefaultRunner{}
 	}
 	return &Client{
