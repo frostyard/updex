@@ -13,12 +13,13 @@ Designed for systems like Debian Trixie that don't ship with `systemd-sysupdate`
 
 ## Features
 
+- Feature-based management of sysext images (enable/disable groups of transfers)
 - Download sysext images from remote HTTP sources
 - SHA256 hash verification via `SHA256SUMS` manifests
 - Optional GPG signature verification (`--verify`)
 - Automatic decompression (xz, gz, zstd)
 - Version management with configurable retention (`InstancesMax`)
-- Optional features support (enable/disable groups of transfers)
+- Automatic update daemon via systemd timers
 - Compatible with standard `.transfer` and `.feature` configuration files
 - JSON output for scripting (`--json`)
 
@@ -40,145 +41,181 @@ make build
 make install
 ```
 
-The `updex` binary provides all commands for both local management and remote discovery/installation.
-
 ## Library (SDK) Usage
 
-Import updex in your Go applications:
+The SDK is built around a `Client` struct that provides all operations:
 
 ```go
 import "github.com/frostyard/updex/updex"
 
 func main() {
-    // Configure options
-    opts := updex.Options{
-        DefinitionsPath: "/etc/sysupdate.d",
-        Component:       "myext",
-        Verify:          true,
-    }
+    client := updex.NewClient(updex.ClientConfig{
+        Definitions: "/etc/sysupdate.d",
+        Verify:      true,
+    })
 
-    // List available versions
-    versions, err := updex.List(opts)
+    ctx := context.Background()
+
+    // List all features
+    features, err := client.Features(ctx)
     if err != nil {
         log.Fatal(err)
     }
-
-    for _, v := range versions {
-        fmt.Printf("%s: %s (installed: %v, current: %v)\n",
-            v.Component, v.Version, v.Installed, v.Current)
+    for _, f := range features {
+        fmt.Printf("%s: enabled=%v (%s)\n", f.Name, f.Enabled, f.Description)
     }
 
-    // Check for updates
-    hasUpdate, err := updex.CheckNew(opts)
+    // Enable a feature and download extensions immediately
+    result, err := client.EnableFeature(ctx, "docker", updex.EnableFeatureOptions{
+        Now: true,
+    })
     if err != nil {
         log.Fatal(err)
     }
+    fmt.Println(result.NextActionMessage)
 
-    if hasUpdate {
-        // Perform update
-        results, err := updex.Update(opts)
-        if err != nil {
-            log.Fatal(err)
+    // Check for available updates
+    checks, err := client.CheckFeatures(ctx, updex.CheckFeaturesOptions{})
+    if err != nil {
+        log.Fatal(err)
+    }
+    for _, fc := range checks {
+        for _, c := range fc.Results {
+            if c.UpdateAvailable {
+                fmt.Printf("%s: %s → %s\n", c.Component, c.CurrentVersion, c.NewestVersion)
+            }
         }
+    }
 
-        for _, r := range results {
-            fmt.Printf("Updated %s to %s\n", r.Component, r.Version)
+    // Update all enabled features
+    updates, err := client.UpdateFeatures(ctx, updex.UpdateFeaturesOptions{})
+    if err != nil {
+        log.Fatal(err)
+    }
+    for _, fu := range updates {
+        for _, u := range fu.Results {
+            fmt.Printf("%s: version %s (downloaded=%v)\n", u.Component, u.Version, u.Downloaded)
         }
+    }
+
+    // Disable a feature
+    _, err = client.DisableFeature(ctx, "docker", updex.DisableFeatureOptions{
+        Now:   true,
+        Force: true,
+    })
+    if err != nil {
+        log.Fatal(err)
     }
 }
 ```
 
-### Available SDK Functions
+### Client Methods
 
-| Function                                         | Description                                |
-| ------------------------------------------------ | ------------------------------------------ |
-| `List(opts Options) ([]VersionResult, error)`    | List available and installed versions      |
-| `CheckNew(opts Options) (bool, error)`           | Check if updates are available             |
-| `Update(opts Options) ([]UpdateResult, error)`   | Download and install newest version        |
-| `Install(opts Options) ([]InstallResult, error)` | Install specific version or extension      |
-| `Pending(opts Options) ([]VersionResult, error)` | Check for pending (not active) updates     |
-| `Vacuum(opts Options) ([]VacuumResult, error)`   | Remove old versions per InstancesMax       |
-| `Components(opts Options) ([]Component, error)`  | List configured components                 |
-| `Discover(opts Options) ([]Extension, error)`    | Discover extensions from remote repository |
-| `Features(opts Options) ([]Feature, error)`      | List optional features                     |
-| `FeatureEnable(opts Options) error`              | Enable a feature                           |
-| `FeatureDisable(opts Options) error`             | Disable a feature                          |
+| Method | Signature | Description |
+| --- | --- | --- |
+| `Features` | `Features(ctx) ([]FeatureInfo, error)` | List all features with status and associated transfers |
+| `EnableFeature` | `EnableFeature(ctx, name, EnableFeatureOptions) (*FeatureActionResult, error)` | Enable a feature via drop-in config |
+| `DisableFeature` | `DisableFeature(ctx, name, DisableFeatureOptions) (*FeatureActionResult, error)` | Disable a feature via drop-in config |
+| `UpdateFeatures` | `UpdateFeatures(ctx, UpdateFeaturesOptions) ([]UpdateFeaturesResult, error)` | Download and install newest versions for all enabled features |
+| `CheckFeatures` | `CheckFeatures(ctx, CheckFeaturesOptions) ([]CheckFeaturesResult, error)` | Check if newer versions are available |
 
-### SDK Options
-
-Configure SDK behavior via the `Options` struct:
+### ClientConfig
 
 ```go
-type Options struct {
-    DefinitionsPath string        // Path to .transfer files
-    Component       string        // Specific component to operate on
-    Verify          bool          // Verify GPG signatures
-    Version         string        // Target version (for Update/Install)
-    Reporter        Reporter      // Progress reporting callback
-    // ... additional fields
+type ClientConfig struct {
+    Definitions  string             // Custom path to .transfer/.feature files (default: standard paths)
+    Verify       bool               // Enable GPG signature verification
+    Verbose      bool               // Enable debug-level output
+    Progress     reporter.Reporter  // Optional progress reporter
+    SysextRunner sysext.SysextRunner // Optional mock runner for testing
 }
+```
+
+### Option Structs
+
+```go
+type EnableFeatureOptions struct {
+    Now       bool // Immediately download extensions after enabling
+    DryRun    bool // Preview changes without modifying filesystem
+    NoRefresh bool // Skip systemd-sysext refresh after download
+}
+
+type DisableFeatureOptions struct {
+    Now       bool // Immediately unmerge and remove extension files
+    Force     bool // Allow removal of merged extensions (requires reboot)
+    DryRun    bool // Preview changes without modifying filesystem
+    NoRefresh bool // Skip systemd-sysext refresh
+}
+
+type UpdateFeaturesOptions struct {
+    NoRefresh bool // Skip systemd-sysext refresh after update
+    NoVacuum  bool // Skip removing old versions after update
+}
+
+type CheckFeaturesOptions struct{}
 ```
 
 ## CLI Usage
 
 ```bash
-# List available and installed versions
-updex list
-
-# Check if updates are available
-updex check-new
-
-# Download and install the newest version
-updex update
-
-# Install a specific version
-updex update 1.2.3
-
-# Remove old versions according to InstancesMax
-updex vacuum
-
-# Check for pending updates (installed but not active)
-updex pending
-
-# List configured components
-updex components
-
-# List optional features
+# List all features
 updex features list
 
-# Enable a feature
-sudo updex features enable devel
+# Enable a feature (downloads on next update)
+sudo updex features enable docker
 
-# Disable a feature
-sudo updex features disable devel
+# Enable and download immediately
+sudo updex features enable docker --now
 
-# Discover extensions from a remote repository
-updex discover https://example.com/sysext
+# Disable a feature (stops future updates)
+sudo updex features disable docker
 
-# Discover with JSON output
-updex discover https://example.com/sysext --json
+# Disable and remove files immediately
+sudo updex features disable docker --now
 
-# Install an extension from a remote repository
-updex install https://example.com/sysext myext
+# Force removal of merged extensions
+sudo updex features disable docker --now --force
+
+# Update all enabled features
+sudo updex features update
+
+# Update without removing old versions
+sudo updex features update --no-vacuum
+
+# Check for available updates (read-only)
+updex features check
+
+# Enable automatic daily updates
+sudo updex daemon enable
+
+# Check auto-update status
+updex daemon status
+
+# Disable automatic updates
+sudo updex daemon disable
 ```
 
 ### Global Flags
 
-| Flag                | Description                                  |
-| ------------------- | -------------------------------------------- |
-| `-C, --definitions` | Path to directory containing .transfer files |
-| `--json`            | Output in JSON format (jq-compatible)        |
-| `--verify`          | Verify GPG signatures on SHA256SUMS          |
-| `--component`       | Select a specific component to operate on    |
+| Flag | Description |
+| --- | --- |
+| `-C, --definitions` | Path to directory containing .transfer and .feature files |
+| `--verify` | Verify GPG signatures on SHA256SUMS |
+| `--no-refresh` | Skip running systemd-sysext refresh after install/update |
+| `--json` | Output in JSON format (jq-compatible) |
+| `--dry-run` | Preview changes without modifying filesystem |
+| `--verbose` | Enable verbose output |
 
 ## Configuration
 
-updex reads `.transfer` files from these directories (in priority order):
+updex reads `.transfer` and `.feature` files from these directories (in priority order):
 
-1. `/etc/sysupdate.d/*.transfer`
-2. `/run/sysupdate.d/*.transfer`
-3. `/usr/local/lib/sysupdate.d/*.transfer`
-4. `/usr/lib/sysupdate.d/*.transfer`
+1. `/etc/sysupdate.d/` (highest priority)
+2. `/run/sysupdate.d/`
+3. `/usr/local/lib/sysupdate.d/`
+4. `/usr/lib/sysupdate.d/`
+
+Only the first occurrence of a given filename is used. The `-C` flag overrides all search paths with a custom directory.
 
 ### Example Transfer File
 
@@ -207,32 +244,32 @@ Mode=0644
 
 #### [Transfer] Section
 
-| Option              | Description                                        | Default |
-| ------------------- | -------------------------------------------------- | ------- |
-| `MinVersion`        | Minimum version to consider                        | (none)  |
-| `ProtectVersion`    | Version to never remove (supports `%A` specifiers) | (none)  |
-| `Verify`            | Verify GPG signatures                              | `no`    |
-| `InstancesMax`      | Maximum versions to keep                           | `2`     |
-| `Features`          | Space-separated feature names (OR logic)           | (none)  |
-| `RequisiteFeatures` | Space-separated feature names (AND logic)          | (none)  |
+| Option | Description | Default |
+| --- | --- | --- |
+| `MinVersion` | Minimum version to consider | (none) |
+| `ProtectVersion` | Version to never remove (supports `%A` specifiers) | (none) |
+| `Verify` | Verify GPG signatures | `no` |
+| `InstancesMax` | Maximum versions to keep | `2` |
+| `Features` | Space-separated feature names (OR logic) | (none) |
+| `RequisiteFeatures` | Space-separated feature names (AND logic) | (none) |
 
 #### [Source] Section
 
-| Option         | Description                                    |
-| -------------- | ---------------------------------------------- |
-| `Type`         | Must be `url-file`                             |
-| `Path`         | Base URL containing SHA256SUMS and image files |
+| Option | Description |
+| --- | --- |
+| `Type` | Must be `url-file` |
+| `Path` | Base URL containing SHA256SUMS and image files |
 | `MatchPattern` | Filename pattern with `@v` version placeholder |
 
 #### [Target] Section
 
-| Option           | Description                              | Default               |
-| ---------------- | ---------------------------------------- | --------------------- |
-| `Type`           | Must be `regular-file`                   | -                     |
-| `Path`           | Target directory                         | `/var/lib/extensions` |
-| `MatchPattern`   | Output filename pattern with `@v`        | -                     |
-| `CurrentSymlink` | Symlink name pointing to current version | (none)                |
-| `Mode`           | File permissions (octal)                 | `0644`                |
+| Option | Description | Default |
+| --- | --- | --- |
+| `Type` | Must be `regular-file` | - |
+| `Path` | Target directory | `/var/lib/extensions` |
+| `MatchPattern` | Output filename pattern with `@v` | - |
+| `CurrentSymlink` | Symlink name pointing to current version | (none) |
+| `Mode` | File permissions (octal) | `0644` |
 
 ### Version Patterns
 
@@ -292,6 +329,9 @@ Features are enabled via drop-in configuration files:
 # Using updex
 sudo updex features enable devel
 
+# Enable and download extensions immediately
+sudo updex features enable devel --now
+
 # Or manually create a drop-in
 mkdir -p /etc/sysupdate.d/devel.feature.d
 echo -e "[Feature]\nEnabled=true" > /etc/sysupdate.d/devel.feature.d/enable.conf
@@ -299,12 +339,12 @@ echo -e "[Feature]\nEnabled=true" > /etc/sysupdate.d/devel.feature.d/enable.conf
 
 ### Feature Configuration Options
 
-| Option          | Description                        | Default |
-| --------------- | ---------------------------------- | ------- |
-| `Description`   | Human-readable feature description | (none)  |
-| `Documentation` | URL to feature documentation       | (none)  |
-| `AppStream`     | URL to AppStream catalog XML       | (none)  |
-| `Enabled`       | Whether the feature is enabled     | `false` |
+| Option | Description | Default |
+| --- | --- | --- |
+| `Description` | Human-readable feature description | (none) |
+| `Documentation` | URL to feature documentation | (none) |
+| `AppStream` | URL to AppStream catalog XML | (none) |
+| `Enabled` | Whether the feature is enabled | `false` |
 
 ### Masking Features
 
@@ -326,48 +366,14 @@ i9j0k1l2...  myext_1.2.0.raw.xz
 
 For GPG verification, also provide `SHA256SUMS.gpg` (detached signature).
 
-## Extension Repository Format
-
-When using `updex discover`, the repository should have this structure:
-
-```
-{URL}/ext/index              # List of extension names, one per line
-{URL}/ext/{name}/SHA256SUMS  # Manifest for each extension
-{URL}/ext/{name}/*.raw.xz    # Extension images
-```
-
-Example `index` file:
-
-```
-myext
-docker
-kubernetes
-```
-
 ## JSON Output
 
 Use `--json` for machine-readable output:
 
 ```bash
-updex list --json | jq '.[] | select(.installed)'
+updex features list --json | jq '.[] | select(.enabled)'
+updex features check --json
 ```
-
-Example output:
-
-```json
-{"version":"1.2.3","installed":true,"available":true,"current":true,"component":"myext"}
-{"version":"1.2.2","installed":true,"available":true,"current":false,"component":"myext"}
-```
-
-## Exit Codes
-
-| Command     | Code | Meaning               |
-| ----------- | ---- | --------------------- |
-| `check-new` | 0    | Update available      |
-| `check-new` | 2    | No update available   |
-| `pending`   | 0    | Pending update exists |
-| `pending`   | 2    | No pending update     |
-| (any)       | 1    | Error occurred        |
 
 ## Development
 
@@ -375,13 +381,19 @@ Example output:
 
 updex follows an **SDK-first** architecture:
 
-- **SDK Layer** (`updex/` package): All operations are implemented as public Go functions
-- **CLI Layer** (`cmd/` package): Thin wrappers that call SDK functions and format output
+- **SDK Layer** (`updex/` package): All operations are implemented as methods on the `Client` struct
+- **CLI Layer** (`cmd/` package): Thin Cobra wrappers that parse flags, call SDK methods, and format output
+
+SDK conventions:
+- All methods take `context.Context` as first parameter
+- Operations use dedicated option structs (e.g., `EnableFeatureOptions`) for future extensibility
+- Return dedicated result structs with status fields + error
+- Error messages: lowercase, no trailing punctuation, wrapped with `fmt.Errorf`
 
 When adding features:
 
-1. Implement in the SDK first (`updex/*.go`)
-2. Create CLI wrapper in `cmd/commands/*.go`
+1. Implement as a method on `Client` in `updex/*.go`
+2. Create CLI wrapper in `cmd/updex/*.go`
 3. CLI commands should only handle argument parsing and output formatting
 
 ### Build Commands
