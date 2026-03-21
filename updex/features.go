@@ -8,7 +8,6 @@ import (
 
 	"github.com/frostyard/updex/internal/config"
 	"github.com/frostyard/updex/internal/download"
-	"github.com/frostyard/updex/internal/manifest"
 	"github.com/frostyard/updex/internal/sysext"
 	"github.com/frostyard/updex/internal/version"
 )
@@ -397,7 +396,7 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 				Component: transfer.Component,
 			}
 
-			available, err := c.getAvailableVersions(transfer)
+			available, m, err := c.getAvailableVersions(transfer)
 			if err != nil {
 				result.Error = fmt.Sprintf("failed to get available versions: %v", err)
 				c.warn("%s", result.Error)
@@ -431,15 +430,6 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 				result.Installed = true
 				c.msg("Version %s already installed and current", versionToInstall)
 				featureResult.Results = append(featureResult.Results, result)
-				continue
-			}
-
-			m, err := manifest.Fetch(transfer.Source.Path, c.config.Verify || transfer.Transfer.Verify)
-			if err != nil {
-				result.Error = fmt.Sprintf("failed to fetch manifest: %v", err)
-				c.warn("%s", result.Error)
-				featureResult.Results = append(featureResult.Results, result)
-				hasErrors = true
 				continue
 			}
 
@@ -567,7 +557,7 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 		for _, transfer := range featureTransfers {
 			c.msg("Checking %s/%s", f.Name, transfer.Component)
 
-			available, err := c.getAvailableVersions(transfer)
+			available, _, err := c.getAvailableVersions(transfer)
 			if err != nil {
 				c.warn("failed to get available versions: %v", err)
 				continue
