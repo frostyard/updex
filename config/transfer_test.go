@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -640,5 +641,69 @@ MatchPattern=docker_@v_%w_%a.raw
 	if tr.Target.MatchPattern != tr.Target.MatchPatterns[0] {
 		t.Errorf("Target.MatchPattern should equal first MatchPatterns entry: %q != %q",
 			tr.Target.MatchPattern, tr.Target.MatchPatterns[0])
+	}
+}
+
+func TestSourceSectionPatterns(t *testing.T) {
+	tests := []struct {
+		name string
+		src  SourceSection
+		want []string
+	}{
+		{
+			name: "MatchPatterns set",
+			src:  SourceSection{MatchPatterns: []string{"a_@v.raw", "a_@v.raw.xz"}, MatchPattern: "a_@v.raw"},
+			want: []string{"a_@v.raw", "a_@v.raw.xz"},
+		},
+		{
+			name: "only MatchPattern set",
+			src:  SourceSection{MatchPattern: "a_@v.raw"},
+			want: []string{"a_@v.raw"},
+		},
+		{
+			name: "both empty",
+			src:  SourceSection{},
+			want: nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.src.Patterns()
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("Patterns() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTargetSectionPatterns(t *testing.T) {
+	tests := []struct {
+		name string
+		tgt  TargetSection
+		want []string
+	}{
+		{
+			name: "MatchPatterns set",
+			tgt:  TargetSection{MatchPatterns: []string{"a_@v.raw", "a_@v.raw.xz"}, MatchPattern: "a_@v.raw"},
+			want: []string{"a_@v.raw", "a_@v.raw.xz"},
+		},
+		{
+			name: "only MatchPattern set",
+			tgt:  TargetSection{MatchPattern: "a_@v.raw"},
+			want: []string{"a_@v.raw"},
+		},
+		{
+			name: "both empty",
+			tgt:  TargetSection{},
+			want: nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.tgt.Patterns()
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("Patterns() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

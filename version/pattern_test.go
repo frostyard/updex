@@ -521,6 +521,91 @@ func TestExtractVersionMulti_FedoraSysextsPattern(t *testing.T) {
 	}
 }
 
+func TestParsePatterns(t *testing.T) {
+	t.Run("valid patterns", func(t *testing.T) {
+		patterns, err := ParsePatterns([]string{"app_@v.raw", "app_@v.raw.xz"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(patterns) != 2 {
+			t.Fatalf("expected 2 patterns, got %d", len(patterns))
+		}
+		if patterns[0].Raw() != "app_@v.raw" {
+			t.Errorf("expected raw = %q, got %q", "app_@v.raw", patterns[0].Raw())
+		}
+	})
+
+	t.Run("skips invalid patterns", func(t *testing.T) {
+		patterns, err := ParsePatterns([]string{"app_@v.raw", "no-version", ""})
+		if len(patterns) != 1 {
+			t.Fatalf("expected 1 pattern, got %d", len(patterns))
+		}
+		if err == nil {
+			t.Fatal("expected error for invalid patterns")
+		}
+	})
+
+	t.Run("all invalid returns first error", func(t *testing.T) {
+		patterns, err := ParsePatterns([]string{"no-version", ""})
+		if len(patterns) != 0 {
+			t.Fatalf("expected 0 patterns, got %d", len(patterns))
+		}
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if err != ErrMissingVersionPlaceholder {
+			t.Errorf("expected ErrMissingVersionPlaceholder, got %v", err)
+		}
+	})
+
+	t.Run("empty input", func(t *testing.T) {
+		patterns, err := ParsePatterns(nil)
+		if len(patterns) != 0 {
+			t.Fatalf("expected 0 patterns, got %d", len(patterns))
+		}
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestExtractVersionParsed(t *testing.T) {
+	patterns, _ := ParsePatterns([]string{"app_@v.raw", "app_@v.raw.xz"})
+
+	t.Run("matches first pattern", func(t *testing.T) {
+		v, matched, ok := ExtractVersionParsed("app_1.2.3.raw", patterns)
+		if !ok {
+			t.Fatal("expected match")
+		}
+		if v != "1.2.3" {
+			t.Errorf("version = %q, want %q", v, "1.2.3")
+		}
+		if matched != "app_@v.raw" {
+			t.Errorf("matched = %q, want %q", matched, "app_@v.raw")
+		}
+	})
+
+	t.Run("matches second pattern", func(t *testing.T) {
+		v, matched, ok := ExtractVersionParsed("app_2.0.0.raw.xz", patterns)
+		if !ok {
+			t.Fatal("expected match")
+		}
+		if v != "2.0.0" {
+			t.Errorf("version = %q, want %q", v, "2.0.0")
+		}
+		if matched != "app_@v.raw.xz" {
+			t.Errorf("matched = %q, want %q", matched, "app_@v.raw.xz")
+		}
+	})
+
+	t.Run("no match", func(t *testing.T) {
+		_, _, ok := ExtractVersionParsed("other_1.0.0.raw", patterns)
+		if ok {
+			t.Error("expected no match")
+		}
+	})
+}
+
 func TestSort(t *testing.T) {
 	tests := []struct {
 		name     string

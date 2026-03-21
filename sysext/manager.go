@@ -14,18 +14,14 @@ import (
 // Also returns the current version (pointed to by symlink or newest)
 func GetInstalledVersions(t *config.Transfer) ([]string, string, error) {
 	// Get all target patterns
-	patterns := t.Target.MatchPatterns
-	if len(patterns) == 0 && t.Target.MatchPattern != "" {
-		patterns = []string{t.Target.MatchPattern}
-	}
-	if len(patterns) == 0 {
+	patternStrs := t.Target.Patterns()
+	if len(patternStrs) == 0 {
 		return nil, "", fmt.Errorf("no target match patterns defined")
 	}
 
-	// Parse first pattern for symlink checking (backward compat)
-	pattern, err := version.ParsePattern(patterns[0])
-	if err != nil {
-		return nil, "", fmt.Errorf("invalid target pattern: %w", err)
+	patterns, firstErr := version.ParsePatterns(patternStrs)
+	if len(patterns) == 0 {
+		return nil, "", fmt.Errorf("invalid target pattern: %w", firstErr)
 	}
 
 	targetDir := t.Target.Path
@@ -49,9 +45,7 @@ func GetInstalledVersions(t *config.Transfer) ([]string, string, error) {
 		symlinkPath := filepath.Join(targetDir, t.Target.CurrentSymlink)
 		if target, err := os.Readlink(symlinkPath); err == nil {
 			// Extract version from symlink target using any pattern
-			if v, _, ok := version.ExtractVersionMulti(filepath.Base(target), patterns); ok {
-				current = v
-			} else if v, ok := pattern.ExtractVersion(filepath.Base(target)); ok {
+			if v, _, ok := version.ExtractVersionParsed(filepath.Base(target), patterns); ok {
 				current = v
 			}
 		}
@@ -65,7 +59,7 @@ func GetInstalledVersions(t *config.Transfer) ([]string, string, error) {
 			continue
 		}
 
-		if v, _, ok := version.ExtractVersionMulti(name, patterns); ok {
+		if v, _, ok := version.ExtractVersionParsed(name, patterns); ok {
 			versions = append(versions, v)
 		}
 	}
@@ -83,27 +77,21 @@ func GetInstalledVersions(t *config.Transfer) ([]string, string, error) {
 // This checks if the extension is currently merged
 func GetActiveVersion(t *config.Transfer) (string, error) {
 	// Get all target patterns
-	patterns := t.Target.MatchPatterns
-	if len(patterns) == 0 && t.Target.MatchPattern != "" {
-		patterns = []string{t.Target.MatchPattern}
-	}
-	if len(patterns) == 0 {
+	patternStrs := t.Target.Patterns()
+	if len(patternStrs) == 0 {
 		return "", fmt.Errorf("no target match patterns defined")
 	}
 
-	// Parse first pattern for symlink checking
-	pattern, err := version.ParsePattern(patterns[0])
-	if err != nil {
-		return "", fmt.Errorf("invalid target pattern: %w", err)
+	patterns, firstErr := version.ParsePatterns(patternStrs)
+	if len(patterns) == 0 {
+		return "", fmt.Errorf("invalid target pattern: %w", firstErr)
 	}
 
 	// First try the current symlink in the target directory
 	if t.Target.CurrentSymlink != "" {
 		symlinkPath := filepath.Join(t.Target.Path, t.Target.CurrentSymlink)
 		if target, err := os.Readlink(symlinkPath); err == nil {
-			if v, _, ok := version.ExtractVersionMulti(filepath.Base(target), patterns); ok {
-				return v, nil
-			} else if v, ok := pattern.ExtractVersion(filepath.Base(target)); ok {
+			if v, _, ok := version.ExtractVersionParsed(filepath.Base(target), patterns); ok {
 				return v, nil
 			}
 		}
@@ -120,7 +108,7 @@ func GetActiveVersion(t *config.Transfer) (string, error) {
 	}
 
 	for _, entry := range entries {
-		if v, _, ok := version.ExtractVersionMulti(entry.Name(), patterns); ok {
+		if v, _, ok := version.ExtractVersionParsed(entry.Name(), patterns); ok {
 			return v, nil
 		}
 	}
@@ -156,13 +144,12 @@ func Vacuum(t *config.Transfer) error {
 // VacuumWithDetails removes old versions and returns what was removed/kept
 func VacuumWithDetails(t *config.Transfer) (removed []string, kept []string, err error) {
 	// Get all target patterns
-	patterns := t.Target.MatchPatterns
-	if len(patterns) == 0 && t.Target.MatchPattern != "" {
-		patterns = []string{t.Target.MatchPattern}
-	}
-	if len(patterns) == 0 {
+	patternStrs := t.Target.Patterns()
+	if len(patternStrs) == 0 {
 		return nil, nil, fmt.Errorf("no target match patterns defined")
 	}
+
+	patterns, _ := version.ParsePatterns(patternStrs)
 
 	targetDir := t.Target.Path
 	if targetDir == "" {
@@ -192,7 +179,7 @@ func VacuumWithDetails(t *config.Transfer) (removed []string, kept []string, err
 			continue
 		}
 
-		if v, _, ok := version.ExtractVersionMulti(name, patterns); ok {
+		if v, _, ok := version.ExtractVersionParsed(name, patterns); ok {
 			installed = append(installed, versionFile{v, name})
 		}
 	}
@@ -344,13 +331,12 @@ func UnlinkFromSysext(t *config.Transfer) error {
 // and removes the current symlink if it exists. Returns the list of removed files.
 func RemoveAllVersions(t *config.Transfer) ([]string, error) {
 	// Get all target patterns
-	patterns := t.Target.MatchPatterns
-	if len(patterns) == 0 && t.Target.MatchPattern != "" {
-		patterns = []string{t.Target.MatchPattern}
-	}
-	if len(patterns) == 0 {
+	patternStrs := t.Target.Patterns()
+	if len(patternStrs) == 0 {
 		return nil, fmt.Errorf("no target match patterns defined")
 	}
+
+	patterns, _ := version.ParsePatterns(patternStrs)
 
 	targetDir := t.Target.Path
 	if targetDir == "" {
@@ -388,7 +374,7 @@ func RemoveAllVersions(t *config.Transfer) ([]string, error) {
 		}
 
 		// Check if this file matches any of the patterns
-		if _, _, ok := version.ExtractVersionMulti(name, patterns); ok {
+		if _, _, ok := version.ExtractVersionParsed(name, patterns); ok {
 			filePath := filepath.Join(targetDir, name)
 			if err := os.Remove(filePath); err != nil {
 				return removed, fmt.Errorf("failed to remove %s: %w", filePath, err)

@@ -64,8 +64,6 @@ func TestEnableFeature_DryRun_ShowsDownloads(t *testing.T) {
 
 	// Set up mock runner
 	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
 
 	// Create test extension content
 	extContent := []byte("fake extension content for dry run test")
@@ -92,7 +90,7 @@ func TestEnableFeature_DryRun_ShowsDownloads(t *testing.T) {
 	updateTransferTargetPath(t, configDir, targetDir)
 
 	// Act
-	client := NewClient(ClientConfig{Definitions: configDir})
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
 	result, err := client.EnableFeature(t.Context(), "testfeature", EnableFeatureOptions{
 		Now:    true,
 		DryRun: true,
@@ -128,8 +126,6 @@ func TestEnableFeature_DryRun_NoNow_ShowsConfig(t *testing.T) {
 
 	// Set up mock runner
 	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
 
 	// Create test extension content
 	extContent := []byte("fake extension content")
@@ -156,7 +152,7 @@ func TestEnableFeature_DryRun_NoNow_ShowsConfig(t *testing.T) {
 	updateTransferTargetPath(t, configDir, targetDir)
 
 	// Act
-	client := NewClient(ClientConfig{Definitions: configDir})
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
 	result, err := client.EnableFeature(t.Context(), "testfeature", EnableFeatureOptions{
 		Now:    false, // without --now
 		DryRun: true,
@@ -191,13 +187,11 @@ func TestEnableFeature_FeatureNotFound(t *testing.T) {
 
 	// Set up mock runner
 	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
 
 	// No features created
 
 	// Act
-	client := NewClient(ClientConfig{Definitions: configDir})
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
 	result, err := client.EnableFeature(t.Context(), "nonexistent", EnableFeatureOptions{})
 
 	// Assert
@@ -219,8 +213,6 @@ func TestDisableFeature_DryRun_ShowsRemovals(t *testing.T) {
 
 	// Set up mock runner
 	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
 
 	// Create feature file (enabled)
 	createFeatureFile(t, configDir, "testfeature", true)
@@ -238,7 +230,7 @@ func TestDisableFeature_DryRun_ShowsRemovals(t *testing.T) {
 	}
 
 	// Act
-	client := NewClient(ClientConfig{Definitions: configDir})
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
 	result, err := client.DisableFeature(t.Context(), "testfeature", DisableFeatureOptions{
 		Now:    true,
 		DryRun: true,
@@ -278,8 +270,6 @@ func TestDisableFeature_DryRun_NoNow_ShowsConfig(t *testing.T) {
 
 	// Set up mock runner
 	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
 
 	// Create feature file (enabled)
 	createFeatureFile(t, configDir, "testfeature", true)
@@ -297,7 +287,7 @@ func TestDisableFeature_DryRun_NoNow_ShowsConfig(t *testing.T) {
 	}
 
 	// Act without --now
-	client := NewClient(ClientConfig{Definitions: configDir})
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
 	result, err := client.DisableFeature(t.Context(), "testfeature", DisableFeatureOptions{
 		Now:    false, // without --now
 		DryRun: true,
@@ -337,8 +327,6 @@ func TestDisableFeature_MergedExtension_RequiresForce(t *testing.T) {
 
 	// Set up mock runner
 	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
 
 	// Create feature file (enabled)
 	createFeatureFile(t, configDir, "testfeature", true)
@@ -375,7 +363,7 @@ Path=` + targetDir + `
 	}
 
 	// Act with Force=false and DryRun=false (but we'll get blocked by merge check before /etc write)
-	client := NewClient(ClientConfig{Definitions: configDir})
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
 	result, err := client.DisableFeature(t.Context(), "testfeature", DisableFeatureOptions{
 		Now:   true,
 		Force: false,
@@ -406,8 +394,6 @@ func TestDisableFeature_Force_DryRun_WithMerged(t *testing.T) {
 
 	// Set up mock runner
 	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
 
 	// Create feature file (enabled)
 	createFeatureFile(t, configDir, "testfeature", true)
@@ -444,7 +430,7 @@ Path=` + targetDir + `
 	}
 
 	// Act with Force=true and DryRun=true
-	client := NewClient(ClientConfig{Definitions: configDir})
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
 	result, err := client.DisableFeature(t.Context(), "testfeature", DisableFeatureOptions{
 		Now:    true,
 		Force:  true,
@@ -479,13 +465,11 @@ func TestDisableFeature_FeatureNotFound(t *testing.T) {
 
 	// Set up mock runner
 	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
 
 	// No features created
 
 	// Act
-	client := NewClient(ClientConfig{Definitions: configDir})
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
 	result, err := client.DisableFeature(t.Context(), "nonexistent", DisableFeatureOptions{})
 
 	// Assert
@@ -506,14 +490,12 @@ func TestEnableFeature_NoTransfers(t *testing.T) {
 
 	// Set up mock runner
 	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
 
 	// Create feature file (disabled) with no associated transfers
 	createFeatureFile(t, configDir, "testfeature", false)
 
 	// Act (dry-run to avoid /etc access)
-	client := NewClient(ClientConfig{Definitions: configDir})
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
 	result, err := client.EnableFeature(t.Context(), "testfeature", EnableFeatureOptions{
 		Now:    true,
 		DryRun: true,
@@ -538,14 +520,12 @@ func TestDisableFeature_NoTransfers(t *testing.T) {
 
 	// Set up mock runner
 	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
 
 	// Create feature file (enabled) with no associated transfers
 	createFeatureFile(t, configDir, "testfeature", true)
 
 	// Act (dry-run to avoid /etc access)
-	client := NewClient(ClientConfig{Definitions: configDir})
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
 	result, err := client.DisableFeature(t.Context(), "testfeature", DisableFeatureOptions{
 		Now:    true,
 		DryRun: true,
@@ -570,8 +550,6 @@ func TestFeatures_ListAllFeatures(t *testing.T) {
 
 	// Set up mock runner
 	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
 
 	// Create multiple feature files
 	createFeatureFile(t, configDir, "feature1", true)
@@ -586,7 +564,7 @@ func TestFeatures_ListAllFeatures(t *testing.T) {
 	updateTransferTargetPath(t, configDir, targetDir)
 
 	// Act
-	client := NewClient(ClientConfig{Definitions: configDir})
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
 	features, err := client.Features(t.Context())
 
 	// Assert
@@ -625,8 +603,6 @@ func TestUpdateFeatures_DownloadsForEnabledFeatures(t *testing.T) {
 
 	// Set up mock runner
 	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
 
 	// Create test extension content
 	extContent := []byte("fake extension content for update test")
@@ -653,7 +629,7 @@ func TestUpdateFeatures_DownloadsForEnabledFeatures(t *testing.T) {
 	updateTransferTargetPath(t, configDir, targetDir)
 
 	// Act
-	client := NewClient(ClientConfig{Definitions: configDir})
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
 	results, err := client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{
 		NoRefresh: true,
 	})
@@ -693,8 +669,6 @@ func TestUpdateFeatures_SkipsDisabledFeatures(t *testing.T) {
 
 	// Set up mock runner
 	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
 
 	extContent := []byte("fake extension content")
 	extHash := hashContent(extContent)
@@ -715,7 +689,7 @@ func TestUpdateFeatures_SkipsDisabledFeatures(t *testing.T) {
 	updateTransferTargetPath(t, configDir, targetDir)
 
 	// Act
-	client := NewClient(ClientConfig{Definitions: configDir})
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
 	results, err := client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{
 		NoRefresh: true,
 	})
@@ -736,8 +710,6 @@ func TestCheckFeatures_FindsUpdates(t *testing.T) {
 
 	// Set up mock runner
 	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
 
 	// Server has v1 and v2 available
 	server := testutil.NewTestServer(t, testutil.TestServerFiles{
@@ -759,7 +731,7 @@ func TestCheckFeatures_FindsUpdates(t *testing.T) {
 	}
 
 	// Act
-	client := NewClient(ClientConfig{Definitions: configDir})
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
 	results, err := client.CheckFeatures(t.Context(), CheckFeaturesOptions{})
 
 	// Assert
@@ -1084,8 +1056,6 @@ func TestCheckFeatures_UpToDate(t *testing.T) {
 
 	// Set up mock runner
 	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
 
 	server := testutil.NewTestServer(t, testutil.TestServerFiles{
 		Files: map[string]string{
@@ -1103,7 +1073,7 @@ func TestCheckFeatures_UpToDate(t *testing.T) {
 		t.Fatalf("failed to create test file: %v", err)
 	}
 
-	client := NewClient(ClientConfig{Definitions: configDir})
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
 	results, err := client.CheckFeatures(t.Context(), CheckFeaturesOptions{})
 
 	if err != nil {

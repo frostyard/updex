@@ -38,15 +38,13 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 	}
 
 	// Find the file for this version
-	patterns := transfer.Source.MatchPatterns
-	if len(patterns) == 0 && transfer.Source.MatchPattern != "" {
-		patterns = []string{transfer.Source.MatchPattern}
-	}
+	patternStrs := transfer.Source.Patterns()
+	patterns, _ := version.ParsePatterns(patternStrs)
 
 	var sourceFile string
 	var expectedHash string
 	for filename, hash := range m.Files {
-		if v, _, ok := version.ExtractVersionMulti(filename, patterns); ok && v == versionToInstall {
+		if v, _, ok := version.ExtractVersionParsed(filename, patterns); ok && v == versionToInstall {
 			sourceFile = filename
 			expectedHash = hash
 			break
@@ -58,10 +56,7 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 	}
 
 	// Build target path using first target pattern
-	targetPatterns := transfer.Target.MatchPatterns
-	if len(targetPatterns) == 0 && transfer.Target.MatchPattern != "" {
-		targetPatterns = []string{transfer.Target.MatchPattern}
-	}
+	targetPatterns := transfer.Target.Patterns()
 
 	targetPattern, err := version.ParsePattern(targetPatterns[0])
 	if err != nil {
@@ -94,7 +89,7 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 
 	// Refresh systemd-sysext
 	if !opts.NoRefresh {
-		if err := sysext.Refresh(); err != nil {
+		if err := c.runner.Refresh(); err != nil {
 			c.warn("sysext refresh failed: %v", err)
 		}
 	}
