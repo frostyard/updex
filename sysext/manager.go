@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/frostyard/updex/internal/config"
-	"github.com/frostyard/updex/internal/version"
+	"github.com/frostyard/updex/config"
+	"github.com/frostyard/updex/version"
 )
 
 // GetInstalledVersions returns the list of installed versions for a transfer config
