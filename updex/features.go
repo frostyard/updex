@@ -159,7 +159,7 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 			// Refresh if we downloaded (unless --no-refresh or --dry-run)
 			if !opts.NoRefresh && !opts.DryRun {
 				c.msg("Refreshing sysext")
-				if err := sysext.Refresh(); err != nil {
+				if err := c.runner.Refresh(); err != nil {
 					c.warn("sysext refresh failed: %v", err)
 				}
 			}
@@ -294,7 +294,7 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 		// If --now is specified, unmerge first (unless dry-run)
 		if opts.Now && !opts.DryRun {
 			c.msg("Unmerging extensions")
-			if err := sysext.Unmerge(); err != nil {
+			if err := c.runner.Unmerge(); err != nil {
 				result.Error = fmt.Sprintf("failed to unmerge: %v", err)
 				c.warn("%s", result.Error)
 				return result, fmt.Errorf("%s", result.Error)
@@ -335,7 +335,7 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 		// Refresh if we unmerged (unless --no-refresh or --dry-run)
 		if opts.Now && !opts.NoRefresh && !opts.DryRun {
 			c.msg("Refreshing sysext")
-			if err := sysext.Refresh(); err != nil {
+			if err := c.runner.Refresh(); err != nil {
 				c.warn("sysext refresh failed: %v", err)
 			}
 		}
@@ -508,7 +508,7 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 	}
 
 	if !opts.NoRefresh {
-		if err := sysext.Refresh(); err != nil {
+		if err := c.runner.Refresh(); err != nil {
 			c.warn("sysext refresh failed: %v", err)
 		}
 	} else {

@@ -17,6 +17,8 @@
 package updex
 
 import (
+	"reflect"
+
 	"github.com/frostyard/std/reporter"
 	"github.com/frostyard/updex/sysext"
 )
@@ -25,6 +27,7 @@ import (
 type Client struct {
 	config   ClientConfig
 	reporter reporter.Reporter
+	runner   sysext.SysextRunner
 }
 
 // ClientConfig holds configuration for the Client.
@@ -55,16 +58,18 @@ type ClientConfig struct {
 
 // NewClient creates a new updex API client with the given configuration.
 func NewClient(cfg ClientConfig) *Client {
-	if cfg.SysextRunner != nil {
-		sysext.SetRunner(cfg.SysextRunner)
-	}
 	r := cfg.Progress
 	if r == nil {
 		r = reporter.NoopReporter{}
 	}
+	sr := cfg.SysextRunner
+	if sr == nil || reflect.ValueOf(sr).IsNil() {
+		sr = &sysext.DefaultRunner{}
+	}
 	return &Client{
 		config:   cfg,
 		reporter: r,
+		runner:   sr,
 	}
 }
 
