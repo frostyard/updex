@@ -23,7 +23,7 @@ updex is a Go library (SDK) and CLI tool for managing systemd-sysext images, rep
 - **CLI Framework**: Cobra (github.com/spf13/cobra) with clix for unified CLI functionality
 - **Configuration**: INI files (gopkg.in/ini.v1)
 - **Compression**: XZ, gzip, zstd support
-- **Security**: GPG signature verification (golang.org/x/crypto/openpgp)
+- **Security**: GPG signature verification (github.com/ProtonMail/go-crypto/openpgp)
 - **Version Management**: Semantic versioning (github.com/hashicorp/go-version)
 
 ## Build & Development
@@ -238,7 +238,7 @@ func main() {
 | `github.com/schollz/progressbar/v3`  | Download progress display      |
 | `github.com/ulikunitz/xz`            | XZ decompression               |
 | `github.com/klauspost/compress/zstd` | Zstd decompression             |
-| `golang.org/x/crypto/openpgp`        | GPG verification               |
+| `github.com/ProtonMail/go-crypto/openpgp` | GPG verification          |
 
 ## Testing
 

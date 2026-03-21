@@ -7,9 +7,7 @@ import (
 	"net/http"
 	"os"
 
-	// TODO: Migrate to github.com/ProtonMail/go-crypto/openpgp - this package is deprecated
-	// but still functional for our GPG verification needs.
-	"golang.org/x/crypto/openpgp" //nolint:staticcheck
+	"github.com/ProtonMail/go-crypto/openpgp"
 )
 
 // Default keyring paths (matching systemd-sysupdate)
@@ -47,6 +45,7 @@ func verifySignature(client *http.Client, sigURL string, content []byte) error {
 		keyring,
 		bytes.NewReader(content),
 		bytes.NewReader(sigData),
+		nil,
 	)
 	if err != nil {
 		return fmt.Errorf("invalid signature: %w", err)
