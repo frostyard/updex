@@ -8,9 +8,8 @@ var (
 	featureDisableRemove bool
 	featureDisableNow    bool
 	featureDisableForce  bool
-	featureEnableNow     bool
-	featureEnableRetry   bool
-	featureUpdateNoVac   bool
+	featureEnableNow   bool
+	featureUpdateNoVac bool
 )
 
 func newFeaturesCmd() *cobra.Command {
@@ -92,7 +91,6 @@ that sets Enabled=true for the specified feature.
 
 OPTIONS:
   --now      Immediately download extensions for this feature
-  --retry    Retry on network failures (3 attempts)
 
 Use --dry-run (global flag) to preview changes without modifying filesystem.
 
@@ -110,7 +108,6 @@ Requires root privileges.`,
 	}
 
 	cmd.Flags().BoolVar(&featureEnableNow, "now", false, "Immediately download extensions")
-	cmd.Flags().BoolVar(&featureEnableRetry, "retry", false, "Retry on network failures (3 attempts)")
 
 	return cmd
 }
