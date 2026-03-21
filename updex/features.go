@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 
 	"github.com/frostyard/updex/config"
-	"github.com/frostyard/updex/download"
 	"github.com/frostyard/updex/sysext"
 	"github.com/frostyard/updex/version"
 )
@@ -145,7 +144,9 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 					result.DownloadedFiles = append(result.DownloadedFiles, transfer.Component+" (would download)")
 				} else {
 					// Use installTransfer which handles all the download logic
-					version, err := c.installTransfer(ctx, transfer, true) // noRefresh=true, we'll refresh once at the end
+					version, _, err := c.installTransfer(ctx, transfer, installTransferOptions{
+						NoRefresh: true, // refresh is batched at the end
+					})
 					if err != nil {
 						result.Error = fmt.Sprintf("failed to download %s: %v", transfer.Component, err)
 						c.warn("%s", result.Error)
@@ -396,117 +397,30 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 				Component: transfer.Component,
 			}
 
-			available, m, err := c.getAvailableVersions(ctx, transfer)
+			v, downloaded, err := c.installTransfer(ctx, transfer, installTransferOptions{
+				NoVacuum:  opts.NoVacuum,
+				NoRefresh: true, // refresh is batched at the end
+			})
 			if err != nil {
-				result.Error = fmt.Sprintf("failed to get available versions: %v", err)
+				result.Error = err.Error()
 				c.warn("%s", result.Error)
 				featureResult.Results = append(featureResult.Results, result)
 				hasErrors = true
 				continue
 			}
 
-			if len(available) == 0 {
-				result.Error = "no versions available"
-				c.warn("%s", result.Error)
-				featureResult.Results = append(featureResult.Results, result)
-				hasErrors = true
-				continue
-			}
-
-			version.Sort(available)
-			versionToInstall := available[0]
-			result.Version = versionToInstall
-
-			installed, current, _ := sysext.GetInstalledVersions(transfer)
-			alreadyInstalled := false
-			for _, v := range installed {
-				if v == versionToInstall {
-					alreadyInstalled = true
-					break
-				}
-			}
-
-			if alreadyInstalled && versionToInstall == current {
+			result.Version = v
+			if downloaded {
+				result.Downloaded = true
 				result.Installed = true
-				c.msg("Version %s already installed and current", versionToInstall)
-				featureResult.Results = append(featureResult.Results, result)
-				continue
+				result.NextActionMessage = "Reboot required to activate changes"
+				c.msg("Installed version %s", v)
+			} else {
+				result.Installed = true
+				c.msg("Version %s already installed and current", v)
 			}
 
-			patterns := transfer.Source.MatchPatterns
-			if len(patterns) == 0 && transfer.Source.MatchPattern != "" {
-				patterns = []string{transfer.Source.MatchPattern}
-			}
-
-			var sourceFile string
-			var expectedHash string
-			for filename, hash := range m.Files {
-				if v, _, ok := version.ExtractVersionMulti(filename, patterns); ok && v == versionToInstall {
-					sourceFile = filename
-					expectedHash = hash
-					break
-				}
-			}
-
-			if sourceFile == "" {
-				result.Error = fmt.Sprintf("no file found for version %s", versionToInstall)
-				c.warn("%s", result.Error)
-				featureResult.Results = append(featureResult.Results, result)
-				hasErrors = true
-				continue
-			}
-
-			targetPatterns := transfer.Target.MatchPatterns
-			if len(targetPatterns) == 0 && transfer.Target.MatchPattern != "" {
-				targetPatterns = []string{transfer.Target.MatchPattern}
-			}
-
-			targetPattern, err := version.ParsePattern(targetPatterns[0])
-			if err != nil {
-				result.Error = fmt.Sprintf("invalid target pattern: %v", err)
-				c.warn("%s", result.Error)
-				featureResult.Results = append(featureResult.Results, result)
-				hasErrors = true
-				continue
-			}
-
-			targetFile := targetPattern.BuildFilename(versionToInstall)
-			targetPath := fmt.Sprintf("%s/%s", transfer.Target.Path, targetFile)
-
-			c.msg("Downloading version %s", versionToInstall)
-			downloadURL := transfer.Source.Path + "/" + sourceFile
-			err = download.Download(ctx, downloadURL, targetPath, expectedHash, transfer.Target.Mode)
-			if err != nil {
-				result.Error = fmt.Sprintf("download failed: %v", err)
-				c.warn("%s", result.Error)
-				featureResult.Results = append(featureResult.Results, result)
-				hasErrors = true
-				continue
-			}
-
-			result.Downloaded = true
-			result.Installed = true
-			result.NextActionMessage = "Reboot required to activate changes"
-
-			if transfer.Target.CurrentSymlink != "" {
-				err = sysext.UpdateSymlink(transfer.Target.Path, transfer.Target.CurrentSymlink, targetFile)
-				if err != nil {
-					c.warn("failed to update symlink: %v", err)
-				}
-			}
-
-			if err := sysext.LinkToSysext(transfer); err != nil {
-				c.warn("failed to link to sysext: %v", err)
-			}
-
-			c.msg("Installed version %s", versionToInstall)
 			featureResult.Results = append(featureResult.Results, result)
-
-			if !opts.NoVacuum {
-				if err := sysext.Vacuum(transfer); err != nil {
-					c.warn("vacuum failed: %v", err)
-				}
-			}
 		}
 
 		allResults = append(allResults, featureResult)
