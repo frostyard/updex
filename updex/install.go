@@ -21,13 +21,14 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 	}
 
 	// Get all patterns
-	patterns := transfer.Source.Patterns()
-	c.debug("source patterns: %v", patterns)
+	patternStrs := transfer.Source.Patterns()
+	c.debug("source patterns: %v", patternStrs)
+	patterns, _ := version.ParsePatterns(patternStrs)
 
 	// Find available versions using all patterns
 	versionSet := make(map[string]bool)
 	for filename := range m.Files {
-		if v, _, ok := version.ExtractVersionMulti(filename, patterns); ok {
+		if v, _, ok := version.ExtractVersionParsed(filename, patterns); ok {
 			versionSet[v] = true
 		}
 	}
@@ -58,7 +59,7 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 	var sourceFile string
 	var expectedHash string
 	for filename, hash := range m.Files {
-		if v, _, ok := version.ExtractVersionMulti(filename, patterns); ok && v == versionToInstall {
+		if v, _, ok := version.ExtractVersionParsed(filename, patterns); ok && v == versionToInstall {
 			sourceFile = filename
 			expectedHash = hash
 			break

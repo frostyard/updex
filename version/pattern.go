@@ -99,8 +99,11 @@ func (p *Pattern) Raw() string {
 	return p.raw
 }
 
-// ExtractVersionMulti tries to extract a version from a filename using multiple patterns
-// Returns the version and the matching pattern, or empty strings if no match
+// ExtractVersionMulti tries to extract a version from a filename using multiple patterns.
+// Returns the version and the matching pattern, or empty strings if no match.
+//
+// Deprecated: This recompiles patterns on every call. For loops, use ParsePatterns
+// to pre-parse once and then call ExtractVersionParsed.
 func ExtractVersionMulti(filename string, patternStrs []string) (version string, matchedPattern string, ok bool) {
 	for _, patternStr := range patternStrs {
 		p, err := ParsePattern(patternStr)
@@ -109,6 +112,36 @@ func ExtractVersionMulti(filename string, patternStrs []string) (version string,
 		}
 		if v, matched := p.ExtractVersion(filename); matched {
 			return v, patternStr, true
+		}
+	}
+	return "", "", false
+}
+
+// ParsePatterns parses multiple pattern strings, skipping any that fail to parse.
+// It returns the first parse error encountered so callers can surface it when all
+// patterns fail.
+func ParsePatterns(patternStrs []string) ([]*Pattern, error) {
+	patterns := make([]*Pattern, 0, len(patternStrs))
+	var firstErr error
+	for _, s := range patternStrs {
+		p, err := ParsePattern(s)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		patterns = append(patterns, p)
+	}
+	return patterns, firstErr
+}
+
+// ExtractVersionParsed tries to extract a version from a filename using pre-parsed patterns.
+// Returns the version and the matching pattern's raw string, or empty strings if no match.
+func ExtractVersionParsed(filename string, patterns []*Pattern) (version string, matchedPattern string, ok bool) {
+	for _, p := range patterns {
+		if v, matched := p.ExtractVersion(filename); matched {
+			return v, p.Raw(), true
 		}
 	}
 	return "", "", false

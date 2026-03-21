@@ -433,12 +433,13 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 				continue
 			}
 
-			patterns := transfer.Source.Patterns()
+			patternStrs := transfer.Source.Patterns()
+			patterns, _ := version.ParsePatterns(patternStrs)
 
 			var sourceFile string
 			var expectedHash string
 			for filename, hash := range m.Files {
-				if v, _, ok := version.ExtractVersionMulti(filename, patterns); ok && v == versionToInstall {
+				if v, _, ok := version.ExtractVersionParsed(filename, patterns); ok && v == versionToInstall {
 					sourceFile = filename
 					expectedHash = hash
 					break
