@@ -14,10 +14,7 @@ import (
 // Also returns the current version (pointed to by symlink or newest)
 func GetInstalledVersions(t *config.Transfer) ([]string, string, error) {
 	// Get all target patterns
-	patternStrs := t.Target.MatchPatterns
-	if len(patternStrs) == 0 && t.Target.MatchPattern != "" {
-		patternStrs = []string{t.Target.MatchPattern}
-	}
+	patternStrs := t.Target.Patterns()
 	if len(patternStrs) == 0 {
 		return nil, "", fmt.Errorf("no target match patterns defined")
 	}
@@ -80,10 +77,7 @@ func GetInstalledVersions(t *config.Transfer) ([]string, string, error) {
 // This checks if the extension is currently merged
 func GetActiveVersion(t *config.Transfer) (string, error) {
 	// Get all target patterns
-	patternStrs := t.Target.MatchPatterns
-	if len(patternStrs) == 0 && t.Target.MatchPattern != "" {
-		patternStrs = []string{t.Target.MatchPattern}
-	}
+	patternStrs := t.Target.Patterns()
 	if len(patternStrs) == 0 {
 		return "", fmt.Errorf("no target match patterns defined")
 	}
@@ -150,10 +144,7 @@ func Vacuum(t *config.Transfer) error {
 // VacuumWithDetails removes old versions and returns what was removed/kept
 func VacuumWithDetails(t *config.Transfer) (removed []string, kept []string, err error) {
 	// Get all target patterns
-	patternStrs := t.Target.MatchPatterns
-	if len(patternStrs) == 0 && t.Target.MatchPattern != "" {
-		patternStrs = []string{t.Target.MatchPattern}
-	}
+	patternStrs := t.Target.Patterns()
 	if len(patternStrs) == 0 {
 		return nil, nil, fmt.Errorf("no target match patterns defined")
 	}
@@ -340,10 +331,7 @@ func UnlinkFromSysext(t *config.Transfer) error {
 // and removes the current symlink if it exists. Returns the list of removed files.
 func RemoveAllVersions(t *config.Transfer) ([]string, error) {
 	// Get all target patterns
-	patternStrs := t.Target.MatchPatterns
-	if len(patternStrs) == 0 && t.Target.MatchPattern != "" {
-		patternStrs = []string{t.Target.MatchPattern}
-	}
+	patternStrs := t.Target.Patterns()
 	if len(patternStrs) == 0 {
 		return nil, fmt.Errorf("no target match patterns defined")
 	}
