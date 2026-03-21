@@ -109,7 +109,7 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 
 	// Refresh systemd-sysext (unless --no-refresh)
 	if !noRefresh {
-		if err := sysext.Refresh(); err != nil {
+		if err := c.runner.Refresh(); err != nil {
 			c.warn("sysext refresh failed: %v", err)
 		}
 	} else {
