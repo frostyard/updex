@@ -67,7 +67,6 @@ func runFeaturesEnable(cmd *cobra.Command, args []string) error {
 	opts := updex.EnableFeatureOptions{
 		Now:       featureEnableNow,
 		DryRun:    clix.DryRun,
-		Retry:     featureEnableRetry,
 		NoRefresh: noRefresh,
 	}
 
