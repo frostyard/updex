@@ -433,15 +433,16 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 				continue
 			}
 
-			patterns := transfer.Source.MatchPatterns
-			if len(patterns) == 0 && transfer.Source.MatchPattern != "" {
-				patterns = []string{transfer.Source.MatchPattern}
+			patternStrs := transfer.Source.MatchPatterns
+			if len(patternStrs) == 0 && transfer.Source.MatchPattern != "" {
+				patternStrs = []string{transfer.Source.MatchPattern}
 			}
+			patterns := version.ParsePatterns(patternStrs)
 
 			var sourceFile string
 			var expectedHash string
 			for filename, hash := range m.Files {
-				if v, _, ok := version.ExtractVersionMulti(filename, patterns); ok && v == versionToInstall {
+				if v, _, ok := version.ExtractVersionParsed(filename, patterns); ok && v == versionToInstall {
 					sourceFile = filename
 					expectedHash = hash
 					break
