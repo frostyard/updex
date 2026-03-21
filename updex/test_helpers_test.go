@@ -6,6 +6,28 @@ import (
 	"testing"
 )
 
+// createFeatureTransferFileWithMinVersion creates a .transfer file with Features and MinVersion set
+func createFeatureTransferFileWithMinVersion(t *testing.T, configDir, component, featureName, baseURL, minVersion string) {
+	t.Helper()
+	content := `[Transfer]
+Features=` + featureName + `
+MinVersion=` + minVersion + `
+
+[Source]
+Type=url-file
+Path=` + baseURL + `
+MatchPattern=` + component + `_@v.raw
+
+[Target]
+MatchPattern=` + component + `_@v.raw
+CurrentSymlink=` + component + `.raw
+`
+	path := filepath.Join(configDir, component+".transfer")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to create transfer file: %v", err)
+	}
+}
+
 // updateTransferTargetPath updates all transfer files to use the given target path
 func updateTransferTargetPath(t *testing.T, configDir, targetDir string) {
 	t.Helper()

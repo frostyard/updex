@@ -144,7 +144,7 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 					result.DownloadedFiles = append(result.DownloadedFiles, transfer.Component+" (would download)")
 				} else {
 					// Use installTransfer which handles all the download logic
-					version, _, err := c.installTransfer(ctx, transfer, installTransferOptions{
+					version, downloaded, err := c.installTransfer(ctx, transfer, installTransferOptions{
 						NoRefresh: true, // refresh is batched at the end
 					})
 					if err != nil {
@@ -152,8 +152,12 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 						c.warn("%s", result.Error)
 						return result, fmt.Errorf("%s", result.Error)
 					}
-					result.DownloadedFiles = append(result.DownloadedFiles, fmt.Sprintf("%s@%s", transfer.Component, version))
-					c.msg("Downloaded %s version %s", transfer.Component, version)
+					if downloaded {
+						result.DownloadedFiles = append(result.DownloadedFiles, fmt.Sprintf("%s@%s", transfer.Component, version))
+						c.msg("Downloaded %s version %s", transfer.Component, version)
+					} else {
+						c.msg("Version %s already installed and current for %s", version, transfer.Component)
+					}
 				}
 			}
 
