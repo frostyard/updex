@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/frostyard/updex/internal/config"
-	"github.com/frostyard/updex/internal/download"
-	"github.com/frostyard/updex/internal/manifest"
-	"github.com/frostyard/updex/internal/sysext"
-	"github.com/frostyard/updex/internal/version"
+	"github.com/frostyard/updex/config"
+	"github.com/frostyard/updex/download"
+	"github.com/frostyard/updex/manifest"
+	"github.com/frostyard/updex/sysext"
+	"github.com/frostyard/updex/version"
 )
 
 // installTransfer performs the update/install logic for a single transfer.

@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/frostyard/updex/internal/config"
-	"github.com/frostyard/updex/internal/manifest"
-	"github.com/frostyard/updex/internal/version"
+	"github.com/frostyard/updex/config"
+	"github.com/frostyard/updex/manifest"
+	"github.com/frostyard/updex/version"
 )
 
 // getAvailableVersions retrieves available versions for a transfer from remote manifest.
