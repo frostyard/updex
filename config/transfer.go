@@ -50,6 +50,28 @@ type TargetSection struct {
 	ReadOnly       bool     // Whether to set read-only flag
 }
 
+// Patterns returns MatchPatterns if non-empty, falling back to []string{MatchPattern}.
+func (s SourceSection) Patterns() []string {
+	if len(s.MatchPatterns) > 0 {
+		return s.MatchPatterns
+	}
+	if s.MatchPattern != "" {
+		return []string{s.MatchPattern}
+	}
+	return nil
+}
+
+// Patterns returns MatchPatterns if non-empty, falling back to []string{MatchPattern}.
+func (t TargetSection) Patterns() []string {
+	if len(t.MatchPatterns) > 0 {
+		return t.MatchPatterns
+	}
+	if t.MatchPattern != "" {
+		return []string{t.MatchPattern}
+	}
+	return nil
+}
+
 // Default search paths for .transfer files (in priority order)
 var defaultSearchPaths = []string{
 	"/etc/sysupdate.d",

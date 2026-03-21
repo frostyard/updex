@@ -433,10 +433,7 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 				continue
 			}
 
-			patterns := transfer.Source.MatchPatterns
-			if len(patterns) == 0 && transfer.Source.MatchPattern != "" {
-				patterns = []string{transfer.Source.MatchPattern}
-			}
+			patterns := transfer.Source.Patterns()
 
 			var sourceFile string
 			var expectedHash string
@@ -456,10 +453,7 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 				continue
 			}
 
-			targetPatterns := transfer.Target.MatchPatterns
-			if len(targetPatterns) == 0 && transfer.Target.MatchPattern != "" {
-				targetPatterns = []string{transfer.Target.MatchPattern}
-			}
+			targetPatterns := transfer.Target.Patterns()
 
 			targetPattern, err := version.ParsePattern(targetPatterns[0])
 			if err != nil {
