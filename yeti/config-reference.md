@@ -31,7 +31,7 @@ Enabled=true
 |-----|------|-------------|
 | `Description` | string | Human-readable description |
 | `Documentation` | string | URL to documentation |
-| `AppStream` | string | AppStream catalog XML URL |
+| `AppStream` | string | AppStream catalog XML URL (parsed by `config` package but not surfaced in the SDK's `FeatureInfo` result) |
 | `Enabled` | bool | Whether the feature is active (`true`/`false`) |
 
 ### Masked features
@@ -114,6 +114,8 @@ MatchPattern=component_@v.raw.xz component_@v.raw.gz component_@v.raw
 ```
 
 Specifiers (`%a`, `%v`, `%w`, etc.) are expanded on each pattern after splitting.
+
+In Go code, the `Transfer` struct stores both `MatchPattern` (first pattern, for backward compatibility) and `MatchPatterns` (all patterns). The `Patterns()` method on `SourceSection`/`TargetSection` returns the canonical list.
 
 ## Pattern Placeholders
 
