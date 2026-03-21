@@ -21,10 +21,7 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 	}
 
 	// Get all patterns
-	patterns := transfer.Source.MatchPatterns
-	if len(patterns) == 0 && transfer.Source.MatchPattern != "" {
-		patterns = []string{transfer.Source.MatchPattern}
-	}
+	patterns := transfer.Source.Patterns()
 	c.debug("source patterns: %v", patterns)
 
 	// Find available versions using all patterns
@@ -73,10 +70,7 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 	}
 
 	// Build target path using first target pattern
-	targetPatterns := transfer.Target.MatchPatterns
-	if len(targetPatterns) == 0 && transfer.Target.MatchPattern != "" {
-		targetPatterns = []string{transfer.Target.MatchPattern}
-	}
+	targetPatterns := transfer.Target.Patterns()
 
 	targetPattern, err := version.ParsePattern(targetPatterns[0])
 	if err != nil {

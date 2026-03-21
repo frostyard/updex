@@ -26,10 +26,7 @@ func (c *Client) getAvailableVersions(ctx context.Context, transfer *config.Tran
 	c.debug("manifest has %d file(s)", len(m.Files))
 
 	// Extract versions from filenames using all patterns
-	patterns := transfer.Source.MatchPatterns
-	if len(patterns) == 0 && transfer.Source.MatchPattern != "" {
-		patterns = []string{transfer.Source.MatchPattern}
-	}
+	patterns := transfer.Source.Patterns()
 	c.debug("matching against pattern(s): %v", patterns)
 
 	versionSet := make(map[string]bool)
