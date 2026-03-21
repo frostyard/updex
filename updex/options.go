@@ -20,12 +20,6 @@ type EnableFeatureOptions struct {
 	// DryRun previews changes without modifying filesystem.
 	DryRun bool
 
-	// Retry enables automatic retry on network failures.
-	Retry bool
-
-	// RetryCount is the number of retries when Retry is true (default 3).
-	RetryCount int
-
 	// NoRefresh skips running systemd-sysext refresh after download.
 	NoRefresh bool
 }

@@ -6,11 +6,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/frostyard/updex/internal/config"
-	"github.com/frostyard/updex/internal/download"
-	"github.com/frostyard/updex/internal/manifest"
-	"github.com/frostyard/updex/internal/sysext"
-	"github.com/frostyard/updex/internal/version"
+	"github.com/frostyard/updex/config"
+	"github.com/frostyard/updex/download"
+	"github.com/frostyard/updex/sysext"
+	"github.com/frostyard/updex/version"
 )
 
 // Features returns all configured features with their status.
@@ -146,7 +145,7 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 					result.DownloadedFiles = append(result.DownloadedFiles, transfer.Component+" (would download)")
 				} else {
 					// Use installTransfer which handles all the download logic
-					version, err := c.installTransfer(transfer, true) // noRefresh=true, we'll refresh once at the end
+					version, err := c.installTransfer(ctx, transfer, true) // noRefresh=true, we'll refresh once at the end
 					if err != nil {
 						result.Error = fmt.Sprintf("failed to download %s: %v", transfer.Component, err)
 						c.warn("%s", result.Error)
@@ -397,7 +396,7 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 				Component: transfer.Component,
 			}
 
-			available, err := c.getAvailableVersions(transfer)
+			available, m, err := c.getAvailableVersions(ctx, transfer)
 			if err != nil {
 				result.Error = fmt.Sprintf("failed to get available versions: %v", err)
 				c.warn("%s", result.Error)
@@ -431,15 +430,6 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 				result.Installed = true
 				c.msg("Version %s already installed and current", versionToInstall)
 				featureResult.Results = append(featureResult.Results, result)
-				continue
-			}
-
-			m, err := manifest.Fetch(transfer.Source.Path, c.config.Verify || transfer.Transfer.Verify)
-			if err != nil {
-				result.Error = fmt.Sprintf("failed to fetch manifest: %v", err)
-				c.warn("%s", result.Error)
-				featureResult.Results = append(featureResult.Results, result)
-				hasErrors = true
 				continue
 			}
 
@@ -485,7 +475,7 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 
 			c.msg("Downloading version %s", versionToInstall)
 			downloadURL := transfer.Source.Path + "/" + sourceFile
-			err = download.Download(downloadURL, targetPath, expectedHash, transfer.Target.Mode)
+			err = download.Download(ctx, downloadURL, targetPath, expectedHash, transfer.Target.Mode)
 			if err != nil {
 				result.Error = fmt.Sprintf("download failed: %v", err)
 				c.warn("%s", result.Error)
@@ -567,7 +557,7 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 		for _, transfer := range featureTransfers {
 			c.msg("Checking %s/%s", f.Name, transfer.Component)
 
-			available, err := c.getAvailableVersions(transfer)
+			available, _, err := c.getAvailableVersions(ctx, transfer)
 			if err != nil {
 				c.warn("failed to get available versions: %v", err)
 				continue

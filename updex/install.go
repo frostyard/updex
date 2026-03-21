@@ -1,20 +1,21 @@
 package updex
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 
-	"github.com/frostyard/updex/internal/config"
-	"github.com/frostyard/updex/internal/download"
-	"github.com/frostyard/updex/internal/manifest"
-	"github.com/frostyard/updex/internal/sysext"
-	"github.com/frostyard/updex/internal/version"
+	"github.com/frostyard/updex/config"
+	"github.com/frostyard/updex/download"
+	"github.com/frostyard/updex/manifest"
+	"github.com/frostyard/updex/sysext"
+	"github.com/frostyard/updex/version"
 )
 
 // installTransfer performs the update/install logic for a single transfer.
-func (c *Client) installTransfer(transfer *config.Transfer, noRefresh bool) (string, error) {
+func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer, noRefresh bool) (string, error) {
 	// Get available versions
-	m, err := manifest.Fetch(transfer.Source.Path, c.config.Verify || transfer.Transfer.Verify)
+	m, err := manifest.Fetch(ctx, transfer.Source.Path, c.config.Verify || transfer.Transfer.Verify)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch manifest: %w", err)
 	}
@@ -88,7 +89,7 @@ func (c *Client) installTransfer(transfer *config.Transfer, noRefresh bool) (str
 	// Download
 	downloadURL := transfer.Source.Path + "/" + sourceFile
 	c.debug("downloading %s → %s", downloadURL, targetPath)
-	err = download.Download(downloadURL, targetPath, expectedHash, transfer.Target.Mode)
+	err = download.Download(ctx, downloadURL, targetPath, expectedHash, transfer.Target.Mode)
 	if err != nil {
 		return "", fmt.Errorf("download failed: %w", err)
 	}

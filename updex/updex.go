@@ -18,7 +18,7 @@ package updex
 
 import (
 	"github.com/frostyard/std/reporter"
-	"github.com/frostyard/updex/internal/sysext"
+	"github.com/frostyard/updex/sysext"
 )
 
 // Client provides programmatic access to updex operations.

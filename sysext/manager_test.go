@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/frostyard/updex/internal/config"
+	"github.com/frostyard/updex/config"
 )
 
 func TestGetInstalledVersions(t *testing.T) {

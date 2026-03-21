@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,9 +18,14 @@ var keyringPaths = []string{
 }
 
 // verifySignature verifies the GPG signature of the manifest content
-func verifySignature(client *http.Client, sigURL string, content []byte) error {
+func verifySignature(ctx context.Context, client *http.Client, sigURL string, content []byte) error {
 	// Download signature
-	resp, err := client.Get(sigURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sigURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create signature request: %w", err)
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to fetch signature: %w", err)
 	}
