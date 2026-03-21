@@ -18,9 +18,10 @@ cmd/updex/client.go             CLI → SDK client factory
 
 updex/                          Public SDK (Client + methods)
   updex.go                      Client struct, NewClient()
-  features.go                   Features(), EnableFeature(), DisableFeature()
-  install.go                    UpdateFeatures(), installTransfer()
-  list.go                       CheckFeatures(), getAvailableVersions()
+  features.go                   Features(), EnableFeature(), DisableFeature(),
+                                UpdateFeatures(), CheckFeatures()
+  install.go                    installTransfer() helper (unexported)
+  list.go                       getAvailableVersions() helper (unexported)
   options.go                    Option structs for all operations
   results.go                    Result structs for all operations
 
@@ -55,14 +56,14 @@ CLI (cmd/daemon.go) → systemd (direct, bypasses SDK)
 ### Testing patterns
 
 - Mock interfaces for system commands: `sysext.SysextRunner`, `systemd.SystemctlRunner`
-- Global runner injection via `SetRunner()` returning cleanup function
-- `ClientConfig.SysextRunner` field for injecting mocks into the SDK client
+- `ClientConfig.SysextRunner` field for injecting mocks into the SDK client — `NewClient` stores the runner directly on the `Client` struct (does not mutate global state)
+- Package-level `SetRunner()` returning cleanup function still exists on `sysext` and `systemd` packages for non-SDK test code
 - `internal/testutil.NewTestServer()` creates `httptest.Server` with configurable manifests and file content
 - `t.TempDir()` for filesystem operations, `t.Context()` for context
 
 ### CLI output
 
-- Text tables by default, JSON with `--json` flag via `common.OutputJSON()`
+- Text tables by default, JSON with `--json` flag — both `--json` and `--dry-run` are provided by the `github.com/frostyard/clix` package, not defined in this repo
 - Operations requiring filesystem changes call `requireRoot()` to enforce root access
 
 ### Public API (Issue #13)
@@ -123,7 +124,7 @@ Transfer file values support systemd-style `%` specifiers. See [Configuration Re
    - Extract available versions using pattern matching (`@v` placeholder)
    - Select newest version via semver comparison
    - Skip if already installed (check target directory)
-   - Download file, verify SHA256 hash during transfer
+   - Download file, verify SHA256 hash of compressed bytes during transfer
    - Decompress if needed (xz, gz, zstd — detected from filename)
    - Atomically rename to final path, update `CurrentSymlink`
    - Create symlink in `/var/lib/extensions/` pointing to extension
@@ -132,8 +133,8 @@ Transfer file values support systemd-style `%` specifiers. See [Configuration Re
 
 ### Enable/disable feature
 
-- **Enable**: Creates a drop-in file in `/etc/sysupdate.d/<name>.feature.d/` setting `Enabled=true`. With `--now`, also downloads extensions immediately.
-- **Disable**: Creates drop-in setting `Enabled=false`. With `--now`, also unmerges and removes extension files. `--force` allows removal of currently merged extensions.
+- **Enable**: Creates drop-in at `/etc/sysupdate.d/<name>.feature.d/00-updex.conf` setting `Enabled=true`. With `--now`, also downloads extensions immediately.
+- **Disable**: Creates drop-in setting `Enabled=false`. With `--now`, calls `Unmerge()`, removes symlinks from `/var/lib/extensions/`, and deletes all versioned files. `--force` required if extensions are currently active/merged.
 
 ## CLI Commands
 

@@ -18,7 +18,7 @@ type ClientConfig struct {
 func NewClient(cfg ClientConfig) *Client
 ```
 
-If `SysextRunner` is provided, `NewClient` calls `sysext.SetRunner()` to inject it globally.
+`NewClient` stores the provided `SysextRunner` directly on the `Client` struct. If `SysextRunner` is nil (including typed nil interfaces, checked via `reflect`), it defaults to `&sysext.DefaultRunner{}`. If `Progress` is nil, it defaults to `reporter.NoopReporter{}`. The client does not mutate global package state.
 
 ## Methods
 
@@ -164,19 +164,28 @@ type CheckResult struct {
 
 ### `download`
 
-- `Download(ctx context.Context, url, targetPath, expectedHash string, mode uint32) error` — Download with hash verification and auto-decompression
+- `Download(ctx context.Context, url, targetPath, expectedHash string, mode uint32) error` — Download with hash verification (on compressed bytes) and auto-decompression. Uses atomic rename (falls back to copy on cross-device). HTTP timeout: 10 minutes. Default mode: `0644` if `mode == 0`
+- `DecompressReader(r io.Reader, compressionType string) (io.ReadCloser, error)` — Returns a decompressing reader for `"xz"`, `"gz"`, `"zstd"`, or passthrough for `""`
 
 ### `version`
 
-- `ParsePattern(pattern string) (*Pattern, error)` — Parse `@v`-style patterns
-- `ExtractVersionMulti(filename string, patternStrs []string) (version, matchedPattern string, ok bool)` — Try multiple patterns
-- `Compare(v1, v2 string) int` — Semver comparison (-1, 0, 1)
+- `ParsePattern(pattern string) (*Pattern, error)` — Parse `@v`-style patterns. Returns `ErrEmptyPattern` or `ErrMissingVersionPlaceholder` on invalid input
+- `ParsePatterns(patternStrs []string) ([]*Pattern, error)` — Parse multiple patterns; skips invalid ones, returns first error
+- `ExtractVersionParsed(filename string, patterns []*Pattern) (version, matchedPattern string, ok bool)` — Try pre-parsed patterns against a filename (preferred for loops)
+- `ExtractVersionMulti(filename string, patternStrs []string) (version, matchedPattern string, ok bool)` — **Deprecated**: recompiles regexes on every call; use `ParsePatterns` + `ExtractVersionParsed` instead
+- `Compare(v1, v2 string) int` — Semver comparison (-1, 0, 1); normalizes by stripping `v`/`V` prefix; falls back to string comparison
 - `Sort(versions []string)` — Sort descending (newest first)
+
+**`Pattern` methods:**
+- `ExtractVersion(filename string) (string, bool)` — Extract version from a single filename
+- `Matches(filename string) bool` — Test if filename matches the pattern
+- `BuildFilename(version string) string` — Construct filename from a version string
+- `Raw() string` — Return the original pattern string
 
 ### `sysext`
 
-- `Refresh() / Merge() / Unmerge()` — `systemd-sysext` commands
-- `SetRunner(r SysextRunner) func()` — Inject mock runner (returns cleanup)
+- `Refresh() / Merge() / Unmerge()` — Package-level convenience functions delegating to a global runner
+- `SetRunner(r SysextRunner) func()` — Inject mock runner globally (returns cleanup). Used by non-SDK test code; SDK tests should use `ClientConfig.SysextRunner` instead
 - `GetInstalledVersions(t *config.Transfer) ([]string, string, error)` — List installed + current version
 - `GetActiveVersion(t *config.Transfer) (string, error)` — Get version currently active in systemd-sysext (checks current symlink and `/run/extensions`)
 - `UpdateSymlink(targetDir, symlinkName, targetFile string) error`
