@@ -10,16 +10,18 @@ import (
 )
 
 // getAvailableVersions retrieves available versions for a transfer from remote manifest.
-func (c *Client) getAvailableVersions(ctx context.Context, transfer *config.Transfer) ([]string, error) {
+// It returns the fetched manifest alongside the versions so callers can reuse it
+// without a redundant HTTP request.
+func (c *Client) getAvailableVersions(ctx context.Context, transfer *config.Transfer) ([]string, *manifest.Manifest, error) {
 	if transfer.Source.Type != "url-file" {
-		return nil, fmt.Errorf("unsupported source type: %s", transfer.Source.Type)
+		return nil, nil, fmt.Errorf("unsupported source type: %s", transfer.Source.Type)
 	}
 
 	// Fetch manifest
 	c.debug("fetching manifest from %s", transfer.Source.Path)
 	m, err := manifest.Fetch(ctx, transfer.Source.Path, c.config.Verify || transfer.Transfer.Verify)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	c.debug("manifest has %d file(s)", len(m.Files))
 
@@ -49,5 +51,5 @@ func (c *Client) getAvailableVersions(ctx context.Context, transfer *config.Tran
 	}
 	c.debug("found %d matching version(s): %v", len(versions), versions)
 
-	return versions, nil
+	return versions, m, nil
 }
