@@ -149,7 +149,10 @@ func VacuumWithDetails(t *config.Transfer) (removed []string, kept []string, err
 		return nil, nil, fmt.Errorf("no target match patterns defined")
 	}
 
-	patterns, _ := version.ParsePatterns(patternStrs)
+	patterns, firstErr := version.ParsePatterns(patternStrs)
+	if len(patterns) == 0 {
+		return nil, nil, fmt.Errorf("invalid target pattern: %w", firstErr)
+	}
 
 	targetDir := t.Target.Path
 	if targetDir == "" {
@@ -336,7 +339,10 @@ func RemoveAllVersions(t *config.Transfer) ([]string, error) {
 		return nil, fmt.Errorf("no target match patterns defined")
 	}
 
-	patterns, _ := version.ParsePatterns(patternStrs)
+	patterns, firstErr := version.ParsePatterns(patternStrs)
+	if len(patterns) == 0 {
+		return nil, fmt.Errorf("invalid target pattern: %w", firstErr)
+	}
 
 	targetDir := t.Target.Path
 	if targetDir == "" {
