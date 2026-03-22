@@ -37,7 +37,7 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFeatureOptions) (*FeatureActionResult, error)
 ```
 
-Enable creates a drop-in file setting `Enabled=true`. Disable creates one setting `Enabled=false`.
+Enable creates a drop-in file setting `Enabled=true`. With `Now: true`, it downloads extensions via the shared `installTransfer` pipeline. Disable creates a drop-in setting `Enabled=false`.
 
 **EnableFeatureOptions:**
 | Field | Type | Description |
@@ -61,7 +61,7 @@ Enable creates a drop-in file setting `Enabled=true`. Disable creates one settin
 func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions) ([]UpdateFeaturesResult, error)
 ```
 
-Downloads and installs the newest available version for each enabled feature's transfers. Returns per-feature results with per-component status.
+Downloads and installs the newest available version for each enabled feature's transfers. Delegates per-component work to the internal `installTransfer` pipeline (which handles download, symlink, sysext linking, and vacuum). Refresh is batched — a single `systemd-sysext refresh` runs after all components are processed. Returns per-feature results with per-component status.
 
 **UpdateFeaturesOptions:**
 | Field | Type | Description |
