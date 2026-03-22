@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/frostyard/updex/config"
@@ -192,17 +193,9 @@ func VacuumWithDetails(t *config.Transfer) (removed []string, kept []string, err
 	}
 
 	// Sort by version (newest first)
-	versions := make([]string, len(installed))
-	for i, vf := range installed {
-		versions[i] = vf.version
-	}
-	version.Sort(versions)
-
-	// Map version to filename
-	versionToFile := make(map[string]string)
-	for _, vf := range installed {
-		versionToFile[vf.version] = vf.filename
-	}
+	slices.SortFunc(installed, func(a, b versionFile) int {
+		return version.Compare(b.version, a.version) // Reversed for descending order
+	})
 
 	// Determine which to keep
 	instancesMax := t.Transfer.InstancesMax
@@ -210,9 +203,9 @@ func VacuumWithDetails(t *config.Transfer) (removed []string, kept []string, err
 		instancesMax = 2
 	}
 
-	for i, v := range versions {
-		filename := versionToFile[v]
-		fullPath := filepath.Join(targetDir, filename)
+	for i, vf := range installed {
+		v := vf.version
+		fullPath := filepath.Join(targetDir, vf.filename)
 
 		// Always keep protected versions
 		if t.Transfer.ProtectVersion != "" && v == t.Transfer.ProtectVersion {
@@ -228,7 +221,7 @@ func VacuumWithDetails(t *config.Transfer) (removed []string, kept []string, err
 
 		// Remove old version
 		if err := os.Remove(fullPath); err != nil {
-			return removed, kept, fmt.Errorf("failed to remove %s: %w", filename, err)
+			return removed, kept, fmt.Errorf("failed to remove %s: %w", vf.filename, err)
 		}
 		removed = append(removed, v)
 	}
