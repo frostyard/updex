@@ -69,16 +69,6 @@ func (r *DefaultSystemctlRunner) IsEnabled(unit string) (bool, error) {
 	return true, nil
 }
 
-// runner is the package-level runner used by systemctl operations
-var runner SystemctlRunner = &DefaultSystemctlRunner{}
-
-// SetRunner sets the runner for testing (returns cleanup function)
-func SetRunner(r SystemctlRunner) func() {
-	old := runner
-	runner = r
-	return func() { runner = old }
-}
-
 // runSystemctl executes a systemctl command with the given arguments
 func runSystemctl(args ...string) error {
 	cmd := exec.Command("systemctl", args...)
