@@ -10,24 +10,39 @@ import (
 	"github.com/frostyard/updex/version"
 )
 
-// GetInstalledVersions returns the list of installed versions for a transfer config
-// Also returns the current version (pointed to by symlink or newest)
-func GetInstalledVersions(t *config.Transfer) ([]string, string, error) {
-	// Get all target patterns
+// parseTargetPatterns extracts and parses the version patterns from a transfer's
+// target configuration, returning an error if no valid patterns are found.
+func parseTargetPatterns(t *config.Transfer) ([]*version.Pattern, error) {
 	patternStrs := t.Target.Patterns()
 	if len(patternStrs) == 0 {
-		return nil, "", fmt.Errorf("no target match patterns defined")
+		return nil, fmt.Errorf("no target match patterns defined")
 	}
 
 	patterns, firstErr := version.ParsePatterns(patternStrs)
 	if len(patterns) == 0 {
-		return nil, "", fmt.Errorf("invalid target pattern: %w", firstErr)
+		return nil, fmt.Errorf("invalid target pattern: %w", firstErr)
 	}
 
-	targetDir := t.Target.Path
-	if targetDir == "" {
-		targetDir = "/var/lib/extensions"
+	return patterns, nil
+}
+
+// targetDir returns the target directory for a transfer, defaulting to SysextDir.
+func targetDir(t *config.Transfer) string {
+	if t.Target.Path != "" {
+		return t.Target.Path
 	}
+	return SysextDir
+}
+
+// GetInstalledVersions returns the list of installed versions for a transfer config
+// Also returns the current version (pointed to by symlink or newest)
+func GetInstalledVersions(t *config.Transfer) ([]string, string, error) {
+	patterns, err := parseTargetPatterns(t)
+	if err != nil {
+		return nil, "", err
+	}
+
+	targetDir := targetDir(t)
 
 	entries, err := os.ReadDir(targetDir)
 	if err != nil {
@@ -76,15 +91,9 @@ func GetInstalledVersions(t *config.Transfer) ([]string, string, error) {
 // GetActiveVersion returns the version currently active in systemd-sysext
 // This checks if the extension is currently merged
 func GetActiveVersion(t *config.Transfer) (string, error) {
-	// Get all target patterns
-	patternStrs := t.Target.Patterns()
-	if len(patternStrs) == 0 {
-		return "", fmt.Errorf("no target match patterns defined")
-	}
-
-	patterns, firstErr := version.ParsePatterns(patternStrs)
-	if len(patterns) == 0 {
-		return "", fmt.Errorf("invalid target pattern: %w", firstErr)
+	patterns, err := parseTargetPatterns(t)
+	if err != nil {
+		return "", err
 	}
 
 	// First try the current symlink in the target directory
@@ -143,21 +152,12 @@ func Vacuum(t *config.Transfer) error {
 
 // VacuumWithDetails removes old versions and returns what was removed/kept
 func VacuumWithDetails(t *config.Transfer) (removed []string, kept []string, err error) {
-	// Get all target patterns
-	patternStrs := t.Target.Patterns()
-	if len(patternStrs) == 0 {
-		return nil, nil, fmt.Errorf("no target match patterns defined")
+	patterns, err := parseTargetPatterns(t)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	patterns, firstErr := version.ParsePatterns(patternStrs)
-	if len(patterns) == 0 {
-		return nil, nil, fmt.Errorf("invalid target pattern: %w", firstErr)
-	}
-
-	targetDir := t.Target.Path
-	if targetDir == "" {
-		targetDir = "/var/lib/extensions"
-	}
+	targetDir := targetDir(t)
 
 	entries, err := os.ReadDir(targetDir)
 	if err != nil {
@@ -333,21 +333,12 @@ func UnlinkFromSysext(t *config.Transfer) error {
 // RemoveAllVersions removes all versions of a component from the target directory
 // and removes the current symlink if it exists. Returns the list of removed files.
 func RemoveAllVersions(t *config.Transfer) ([]string, error) {
-	// Get all target patterns
-	patternStrs := t.Target.Patterns()
-	if len(patternStrs) == 0 {
-		return nil, fmt.Errorf("no target match patterns defined")
+	patterns, err := parseTargetPatterns(t)
+	if err != nil {
+		return nil, err
 	}
 
-	patterns, firstErr := version.ParsePatterns(patternStrs)
-	if len(patterns) == 0 {
-		return nil, fmt.Errorf("invalid target pattern: %w", firstErr)
-	}
-
-	targetDir := t.Target.Path
-	if targetDir == "" {
-		targetDir = "/var/lib/extensions"
-	}
+	targetDir := targetDir(t)
 
 	entries, err := os.ReadDir(targetDir)
 	if err != nil {
