@@ -125,6 +125,7 @@ nfpms:
       - apk
 
 release:
+  mode: replace
   footer: |
     **Full Changelog**: https://github.com/bketelsen/{{ .ProjectName }}/compare/{{ .PreviousTag }}...{{ .Tag }}
 
