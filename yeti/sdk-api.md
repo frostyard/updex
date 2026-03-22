@@ -61,7 +61,7 @@ Enable creates a drop-in file setting `Enabled=true`. With `Now: true`, it downl
 func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions) ([]UpdateFeaturesResult, error)
 ```
 
-Downloads and installs the newest available version for each enabled feature's transfers. Delegates per-component work to the internal `installTransfer` pipeline (which handles download, symlink, sysext linking, and vacuum). Refresh is batched — a single `systemd-sysext refresh` runs after all components are processed. Returns per-feature results with per-component status.
+Downloads and installs the newest available version for each enabled feature's transfers. Delegates per-component work to the internal `installTransfer` pipeline (which handles download, symlink, sysext linking, and vacuum). Manifests are cached by source URL — transfers sharing the same source avoid redundant HTTP requests. Refresh is batched — a single `systemd-sysext refresh` runs after all components are processed. Returns per-feature results with per-component status.
 
 **UpdateFeaturesOptions:**
 | Field | Type | Description |
@@ -75,7 +75,7 @@ Downloads and installs the newest available version for each enabled feature's t
 func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) ([]CheckFeaturesResult, error)
 ```
 
-Checks for available updates without downloading. `CheckFeaturesOptions` is currently empty.
+Checks for available updates without downloading. Manifests are cached by source URL, same as `UpdateFeatures`. `CheckFeaturesOptions` is currently empty.
 
 ## Result Types
 
