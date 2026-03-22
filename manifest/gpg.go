@@ -63,29 +63,40 @@ func verifySignature(ctx context.Context, client *http.Client, sigURL string, co
 // loadKeyring loads the GPG keyring from default paths
 func loadKeyring() (openpgp.EntityList, error) {
 	for _, path := range keyringPaths {
-		f, err := os.Open(path)
+		keyring, err := readKeyringFile(path)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
 			return nil, err
 		}
-		defer func() { _ = f.Close() }()
-
-		keyring, err := openpgp.ReadKeyRing(f)
-		if err != nil {
-			// Try armored format
-			_, _ = f.Seek(0, 0)
-			keyring, err = openpgp.ReadArmoredKeyRing(f)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read keyring from %s: %w", path, err)
-			}
-		}
 
 		return keyring, nil
 	}
 
 	return nil, fmt.Errorf("no keyring found in %v", keyringPaths)
+}
+
+// readKeyringFile reads a GPG keyring from a single file path.
+// Returns os.ErrNotExist if the file does not exist.
+func readKeyringFile(path string) (openpgp.EntityList, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+
+	keyring, err := openpgp.ReadKeyRing(f)
+	if err != nil {
+		// Try armored format
+		_, _ = f.Seek(0, 0)
+		keyring, err = openpgp.ReadArmoredKeyRing(f)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read keyring from %s: %w", path, err)
+		}
+	}
+
+	return keyring, nil
 }
 
 // SetKeyringPaths allows overriding the default keyring search paths
