@@ -7,21 +7,23 @@ import (
 
 	"github.com/frostyard/updex/config"
 	"github.com/frostyard/updex/download"
+	"github.com/frostyard/updex/manifest"
 	"github.com/frostyard/updex/sysext"
 	"github.com/frostyard/updex/version"
 )
 
 // installTransfer performs the update/install logic for a single transfer.
-// It returns the version selected, whether a download occurred, and any error.
-func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer, opts installTransferOptions) (string, bool, error) {
+// It returns the version selected, the resolved manifest, whether a download occurred, and any error.
+// If opts.CachedManifest is non-nil, it is used instead of fetching the manifest over HTTP.
+func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer, opts installTransferOptions) (string, *manifest.Manifest, bool, error) {
 	// Get available versions (applies MinVersion filter)
-	available, m, err := c.getAvailableVersions(ctx, transfer)
+	available, m, err := c.getAvailableVersions(ctx, transfer, opts.CachedManifest)
 	if err != nil {
-		return "", false, fmt.Errorf("failed to get available versions: %w", err)
+		return "", nil, false, fmt.Errorf("failed to get available versions: %w", err)
 	}
 
 	if len(available) == 0 {
-		return "", false, fmt.Errorf("no versions available")
+		return "", nil, false, fmt.Errorf("no versions available")
 	}
 
 	// Sort and get newest
@@ -33,7 +35,7 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 	installed, current, _ := sysext.GetInstalledVersions(transfer)
 	for _, v := range installed {
 		if v == versionToInstall && v == current {
-			return versionToInstall, false, nil
+			return versionToInstall, m, false, nil
 		}
 	}
 
@@ -52,7 +54,7 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 	}
 
 	if sourceFile == "" {
-		return "", false, fmt.Errorf("no file found for version %s", versionToInstall)
+		return "", nil, false, fmt.Errorf("no file found for version %s", versionToInstall)
 	}
 
 	// Build target path using first target pattern
@@ -60,7 +62,7 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 
 	targetPattern, err := version.ParsePattern(targetPatterns[0])
 	if err != nil {
-		return "", false, fmt.Errorf("invalid target pattern: %w", err)
+		return "", nil, false, fmt.Errorf("invalid target pattern: %w", err)
 	}
 
 	targetFile := targetPattern.BuildFilename(versionToInstall)
@@ -71,7 +73,7 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 	c.debug("downloading %s → %s", downloadURL, targetPath)
 	err = download.Download(ctx, downloadURL, targetPath, expectedHash, transfer.Target.Mode)
 	if err != nil {
-		return "", false, fmt.Errorf("download failed: %w", err)
+		return "", nil, false, fmt.Errorf("download failed: %w", err)
 	}
 
 	// Update symlink if configured
@@ -101,5 +103,5 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 		}
 	}
 
-	return versionToInstall, true, nil
+	return versionToInstall, m, true, nil
 }

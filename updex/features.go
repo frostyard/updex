@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/frostyard/updex/config"
+	"github.com/frostyard/updex/manifest"
 	"github.com/frostyard/updex/sysext"
 	"github.com/frostyard/updex/version"
 )
@@ -144,7 +145,7 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 					result.DownloadedFiles = append(result.DownloadedFiles, transfer.Component+" (would download)")
 				} else {
 					// Use installTransfer which handles all the download logic
-					version, downloaded, err := c.installTransfer(ctx, transfer, installTransferOptions{
+					version, _, downloaded, err := c.installTransfer(ctx, transfer, installTransferOptions{
 						NoRefresh: true, // refresh is batched at the end
 					})
 					if err != nil {
@@ -380,6 +381,10 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 	var allResults []UpdateFeaturesResult
 	var hasErrors bool
 
+	// Cache manifests by source URL to avoid redundant HTTP requests
+	// when multiple transfers share the same source.
+	manifestCache := make(map[string]*manifest.Manifest)
+
 	for _, f := range features {
 		if !f.Enabled || f.Masked {
 			continue
@@ -401,10 +406,14 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 				Component: transfer.Component,
 			}
 
-			v, downloaded, err := c.installTransfer(ctx, transfer, installTransferOptions{
-				NoVacuum:  opts.NoVacuum,
-				NoRefresh: true, // refresh is batched at the end
+			v, m, downloaded, err := c.installTransfer(ctx, transfer, installTransferOptions{
+				NoVacuum:       opts.NoVacuum,
+				NoRefresh:      true, // refresh is batched at the end
+				CachedManifest: manifestCache[transfer.Source.Path],
 			})
+			if m != nil {
+				manifestCache[transfer.Source.Path] = m
+			}
 			if err != nil {
 				result.Error = err.Error()
 				c.warn("%s", result.Error)
@@ -458,6 +467,10 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 
 	var allResults []CheckFeaturesResult
 
+	// Cache manifests by source URL to avoid redundant HTTP requests
+	// when multiple transfers share the same source.
+	manifestCache := make(map[string]*manifest.Manifest)
+
 	for _, f := range features {
 		if !f.Enabled || f.Masked {
 			continue
@@ -475,7 +488,10 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 		for _, transfer := range featureTransfers {
 			c.msg("Checking %s/%s", f.Name, transfer.Component)
 
-			available, _, err := c.getAvailableVersions(ctx, transfer)
+			available, m, err := c.getAvailableVersions(ctx, transfer, manifestCache[transfer.Source.Path])
+			if m != nil {
+				manifestCache[transfer.Source.Path] = m
+			}
 			if err != nil {
 				c.warn("failed to get available versions: %v", err)
 				continue

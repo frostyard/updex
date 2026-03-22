@@ -11,17 +11,24 @@ import (
 
 // getAvailableVersions retrieves available versions for a transfer from remote manifest.
 // It returns the fetched manifest alongside the versions so callers can reuse it
-// without a redundant HTTP request.
-func (c *Client) getAvailableVersions(ctx context.Context, transfer *config.Transfer) ([]string, *manifest.Manifest, error) {
+// without a redundant HTTP request. If cachedManifest is non-nil, it is used instead
+// of fetching the manifest over HTTP.
+func (c *Client) getAvailableVersions(ctx context.Context, transfer *config.Transfer, cachedManifest *manifest.Manifest) ([]string, *manifest.Manifest, error) {
 	if transfer.Source.Type != "url-file" {
 		return nil, nil, fmt.Errorf("unsupported source type: %s", transfer.Source.Type)
 	}
 
-	// Fetch manifest
-	c.debug("fetching manifest from %s", transfer.Source.Path)
-	m, err := manifest.Fetch(ctx, transfer.Source.Path, c.config.Verify || transfer.Transfer.Verify)
-	if err != nil {
-		return nil, nil, err
+	m := cachedManifest
+	if m == nil {
+		// Fetch manifest
+		c.debug("fetching manifest from %s", transfer.Source.Path)
+		var err error
+		m, err = manifest.Fetch(ctx, transfer.Source.Path, c.config.Verify || transfer.Transfer.Verify)
+		if err != nil {
+			return nil, nil, err
+		}
+	} else {
+		c.debug("using cached manifest for %s", transfer.Source.Path)
 	}
 	c.debug("manifest has %d file(s)", len(m.Files))
 

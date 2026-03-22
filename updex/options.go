@@ -1,5 +1,7 @@
 package updex
 
+import "github.com/frostyard/updex/manifest"
+
 // UpdateFeaturesOptions configures the UpdateFeatures operation.
 type UpdateFeaturesOptions struct {
 	// NoRefresh skips running systemd-sysext refresh after update.
@@ -31,6 +33,9 @@ type installTransferOptions struct {
 
 	// NoRefresh skips running systemd-sysext refresh after install.
 	NoRefresh bool
+
+	// CachedManifest, if non-nil, is used instead of fetching the manifest over HTTP.
+	CachedManifest *manifest.Manifest
 }
 
 // DisableFeatureOptions configures the DisableFeature operation.
