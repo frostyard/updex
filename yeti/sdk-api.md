@@ -18,7 +18,7 @@ type ClientConfig struct {
 func NewClient(cfg ClientConfig) *Client
 ```
 
-`NewClient` stores the provided `SysextRunner` directly on the `Client` struct. If `SysextRunner` is nil (including typed nil interfaces, checked via `reflect`), it defaults to `&sysext.DefaultRunner{}`. If `Progress` is nil, it defaults to `reporter.NoopReporter{}`. The client does not mutate global package state.
+`NewClient` stores the provided `SysextRunner` directly on the `Client` struct. If `SysextRunner` is nil, it defaults to `&sysext.DefaultRunner{}`. If `Progress` is nil, it defaults to `reporter.NoopReporter{}`. The client does not mutate global package state.
 
 ## Methods
 
