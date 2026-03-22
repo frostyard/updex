@@ -125,9 +125,10 @@ func LoadTransfers(customPath string) ([]*Transfer, error) {
 	}
 
 	// Parse all transfer files
+	specCtx := newSpecifierContext()
 	var transfers []*Transfer
 	for component, filePath := range transferFiles {
-		t, err := parseTransferFile(filePath, component)
+		t, err := parseTransferFile(filePath, component, specCtx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse %s: %w", filePath, err)
 		}
@@ -142,13 +143,11 @@ func LoadTransfers(customPath string) ([]*Transfer, error) {
 	return transfers, nil
 }
 
-func parseTransferFile(filePath, component string) (*Transfer, error) {
+func parseTransferFile(filePath, component string, specCtx *specifierContext) (*Transfer, error) {
 	cfg, err := ini.Load(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load INI file: %w", err)
 	}
-
-	specCtx := newSpecifierContext()
 
 	t := &Transfer{
 		Component: component,
@@ -262,12 +261,15 @@ func parseTransferFile(filePath, component string) (*Transfer, error) {
 	return t, nil
 }
 
-// specifierContext caches values that are constant across a single
-// parseTransferFile call, avoiding repeated syscalls and file reads.
+// specifierContext caches values that are constant for the lifetime of a
+// LoadTransfers call, avoiding repeated syscalls and file reads.
 type specifierContext struct {
 	osRelease     map[string]string
 	hostname      string
 	shortHostname string
+	bootID        string
+	machineID     string
+	kernelRelease string
 }
 
 func newSpecifierContext() *specifierContext {
@@ -281,6 +283,9 @@ func newSpecifierContext() *specifierContext {
 		osRelease:     osRelease,
 		hostname:      hostname,
 		shortHostname: shortHostname,
+		bootID:        readFileOneLine("/proc/sys/kernel/random/boot_id"),
+		machineID:     readFileOneLine("/etc/machine-id"),
+		kernelRelease: readFileOneLine("/proc/sys/kernel/osrelease"),
 	}
 }
 
@@ -310,7 +315,7 @@ func expandSpecifiers(s string, ctx *specifierContext) string {
 		case 'B':
 			repl = ctx.osRelease["BUILD_ID"]
 		case 'b':
-			repl = readFileOneLine("/proc/sys/kernel/random/boot_id")
+			repl = ctx.bootID
 		case 'H':
 			repl = ctx.hostname
 		case 'l':
@@ -318,7 +323,7 @@ func expandSpecifiers(s string, ctx *specifierContext) string {
 		case 'M':
 			repl = ctx.osRelease["IMAGE_ID"]
 		case 'm':
-			repl = readFileOneLine("/etc/machine-id")
+			repl = ctx.machineID
 		case 'o':
 			repl = ctx.osRelease["ID"]
 		case 'T':
@@ -326,7 +331,7 @@ func expandSpecifiers(s string, ctx *specifierContext) string {
 		case 'V':
 			repl = "/var/tmp"
 		case 'v':
-			repl = readFileOneLine("/proc/sys/kernel/osrelease")
+			repl = ctx.kernelRelease
 		case 'w':
 			repl = ctx.osRelease["VERSION_ID"]
 		case 'W':
