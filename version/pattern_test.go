@@ -450,9 +450,9 @@ func TestPattern_FedoraSysextsStyleWithSpecifierExpansion(t *testing.T) {
 	}
 }
 
-func TestExtractVersionMulti_FedoraSysextsPattern(t *testing.T) {
-	// Test ExtractVersionMulti with fedora-sysexts pattern
-	// This test verifies that ExtractVersionMulti correctly matches and extracts versions
+func TestExtractVersionParsed_FedoraSysextsPattern(t *testing.T) {
+	// Test ExtractVersionParsed with fedora-sysexts pattern
+	// This test verifies that ExtractVersionParsed correctly matches and extracts versions
 	tests := []struct {
 		name              string
 		originalPatterns  []string // Patterns with unexpanded specifiers
@@ -495,15 +495,16 @@ func TestExtractVersionMulti_FedoraSysextsPattern(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// In real usage, patterns would be expanded first (specifiers replaced).
 			// We test with the expanded patterns and track which original pattern matched.
-			version, matched, ok := ExtractVersionMulti(tt.filename, tt.expandedPatterns)
+			patterns, _ := ParsePatterns(tt.expandedPatterns)
+			version, matched, ok := ExtractVersionParsed(tt.filename, patterns)
 
 			if ok != tt.expectOK {
-				t.Errorf("ExtractVersionMulti() ok = %v, want %v", ok, tt.expectOK)
+				t.Errorf("ExtractVersionParsed() ok = %v, want %v", ok, tt.expectOK)
 			}
 
 			if ok {
 				if version != tt.expectVersion {
-					t.Errorf("ExtractVersionMulti() version = %q, want %q", version, tt.expectVersion)
+					t.Errorf("ExtractVersionParsed() version = %q, want %q", version, tt.expectVersion)
 				}
 				// Find which original pattern corresponds to the matched expanded pattern
 				var matchedOrig string
@@ -514,7 +515,7 @@ func TestExtractVersionMulti_FedoraSysextsPattern(t *testing.T) {
 					}
 				}
 				if matchedOrig != tt.expectOrigPattern {
-					t.Errorf("ExtractVersionMulti() matched original = %q, want %q", matchedOrig, tt.expectOrigPattern)
+					t.Errorf("ExtractVersionParsed() matched original = %q, want %q", matchedOrig, tt.expectOrigPattern)
 				}
 			}
 		})

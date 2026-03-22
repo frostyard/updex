@@ -172,7 +172,6 @@ type CheckResult struct {
 - `ParsePattern(pattern string) (*Pattern, error)` — Parse `@v`-style patterns. Returns `ErrEmptyPattern` or `ErrMissingVersionPlaceholder` on invalid input
 - `ParsePatterns(patternStrs []string) ([]*Pattern, error)` — Parse multiple patterns; skips invalid ones, returns first error
 - `ExtractVersionParsed(filename string, patterns []*Pattern) (version, matchedPattern string, ok bool)` — Try pre-parsed patterns against a filename (preferred for loops)
-- `ExtractVersionMulti(filename string, patternStrs []string) (version, matchedPattern string, ok bool)` — **Deprecated**: recompiles regexes on every call; use `ParsePatterns` + `ExtractVersionParsed` instead
 - `Compare(v1, v2 string) int` — Semver comparison (-1, 0, 1); normalizes by stripping `v`/`V` prefix; falls back to string comparison
 - `Sort(versions []string)` — Sort descending (newest first)
 
