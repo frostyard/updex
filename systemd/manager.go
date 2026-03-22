@@ -1,6 +1,7 @@
 package systemd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -99,10 +100,7 @@ func (m *Manager) Remove(name string) error {
 		errs = append(errs, fmt.Errorf("daemon-reload: %w", err))
 	}
 
-	if len(errs) > 0 {
-		return fmt.Errorf("errors during removal: %v", errs)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // Exists checks if either timer or service file exists at UnitPath
