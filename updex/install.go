@@ -41,7 +41,10 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 
 	// Find the file for this version
 	patternStrs := transfer.Source.Patterns()
-	patterns, _ := version.ParsePatterns(patternStrs)
+	patterns, firstErr := version.ParsePatterns(patternStrs)
+	if len(patterns) == 0 && firstErr != nil {
+		return "", nil, false, fmt.Errorf("invalid source pattern: %w", firstErr)
+	}
 
 	var sourceFile string
 	var expectedHash string
