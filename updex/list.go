@@ -35,7 +35,10 @@ func (c *Client) getAvailableVersions(ctx context.Context, transfer *config.Tran
 	// Extract versions from filenames using all patterns
 	patternStrs := transfer.Source.Patterns()
 	c.debug("matching against pattern(s): %v", patternStrs)
-	patterns, _ := version.ParsePatterns(patternStrs)
+	patterns, firstErr := version.ParsePatterns(patternStrs)
+	if len(patterns) == 0 && firstErr != nil {
+		return nil, nil, fmt.Errorf("invalid source pattern: %w", firstErr)
+	}
 
 	versionSet := make(map[string]bool)
 	for filename := range m.Files {
