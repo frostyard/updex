@@ -121,7 +121,7 @@ Transfer file values support systemd-style `%` specifiers. See [Configuration Re
 1. Load all `.feature` and `.transfer` files from search paths
 2. Filter transfers to those matching enabled features
 3. For each transfer:
-   - Fetch `SHA256SUMS` manifest from source URL (+ GPG verify if configured); the manifest is retained and reused for file lookup, avoiding a redundant HTTP request
+   - Fetch `SHA256SUMS` manifest from source URL (+ GPG verify if configured); manifests are cached by source URL across transfers so that multiple transfers sharing the same source make only one HTTP request
    - Extract available versions using pattern matching (`@v` placeholder)
    - Select newest version via semver comparison
    - Skip if already installed (check target directory)
