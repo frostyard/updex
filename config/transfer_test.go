@@ -22,7 +22,7 @@ func TestExpandSpecifiersLiteralPercent(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			got := expandSpecifiers(tt.input)
+			got := expandSpecifiers(tt.input, newSpecifierContext())
 			if got != tt.want {
 				t.Errorf("expandSpecifiers(%q) = %q, want %q", tt.input, got, tt.want)
 			}
@@ -32,7 +32,7 @@ func TestExpandSpecifiersLiteralPercent(t *testing.T) {
 
 func TestExpandSpecifiersUnknownPassThrough(t *testing.T) {
 	// Unknown specifiers must be left unchanged.
-	got := expandSpecifiers("foo-%Z-bar")
+	got := expandSpecifiers("foo-%Z-bar", newSpecifierContext())
 	if got != "foo-%Z-bar" {
 		t.Errorf("expandSpecifiers(%q) = %q, want unchanged %q", "foo-%Z-bar", got, "foo-%Z-bar")
 	}
@@ -40,10 +40,10 @@ func TestExpandSpecifiersUnknownPassThrough(t *testing.T) {
 
 func TestExpandSpecifiersTemporaryDirs(t *testing.T) {
 	// %T and %V are always /tmp and /var/tmp.
-	if got := expandSpecifiers("%T"); got != "/tmp" {
+	if got := expandSpecifiers("%T", newSpecifierContext()); got != "/tmp" {
 		t.Errorf("expandSpecifiers(%%T) = %q, want /tmp", got)
 	}
-	if got := expandSpecifiers("%V"); got != "/var/tmp" {
+	if got := expandSpecifiers("%V", newSpecifierContext()); got != "/var/tmp" {
 		t.Errorf("expandSpecifiers(%%V) = %q, want /var/tmp", got)
 	}
 }

@@ -148,6 +148,8 @@ func parseTransferFile(filePath, component string) (*Transfer, error) {
 		return nil, fmt.Errorf("failed to load INI file: %w", err)
 	}
 
+	specCtx := newSpecifierContext()
+
 	t := &Transfer{
 		Component: component,
 		FilePath:  filePath,
@@ -167,7 +169,7 @@ func parseTransferFile(filePath, component string) (*Transfer, error) {
 			t.Transfer.MinVersion = key.String()
 		}
 		if key, err := sec.GetKey("ProtectVersion"); err == nil {
-			t.Transfer.ProtectVersion = expandSpecifiers(key.String())
+			t.Transfer.ProtectVersion = expandSpecifiers(key.String(), specCtx)
 		}
 		if key, err := sec.GetKey("Verify"); err == nil {
 			t.Transfer.Verify = key.MustBool(false)
@@ -196,7 +198,7 @@ func parseTransferFile(filePath, component string) (*Transfer, error) {
 			// Specifiers (%a, %v, %w, …) are expanded before the patterns are used.
 			patterns := parsePatterns(key.String())
 			for i, p := range patterns {
-				patterns[i] = expandSpecifiers(p)
+				patterns[i] = expandSpecifiers(p, specCtx)
 			}
 			t.Source.MatchPatterns = patterns
 			if len(patterns) > 0 {
@@ -220,7 +222,7 @@ func parseTransferFile(filePath, component string) (*Transfer, error) {
 			// Specifiers are expanded here for the same reason as Source.MatchPattern.
 			patterns := parsePatterns(key.String())
 			for i, p := range patterns {
-				patterns[i] = expandSpecifiers(p)
+				patterns[i] = expandSpecifiers(p, specCtx)
 			}
 			t.Target.MatchPatterns = patterns
 			if len(patterns) > 0 {
@@ -260,15 +262,35 @@ func parseTransferFile(filePath, component string) (*Transfer, error) {
 	return t, nil
 }
 
+// specifierContext caches values that are constant across a single
+// parseTransferFile call, avoiding repeated syscalls and file reads.
+type specifierContext struct {
+	osRelease     map[string]string
+	hostname      string
+	shortHostname string
+}
+
+func newSpecifierContext() *specifierContext {
+	osRelease := readOSRelease()
+	hostname, _ := os.Hostname()
+	shortHostname := hostname
+	if dot := strings.IndexByte(shortHostname, '.'); dot >= 0 {
+		shortHostname = shortHostname[:dot]
+	}
+	return &specifierContext{
+		osRelease:     osRelease,
+		hostname:      hostname,
+		shortHostname: shortHostname,
+	}
+}
+
 // expandSpecifiers expands systemd-style %x specifiers per sysupdate.d(5).
 // It performs a single left-to-right scan so that %% → % cannot trigger
 // a second round of expansion.
-func expandSpecifiers(s string) string {
+func expandSpecifiers(s string, ctx *specifierContext) string {
 	if !strings.ContainsRune(s, '%') {
 		return s
 	}
-
-	osRelease := readOSRelease()
 
 	var b strings.Builder
 	b.Grow(len(s))
@@ -282,27 +304,23 @@ func expandSpecifiers(s string) string {
 		var repl string
 		switch s[i+1] {
 		case 'A':
-			repl = osRelease["IMAGE_VERSION"]
+			repl = ctx.osRelease["IMAGE_VERSION"]
 		case 'a':
 			repl = goarchToSystemdArch()
 		case 'B':
-			repl = osRelease["BUILD_ID"]
+			repl = ctx.osRelease["BUILD_ID"]
 		case 'b':
 			repl = readFileOneLine("/proc/sys/kernel/random/boot_id")
 		case 'H':
-			repl, _ = os.Hostname()
+			repl = ctx.hostname
 		case 'l':
-			h, _ := os.Hostname()
-			if dot := strings.IndexByte(h, '.'); dot >= 0 {
-				h = h[:dot]
-			}
-			repl = h
+			repl = ctx.shortHostname
 		case 'M':
-			repl = osRelease["IMAGE_ID"]
+			repl = ctx.osRelease["IMAGE_ID"]
 		case 'm':
 			repl = readFileOneLine("/etc/machine-id")
 		case 'o':
-			repl = osRelease["ID"]
+			repl = ctx.osRelease["ID"]
 		case 'T':
 			repl = "/tmp"
 		case 'V':
@@ -310,9 +328,9 @@ func expandSpecifiers(s string) string {
 		case 'v':
 			repl = readFileOneLine("/proc/sys/kernel/osrelease")
 		case 'w':
-			repl = osRelease["VERSION_ID"]
+			repl = ctx.osRelease["VERSION_ID"]
 		case 'W':
-			repl = osRelease["VARIANT_ID"]
+			repl = ctx.osRelease["VARIANT_ID"]
 		case '%':
 			repl = "%"
 		default:
