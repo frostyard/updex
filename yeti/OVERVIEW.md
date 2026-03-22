@@ -20,7 +20,8 @@ updex/                          Public SDK (Client + methods)
   updex.go                      Client struct, NewClient()
   features.go                   Features(), EnableFeature(), DisableFeature(),
                                 UpdateFeatures(), CheckFeatures()
-  install.go                    installTransfer() helper (unexported)
+  install.go                    installTransfer() — complete install pipeline
+                                (download, symlink, sysext link, refresh, vacuum)
   list.go                       getAvailableVersions() helper (unexported)
   options.go                    Option structs for all operations
   results.go                    Result structs for all operations
@@ -129,7 +130,7 @@ Transfer file values support systemd-style `%` specifiers. See [Configuration Re
    - Atomically rename to final path, update `CurrentSymlink`
    - Create symlink in `/var/lib/extensions/` pointing to extension
    - Vacuum old versions per `InstancesMax`
-4. Call `systemd-sysext refresh` to reload all extensions (unless `--no-refresh`)
+4. Call `systemd-sysext refresh` to reload all extensions (unless `--no-refresh`). Callers batch this — `installTransfer` is called with `NoRefresh: true` per-component, and a single refresh runs at the end
 
 ### Enable/disable feature
 
