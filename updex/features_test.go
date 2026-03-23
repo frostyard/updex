@@ -765,8 +765,6 @@ func TestUpdateFeatures_MinVersion_FiltersVersions(t *testing.T) {
 	targetDir := t.TempDir()
 
 	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
 
 	// Server has v0.9.0, v1.0.0, and v2.0.0 available
 	ext1Content := []byte("ext v0.9.0")
@@ -792,7 +790,7 @@ func TestUpdateFeatures_MinVersion_FiltersVersions(t *testing.T) {
 	createFeatureTransferFileWithMinVersion(t, configDir, "testext", "testfeature", server.URL, "1.0.0")
 	updateTransferTargetPath(t, configDir, targetDir)
 
-	client := NewClient(ClientConfig{Definitions: configDir})
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
 	results, err := client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{
 		NoRefresh: true,
 	})
@@ -831,8 +829,6 @@ func TestEnableFeature_Now_MinVersion_FiltersVersions(t *testing.T) {
 	targetDir := t.TempDir()
 
 	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
 
 	ext1Content := []byte("ext v0.5.0")
 	ext2Content := []byte("ext v1.5.0")
@@ -854,7 +850,7 @@ func TestEnableFeature_Now_MinVersion_FiltersVersions(t *testing.T) {
 	createFeatureTransferFileWithMinVersion(t, configDir, "testext", "testfeature", server.URL, "1.0.0")
 	updateTransferTargetPath(t, configDir, targetDir)
 
-	client := NewClient(ClientConfig{Definitions: configDir})
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
 	result, err := client.EnableFeature(t.Context(), "testfeature", EnableFeatureOptions{
 		Now:       true,
 		DryRun:    true, // dry-run to avoid /etc writes
@@ -884,8 +880,6 @@ func TestEnableFeature_Now_AlreadyInstalled(t *testing.T) {
 	targetDir := t.TempDir()
 
 	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
 
 	extContent := []byte("fake extension content for already installed test")
 	extHash := hashContent(extContent)
@@ -912,7 +906,7 @@ func TestEnableFeature_Now_AlreadyInstalled(t *testing.T) {
 		t.Fatalf("failed to create symlink: %v", err)
 	}
 
-	client := NewClient(ClientConfig{Definitions: configDir})
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
 	result, err := client.EnableFeature(t.Context(), "testfeature", EnableFeatureOptions{
 		Now:       true,
 		NoRefresh: true,
@@ -944,8 +938,6 @@ func TestUpdateFeatures_AlreadyInstalled_NotReportedAsDownloaded(t *testing.T) {
 	targetDir := t.TempDir()
 
 	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
 
 	extContent := []byte("fake extension content")
 	extHash := hashContent(extContent)
@@ -972,7 +964,7 @@ func TestUpdateFeatures_AlreadyInstalled_NotReportedAsDownloaded(t *testing.T) {
 		t.Fatalf("failed to create symlink: %v", err)
 	}
 
-	client := NewClient(ClientConfig{Definitions: configDir})
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
 	results, err := client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{
 		NoRefresh: true,
 	})
@@ -1005,8 +997,6 @@ func TestUpdateFeatures_NoVacuum_Respected(t *testing.T) {
 	targetDir := t.TempDir()
 
 	mockRunner := &sysext.MockRunner{}
-	cleanup := sysext.SetRunner(mockRunner)
-	defer cleanup()
 
 	extContent := []byte("fake extension for vacuum test")
 	extHash := hashContent(extContent)
@@ -1025,7 +1015,7 @@ func TestUpdateFeatures_NoVacuum_Respected(t *testing.T) {
 	createFeatureTransferFile(t, configDir, "testext", "testfeature", server.URL)
 	updateTransferTargetPath(t, configDir, targetDir)
 
-	client := NewClient(ClientConfig{Definitions: configDir})
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
 	results, err := client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{
 		NoRefresh: true,
 		NoVacuum:  true,
