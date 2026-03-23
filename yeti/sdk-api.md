@@ -8,17 +8,18 @@ The `updex` package (`github.com/frostyard/updex/updex`) is the primary public A
 type Client struct { /* unexported fields */ }
 
 type ClientConfig struct {
-    Definitions  string              // Custom config file path (overrides search paths)
-    Verify       bool                // Enable GPG signature verification
-    Verbose      bool                // Enable debug output
-    Progress     reporter.Reporter   // Progress reporter (optional)
-    SysextRunner sysext.SysextRunner // Mock runner for tests (optional)
+    Definitions        string                // Custom config file path (overrides search paths)
+    Verify             bool                  // Enable GPG signature verification
+    Verbose            bool                  // Enable debug output
+    Progress           reporter.Reporter     // Progress reporter (optional)
+    SysextRunner       sysext.SysextRunner   // Mock runner for tests (optional)
+    OnDownloadProgress download.ProgressFunc // Download progress callback (optional)
 }
 
 func NewClient(cfg ClientConfig) *Client
 ```
 
-`NewClient` stores the provided `SysextRunner` directly on the `Client` struct. If `SysextRunner` is nil, it defaults to `&sysext.DefaultRunner{}`. If `Progress` is nil, it defaults to `reporter.NoopReporter{}`. The client does not mutate global package state.
+`NewClient` stores the provided `SysextRunner` directly on the `Client` struct. If `SysextRunner` is nil, it defaults to `&sysext.DefaultRunner{}`. If `Progress` is nil, it defaults to `reporter.NoopReporter{}`. `OnDownloadProgress` is passed through to `download.Download` calls — when non-nil, it is called with the HTTP response content length (-1 if unknown) and should return an `io.Writer` that receives downloaded bytes for progress tracking (return nil to skip progress for that download). The client does not mutate global package state.
 
 ## Methods
 
@@ -164,7 +165,8 @@ type CheckResult struct {
 
 ### `download`
 
-- `Download(ctx context.Context, url, targetPath, expectedHash string, mode uint32) error` — Download with hash verification (on compressed bytes) and auto-decompression. Uses atomic rename (falls back to copy on cross-device). HTTP timeout: 10 minutes. Default mode: `0644` if `mode == 0`
+- `Download(ctx context.Context, url, targetPath, expectedHash string, mode uint32, onProgress ProgressFunc) error` — Download with hash verification (on compressed bytes) and auto-decompression. Uses atomic rename (falls back to atomic copy on cross-device). HTTP timeout: 10 minutes. Default mode: `0644` if `mode == 0`. `onProgress` is called with the response content length; the returned `io.Writer` receives downloaded bytes. Pass nil to disable progress tracking
+- `ProgressFunc` — `func(contentLength int64) io.Writer` callback type for download progress
 - `DecompressReader(r io.Reader, compressionType string) (io.ReadCloser, error)` — Returns a decompressing reader for `"xz"`, `"gz"`, `"zstd"`, or passthrough for `""`
 
 ### `version`
@@ -183,8 +185,7 @@ type CheckResult struct {
 
 ### `sysext`
 
-- `Refresh() / Merge() / Unmerge()` — Package-level convenience functions delegating to a global runner
-- `SetRunner(r SysextRunner) func()` — Inject mock runner globally (returns cleanup). Used by non-SDK test code; SDK tests should use `ClientConfig.SysextRunner` instead
+- `SysextRunner` interface — `Refresh()`, `Merge()`, `Unmerge()` methods executed via `DefaultRunner` (real commands) or `MockRunner` (tests)
 - `GetInstalledVersions(t *config.Transfer) ([]string, string, error)` — List installed + current version
 - `GetActiveVersion(t *config.Transfer) (string, error)` — Get version currently active in systemd-sysext (checks current symlink and `/run/extensions`)
 - `UpdateSymlink(targetDir, symlinkName, targetFile string) error`
