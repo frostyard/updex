@@ -59,6 +59,38 @@ func (c *Client) Features(ctx context.Context) ([]FeatureInfo, error) {
 	return featureInfos, nil
 }
 
+// findFeature loads all features and returns the one matching name. It returns
+// an error if the feature is not found or is masked. The action parameter
+// (e.g. "enabled", "disabled") is used in the masked error message.
+func (c *Client) findFeature(name, action string) (*config.Feature, error) {
+	features, err := config.LoadFeatures(c.config.Definitions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load features: %w", err)
+	}
+
+	for _, f := range features {
+		if f.Name == name {
+			if f.Masked {
+				return nil, fmt.Errorf("feature '%s' is masked and cannot be %s", name, action)
+			}
+			return f, nil
+		}
+	}
+
+	return nil, fmt.Errorf("feature '%s' not found", name)
+}
+
+// loadFeatureTransfers loads all transfers and returns those associated with
+// the given feature name.
+func (c *Client) loadFeatureTransfers(name string) ([]*config.Transfer, error) {
+	transfers, err := config.LoadTransfers(c.config.Definitions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load transfers: %w", err)
+	}
+
+	return config.GetTransfersForFeature(transfers, name), nil
+}
+
 // EnableFeature enables a feature by creating a drop-in configuration file.
 func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeatureOptions) (*FeatureActionResult, error) {
 	c.msg("Enabling %s", name)
@@ -69,31 +101,11 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 		DryRun:  opts.DryRun,
 	}
 
-	// Verify the feature exists
-	features, err := config.LoadFeatures(c.config.Definitions)
-	if err != nil {
-		result.Error = fmt.Sprintf("failed to load features: %v", err)
+	// Verify the feature exists and is not masked
+	if _, err := c.findFeature(name, "enabled"); err != nil {
+		result.Error = err.Error()
 		c.warn("%s", result.Error)
-		return result, fmt.Errorf("%s", result.Error)
-	}
-
-	found := false
-	for _, f := range features {
-		if f.Name == name {
-			found = true
-			if f.Masked {
-				result.Error = fmt.Sprintf("feature '%s' is masked and cannot be enabled", name)
-				c.warn("%s", result.Error)
-				return result, fmt.Errorf("%s", result.Error)
-			}
-			break
-		}
-	}
-
-	if !found {
-		result.Error = fmt.Sprintf("feature '%s' not found", name)
-		c.warn("%s", result.Error)
-		return result, fmt.Errorf("%s", result.Error)
+		return result, err
 	}
 
 	// Create drop-in directory and file
@@ -124,15 +136,12 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 	if opts.Now {
 		c.msg("Downloading extensions")
 
-		// Load transfers to find which ones belong to this feature
-		transfers, err := config.LoadTransfers(c.config.Definitions)
+		featureTransfers, err := c.loadFeatureTransfers(name)
 		if err != nil {
-			result.Error = fmt.Sprintf("failed to load transfers: %v", err)
+			result.Error = err.Error()
 			c.warn("%s", result.Error)
-			return result, fmt.Errorf("%s", result.Error)
+			return result, err
 		}
-
-		featureTransfers := config.GetTransfersForFeature(transfers, name)
 
 		if len(featureTransfers) == 0 {
 			c.msg("No transfers associated with this feature")
@@ -199,42 +208,20 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 		DryRun:  opts.DryRun,
 	}
 
-	// Verify the feature exists
-	features, err := config.LoadFeatures(c.config.Definitions)
-	if err != nil {
-		result.Error = fmt.Sprintf("failed to load features: %v", err)
+	// Verify the feature exists and is not masked
+	if _, err := c.findFeature(name, "disabled"); err != nil {
+		result.Error = err.Error()
 		c.warn("%s", result.Error)
-		return result, fmt.Errorf("%s", result.Error)
-	}
-
-	found := false
-	for _, f := range features {
-		if f.Name == name {
-			found = true
-			if f.Masked {
-				result.Error = fmt.Sprintf("feature '%s' is masked and cannot be disabled", name)
-				c.warn("%s", result.Error)
-				return result, fmt.Errorf("%s", result.Error)
-			}
-			break
-		}
-	}
-
-	if !found {
-		result.Error = fmt.Sprintf("feature '%s' not found", name)
-		c.warn("%s", result.Error)
-		return result, fmt.Errorf("%s", result.Error)
+		return result, err
 	}
 
 	// Load transfers for this feature (needed for merge state check and file removal)
-	transfers, err := config.LoadTransfers(c.config.Definitions)
+	featureTransfers, err := c.loadFeatureTransfers(name)
 	if err != nil {
-		result.Error = fmt.Sprintf("failed to load transfers: %v", err)
+		result.Error = err.Error()
 		c.warn("%s", result.Error)
-		return result, fmt.Errorf("%s", result.Error)
+		return result, err
 	}
-
-	featureTransfers := config.GetTransfersForFeature(transfers, name)
 
 	// --now now implies file removal (same as --remove)
 	// Keep --remove for backward compatibility
