@@ -18,6 +18,7 @@ package updex
 
 import (
 	"github.com/frostyard/std/reporter"
+	"github.com/frostyard/updex/download"
 	"github.com/frostyard/updex/sysext"
 )
 
@@ -52,6 +53,13 @@ type ClientConfig struct {
 	// If nil, uses the default runner that executes real commands.
 	// Set this in tests to inject a mock.
 	SysextRunner sysext.SysextRunner
+
+	// OnDownloadProgress is an optional callback for download progress tracking.
+	// If non-nil, it is passed to [download.Download] and called with the
+	// response content length (-1 if unknown). The returned io.Writer receives
+	// downloaded bytes. Return nil from the callback to disable progress for
+	// a given download.
+	OnDownloadProgress download.ProgressFunc
 }
 
 // NewClient creates a new updex API client with the given configuration.
