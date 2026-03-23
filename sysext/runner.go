@@ -28,16 +28,6 @@ func (r *DefaultRunner) Unmerge() error {
 	return runSysextCommand("unmerge")
 }
 
-// runner is the package-level runner used by Refresh, Merge, Unmerge functions
-var runner SysextRunner = &DefaultRunner{}
-
-// SetRunner sets the runner for testing (returns cleanup function)
-func SetRunner(r SysextRunner) func() {
-	old := runner
-	runner = r
-	return func() { runner = old }
-}
-
 // runSysextCommand executes a systemd-sysext subcommand
 func runSysextCommand(subcommand string) error {
 	cmd := exec.Command("systemd-sysext", subcommand)

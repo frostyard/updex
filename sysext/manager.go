@@ -375,18 +375,3 @@ func RemoveAllVersions(t *config.Transfer) ([]string, error) {
 
 	return removed, nil
 }
-
-// Refresh calls systemd-sysext refresh to reload extensions
-func Refresh() error {
-	return runner.Refresh()
-}
-
-// Merge calls systemd-sysext merge to merge extensions
-func Merge() error {
-	return runner.Merge()
-}
-
-// Unmerge calls systemd-sysext unmerge to unmerge extensions
-func Unmerge() error {
-	return runner.Unmerge()
-}
