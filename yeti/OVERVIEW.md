@@ -58,7 +58,6 @@ CLI (cmd/daemon.go) → systemd (direct, bypasses SDK)
 
 - Mock interfaces for system commands: `sysext.SysextRunner`, `systemd.SystemctlRunner`
 - `ClientConfig.SysextRunner` field for injecting mocks into the SDK client — `NewClient` stores the runner directly on the `Client` struct (does not mutate global state)
-- Package-level `SetRunner()` returning cleanup function exists on the `sysext` package for non-SDK test code
 - `internal/testutil.NewTestServer()` creates `httptest.Server` with configurable manifests and file content
 - `t.TempDir()` for filesystem operations, `t.Context()` for context
 
