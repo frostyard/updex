@@ -144,7 +144,8 @@ func detectCompression(filename string) string {
 	}
 }
 
-// copyFile copies a file with the given mode
+// copyFile atomically copies a file with the given mode. It writes to a temp
+// file on the destination device, syncs to disk, then renames into place.
 func copyFile(src, dst string, mode os.FileMode) error {
 	srcFile, err := os.Open(src)
 	if err != nil {
@@ -152,12 +153,29 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	}
 	defer func() { _ = srcFile.Close() }()
 
-	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	// Create temp file on the same device as dst for atomic rename
+	tmpFile, err := os.CreateTemp(filepath.Dir(dst), ".updex-copy-*")
 	if err != nil {
 		return err
 	}
-	defer func() { _ = dstFile.Close() }()
+	tmpPath := tmpFile.Name()
+	defer func() { _ = os.Remove(tmpPath) }() // clean up on failure
 
-	_, err = io.Copy(dstFile, srcFile)
-	return err
+	if _, err := io.Copy(tmpFile, srcFile); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+
+	// Ensure data is persisted to disk before the atomic rename
+	if err := tmpFile.Sync(); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	_ = tmpFile.Close()
+
+	if err := os.Chmod(tmpPath, mode); err != nil {
+		return err
+	}
+
+	return os.Rename(tmpPath, dst)
 }
