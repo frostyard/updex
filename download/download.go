@@ -10,13 +10,18 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/schollz/progressbar/v3"
 )
 
+// ProgressFunc is called before downloading begins with the response content
+// length (-1 if unknown). It returns an io.Writer that will receive downloaded
+// bytes for progress tracking. Return nil to disable progress tracking.
+type ProgressFunc func(contentLength int64) io.Writer
+
 // Download fetches a file from URL, verifies its hash, decompresses if needed,
-// and atomically writes it to the target path
-func Download(ctx context.Context, url, targetPath, expectedHash string, mode uint32) error {
+// and atomically writes it to the target path. If onProgress is non-nil, it is
+// called with the content length after the HTTP response is received, and the
+// returned writer receives downloaded bytes for progress tracking.
+func Download(ctx context.Context, url, targetPath, expectedHash string, mode uint32, onProgress ProgressFunc) error {
 	// Create target directory if needed
 	targetDir := filepath.Dir(targetPath)
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
@@ -54,32 +59,18 @@ func Download(ctx context.Context, url, targetPath, expectedHash string, mode ui
 		return fmt.Errorf("download failed with status: %s", resp.Status)
 	}
 
-	// Set up progress bar
-	bar := progressbar.NewOptions64(
-		resp.ContentLength,
-		progressbar.OptionSetDescription("Downloading"),
-		progressbar.OptionShowBytes(true),
-		progressbar.OptionSetWidth(40),
-		progressbar.OptionThrottle(100*time.Millisecond),
-		progressbar.OptionShowCount(),
-		progressbar.OptionOnCompletion(func() { fmt.Println() }),
-		progressbar.OptionSetPredictTime(true),
-		progressbar.OptionFullWidth(),
-		progressbar.OptionSetTheme(progressbar.Theme{
-			Saucer:        "=",
-			SaucerHead:    ">",
-			SaucerPadding: " ",
-			BarStart:      "[",
-			BarEnd:        "]",
-		}),
-	)
-
 	// Compute hash while downloading
 	hasher := sha256.New()
 	reader := io.TeeReader(resp.Body, hasher)
 
-	// Write to temp file with progress
-	_, err = io.Copy(io.MultiWriter(tmpFile, bar), reader)
+	// Write to temp file with optional progress
+	var dst io.Writer = tmpFile
+	if onProgress != nil {
+		if pw := onProgress(resp.ContentLength); pw != nil {
+			dst = io.MultiWriter(tmpFile, pw)
+		}
+	}
+	_, err = io.Copy(dst, reader)
 	if err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
 	}
