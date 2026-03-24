@@ -126,20 +126,25 @@ func GetActiveVersion(t *config.Transfer) (string, error) {
 	return "", nil
 }
 
-// UpdateSymlink updates or creates the current version symlink
+// UpdateSymlink atomically updates or creates the current version symlink.
+// It creates a temporary symlink in the same directory, then renames it over the
+// target to ensure the symlink always exists and points to either the old or new target.
 func UpdateSymlink(targetDir, symlinkName, targetFile string) error {
 	symlinkPath := filepath.Join(targetDir, symlinkName)
 
-	// Remove existing symlink if present
-	if _, err := os.Lstat(symlinkPath); err == nil {
-		if err := os.Remove(symlinkPath); err != nil {
-			return fmt.Errorf("failed to remove existing symlink: %w", err)
-		}
+	// Create a temporary symlink with a unique name in the same directory
+	tmpPath := symlinkPath + ".tmp"
+	// Remove any stale temporary symlink from a previous interrupted attempt
+	_ = os.Remove(tmpPath)
+
+	if err := os.Symlink(targetFile, tmpPath); err != nil {
+		return fmt.Errorf("failed to create temporary symlink: %w", err)
 	}
 
-	// Create relative symlink
-	if err := os.Symlink(targetFile, symlinkPath); err != nil {
-		return fmt.Errorf("failed to create symlink: %w", err)
+	// Atomically replace the target symlink
+	if err := os.Rename(tmpPath, symlinkPath); err != nil {
+		_ = os.Remove(tmpPath) // clean up on failure
+		return fmt.Errorf("failed to rename symlink: %w", err)
 	}
 
 	return nil
