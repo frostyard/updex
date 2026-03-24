@@ -11,7 +11,7 @@ import (
 )
 
 // decompressFile decompresses a file based on the compression type
-func decompressFile(srcPath, dstPath, compressionType string) error {
+func decompressFile(srcPath, dstPath, compressionType string) (retErr error) {
 	src, err := os.Open(srcPath)
 	if err != nil {
 		return fmt.Errorf("failed to open source file: %w", err)
@@ -22,7 +22,11 @@ func decompressFile(srcPath, dstPath, compressionType string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create destination file: %w", err)
 	}
-	defer func() { _ = dst.Close() }()
+	defer func() {
+		if err := dst.Close(); err != nil && retErr == nil {
+			retErr = fmt.Errorf("failed to close destination file: %w", err)
+		}
+	}()
 
 	var reader io.Reader
 
