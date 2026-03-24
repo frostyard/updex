@@ -17,6 +17,9 @@
 package updex
 
 import (
+	"net/http"
+	"time"
+
 	"github.com/frostyard/std/reporter"
 	"github.com/frostyard/updex/download"
 	"github.com/frostyard/updex/sysext"
@@ -24,9 +27,10 @@ import (
 
 // Client provides programmatic access to updex operations.
 type Client struct {
-	config   ClientConfig
-	reporter reporter.Reporter
-	runner   sysext.SysextRunner
+	config     ClientConfig
+	httpClient *http.Client
+	reporter   reporter.Reporter
+	runner     sysext.SysextRunner
 }
 
 // ClientConfig holds configuration for the Client.
@@ -60,6 +64,12 @@ type ClientConfig struct {
 	// downloaded bytes. Return nil from the callback to disable progress for
 	// a given download.
 	OnDownloadProgress download.ProgressFunc
+
+	// HTTPClient is an optional HTTP client used for all downloads and manifest
+	// fetches. If nil, a default client with a 10-minute timeout is created.
+	// Providing a shared client enables HTTP keep-alive connection reuse across
+	// multiple downloads from the same host.
+	HTTPClient *http.Client
 }
 
 // NewClient creates a new updex API client with the given configuration.
@@ -72,10 +82,17 @@ func NewClient(cfg ClientConfig) *Client {
 	if sr == nil {
 		sr = &sysext.DefaultRunner{}
 	}
+	hc := cfg.HTTPClient
+	if hc == nil {
+		hc = &http.Client{
+			Timeout: 10 * time.Minute,
+		}
+	}
 	return &Client{
-		config:   cfg,
-		reporter: r,
-		runner:   sr,
+		config:     cfg,
+		httpClient: hc,
+		reporter:   r,
+		runner:     sr,
 	}
 }
 

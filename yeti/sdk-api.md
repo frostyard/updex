@@ -14,12 +14,13 @@ type ClientConfig struct {
     Progress           reporter.Reporter     // Progress reporter (optional)
     SysextRunner       sysext.SysextRunner   // Mock runner for tests (optional)
     OnDownloadProgress download.ProgressFunc // Download progress callback (optional)
+    HTTPClient         *http.Client          // Shared HTTP client (optional)
 }
 
 func NewClient(cfg ClientConfig) *Client
 ```
 
-`NewClient` stores the provided `SysextRunner` directly on the `Client` struct. If `SysextRunner` is nil, it defaults to `&sysext.DefaultRunner{}`. If `Progress` is nil, it defaults to `reporter.NoopReporter{}`. `OnDownloadProgress` is passed through to `download.Download` calls — when non-nil, it is called with the HTTP response content length (-1 if unknown) and should return an `io.Writer` that receives downloaded bytes for progress tracking (return nil to skip progress for that download). The client does not mutate global package state.
+`NewClient` stores the provided `SysextRunner` directly on the `Client` struct. If `SysextRunner` is nil, it defaults to `&sysext.DefaultRunner{}`. If `Progress` is nil, it defaults to `reporter.NoopReporter{}`. `OnDownloadProgress` is passed through to `download.Download` calls — when non-nil, it is called with the HTTP response content length (-1 if unknown) and should return an `io.Writer` that receives downloaded bytes for progress tracking (return nil to skip progress for that download). If `HTTPClient` is nil, a default `http.Client` with a 10-minute timeout is created and reused for all manifest fetches and file downloads, enabling HTTP keep-alive connection reuse. The client does not mutate global package state.
 
 ## Methods
 
@@ -158,14 +159,14 @@ type CheckResult struct {
 
 ### `manifest`
 
-- `Fetch(ctx context.Context, baseURL string, verify bool) (*Manifest, error)` — Fetch and parse `SHA256SUMS` from URL
+- `Fetch(ctx context.Context, httpClient *http.Client, baseURL string, verify bool) (*Manifest, error)` — Fetch and parse `SHA256SUMS` from URL. If `httpClient` is nil, a default client with a 30-second timeout is used
 - `VerifyHash(filePath string, expectedHash string) error` — Verify a file's SHA256
 - `VerifyHashReader(r io.Reader, expectedHash string) *HashVerifyReader` — Streaming hash verification
 - `SetKeyringPaths(paths []string)` — Override GPG keyring locations
 
 ### `download`
 
-- `Download(ctx context.Context, url, targetPath, expectedHash string, mode uint32, onProgress ProgressFunc) error` — Download with hash verification (on compressed bytes) and auto-decompression. Uses atomic rename (falls back to atomic copy on cross-device). HTTP timeout: 10 minutes. Default mode: `0644` if `mode == 0`. `onProgress` is called with the response content length; the returned `io.Writer` receives downloaded bytes. Pass nil to disable progress tracking
+- `Download(ctx context.Context, httpClient *http.Client, url, targetPath, expectedHash string, mode uint32, onProgress ProgressFunc) error` — Download with hash verification (on compressed bytes) and auto-decompression. Uses atomic rename (falls back to atomic copy on cross-device). If `httpClient` is nil, a default client with a 10-minute timeout is used. Default mode: `0644` if `mode == 0`. `onProgress` is called with the response content length; the returned `io.Writer` receives downloaded bytes. Pass nil to disable progress tracking
 - `ProgressFunc` — `func(contentLength int64) io.Writer` callback type for download progress
 - `DecompressReader(r io.Reader, compressionType string) (io.ReadCloser, error)` — Returns a decompressing reader for `"xz"`, `"gz"`, `"zstd"`, or passthrough for `""`
 

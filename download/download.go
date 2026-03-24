@@ -18,10 +18,11 @@ import (
 type ProgressFunc func(contentLength int64) io.Writer
 
 // Download fetches a file from URL, verifies its hash, decompresses if needed,
-// and atomically writes it to the target path. If onProgress is non-nil, it is
+// and atomically writes it to the target path. If httpClient is nil, a default
+// client with a 10-minute timeout is used. If onProgress is non-nil, it is
 // called with the content length after the HTTP response is received, and the
 // returned writer receives downloaded bytes for progress tracking.
-func Download(ctx context.Context, url, targetPath, expectedHash string, mode uint32, onProgress ProgressFunc) error {
+func Download(ctx context.Context, httpClient *http.Client, url, targetPath, expectedHash string, mode uint32, onProgress ProgressFunc) error {
 	// Create target directory if needed
 	targetDir := filepath.Dir(targetPath)
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
@@ -40,8 +41,10 @@ func Download(ctx context.Context, url, targetPath, expectedHash string, mode ui
 	}()
 
 	// Download the file
-	client := &http.Client{
-		Timeout: 10 * time.Minute, // Long timeout for large files
+	if httpClient == nil {
+		httpClient = &http.Client{
+			Timeout: 10 * time.Minute,
+		}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -49,7 +52,7 @@ func Download(ctx context.Context, url, targetPath, expectedHash string, mode ui
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to download: %w", err)
 	}

@@ -23,7 +23,7 @@ func (c *Client) getAvailableVersions(ctx context.Context, transfer *config.Tran
 		// Fetch manifest
 		c.debug("fetching manifest from %s", transfer.Source.Path)
 		var err error
-		m, err = manifest.Fetch(ctx, transfer.Source.Path, c.config.Verify || transfer.Transfer.Verify)
+		m, err = manifest.Fetch(ctx, c.httpClient, transfer.Source.Path, c.config.Verify || transfer.Transfer.Verify)
 		if err != nil {
 			return nil, nil, err
 		}

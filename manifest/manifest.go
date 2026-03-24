@@ -18,14 +18,17 @@ type Manifest struct {
 	Files map[string]string // filename -> SHA256 hash
 }
 
-// Fetch downloads and parses a SHA256SUMS manifest from the given base URL
-// If verify is true, it will also verify the GPG signature
-func Fetch(ctx context.Context, baseURL string, verify bool) (*Manifest, error) {
+// Fetch downloads and parses a SHA256SUMS manifest from the given base URL.
+// If httpClient is nil, a default client with a 30-second timeout is used.
+// If verify is true, it will also verify the GPG signature.
+func Fetch(ctx context.Context, httpClient *http.Client, baseURL string, verify bool) (*Manifest, error) {
 	manifestURL := strings.TrimRight(baseURL, "/") + "/SHA256SUMS"
 
 	// Download manifest
-	client := &http.Client{
-		Timeout: 30 * time.Second,
+	if httpClient == nil {
+		httpClient = &http.Client{
+			Timeout: 30 * time.Second,
+		}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
@@ -33,7 +36,7 @@ func Fetch(ctx context.Context, baseURL string, verify bool) (*Manifest, error) 
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	resp, err := client.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch manifest: %w", err)
 	}
@@ -52,7 +55,7 @@ func Fetch(ctx context.Context, baseURL string, verify bool) (*Manifest, error) 
 	// Verify GPG signature if requested
 	if verify {
 		sigURL := manifestURL + ".gpg"
-		if err := verifySignature(ctx, client, sigURL, content); err != nil {
+		if err := verifySignature(ctx, httpClient, sigURL, content); err != nil {
 			return nil, fmt.Errorf("signature verification failed: %w", err)
 		}
 	}
