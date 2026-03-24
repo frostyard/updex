@@ -98,8 +98,3 @@ func readKeyringFile(path string) (openpgp.EntityList, error) {
 
 	return keyring, nil
 }
-
-// SetKeyringPaths allows overriding the default keyring search paths
-func SetKeyringPaths(paths []string) {
-	keyringPaths = paths
-}
