@@ -161,7 +161,6 @@ type CheckResult struct {
 - `Fetch(ctx context.Context, baseURL string, verify bool) (*Manifest, error)` — Fetch and parse `SHA256SUMS` from URL
 - `VerifyHash(filePath string, expectedHash string) error` — Verify a file's SHA256
 - `VerifyHashReader(r io.Reader, expectedHash string) *HashVerifyReader` — Streaming hash verification
-- `SetKeyringPaths(paths []string)` — Override GPG keyring locations
 
 ### `download`
 
