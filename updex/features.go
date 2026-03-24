@@ -2,6 +2,7 @@ package updex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -116,16 +117,18 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 		c.msg("Would create drop-in: %s", dropInFile)
 	} else {
 		if err := os.MkdirAll(dropInDir, 0755); err != nil {
-			result.Error = fmt.Sprintf("failed to create drop-in directory: %v", err)
+			err = fmt.Errorf("failed to create drop-in directory: %w", err)
+			result.Error = err.Error()
 			c.warn("%s", result.Error)
-			return result, fmt.Errorf("%s", result.Error)
+			return result, err
 		}
 
 		content := "[Feature]\nEnabled=true\n"
 		if err := os.WriteFile(dropInFile, []byte(content), 0644); err != nil {
-			result.Error = fmt.Sprintf("failed to write drop-in file: %v", err)
+			err = fmt.Errorf("failed to write drop-in file: %w", err)
+			result.Error = err.Error()
 			c.warn("%s", result.Error)
-			return result, fmt.Errorf("%s", result.Error)
+			return result, err
 		}
 
 		result.DropIn = dropInFile
@@ -158,9 +161,10 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 						NoRefresh: true, // refresh is batched at the end
 					})
 					if err != nil {
-						result.Error = fmt.Sprintf("failed to download %s: %v", transfer.Component, err)
+						err = fmt.Errorf("failed to download %s: %w", transfer.Component, err)
+						result.Error = err.Error()
 						c.warn("%s", result.Error)
-						return result, fmt.Errorf("%s", result.Error)
+						return result, err
 					}
 					if downloaded {
 						result.DownloadedFiles = append(result.DownloadedFiles, fmt.Sprintf("%s@%s", transfer.Component, version))
@@ -250,7 +254,7 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 			}
 			result.Error = errMsg
 			c.warn("%s", errMsg)
-			return result, fmt.Errorf("%s", errMsg)
+			return result, errors.New(errMsg)
 		}
 
 		if len(mergedExtensions) > 0 && opts.Force {
@@ -266,16 +270,18 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 		c.msg("Would create drop-in: %s", dropInFile)
 	} else {
 		if err := os.MkdirAll(dropInDir, 0755); err != nil {
-			result.Error = fmt.Sprintf("failed to create drop-in directory: %v", err)
+			err = fmt.Errorf("failed to create drop-in directory: %w", err)
+			result.Error = err.Error()
 			c.warn("%s", result.Error)
-			return result, fmt.Errorf("%s", result.Error)
+			return result, err
 		}
 
 		content := "[Feature]\nEnabled=false\n"
 		if err := os.WriteFile(dropInFile, []byte(content), 0644); err != nil {
-			result.Error = fmt.Sprintf("failed to write drop-in file: %v", err)
+			err = fmt.Errorf("failed to write drop-in file: %w", err)
+			result.Error = err.Error()
 			c.warn("%s", result.Error)
-			return result, fmt.Errorf("%s", result.Error)
+			return result, err
 		}
 
 		result.DropIn = dropInFile
@@ -288,9 +294,10 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 		if opts.Now && !opts.DryRun {
 			c.msg("Unmerging extensions")
 			if err := c.runner.Unmerge(); err != nil {
-				result.Error = fmt.Sprintf("failed to unmerge: %v", err)
+				err = fmt.Errorf("failed to unmerge: %w", err)
+				result.Error = err.Error()
 				c.warn("%s", result.Error)
-				return result, fmt.Errorf("%s", result.Error)
+				return result, err
 			}
 			result.Unmerged = true
 		} else if opts.Now && opts.DryRun {
@@ -313,9 +320,10 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 				// Remove all versions
 				removed, err := sysext.RemoveAllVersions(t)
 				if err != nil {
-					result.Error = fmt.Sprintf("failed to remove files for %s: %v", t.Component, err)
+					err = fmt.Errorf("failed to remove files for %s: %w", t.Component, err)
+					result.Error = err.Error()
 					c.warn("%s", result.Error)
-					return result, fmt.Errorf("%s", result.Error)
+					return result, err
 				}
 				allRemoved = append(allRemoved, removed...)
 			}
