@@ -135,7 +135,7 @@ func UpdateSymlink(targetDir, symlinkName, targetFile string) error {
 	// Create a temporary symlink with a unique name in the same directory
 	tmpPath := symlinkPath + ".tmp"
 	// Remove any stale temporary symlink from a previous interrupted attempt
-	os.Remove(tmpPath)
+	_ = os.Remove(tmpPath)
 
 	if err := os.Symlink(targetFile, tmpPath); err != nil {
 		return fmt.Errorf("failed to create temporary symlink: %w", err)
@@ -143,7 +143,7 @@ func UpdateSymlink(targetDir, symlinkName, targetFile string) error {
 
 	// Atomically replace the target symlink
 	if err := os.Rename(tmpPath, symlinkPath); err != nil {
-		os.Remove(tmpPath) // clean up on failure
+		_ = os.Remove(tmpPath) // clean up on failure
 		return fmt.Errorf("failed to rename symlink: %w", err)
 	}
 
