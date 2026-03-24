@@ -82,7 +82,9 @@ func Download(ctx context.Context, url, targetPath, expectedHash string, mode ui
 	}
 
 	// Close temp file before decompression
-	_ = tmpFile.Close()
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
 
 	// Determine if decompression is needed and get final path
 	finalPath := targetPath
