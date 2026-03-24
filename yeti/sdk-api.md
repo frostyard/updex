@@ -53,7 +53,7 @@ Enable creates a drop-in file setting `Enabled=true`. With `Now: true`, it downl
 |-------|------|-------------|
 | `Now` | `bool` | Unmerge and remove files immediately |
 | `Remove` | `bool` | Deprecated alias for `Now` |
-| `Force` | `bool` | Allow removal of currently merged extensions |
+| `Force` | `bool` | Allow removal of currently merged extensions (requires reboot) |
 | `DryRun` | `bool` | Preview without modifying filesystem |
 | `NoRefresh` | `bool` | Skip `systemd-sysext refresh` |
 

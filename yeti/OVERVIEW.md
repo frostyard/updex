@@ -134,12 +134,12 @@ Transfer file values support systemd-style `%` specifiers. See [Configuration Re
 ### Enable/disable feature
 
 - **Enable**: Creates drop-in at `/etc/sysupdate.d/<name>.feature.d/00-updex.conf` setting `Enabled=true`. With `--now`, also downloads extensions immediately.
-- **Disable**: Creates drop-in setting `Enabled=false`. With `--now`, calls `Unmerge()`, removes symlinks from `/var/lib/extensions/`, and deletes all versioned files. `--force` required if extensions are currently active/merged.
+- **Disable**: Creates drop-in setting `Enabled=false`. With `--now`, calls `Unmerge()`, removes symlinks from `/var/lib/extensions/`, and deletes all versioned files. `--force` required if extensions are currently active/merged (changes take effect after reboot).
 
 ## CLI Commands
 
 ```
-updex features list                     List all features with status
+updex features list                     List all features with status (alias: updex feature)
 updex features enable <name>            Enable a feature
   --now                                 Download extensions immediately
   --dry-run                             Preview without modifying filesystem
