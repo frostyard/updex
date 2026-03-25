@@ -481,7 +481,7 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 		for _, transfer := range featureTransfers {
 			c.msg("Checking %s/%s", f.Name, transfer.Component)
 
-			available, m, err := c.getAvailableVersions(ctx, transfer, manifestCache[transfer.Source.Path])
+			available, m, _, err := c.getAvailableVersions(ctx, transfer, manifestCache[transfer.Source.Path])
 			if m != nil {
 				manifestCache[transfer.Source.Path] = m
 			}

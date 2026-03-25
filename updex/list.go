@@ -10,12 +10,12 @@ import (
 )
 
 // getAvailableVersions retrieves available versions for a transfer from remote manifest.
-// It returns the fetched manifest alongside the versions so callers can reuse it
-// without a redundant HTTP request. If cachedManifest is non-nil, it is used instead
-// of fetching the manifest over HTTP.
-func (c *Client) getAvailableVersions(ctx context.Context, transfer *config.Transfer, cachedManifest *manifest.Manifest) ([]string, *manifest.Manifest, error) {
+// It returns the fetched manifest and the parsed source patterns alongside the versions
+// so callers can reuse both without redundant HTTP requests or pattern parsing.
+// If cachedManifest is non-nil, it is used instead of fetching the manifest over HTTP.
+func (c *Client) getAvailableVersions(ctx context.Context, transfer *config.Transfer, cachedManifest *manifest.Manifest) ([]string, *manifest.Manifest, []*version.Pattern, error) {
 	if transfer.Source.Type != "url-file" {
-		return nil, nil, fmt.Errorf("unsupported source type: %s", transfer.Source.Type)
+		return nil, nil, nil, fmt.Errorf("unsupported source type: %s", transfer.Source.Type)
 	}
 
 	m := cachedManifest
@@ -25,7 +25,7 @@ func (c *Client) getAvailableVersions(ctx context.Context, transfer *config.Tran
 		var err error
 		m, err = manifest.Fetch(ctx, c.httpClient, transfer.Source.Path, c.config.Verify || transfer.Transfer.Verify)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	} else {
 		c.debug("using cached manifest for %s", transfer.Source.Path)
@@ -37,7 +37,7 @@ func (c *Client) getAvailableVersions(ctx context.Context, transfer *config.Tran
 	c.debug("matching against pattern(s): %v", patternStrs)
 	patterns, firstErr := version.ParsePatterns(patternStrs)
 	if len(patterns) == 0 && firstErr != nil {
-		return nil, nil, fmt.Errorf("invalid source pattern: %w", firstErr)
+		return nil, nil, nil, fmt.Errorf("invalid source pattern: %w", firstErr)
 	}
 
 	versionSet := make(map[string]bool)
@@ -59,5 +59,5 @@ func (c *Client) getAvailableVersions(ctx context.Context, transfer *config.Tran
 	}
 	c.debug("found %d matching version(s): %v", len(versions), versions)
 
-	return versions, m, nil
+	return versions, m, patterns, nil
 }
