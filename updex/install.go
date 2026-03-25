@@ -17,7 +17,7 @@ import (
 // If opts.CachedManifest is non-nil, it is used instead of fetching the manifest over HTTP.
 func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer, opts installTransferOptions) (string, *manifest.Manifest, bool, error) {
 	// Get available versions (applies MinVersion filter)
-	available, m, err := c.getAvailableVersions(ctx, transfer, opts.CachedManifest)
+	available, m, patterns, err := c.getAvailableVersions(ctx, transfer, opts.CachedManifest)
 	if err != nil {
 		return "", nil, false, fmt.Errorf("failed to get available versions: %w", err)
 	}
@@ -39,13 +39,7 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 		}
 	}
 
-	// Find the file for this version
-	patternStrs := transfer.Source.Patterns()
-	patterns, firstErr := version.ParsePatterns(patternStrs)
-	if len(patterns) == 0 && firstErr != nil {
-		return "", nil, false, fmt.Errorf("invalid source pattern: %w", firstErr)
-	}
-
+	// Find the file for this version using patterns already parsed by getAvailableVersions
 	var sourceFile string
 	var expectedHash string
 	for filename, hash := range m.Files {
