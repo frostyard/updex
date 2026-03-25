@@ -40,10 +40,6 @@ type installTransferOptions struct {
 
 // DisableFeatureOptions configures the DisableFeature operation.
 type DisableFeatureOptions struct {
-	// Remove deletes downloaded files for this feature's transfers.
-	// DEPRECATED: --now now includes this behavior.
-	Remove bool
-
 	// Now immediately removes files AND unmerges extensions.
 	Now bool
 

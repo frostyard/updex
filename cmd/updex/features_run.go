@@ -105,7 +105,6 @@ func runFeaturesDisable(cmd *cobra.Command, args []string) error {
 	client := newClient()
 
 	opts := updex.DisableFeatureOptions{
-		Remove:    featureDisableRemove,
 		Now:       featureDisableNow,
 		Force:     featureDisableForce,
 		DryRun:    clix.DryRun,
@@ -135,7 +134,7 @@ func runFeaturesDisable(cmd *cobra.Command, args []string) error {
 				}
 				if featureDisableForce {
 					fmt.Printf("Warning: Reboot required for changes to take effect.\n")
-				} else if !featureDisableNow && !featureDisableRemove {
+				} else if !featureDisableNow {
 					fmt.Printf("Run 'updex features update' to apply changes.\n")
 				}
 			}
