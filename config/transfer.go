@@ -490,7 +490,7 @@ func GetTransfersForFeature(transfers []*Transfer, featureName string) []*Transf
 			continue
 		}
 		// Also check RequisiteFeatures
-		if slices.Contains(t.Transfer.RequisiteFeatures, featureName) && !slices.Contains(result, t) {
+		if slices.Contains(t.Transfer.RequisiteFeatures, featureName) {
 			result = append(result, t)
 		}
 	}
