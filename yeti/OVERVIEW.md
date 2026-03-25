@@ -22,7 +22,9 @@ updex/                          Public SDK (Client + methods)
                                 UpdateFeatures(), CheckFeatures()
   install.go                    installTransfer() — complete install pipeline
                                 (download, symlink, sysext link, refresh, vacuum)
-  list.go                       getAvailableVersions() helper (unexported)
+                                Reuses parsed patterns from getAvailableVersions
+  list.go                       getAvailableVersions() — returns versions,
+                                manifest, and parsed patterns for caller reuse
   options.go                    Option structs for all operations
   results.go                    Result structs for all operations
 
@@ -121,7 +123,7 @@ Transfer file values support systemd-style `%` specifiers. See [Configuration Re
 2. Filter transfers to those matching enabled features
 3. For each transfer:
    - Fetch `SHA256SUMS` manifest from source URL (+ GPG verify if configured); manifests are cached by source URL across transfers so that multiple transfers sharing the same source make only one HTTP request
-   - Extract available versions using pattern matching (`@v` placeholder)
+   - Parse source patterns and extract available versions using pattern matching (`@v` placeholder); parsed patterns are returned to callers so `installTransfer` reuses them without re-parsing
    - Select newest version via semver comparison
    - Skip if already installed (check target directory)
    - Download file, verify SHA256 hash of compressed bytes during transfer

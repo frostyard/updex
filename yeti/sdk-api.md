@@ -62,7 +62,7 @@ Enable creates a drop-in file setting `Enabled=true`. With `Now: true`, it downl
 func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions) ([]UpdateFeaturesResult, error)
 ```
 
-Downloads and installs the newest available version for each enabled feature's transfers. Delegates per-component work to the internal `installTransfer` pipeline (which handles download, symlink, sysext linking, and vacuum). Manifests are cached by source URL — transfers sharing the same source avoid redundant HTTP requests. Refresh is batched — a single `systemd-sysext refresh` runs after all components are processed. Returns per-feature results with per-component status.
+Downloads and installs the newest available version for each enabled feature's transfers. Delegates per-component work to the internal `installTransfer` pipeline (which handles download, symlink, sysext linking, and vacuum). Manifests are cached by source URL — transfers sharing the same source avoid redundant HTTP requests. Parsed source patterns are returned from version listing and reused by the install pipeline to avoid redundant pattern compilation. Refresh is batched — a single `systemd-sysext refresh` runs after all components are processed. Returns per-feature results with per-component status.
 
 **UpdateFeaturesOptions:**
 | Field | Type | Description |
@@ -171,7 +171,7 @@ type CheckResult struct {
 ### `version`
 
 - `ParsePattern(pattern string) (*Pattern, error)` — Parse `@v`-style patterns. Returns `ErrEmptyPattern` or `ErrMissingVersionPlaceholder` on invalid input
-- `ParsePatterns(patternStrs []string) ([]*Pattern, error)` — Parse multiple patterns; skips invalid ones, returns first error
+- `ParsePatterns(patternStrs []string) ([]*Pattern, error)` — Parse multiple patterns; returns all successfully parsed patterns and the first error encountered (callers proceed if at least one pattern parsed)
 - `ExtractVersionParsed(filename string, patterns []*Pattern) (version, matchedPattern string, ok bool)` — Try pre-parsed patterns against a filename (preferred for loops)
 - `Compare(v1, v2 string) int` — Semver comparison (-1, 0, 1); normalizes by stripping `v`/`V` prefix; falls back to string comparison
 - `Sort(versions []string)` — Sort descending (newest first)
