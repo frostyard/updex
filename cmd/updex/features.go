@@ -5,11 +5,10 @@ import (
 )
 
 var (
-	featureDisableRemove bool
-	featureDisableNow    bool
-	featureDisableForce  bool
-	featureEnableNow     bool
-	featureUpdateNoVac   bool
+	featureDisableNow   bool
+	featureDisableForce bool
+	featureEnableNow    bool
+	featureUpdateNoVac  bool
 )
 
 func newFeaturesCmd() *cobra.Command {
@@ -123,7 +122,6 @@ that sets Enabled=false for the specified feature.
 
 OPTIONS:
   --now      Immediately unmerge AND remove extension files
-  --remove   Remove files (same behavior as --now for backward compat)
   --force    Allow removal of merged extensions (requires reboot)
 
 Use --dry-run (global flag) to preview changes without modifying filesystem.
@@ -144,7 +142,6 @@ Requires root privileges.`,
 		RunE: runFeaturesDisable,
 	}
 
-	cmd.Flags().BoolVar(&featureDisableRemove, "remove", false, "Remove downloaded files (same as --now)")
 	cmd.Flags().BoolVar(&featureDisableNow, "now", false, "Immediately unmerge and remove extension files")
 	cmd.Flags().BoolVar(&featureDisableForce, "force", false, "Allow removal of merged extensions (requires reboot)")
 

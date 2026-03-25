@@ -227,9 +227,7 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 		return result, err
 	}
 
-	// --now now implies file removal (same as --remove)
-	// Keep --remove for backward compatibility
-	willRemoveFiles := opts.Now || opts.Remove
+	willRemoveFiles := opts.Now
 
 	// Check merge state BEFORE any destructive operations
 	if willRemoveFiles && len(featureTransfers) > 0 {
