@@ -1,7 +1,6 @@
 package updex
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"text/tabwriter"
@@ -14,7 +13,7 @@ import (
 func runFeaturesList(cmd *cobra.Command, args []string) error {
 	client := newClient()
 
-	features, err := client.Features(context.Background())
+	features, err := client.Features(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -70,7 +69,7 @@ func runFeaturesEnable(cmd *cobra.Command, args []string) error {
 		NoRefresh: noRefresh,
 	}
 
-	result, err := client.EnableFeature(context.Background(), args[0], opts)
+	result, err := client.EnableFeature(cmd.Context(), args[0], opts)
 
 	if clix.JSONOutput {
 		clix.OutputJSON(result)
@@ -111,7 +110,7 @@ func runFeaturesDisable(cmd *cobra.Command, args []string) error {
 		NoRefresh: noRefresh,
 	}
 
-	result, err := client.DisableFeature(context.Background(), args[0], opts)
+	result, err := client.DisableFeature(cmd.Context(), args[0], opts)
 
 	if clix.JSONOutput {
 		clix.OutputJSON(result)
@@ -156,7 +155,7 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 		NoVacuum:  featureUpdateNoVac,
 	}
 
-	results, err := client.UpdateFeatures(context.Background(), opts)
+	results, err := client.UpdateFeatures(cmd.Context(), opts)
 
 	if clix.JSONOutput {
 		clix.OutputJSON(results)
@@ -191,7 +190,7 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 func runFeaturesCheck(cmd *cobra.Command, args []string) error {
 	client := newClient()
 
-	results, err := client.CheckFeatures(context.Background(), updex.CheckFeaturesOptions{})
+	results, err := client.CheckFeatures(cmd.Context(), updex.CheckFeaturesOptions{})
 
 	if clix.JSONOutput {
 		clix.OutputJSON(results)
