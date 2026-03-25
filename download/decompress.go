@@ -28,35 +28,11 @@ func decompressFile(srcPath, dstPath, compressionType string) (retErr error) {
 		}
 	}()
 
-	var reader io.Reader
-
-	switch compressionType {
-	case "xz":
-		xzReader, err := xz.NewReader(src)
-		if err != nil {
-			return fmt.Errorf("failed to create xz reader: %w", err)
-		}
-		reader = xzReader
-
-	case "gz":
-		gzReader, err := gzip.NewReader(src)
-		if err != nil {
-			return fmt.Errorf("failed to create gzip reader: %w", err)
-		}
-		defer func() { _ = gzReader.Close() }()
-		reader = gzReader
-
-	case "zstd":
-		zstdReader, err := zstd.NewReader(src)
-		if err != nil {
-			return fmt.Errorf("failed to create zstd reader: %w", err)
-		}
-		defer zstdReader.Close()
-		reader = zstdReader
-
-	default:
-		return fmt.Errorf("unsupported compression type: %s", compressionType)
+	reader, err := DecompressReader(src, compressionType)
+	if err != nil {
+		return err
 	}
+	defer func() { _ = reader.Close() }()
 
 	_, err = io.Copy(dst, reader)
 	if err != nil {
