@@ -1,6 +1,7 @@
 package updex
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"text/tabwriter"
@@ -19,8 +20,8 @@ func runFeaturesList(cmd *cobra.Command, args []string) error {
 	}
 
 	if clix.JSONOutput {
-		clix.OutputJSON(features)
-		return nil
+		_, err = clix.OutputJSON(features)
+		return err
 	}
 
 	if len(features) == 0 {
@@ -72,7 +73,7 @@ func runFeaturesEnable(cmd *cobra.Command, args []string) error {
 	result, err := client.EnableFeature(cmd.Context(), args[0], opts)
 
 	if clix.JSONOutput {
-		clix.OutputJSON(result)
+		_, _ = clix.OutputJSON(result)
 	} else if result != nil {
 		if result.Error != "" {
 			fmt.Printf("Error: %s\n", result.Error)
@@ -113,7 +114,7 @@ func runFeaturesDisable(cmd *cobra.Command, args []string) error {
 	result, err := client.DisableFeature(cmd.Context(), args[0], opts)
 
 	if clix.JSONOutput {
-		clix.OutputJSON(result)
+		_, _ = clix.OutputJSON(result)
 	} else if result != nil {
 		if result.Error != "" {
 			fmt.Printf("Error: %s\n", result.Error)
@@ -158,8 +159,8 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 	results, err := client.UpdateFeatures(cmd.Context(), opts)
 
 	if clix.JSONOutput {
-		clix.OutputJSON(results)
-		return err
+		_, jsonErr := clix.OutputJSON(results)
+		return errors.Join(err, jsonErr)
 	}
 
 	if len(results) == 0 {
@@ -193,8 +194,8 @@ func runFeaturesCheck(cmd *cobra.Command, args []string) error {
 	results, err := client.CheckFeatures(cmd.Context(), updex.CheckFeaturesOptions{})
 
 	if clix.JSONOutput {
-		clix.OutputJSON(results)
-		return err
+		_, jsonErr := clix.OutputJSON(results)
+		return errors.Join(err, jsonErr)
 	}
 
 	if len(results) == 0 {
