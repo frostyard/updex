@@ -84,13 +84,13 @@ Checks for available updates without downloading. Manifests are cached by source
 
 ```go
 type FeatureInfo struct {
-    Name          string
-    Description   string
-    Documentation string
-    Enabled       bool
-    Masked        bool
-    Source        string   // Path to .feature file
-    Transfers     []string // Associated transfer component names
+    Name          string   `json:"name"`
+    Description   string   `json:"description,omitempty"`
+    Documentation string   `json:"documentation,omitempty"`
+    Enabled       bool     `json:"enabled"`
+    Masked        bool     `json:"masked,omitempty"`
+    Source        string   `json:"source"`
+    Transfers     []string `json:"transfers,omitzero"`
 }
 ```
 
@@ -98,34 +98,36 @@ type FeatureInfo struct {
 
 ```go
 type FeatureActionResult struct {
-    Feature           string
-    Action            string   // "enable" or "disable"
-    Success           bool
-    DropIn            string   // Path to created drop-in file
-    Error             string
-    NextActionMessage string   // User guidance (e.g., "run update to download")
-    RemovedFiles      []string
-    DownloadedFiles   []string
-    DryRun            bool
-    Unmerged          bool
+    Feature           string   `json:"feature"`
+    Action            string   `json:"action"`
+    Success           bool     `json:"success"`
+    DropIn            string   `json:"drop_in,omitempty"`
+    Error             string   `json:"error,omitempty"`
+    NextActionMessage string   `json:"next_action_message,omitempty"`
+    RemovedFiles      []string `json:"removed_files,omitzero"`
+    DownloadedFiles   []string `json:"downloaded_files,omitzero"`
+    DryRun            bool     `json:"dry_run,omitempty"`
+    Unmerged          bool     `json:"unmerged,omitempty"`
 }
 ```
+
+> **Note:** Slice fields use `omitzero` (Go 1.24+) — they are omitted from JSON when nil/empty. Scalar fields use `omitempty` for the same effect on zero values.
 
 ### UpdateFeaturesResult / UpdateResult
 
 ```go
 type UpdateFeaturesResult struct {
-    Feature string
-    Results []UpdateResult
+    Feature string         `json:"feature"`
+    Results []UpdateResult `json:"results"`
 }
 
 type UpdateResult struct {
-    Component         string
-    Version           string
-    Downloaded        bool
-    Installed         bool
-    Error             string
-    NextActionMessage string
+    Component         string `json:"component"`
+    Version           string `json:"version"`
+    Downloaded        bool   `json:"downloaded"`
+    Installed         bool   `json:"installed"`
+    Error             string `json:"error,omitempty"`
+    NextActionMessage string `json:"next_action_message,omitempty"`
 }
 ```
 
@@ -133,15 +135,15 @@ type UpdateResult struct {
 
 ```go
 type CheckFeaturesResult struct {
-    Feature string
-    Results []CheckResult
+    Feature string        `json:"feature"`
+    Results []CheckResult `json:"results"`
 }
 
 type CheckResult struct {
-    Component       string
-    CurrentVersion  string
-    NewestVersion   string
-    UpdateAvailable bool
+    Component       string `json:"component"`
+    CurrentVersion  string `json:"current_version,omitempty"`
+    NewestVersion   string `json:"newest_version"`
+    UpdateAvailable bool   `json:"update_available"`
 }
 ```
 
