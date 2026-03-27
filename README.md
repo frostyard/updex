@@ -123,11 +123,13 @@ func main() {
 
 ```go
 type ClientConfig struct {
-    Definitions  string             // Custom path to .transfer/.feature files (default: standard paths)
-    Verify       bool               // Enable GPG signature verification
-    Verbose      bool               // Enable debug-level output
-    Progress     reporter.Reporter  // Optional progress reporter
-    SysextRunner sysext.SysextRunner // Optional mock runner for testing
+    Definitions        string                // Custom path to .transfer/.feature files (default: standard paths)
+    Verify             bool                  // Enable GPG signature verification
+    Verbose            bool                  // Enable debug-level output
+    Progress           reporter.Reporter     // Optional progress reporter
+    SysextRunner       sysext.SysextRunner   // Optional mock runner for testing
+    OnDownloadProgress download.ProgressFunc // Optional download progress callback
+    HTTPClient         *http.Client          // Optional shared HTTP client
 }
 ```
 
