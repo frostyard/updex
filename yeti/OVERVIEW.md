@@ -144,11 +144,9 @@ Transfer file values support systemd-style `%` specifiers. See [Configuration Re
 updex features list                     List all features with status (alias: updex feature)
 updex features enable <name>            Enable a feature
   --now                                 Download extensions immediately
-  --dry-run                             Preview without modifying filesystem
 updex features disable <name>           Disable a feature
   --now                                 Unmerge and remove files immediately
   --force                               Allow removal of merged extensions
-  --dry-run                             Preview without modifying filesystem
 updex features update                   Download and install new versions
   --no-vacuum                           Skip removing old versions
 updex features check                    Check for available updates
@@ -161,7 +159,9 @@ Global flags:
   -C, --definitions <path>              Custom path to config files
   --verify                              Enable GPG verification
   --no-refresh                          Skip systemd-sysext refresh
-  --json                                Output as JSON
+  --json                                Output as JSON (from clix)
+  --dry-run                             Preview without modifying filesystem (from clix)
+  --verbose                             Enable debug output (from clix)
 ```
 
 ## Dependencies
