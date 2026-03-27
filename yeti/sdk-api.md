@@ -203,3 +203,4 @@ type CheckResult struct {
 - `GenerateTimer(cfg *TimerConfig) string` — Generate systemd timer unit content
 - `GenerateService(cfg *ServiceConfig) string` — Generate systemd service unit content
 - `Manager.Install(timer, service) / Remove(name) / Exists(name)` — Unit lifecycle
+- `SystemctlRunner` interface — `DaemonReload()`, `Enable(unit)`, `Disable(unit)`, `Start(unit)`, `Stop(unit)`, `IsActive(unit)`, `IsEnabled(unit)` methods executed via `DefaultSystemctlRunner` (real commands) or `MockSystemctlRunner` (tests)

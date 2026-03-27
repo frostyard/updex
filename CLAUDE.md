@@ -24,14 +24,13 @@ updex is a Go SDK and CLI for managing systemd-sysext images. It replicates `sys
 
 Key packages:
 - `updex/` — Public SDK: `Client` struct with `Features()`, `EnableFeature()`, `DisableFeature()`, `UpdateFeatures()`, `CheckFeatures()`
-- `cmd/commands/` — Cobra command handlers calling SDK methods
-- `cmd/common/` — Shared CLI utilities (flags, JSON output, progress reporting)
-- `internal/config/` — Parses `.transfer` and `.feature` INI files from systemd-style search paths
-- `internal/download/` — HTTP downloads with SHA256 verification and decompression (xz, gz, zstd)
-- `internal/manifest/` — Fetches/parses SHA256SUMS manifests with optional GPG verification
-- `internal/version/` — Pattern matching (`@v` placeholder) and semantic version comparison
-- `internal/sysext/` — systemd-sysext integration with mockable `Runner` interface
-- `internal/systemd/` — Generates/installs systemd timer+service units, mockable `Runner` interface
+- `cmd/updex/` — Cobra command handlers calling SDK methods (flags, output formatting, progress bars)
+- `config/` — Parses `.transfer` and `.feature` INI files from systemd-style search paths
+- `download/` — HTTP downloads with SHA256 verification and decompression (xz, gz, zstd)
+- `manifest/` — Fetches/parses SHA256SUMS manifests with optional GPG verification
+- `version/` — Pattern matching (`@v` placeholder) and semantic version comparison
+- `sysext/` — systemd-sysext integration with mockable `Runner` interface
+- `systemd/` — Generates/installs systemd timer+service units, mockable `Runner` interface
 
 Entry point: `cmd/updex-cli/main.go` → `cmd/updex/root.go`
 
@@ -45,4 +44,9 @@ Entry point: `cmd/updex-cli/main.go` → `cmd/updex/root.go`
 
 ## Go Version
 
-Go 1.25. Use modern idioms: `any`, `slices`/`maps`/`cmp` packages, `t.Context()`, `slices.SortFunc`, `strings.SplitSeq`, `omitzero` for slice/map/struct JSON tags, `wg.Go()`.
+Go 1.26. Use modern idioms: `any`, `slices`/`maps`/`cmp` packages, `t.Context()`, `slices.SortFunc`, `strings.SplitSeq`, `omitzero` for slice/map/struct JSON tags, `wg.Go()`.
+## Documentation
+
+**update documentation** After any change to source code, update relevant documentation in CLAUDE.md, README.md and the yeti/ folder. A task is not complete without reviewing and updating relevant documentation.
+
+**yeti/ directory** The `yeti/` directory contains documentation written for AI consumption and context enhancement, not primarily for humans. Jobs like `doc-maintainer` and `issue-worker` instruct the AI to read `yeti/OVERVIEW.md` and related files for codebase context before performing tasks. Write content in this directory to be maximally useful to an AI agent understanding the codebase — detailed architecture, patterns, and decision rationale rather than user-facing guides.
