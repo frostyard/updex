@@ -111,11 +111,11 @@ func runDaemonEnable(cmd *cobra.Command, args []string) error {
 	}
 
 	if clix.JSONOutput {
-		clix.OutputJSON(map[string]any{
+		_, err := clix.OutputJSON(map[string]any{
 			"success": true,
 			"message": "Auto-update daemon enabled",
 		})
-		return nil
+		return err
 	}
 
 	fmt.Println("Auto-update daemon enabled.")
@@ -162,11 +162,11 @@ func runDaemonDisable(cmd *cobra.Command, args []string) error {
 	}
 
 	if clix.JSONOutput {
-		clix.OutputJSON(map[string]any{
+		_, err := clix.OutputJSON(map[string]any{
 			"success": true,
 			"message": "Auto-update daemon disabled",
 		})
-		return nil
+		return err
 	}
 
 	fmt.Println("Auto-update daemon disabled.")
@@ -213,8 +213,8 @@ func runDaemonStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	if clix.JSONOutput {
-		clix.OutputJSON(status)
-		return nil
+		_, err := clix.OutputJSON(status)
+		return err
 	}
 
 	if !status.Installed {
