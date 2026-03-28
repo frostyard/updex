@@ -12,6 +12,8 @@ import (
 	"gopkg.in/ini.v1"
 )
 
+const featureSuffix = ".feature"
+
 // Feature represents a parsed .feature configuration file
 type Feature struct {
 	Name          string   // Derived from filename (e.g., "devel" from "devel.feature")
@@ -35,31 +37,9 @@ func LoadFeatures(customPath string) ([]*Feature, error) {
 	}
 
 	// Collect all .feature files, with earlier paths taking priority
-	featureFiles := make(map[string]string) // feature name -> file path
-
-	for _, dir := range searchPaths {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, fmt.Errorf("failed to read directory %s: %w", dir, err)
-		}
-
-		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
-			}
-			if !strings.HasSuffix(entry.Name(), ".feature") {
-				continue
-			}
-
-			featureName := strings.TrimSuffix(entry.Name(), ".feature")
-			if _, exists := featureFiles[featureName]; !exists {
-				// Earlier paths take priority
-				featureFiles[featureName] = filepath.Join(dir, entry.Name())
-			}
-		}
+	featureFiles, err := collectConfigFiles(searchPaths, featureSuffix)
+	if err != nil {
+		return nil, err
 	}
 
 	if len(featureFiles) == 0 {
