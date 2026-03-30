@@ -4,13 +4,14 @@ import (
 	"cmp"
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
 
 	"gopkg.in/ini.v1"
 )
+
+const transferSuffix = ".transfer"
 
 // Transfer represents a parsed .transfer configuration file
 type Transfer struct {
@@ -93,31 +94,9 @@ func LoadTransfers(customPath string) ([]*Transfer, error) {
 	}
 
 	// Collect all .transfer files, with earlier paths taking priority
-	transferFiles := make(map[string]string) // component name -> file path
-
-	for _, dir := range searchPaths {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, fmt.Errorf("failed to read directory %s: %w", dir, err)
-		}
-
-		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
-			}
-			if !strings.HasSuffix(entry.Name(), ".transfer") {
-				continue
-			}
-
-			component := strings.TrimSuffix(entry.Name(), ".transfer")
-			if _, exists := transferFiles[component]; !exists {
-				// Earlier paths take priority
-				transferFiles[component] = filepath.Join(dir, entry.Name())
-			}
-		}
+	transferFiles, err := collectConfigFiles(searchPaths, transferSuffix)
+	if err != nil {
+		return nil, err
 	}
 
 	if len(transferFiles) == 0 {
