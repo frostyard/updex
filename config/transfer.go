@@ -11,6 +11,8 @@ import (
 	"gopkg.in/ini.v1"
 )
 
+const transferSuffix = ".transfer"
+
 // Transfer represents a parsed .transfer configuration file
 type Transfer struct {
 	Component string          // Derived from filename
@@ -92,7 +94,7 @@ func LoadTransfers(customPath string) ([]*Transfer, error) {
 	}
 
 	// Collect all .transfer files, with earlier paths taking priority
-	transferFiles, err := collectConfigFiles(searchPaths, ".transfer")
+	transferFiles, err := collectConfigFiles(searchPaths, transferSuffix)
 	if err != nil {
 		return nil, err
 	}
