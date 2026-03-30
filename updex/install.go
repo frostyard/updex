@@ -81,9 +81,11 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 		}
 	}
 
-	// Link to /var/lib/extensions for systemd-sysext
-	if err := sysext.LinkToSysext(transfer); err != nil {
-		c.warn("failed to link to sysext: %v", err)
+	// Link to /var/lib/extensions for systemd-sysext — without this the
+	// extension is invisible to `systemd-sysext refresh`, so treat failure
+	// as a hard error even though the download succeeded.
+	if err := c.runner.LinkToSysext(transfer); err != nil {
+		return "", nil, false, fmt.Errorf("failed to link to sysext: %w", err)
 	}
 
 	// Refresh systemd-sysext

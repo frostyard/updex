@@ -186,7 +186,7 @@ type CheckResult struct {
 
 ### `sysext`
 
-- `SysextRunner` interface — `Refresh()`, `Merge()`, `Unmerge()` methods executed via `DefaultRunner` (real commands) or `MockRunner` (tests)
+- `SysextRunner` interface — `Refresh()`, `Merge()`, `Unmerge()`, `LinkToSysext(*config.Transfer)` methods executed via `DefaultRunner` (real commands) or `MockRunner` (tests)
 - `GetInstalledVersions(t *config.Transfer) ([]string, string, error)` — List installed + current version
 - `GetActiveVersion(t *config.Transfer) (string, error)` — Get version currently active in systemd-sysext (checks current symlink and `/run/extensions`)
 - `UpdateSymlink(targetDir, symlinkName, targetFile string) error`

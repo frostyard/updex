@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+
+	"github.com/frostyard/updex/config"
 )
 
 // SysextRunner executes systemd-sysext commands
@@ -11,6 +13,7 @@ type SysextRunner interface {
 	Refresh() error
 	Merge() error
 	Unmerge() error
+	LinkToSysext(t *config.Transfer) error
 }
 
 // DefaultRunner executes real systemd-sysext commands
@@ -26,6 +29,10 @@ func (r *DefaultRunner) Merge() error {
 
 func (r *DefaultRunner) Unmerge() error {
 	return runSysextCommand("unmerge")
+}
+
+func (r *DefaultRunner) LinkToSysext(t *config.Transfer) error {
+	return LinkToSysext(t)
 }
 
 // runSysextCommand executes a systemd-sysext subcommand
