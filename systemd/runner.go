@@ -49,7 +49,7 @@ func (r *DefaultSystemctlRunner) IsActive(unit string) (bool, error) {
 				return false, nil
 			}
 		}
-		return false, nil
+		return false, err
 	}
 	return true, nil
 }
@@ -64,7 +64,7 @@ func (r *DefaultSystemctlRunner) IsEnabled(unit string) (bool, error) {
 				return false, nil
 			}
 		}
-		return false, nil
+		return false, err
 	}
 	return true, nil
 }
