@@ -19,7 +19,8 @@ cmd/updex/client.go             CLI → SDK client factory
 updex/                          Public SDK (Client + methods)
   updex.go                      Client struct, NewClient()
   features.go                   Features(), EnableFeature(), DisableFeature(),
-                                UpdateFeatures(), CheckFeatures()
+                                UpdateFeatures(), CheckFeatures(),
+                                writeFeatureDropIn() helper
   install.go                    installTransfer() — complete install pipeline
                                 (download, symlink, sysext link, refresh, vacuum)
                                 Reuses parsed patterns from getAvailableVersions
