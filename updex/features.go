@@ -92,6 +92,31 @@ func (c *Client) loadFeatureTransfers(name string) ([]*config.Transfer, error) {
 	return config.GetTransfersForFeature(transfers, name), nil
 }
 
+// writeFeatureDropIn creates a drop-in configuration file that sets a
+// feature's enabled state. In dry-run mode it only logs what would happen
+// and returns the path without writing anything.
+func (c *Client) writeFeatureDropIn(name string, enabled bool, dryRun bool) (string, error) {
+	dropInDir := filepath.Join("/etc/sysupdate.d", name+".feature.d")
+	dropInFile := filepath.Join(dropInDir, "00-updex.conf")
+
+	if dryRun {
+		c.msg("Would create drop-in: %s", dropInFile)
+		return dropInFile, nil
+	}
+
+	if err := os.MkdirAll(dropInDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create drop-in directory: %w", err)
+	}
+
+	content := fmt.Sprintf("[Feature]\nEnabled=%v\n", enabled)
+	if err := os.WriteFile(dropInFile, []byte(content), 0644); err != nil {
+		return "", fmt.Errorf("failed to write drop-in file: %w", err)
+	}
+
+	c.msg("Created drop-in: %s", dropInFile)
+	return dropInFile, nil
+}
+
 // EnableFeature enables a feature by creating a drop-in configuration file.
 func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeatureOptions) (*FeatureActionResult, error) {
 	c.msg("Enabling %s", name)
@@ -110,29 +135,14 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 	}
 
 	// Create drop-in directory and file
-	dropInDir := filepath.Join("/etc/sysupdate.d", name+".feature.d")
-	dropInFile := filepath.Join(dropInDir, "00-updex.conf")
-
-	if opts.DryRun {
-		c.msg("Would create drop-in: %s", dropInFile)
-	} else {
-		if err := os.MkdirAll(dropInDir, 0755); err != nil {
-			err = fmt.Errorf("failed to create drop-in directory: %w", err)
-			result.Error = err.Error()
-			c.warn("%s", result.Error)
-			return result, err
-		}
-
-		content := "[Feature]\nEnabled=true\n"
-		if err := os.WriteFile(dropInFile, []byte(content), 0644); err != nil {
-			err = fmt.Errorf("failed to write drop-in file: %w", err)
-			result.Error = err.Error()
-			c.warn("%s", result.Error)
-			return result, err
-		}
-
+	dropInFile, err := c.writeFeatureDropIn(name, true, opts.DryRun)
+	if err != nil {
+		result.Error = err.Error()
+		c.warn("%s", result.Error)
+		return result, err
+	}
+	if !opts.DryRun {
 		result.DropIn = dropInFile
-		c.msg("Created drop-in: %s", dropInFile)
 	}
 
 	// Handle --now flag: download extensions immediately
@@ -261,29 +271,14 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 	}
 
 	// Create drop-in directory and file
-	dropInDir := filepath.Join("/etc/sysupdate.d", name+".feature.d")
-	dropInFile := filepath.Join(dropInDir, "00-updex.conf")
-
-	if opts.DryRun {
-		c.msg("Would create drop-in: %s", dropInFile)
-	} else {
-		if err := os.MkdirAll(dropInDir, 0755); err != nil {
-			err = fmt.Errorf("failed to create drop-in directory: %w", err)
-			result.Error = err.Error()
-			c.warn("%s", result.Error)
-			return result, err
-		}
-
-		content := "[Feature]\nEnabled=false\n"
-		if err := os.WriteFile(dropInFile, []byte(content), 0644); err != nil {
-			err = fmt.Errorf("failed to write drop-in file: %w", err)
-			result.Error = err.Error()
-			c.warn("%s", result.Error)
-			return result, err
-		}
-
+	dropInFile, err := c.writeFeatureDropIn(name, false, opts.DryRun)
+	if err != nil {
+		result.Error = err.Error()
+		c.warn("%s", result.Error)
+		return result, err
+	}
+	if !opts.DryRun {
 		result.DropIn = dropInFile
-		c.msg("Created drop-in: %s", dropInFile)
 	}
 
 	// Handle --now (or --remove for backward compat): remove files and unmerge
