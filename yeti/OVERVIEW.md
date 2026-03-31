@@ -29,6 +29,7 @@ updex/                          Public SDK (Client + methods)
   results.go                    Result structs for all operations
 
 config/                         .transfer and .feature INI file parsing
+                                (shared collectConfigFiles helper for directory scanning)
 download/                       HTTP download with SHA256 + decompression
 manifest/                       SHA256SUMS manifest fetch/parse + GPG verify
 version/                        Pattern matching (@v placeholder) + semver compare
