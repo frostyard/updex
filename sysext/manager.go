@@ -208,9 +208,29 @@ func VacuumWithDetails(t *config.Transfer) (removed []string, kept []string, err
 		instancesMax = 2
 	}
 
+	// Resolve the active version (the one the CurrentSymlink points at). It must
+	// never be removed regardless of how it sorts, otherwise vacuum would leave
+	// a dangling symlink — which is exactly what happens when the version
+	// comparator can't rank a freshly downloaded image above older ones.
+	activeVersion := ""
+	if t.Target.CurrentSymlink != "" {
+		symlinkPath := filepath.Join(targetDir, t.Target.CurrentSymlink)
+		if target, err := os.Readlink(symlinkPath); err == nil {
+			if v, _, ok := version.ExtractVersionParsed(filepath.Base(target), patterns); ok {
+				activeVersion = v
+			}
+		}
+	}
+
 	for i, vf := range installed {
 		v := vf.version
 		fullPath := filepath.Join(targetDir, vf.filename)
+
+		// Always keep the active (symlinked) version.
+		if activeVersion != "" && v == activeVersion {
+			kept = append(kept, v)
+			continue
+		}
 
 		// Always keep protected versions
 		if t.Transfer.ProtectVersion != "" && v == t.Transfer.ProtectVersion {

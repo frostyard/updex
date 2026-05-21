@@ -264,6 +264,70 @@ func TestVacuumWithDetails(t *testing.T) {
 	}
 }
 
+func TestVacuumWithDetailsKeepsActiveSymlinkedVersion(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Three versions present; the current symlink points at the OLDEST one.
+	// This reproduces the dangling-symlink failure: vacuum must never delete
+	// the file the CurrentSymlink resolves to, even when it sorts oldest.
+	files := []string{
+		"myext_1.0.0.raw",
+		"myext_2.0.0.raw",
+		"myext_3.0.0.raw",
+	}
+	for _, f := range files {
+		if err := os.WriteFile(filepath.Join(tmpDir, f), []byte("test"), 0644); err != nil {
+			t.Fatalf("failed to create test file: %v", err)
+		}
+	}
+
+	// Active version = 1.0.0 (the oldest).
+	if err := os.Symlink("myext_1.0.0.raw", filepath.Join(tmpDir, "myext.raw")); err != nil {
+		t.Fatalf("failed to create symlink: %v", err)
+	}
+
+	transfer := &config.Transfer{
+		Transfer: config.TransferSection{
+			InstancesMax: 1, // Keep only 1 by count...
+		},
+		Target: config.TargetSection{
+			Path:           tmpDir,
+			MatchPattern:   "myext_@v.raw",
+			CurrentSymlink: "myext.raw",
+		},
+	}
+
+	removed, kept, err := VacuumWithDetails(transfer)
+	if err != nil {
+		t.Fatalf("VacuumWithDetails() error = %v", err)
+	}
+
+	keptMap := make(map[string]bool)
+	for _, v := range kept {
+		keptMap[v] = true
+	}
+	// ...but the active version must be kept on top of the count.
+	if !keptMap["1.0.0"] {
+		t.Error("active (symlinked) version 1.0.0 must be kept")
+	}
+	if !keptMap["3.0.0"] {
+		t.Error("newest version 3.0.0 should be kept")
+	}
+
+	// The active file must still exist on disk (no dangling symlink).
+	if _, err := os.Stat(filepath.Join(tmpDir, "myext_1.0.0.raw")); err != nil {
+		t.Errorf("active file myext_1.0.0.raw must still exist: %v", err)
+	}
+
+	removedMap := make(map[string]bool)
+	for _, v := range removed {
+		removedMap[v] = true
+	}
+	if !removedMap["2.0.0"] {
+		t.Error("non-active middle version 2.0.0 should be removed")
+	}
+}
+
 func TestVacuumWithDetailsProtectedVersion(t *testing.T) {
 	tmpDir := t.TempDir()
 

@@ -313,6 +313,42 @@ func TestCompare(t *testing.T) {
 			v2:   "def",
 			want: -1,
 		},
+		{
+			name: "debian newer upstream patch",
+			v1:   "5+29.4.2-2~debian.13~trixie",
+			v2:   "5+29.3.1-1~debian.13~trixie",
+			want: 1,
+		},
+		{
+			name: "debian older upstream patch",
+			v1:   "5+29.3.0-1~debian.13~trixie",
+			v2:   "5+29.3.1-1~debian.13~trixie",
+			want: -1,
+		},
+		{
+			name: "debian equal full version",
+			v1:   "5+29.4.2-2~debian.13~trixie",
+			v2:   "5+29.4.2-2~debian.13~trixie",
+			want: 0,
+		},
+		{
+			name: "debian tilde sorts before release",
+			v1:   "1.0.0~rc1",
+			v2:   "1.0.0",
+			want: -1,
+		},
+		{
+			name: "debian epoch dominates",
+			v1:   "2:1.0",
+			v2:   "1:5.0",
+			want: 1,
+		},
+		{
+			name: "debian revision breaks tie",
+			v1:   "1.0-2~debian",
+			v2:   "1.0-1~debian",
+			want: 1,
+		},
 	}
 
 	for _, tt := range tests {
