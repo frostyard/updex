@@ -41,6 +41,8 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 
 Enable creates a drop-in file setting `Enabled=true`. With `Now: true`, it downloads extensions via the shared `installTransfer` pipeline. Disable creates a drop-in setting `Enabled=false`.
 
+In dry-run mode, enable/disable skip writing drop-ins and skip sysext/filesystem mutations. `EnableFeature` with `Now: true` records associated transfer components as would-download entries without fetching manifests or resolving exact versions. `DisableFeature` with `Now: true` still checks active versions for force-safety, then records component-level would-remove entries instead of deleting files.
+
 **EnableFeatureOptions:**
 | Field | Type | Description |
 |-------|------|-------------|
@@ -64,10 +66,12 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 
 Downloads and installs the newest available version for each enabled feature's transfers. Delegates per-component work to the internal `installTransfer` pipeline (which handles download, symlink, sysext linking, and vacuum). Manifests are cached by source URL — transfers sharing the same source avoid redundant HTTP requests. Parsed source patterns are returned from version listing and reused by the install pipeline to avoid redundant pattern compilation. Refresh is batched — a single `systemd-sysext refresh` runs after all components are processed. With `DryRun: true`, manifests are fetched and versions are selected, but download, symlink update, sysext linking, refresh, and vacuum deletion are skipped. Returns per-feature results with per-component status.
 
+Dry-run update results use the normal `UpdateResult` shape: `Downloaded=true` means the component would be downloaded, `Installed=false` means no install happened, and `RemovedVersions` is populated from `sysext.PlanVacuumAfterInstall` unless `NoVacuum` is true. The CLI still enforces root before calling this SDK method, but the SDK method itself is read-only in dry-run mode apart from remote manifest fetches.
+
 **UpdateFeaturesOptions:**
 | Field | Type | Description |
 |-------|------|-------------|
-| `DryRun` | `bool` | Preview downloads, installs, refreshes, and vacuum removals without modifying filesystem or sysext state |
+| `DryRun` | `bool` | Preview downloads, installs, refreshes, and vacuum removals without modifying filesystem or sysext state; still fetches manifests and inspects local installed files |
 | `NoRefresh` | `bool` | Skip `systemd-sysext refresh` after updates |
 | `NoVacuum` | `bool` | Skip removing old versions |
 
@@ -134,7 +138,7 @@ type UpdateResult struct {
 }
 ```
 
-For dry-run update results, `Downloaded=true` means the component would be downloaded, `Installed=false` means no install was performed, and `RemovedVersions` lists versions vacuum would remove if `NoVacuum` is false.
+For dry-run update results, `Downloaded=true` means the component would be downloaded, `Installed=false` means no install was performed, and `RemovedVersions` lists versions vacuum would remove if `NoVacuum` is false. Non-dry-run `RemovedVersions` is currently not populated because `installTransfer` calls `sysext.Vacuum` rather than `VacuumWithDetails`.
 
 ### CheckFeaturesResult / CheckResult
 

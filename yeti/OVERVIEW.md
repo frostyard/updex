@@ -71,7 +71,14 @@ CLI (cmd/daemon.go) → systemd (direct, bypasses SDK)
 
 - Text tables by default, JSON with `--json` flag — both `--json` and `--dry-run` are provided by the `github.com/frostyard/clix` package, not defined in this repo
 - `cmd/updex/client.go` always wires `clix.NewReporter()` and `newProgressBar`; there is no repo-defined `--quiet` flag in the current code
-- Operations requiring filesystem changes call `requireRoot()` to enforce root access
+- Operations requiring filesystem changes call `requireRoot()` before entering the SDK. This currently includes dry-run variants of `features enable`, `features disable`, and `features update`, so dry-run is mutation-free but not rootless from the CLI.
+
+### Dry-run behavior
+
+- `UpdateFeaturesOptions.DryRun` is threaded through `UpdateFeatures` into `installTransfer`, which is the choke point before downloads, symlink updates, `/var/lib/extensions` linking, refresh, and vacuum deletion
+- Update dry-runs still perform read-only work: load configs, fetch manifests, resolve versions, inspect installed files, and, unless `NoVacuum` is set, call `sysext.PlanVacuumAfterInstall` to populate `UpdateResult.RemovedVersions`
+- In update dry-run results, `Downloaded=true` means "would download", `Installed=false` means no install occurred, and `DryRun=true` disambiguates the status for JSON consumers
+- Enable/disable dry-runs are lighter previews: enabling with `--now` lists associated transfer components without manifest/version resolution, while disabling with `--now` performs active-version checks but records component-level "would remove" entries rather than enumerating every file
 
 ### Public API (Issue #13)
 
@@ -183,6 +190,8 @@ Global flags:
   --dry-run                             Preview without modifying filesystem (from clix)
   --verbose                             Enable debug output (from clix)
 ```
+
+Mutating commands enforce root before reading `--dry-run`, so examples that preview `features enable`, `features disable`, or `features update` may still need `sudo` when run through the CLI.
 
 ## Dependencies
 
