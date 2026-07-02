@@ -4,9 +4,13 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestParseManifest(t *testing.T) {
@@ -236,4 +240,86 @@ func TestHashVerifyReaderPartialReads(t *testing.T) {
 	if err := reader.Verify(); err != nil {
 		t.Errorf("Verify() after partial reads error = %v", err)
 	}
+}
+
+func TestFetchRetriesServerErrorThenSucceeds(t *testing.T) {
+	content := validManifestContent()
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/SHA256SUMS" {
+			http.NotFound(w, r)
+			return
+		}
+		if requests.Add(1) <= 2 {
+			http.Error(w, "temporary failure", http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte(content))
+	}))
+	defer server.Close()
+
+	m, err := Fetch(t.Context(), server.Client(), server.URL, false, WithRetryConfig(3, time.Millisecond))
+	if err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+	if requests.Load() != 3 {
+		t.Fatalf("requests = %d, want 3", requests.Load())
+	}
+	if got := m.Files["file.raw"]; got != testManifestHash() {
+		t.Fatalf("Files[file.raw] = %q, want %q", got, testManifestHash())
+	}
+}
+
+func TestFetchDoesNotRetryNotFound(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	_, err := Fetch(t.Context(), server.Client(), server.URL, false, WithRetryConfig(3, time.Millisecond))
+	if err == nil {
+		t.Fatal("Fetch() error = nil, want error")
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("requests = %d, want 1", requests.Load())
+	}
+}
+
+func TestFetchRetriesTruncatedBodyThenSucceeds(t *testing.T) {
+	content := validManifestContent()
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/SHA256SUMS" {
+			http.NotFound(w, r)
+			return
+		}
+		if requests.Add(1) <= 2 {
+			w.Header().Set("Content-Length", fmt.Sprint(len(content)+10))
+			_, _ = w.Write([]byte(content[:len(content)/2]))
+			return
+		}
+		_, _ = w.Write([]byte(content))
+	}))
+	defer server.Close()
+
+	m, err := Fetch(t.Context(), server.Client(), server.URL, false, WithRetryConfig(3, time.Millisecond))
+	if err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+	if requests.Load() != 3 {
+		t.Fatalf("requests = %d, want 3", requests.Load())
+	}
+	if got := m.Files["file.raw"]; got != testManifestHash() {
+		t.Fatalf("Files[file.raw] = %q, want %q", got, testManifestHash())
+	}
+}
+
+func validManifestContent() string {
+	return testManifestHash() + "  file.raw\n"
+}
+
+func testManifestHash() string {
+	return "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 }

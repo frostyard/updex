@@ -26,8 +26,8 @@ Key packages:
 - `updex/` — Public SDK: `Client` struct with `Features()`, `EnableFeature()`, `DisableFeature()`, `UpdateFeatures()`, `CheckFeatures()`
 - `cmd/updex/` — Cobra command handlers calling SDK methods (flags, output formatting, progress bars)
 - `config/` — Parses `.transfer` and `.feature` INI files from systemd-style search paths
-- `download/` — HTTP downloads with SHA256 verification and decompression (xz, gz, zstd)
-- `manifest/` — Fetches/parses SHA256SUMS manifests with optional GPG verification
+- `download/` — HTTP downloads with bounded retry for transient failures, SHA256 verification, and decompression (xz, gz, zstd)
+- `manifest/` — Fetches/parses SHA256SUMS manifests with bounded retry for transient failures and optional GPG verification
 - `version/` — Pattern matching (`@v` placeholder) and semantic version comparison
 - `sysext/` — systemd-sysext integration with mockable `Runner` interface and read-only vacuum planning helpers
 - `systemd/` — Generates/installs systemd timer+service units, mockable `Runner` interface

@@ -61,8 +61,9 @@ type ClientConfig struct {
 	// OnDownloadProgress is an optional callback for download progress tracking.
 	// If non-nil, it is passed to [download.Download] and called with the
 	// response content length (-1 if unknown). The returned io.Writer receives
-	// downloaded bytes. Return nil from the callback to disable progress for
-	// a given download.
+	// downloaded bytes. Retries call this once per attempt, so return a fresh
+	// independent writer each time to avoid double-counting progress. Return
+	// nil from the callback to disable progress for a given download.
 	OnDownloadProgress download.ProgressFunc
 
 	// HTTPClient is an optional HTTP client used for all downloads and manifest
@@ -102,6 +103,12 @@ func (c *Client) msg(format string, a ...any) {
 
 func (c *Client) warn(format string, a ...any) {
 	c.reporter.Warning(format, a...)
+}
+
+func (c *Client) retryNotify(what string) func(attempt, maxAttempts int, reason error) {
+	return func(attempt, maxAttempts int, reason error) {
+		c.warn("retrying %s (attempt %d/%d): %v", what, attempt, maxAttempts, reason)
+	}
 }
 
 func (c *Client) debug(format string, a ...any) {

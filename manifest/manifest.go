@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/frostyard/updex/internal/retry"
 )
 
 // Manifest represents a parsed SHA256SUMS manifest
@@ -18,38 +20,81 @@ type Manifest struct {
 	Files map[string]string // filename -> SHA256 hash
 }
 
+type retrySettings struct {
+	cfg    retry.Config
+	notify retry.Notify
+}
+
+// Option configures manifest fetch behavior.
+type Option func(*retrySettings)
+
+// WithRetryConfig configures bounded retry attempts and base backoff delay.
+func WithRetryConfig(maxAttempts int, baseDelay time.Duration) Option {
+	return func(settings *retrySettings) {
+		settings.cfg = retry.Config{
+			MaxAttempts: maxAttempts,
+			BaseDelay:   baseDelay,
+		}
+	}
+}
+
+// WithRetryNotify configures a callback called before retry backoff sleeps.
+func WithRetryNotify(fn func(attempt, maxAttempts int, reason error)) Option {
+	return func(settings *retrySettings) {
+		settings.notify = retry.Notify(fn)
+	}
+}
+
+func resolveRetry(opts ...Option) retrySettings {
+	settings := retrySettings{cfg: retry.DefaultConfig}
+	for _, opt := range opts {
+		opt(&settings)
+	}
+	return settings
+}
+
 // Fetch downloads and parses a SHA256SUMS manifest from the given base URL.
 // If httpClient is nil, a default client with a 30-second timeout is used.
 // If verify is true, it will also verify the GPG signature.
-func Fetch(ctx context.Context, httpClient *http.Client, baseURL string, verify bool) (*Manifest, error) {
+func Fetch(ctx context.Context, httpClient *http.Client, baseURL string, verify bool, opts ...Option) (*Manifest, error) {
 	manifestURL := strings.TrimRight(baseURL, "/") + "/SHA256SUMS"
 
-	// Download manifest
 	if httpClient == nil {
 		httpClient = &http.Client{
 			Timeout: 30 * time.Second,
 		}
 	}
+	rs := resolveRetry(opts...)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
+	var content []byte
+	err := retry.Do(ctx, rs.cfg, rs.notify, func() error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
+		if err != nil {
+			return fmt.Errorf("failed to create request: %w", err)
+		}
+
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return retry.TransientIfNetwork(fmt.Errorf("failed to fetch manifest: %w", err))
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError {
+			return retry.Transient(fmt.Errorf("manifest fetch failed with status: %s", resp.Status))
+		}
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("manifest fetch failed with status: %s", resp.Status)
+		}
+
+		content, err = io.ReadAll(resp.Body)
+		if err != nil {
+			return retry.TransientIfNetwork(fmt.Errorf("failed to read manifest: %w", err))
+		}
+
+		return nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch manifest: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("manifest fetch failed with status: %s", resp.Status)
-	}
-
-	// Read manifest content
-	content, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read manifest: %w", err)
+		return nil, err
 	}
 
 	// Verify GPG signature if requested
