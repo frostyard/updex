@@ -4,7 +4,7 @@
 
 updex is a Go SDK and CLI for managing [systemd-sysext](https://www.freedesktop.org/software/systemd/man/latest/systemd-sysext.html) images. It replicates `systemd-sysupdate` functionality for `url-file` transfers, providing feature-based management of system extensions with version tracking, SHA256 verification, optional GPG signing, and automatic cleanup.
 
-The project follows an **SDK-first design**: all logic lives in public Go packages, and the CLI is a thin wrapper that parses flags and formats output.
+The project follows an **SDK-first design** for feature management: the core workflows live in public Go packages, and the CLI is mostly a thin wrapper that parses flags and formats output. The `daemon` command is the main exception: it imports the `systemd` package directly to install/remove timer units.
 
 ## Architecture
 
@@ -13,7 +13,7 @@ cmd/updex-cli/main.go          Entry point (frostyard/clix bootstrap)
 cmd/updex/root.go               Cobra root command, global flags
 cmd/updex/features.go           features list|enable|disable|update|check
 cmd/updex/features_run.go       Run functions for feature subcommands
-cmd/updex/daemon.go             daemon enable|disable|status (systemd timers)
+cmd/updex/daemon.go             daemon enable|disable|status (direct systemd timers)
 cmd/updex/client.go             CLI → SDK client factory
 
 updex/                          Public SDK (Client + methods)
@@ -29,11 +29,11 @@ updex/                          Public SDK (Client + methods)
   options.go                    Option structs for all operations
   results.go                    Result structs for all operations
 
-config/                         .transfer and .feature INI file parsing
-                                (shared collectConfigFiles helper for directory scanning)
+config/                         .transfer and .feature INI file parsing,
+                                search paths, drop-ins, and specifiers
 download/                       HTTP download with SHA256 + decompression
 manifest/                       SHA256SUMS manifest fetch/parse + GPG verify
-version/                        Pattern matching (@v placeholder) + semver compare
+version/                        Pattern matching (@v placeholder) + version compare
 sysext/                         systemd-sysext operations (refresh/merge/vacuum)
 systemd/                        systemd unit generation + systemctl management
 internal/testutil/              HTTP test server helpers (module-internal)
@@ -42,8 +42,8 @@ internal/testutil/              HTTP test server helpers (module-internal)
 ### Package dependency flow
 
 ```
-CLI (cmd/) → SDK (updex/) → config, download, manifest, version, sysext
-                         → sysext → config, version
+CLI (cmd/features*) → SDK (updex/) → config, manifest, download, version, sysext
+                                  → sysext → config, version
 CLI (cmd/daemon.go) → systemd (direct, bypasses SDK)
 ```
 
@@ -56,6 +56,8 @@ CLI (cmd/daemon.go) → systemd (direct, bypasses SDK)
 - All public SDK methods take `context.Context` as first parameter for cancellation
 - Operations use dedicated option structs (e.g., `EnableFeatureOptions`, `UpdateFeaturesOptions`) to allow future expansion without breaking changes
 - Return dedicated result structs with status fields + error
+- `ClientConfig.HTTPClient` is reused for manifest fetches and downloads; if nil, `NewClient` creates one with a 10-minute timeout
+- `ClientConfig.Progress` receives informational/warning/debug messages; `ClientConfig.OnDownloadProgress` is a separate download-byte callback
 - Error messages: lowercase, no trailing punctuation, wrapped with `fmt.Errorf("context: %w", err)`
 
 ### Testing patterns
@@ -68,11 +70,19 @@ CLI (cmd/daemon.go) → systemd (direct, bypasses SDK)
 ### CLI output
 
 - Text tables by default, JSON with `--json` flag — both `--json` and `--dry-run` are provided by the `github.com/frostyard/clix` package, not defined in this repo
+- `cmd/updex/client.go` always wires `clix.NewReporter()` and `newProgressBar`; there is no repo-defined `--quiet` flag in the current code
 - Operations requiring filesystem changes call `requireRoot()` to enforce root access
 
 ### Public API (Issue #13)
 
 All core packages (`config`, `version`, `download`, `manifest`, `sysext`, `systemd`) are exported as public API at `github.com/frostyard/updex/<package>`. Only `internal/testutil` remains internal. This was an intentional decision: the types in these packages (e.g., `Transfer`, `Feature`, `Pattern`, `Manifest`) were designed with exported fields and are suitable for external consumption.
+
+### Version and pattern conventions
+
+- Every match pattern must contain `@v`; other `@` placeholders match UUIDs, flags, file metadata, and hashes but are not substituted when building target filenames
+- `.transfer` `MatchPattern` fields may contain multiple space-separated alternatives; the first is preserved in `MatchPattern`, while all alternatives are available via `Patterns()`
+- `%` specifiers in transfer values are expanded at parse time with a cached context per `LoadTransfers` call
+- `version.Compare` uses `hashicorp/go-version` for normal semver-like versions, but routes Debian/dpkg-looking versions containing `:` or `~` through a dpkg-compatible comparator so epochs and tildes sort correctly
 
 ## Configuration
 
@@ -126,19 +136,26 @@ Transfer file values support systemd-style `%` specifiers. See [Configuration Re
 3. For each transfer:
    - Fetch `SHA256SUMS` manifest from source URL (+ GPG verify if configured); manifests are cached by source URL across transfers so that multiple transfers sharing the same source make only one HTTP request
    - Parse source patterns and extract available versions using pattern matching (`@v` placeholder); parsed patterns are returned to callers so `installTransfer` reuses them without re-parsing
-   - Select newest version via semver comparison
+   - Select newest version via `version.Sort` (semver where possible, Debian/dpkg ordering for versions with `:` or `~`, string fallback otherwise)
    - Skip if already installed (check target directory)
    - Download file, verify SHA256 hash of compressed bytes during transfer
    - Decompress if needed (xz, gz, zstd — detected from filename)
    - Atomically rename to final path, update `CurrentSymlink`
    - Create symlink in `/var/lib/extensions/` pointing to extension
-   - Vacuum old versions per `InstancesMax`
+   - Vacuum old versions per `InstancesMax`; the active symlink target and `ProtectVersion` are always kept
 4. Call `systemd-sysext refresh` to reload all extensions (unless `--no-refresh`). Callers batch this — `installTransfer` is called with `NoRefresh: true` per-component, and a single refresh runs at the end. With `--dry-run`, the same manifest/version resolution runs, but `installTransfer` returns before download; `UpdateFeatures` reports would-download/would-install results and read-only vacuum removals, then skips the final refresh.
 
 ### Enable/disable feature
 
 - **Enable**: Creates drop-in at `/etc/sysupdate.d/<name>.feature.d/00-updex.conf` setting `Enabled=true`. With `--now`, also downloads extensions immediately.
 - **Disable**: Creates drop-in setting `Enabled=false`. With `--now`, calls `Unmerge()`, removes symlinks from `/var/lib/extensions/`, and deletes all versioned files. `--force` required if extensions are currently active/merged (changes take effect after reboot).
+
+### Auto-update daemon
+
+- `updex daemon enable` installs `/etc/systemd/system/updex-update.timer` and `.service`, then enables and starts the timer
+- The timer runs `daily`, is `Persistent=true`, and uses `RandomizedDelaySec=3600`
+- The service command is `/usr/bin/updex features update --no-refresh`, so automatic downloads are staged and not refreshed/activated until a later refresh or reboot
+- Unit installation refuses to overwrite existing timer/service files; callers must disable first
 
 ## CLI Commands
 
