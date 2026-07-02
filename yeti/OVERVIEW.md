@@ -141,11 +141,11 @@ Transfer file values support systemd-style `%` specifiers. See [Configuration Re
 1. Load all `.feature` and `.transfer` files from search paths
 2. Filter transfers to those matching enabled features
 3. For each transfer:
-   - Fetch `SHA256SUMS` manifest from source URL (+ GPG verify if configured); manifests are cached by source URL across transfers so that multiple transfers sharing the same source make only one HTTP request
+   - Fetch `SHA256SUMS` manifest from source URL (+ GPG verify if configured); transient network failures during request or body read and HTTP 5xx/429 are retried up to 3 attempts with exponential backoff, while TLS/cert errors, unsupported protocols, 4xx other than 429, and checksum mismatches fail immediately. Manifests are cached by source URL across transfers so that multiple transfers sharing the same source make only one HTTP request
    - Parse source patterns and extract available versions using pattern matching (`@v` placeholder); parsed patterns are returned to callers so `installTransfer` reuses them without re-parsing
    - Select newest version via `version.Sort` (semver where possible, Debian/dpkg ordering for versions with `:` or `~`, string fallback otherwise)
    - Skip if already installed (check target directory)
-   - Download file, verify SHA256 hash of compressed bytes during transfer
+   - Download file, retrying the same transient request/body-read failures and HTTP 5xx/429 from scratch without range/resume requests, then verify SHA256 hash of compressed bytes during transfer
    - Decompress if needed (xz, gz, zstd — detected from filename)
    - Atomically rename to final path, update `CurrentSymlink`
    - Create symlink in `/var/lib/extensions/` pointing to extension

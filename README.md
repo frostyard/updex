@@ -16,6 +16,7 @@ Designed for systems like Debian Trixie that don't ship with `systemd-sysupdate`
 - Feature-based management of sysext images (enable/disable groups of transfers)
 - Download sysext images from remote HTTP sources
 - SHA256 hash verification via `SHA256SUMS` manifests
+- Bounded retry with exponential backoff for transient network failures and HTTP 5xx/429 responses
 - Optional GPG signature verification (`--verify`)
 - Automatic decompression (xz, gz, zstd)
 - Version management with configurable retention (`InstancesMax`)
@@ -132,6 +133,8 @@ type ClientConfig struct {
     HTTPClient         *http.Client          // Optional shared HTTP client
 }
 ```
+
+Manifest fetches and file downloads retry transient request/body-read failures and HTTP 5xx/429 responses up to three total attempts by default. HTTP 4xx responses other than 429 and checksum mismatches fail immediately. `OnDownloadProgress` may be called once per retry attempt; return a fresh writer each time to avoid double-counting progress.
 
 ### Option Structs
 
@@ -371,6 +374,8 @@ i9j0k1l2...  myext_1.2.0.raw.xz
 ```
 
 For GPG verification, also provide `SHA256SUMS.gpg` (detached signature).
+
+Fetching `SHA256SUMS` retries transient network failures and HTTP 5xx/429 responses with exponential backoff. The detached signature fetch is verified after the manifest body is fetched.
 
 ## JSON Output
 

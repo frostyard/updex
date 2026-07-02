@@ -20,7 +20,7 @@ type ClientConfig struct {
 func NewClient(cfg ClientConfig) *Client
 ```
 
-`NewClient` stores the provided `SysextRunner` directly on the `Client` struct. If `SysextRunner` is nil, it defaults to `&sysext.DefaultRunner{}`. If `Progress` is nil, it defaults to `reporter.NoopReporter{}`. `OnDownloadProgress` is passed through to `download.Download` calls — when non-nil, it is called with the HTTP response content length (-1 if unknown) and should return an `io.Writer` that receives downloaded bytes for progress tracking (return nil to skip progress for that download). If `HTTPClient` is nil, a default `http.Client` with a 10-minute timeout is created and reused for all manifest fetches and file downloads, enabling HTTP keep-alive connection reuse. The client stores the original config and does not mutate global package state.
+`NewClient` stores the provided `SysextRunner` directly on the `Client` struct. If `SysextRunner` is nil, it defaults to `&sysext.DefaultRunner{}`. If `Progress` is nil, it defaults to `reporter.NoopReporter{}`. `OnDownloadProgress` is passed through to `download.Download` calls — when non-nil, it is called with the HTTP response content length (-1 if unknown) and should return an `io.Writer` that receives downloaded bytes for progress tracking (return nil to skip progress for that download). Retries call this callback once per attempt, so implementations must return a fresh independent writer each time to avoid double-counting progress. If `HTTPClient` is nil, a default `http.Client` with a 10-minute timeout is created and reused for all manifest fetches and file downloads, enabling HTTP keep-alive connection reuse. The client stores the original config and does not mutate global package state.
 
 ## Methods
 
@@ -169,14 +169,14 @@ type CheckResult struct {
 
 ### `manifest`
 
-- `Fetch(ctx context.Context, httpClient *http.Client, baseURL string, verify bool) (*Manifest, error)` — Fetch and parse `SHA256SUMS` from URL. If `httpClient` is nil, a default client with a 30-second timeout is used
+- `Fetch(ctx context.Context, httpClient *http.Client, baseURL string, verify bool, opts ...Option) (*Manifest, error)` — Fetch and parse `SHA256SUMS` from URL. If `httpClient` is nil, a default client with a 30-second timeout is used. The `SHA256SUMS` GET and body read retry transient network failures and HTTP 5xx/429 up to 3 total attempts with exponential backoff; TLS/cert errors, unsupported protocols, and 4xx other than 429 fail immediately. `WithRetryConfig(maxAttempts int, baseDelay time.Duration)` overrides retry bounds for tests or SDK consumers; `WithRetryNotify(func(attempt, maxAttempts int, reason error))` reports retry attempts
 - `VerifyHash(filePath string, expectedHash string) error` — Verify a file's SHA256
 - `VerifyHashReader(r io.Reader, expectedHash string) *HashVerifyReader` — Streaming hash verification
 
 ### `download`
 
-- `Download(ctx context.Context, httpClient *http.Client, url, targetPath, expectedHash string, mode uint32, onProgress ProgressFunc) error` — Download with hash verification (on compressed bytes) and auto-decompression. Uses atomic rename (falls back to atomic copy on cross-device). If `httpClient` is nil, a default client with a 10-minute timeout is used. Default mode: `0644` if `mode == 0`. `onProgress` is called with the response content length; the returned `io.Writer` receives downloaded bytes. Pass nil to disable progress tracking
-- `ProgressFunc` — `func(contentLength int64) io.Writer` callback type for download progress
+- `Download(ctx context.Context, httpClient *http.Client, url, targetPath, expectedHash string, mode uint32, onProgress ProgressFunc, opts ...Option) error` — Download with hash verification (on compressed bytes) and auto-decompression. Uses atomic rename (falls back to atomic copy on cross-device). If `httpClient` is nil, a default client with a 10-minute timeout is used. Default mode: `0644` if `mode == 0`. GETs and response-body reads retry transient network failures and HTTP 5xx/429 up to 3 total attempts with exponential backoff; each retry re-requests the file from scratch. 4xx other than 429 and checksum mismatches fail immediately. `WithRetryConfig(maxAttempts int, baseDelay time.Duration)` overrides retry bounds for tests or SDK consumers; `WithRetryNotify(func(attempt, maxAttempts int, reason error))` reports retry attempts
+- `ProgressFunc` — `func(contentLength int64) io.Writer` callback type for download progress. It may be called once per retry attempt, and should return a fresh independent writer each time to avoid double-counting
 - `DecompressReader(r io.Reader, compressionType string) (io.ReadCloser, error)` — Returns a decompressing reader for `"xz"`, `"gz"`, `"zstd"`, or passthrough for `""`
 
 ### `version`
