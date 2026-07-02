@@ -15,6 +15,7 @@ cmd/updex/features.go           features list|enable|disable|update|check
 cmd/updex/features_run.go       Run functions for feature subcommands
 cmd/updex/daemon.go             daemon enable|disable|status (systemd timers)
 cmd/updex/client.go             CLI → SDK client factory
+cmd/updex/output.go             Quiet-aware output helpers + reporter/progress selection
 
 updex/                          Public SDK (Client + methods)
   updex.go                      Client struct, NewClient()
@@ -164,7 +165,17 @@ Global flags:
   --json                                Output as JSON (from clix)
   --dry-run                             Preview without modifying filesystem (from clix)
   --verbose                             Enable debug output (from clix)
+  -q, --quiet                           Suppress non-error output (errors still go to stderr)
+  -s, --silent                          Alias for --quiet (from clix); also disables the download progress bar
 ```
+
+> `--quiet` suppresses all non-error stdout: SDK progress/info/warning reporting,
+> the download progress bar, result tables, and success/confirmation lines.
+> Errors are unaffected and are printed to stderr by the fang/cobra layer.
+> `--json` output is still emitted (it is an explicit data request). The clix
+> `--silent`/`-s` flag is treated as equivalent to `--quiet`. The auto-update
+> timer installed by `daemon enable` runs `updex features update --no-refresh
+> --quiet` so the journal only records real errors.
 
 ## Dependencies
 

@@ -38,7 +38,8 @@ Entry point: `cmd/updex-cli/main.go` → `cmd/updex/root.go`
 
 - Error messages: lowercase, no trailing punctuation, wrap with `fmt.Errorf("context: %w", err)`
 - SDK functions accept a `context.Context` and an options struct, return result structs + error
-- CLI output: `common.OutputJSON()` for `--json` flag, text tables otherwise
+- CLI output: `clix.OutputJSON()` for `--json` flag, text tables otherwise
+- Quiet mode: the global `-q, --quiet` flag (see `cmd/updex/output.go`) suppresses all non-error stdout — SDK reporter output, the download progress bar, result tables, and confirmation lines. Non-error CLI output must go through `outPrintln`/`outPrintf` (which honor `isQuiet()`); errors are returned from `RunE` so fang prints them to stderr. `--json` output is preserved under `--quiet`. `isQuiet()` also treats the clix `--silent`/`-s` flag as equivalent.
 - Tests use `t.TempDir()` for filesystem operations and mock runners for systemd commands
 - Configuration uses INI format with systemd-style priority paths: `/etc/sysupdate.d/`, `/run/sysupdate.d/`, `/usr/local/lib/sysupdate.d/`, `/usr/lib/sysupdate.d/`
 

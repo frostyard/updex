@@ -25,7 +25,11 @@ func runFeaturesList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(features) == 0 {
-		fmt.Println("No features configured.")
+		outPrintln("No features configured.")
+		return nil
+	}
+
+	if isQuiet() {
 		return nil
 	}
 
@@ -74,22 +78,18 @@ func runFeaturesEnable(cmd *cobra.Command, args []string) error {
 
 	if clix.JSONOutput {
 		_, _ = clix.OutputJSON(result)
-	} else if result != nil {
-		if result.Error != "" {
-			fmt.Printf("Error: %s\n", result.Error)
-		} else if result.Success {
-			if result.DryRun {
-				fmt.Printf("[DRY RUN] %s\n", result.NextActionMessage)
-			} else {
-				fmt.Printf("Feature '%s' enabled.\n", result.Feature)
-				if len(result.DownloadedFiles) > 0 {
-					fmt.Printf("Downloaded %d extension(s):\n", len(result.DownloadedFiles))
-					for _, f := range result.DownloadedFiles {
-						fmt.Printf("  - %s\n", f)
-					}
-				} else if !featureEnableNow {
-					fmt.Printf("Run 'updex features update' to download extensions.\n")
+	} else if result != nil && result.Error == "" && result.Success {
+		if result.DryRun {
+			outPrintf("[DRY RUN] %s\n", result.NextActionMessage)
+		} else {
+			outPrintf("Feature '%s' enabled.\n", result.Feature)
+			if len(result.DownloadedFiles) > 0 {
+				outPrintf("Downloaded %d extension(s):\n", len(result.DownloadedFiles))
+				for _, f := range result.DownloadedFiles {
+					outPrintf("  - %s\n", f)
 				}
+			} else if !featureEnableNow {
+				outPrintf("Run 'updex features update' to download extensions.\n")
 			}
 		}
 	}
@@ -115,28 +115,24 @@ func runFeaturesDisable(cmd *cobra.Command, args []string) error {
 
 	if clix.JSONOutput {
 		_, _ = clix.OutputJSON(result)
-	} else if result != nil {
-		if result.Error != "" {
-			fmt.Printf("Error: %s\n", result.Error)
-		} else if result.Success {
-			if result.DryRun {
-				fmt.Printf("[DRY RUN] %s\n", result.NextActionMessage)
-			} else {
-				fmt.Printf("Feature '%s' disabled.\n", result.Feature)
-				if result.Unmerged {
-					fmt.Printf("Extensions unmerged.\n")
+	} else if result != nil && result.Error == "" && result.Success {
+		if result.DryRun {
+			outPrintf("[DRY RUN] %s\n", result.NextActionMessage)
+		} else {
+			outPrintf("Feature '%s' disabled.\n", result.Feature)
+			if result.Unmerged {
+				outPrintf("Extensions unmerged.\n")
+			}
+			if len(result.RemovedFiles) > 0 {
+				outPrintf("Removed %d file(s):\n", len(result.RemovedFiles))
+				for _, f := range result.RemovedFiles {
+					outPrintf("  - %s\n", f)
 				}
-				if len(result.RemovedFiles) > 0 {
-					fmt.Printf("Removed %d file(s):\n", len(result.RemovedFiles))
-					for _, f := range result.RemovedFiles {
-						fmt.Printf("  - %s\n", f)
-					}
-				}
-				if featureDisableForce {
-					fmt.Printf("Warning: Reboot required for changes to take effect.\n")
-				} else if !featureDisableNow {
-					fmt.Printf("Run 'updex features update' to apply changes.\n")
-				}
+			}
+			if featureDisableForce {
+				outPrintf("Warning: Reboot required for changes to take effect.\n")
+			} else if !featureDisableNow {
+				outPrintf("Run 'updex features update' to apply changes.\n")
 			}
 		}
 	}
@@ -164,7 +160,11 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(results) == 0 {
-		fmt.Println("No enabled features with transfers found.")
+		outPrintln("No enabled features with transfers found.")
+		return err
+	}
+
+	if isQuiet() {
 		return err
 	}
 
@@ -199,7 +199,11 @@ func runFeaturesCheck(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(results) == 0 {
-		fmt.Println("No enabled features with transfers found.")
+		outPrintln("No enabled features with transfers found.")
+		return err
+	}
+
+	if isQuiet() {
 		return err
 	}
 

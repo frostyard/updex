@@ -11,12 +11,14 @@ var (
 	definitions string
 	verify      bool
 	noRefresh   bool
+	quiet       bool
 )
 
 func registerAppFlags(cmd *cobra.Command) {
 	cmd.PersistentFlags().StringVarP(&definitions, "definitions", "C", "", "Path to directory containing .transfer and .feature files")
 	cmd.PersistentFlags().BoolVar(&verify, "verify", false, "Verify GPG signatures on SHA256SUMS")
 	cmd.PersistentFlags().BoolVar(&noRefresh, "no-refresh", false, "Skip running systemd-sysext refresh after install/update")
+	cmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "Suppress non-error output (progress, info logs, and result tables)")
 }
 
 func requireRoot() error {

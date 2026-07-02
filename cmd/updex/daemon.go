@@ -10,6 +10,11 @@ import (
 
 const unitName = "updex-update"
 
+// updateExecStart is the command the auto-update timer runs. It uses --quiet so
+// the timer/journal only records real errors, and --no-refresh to stage updates
+// without activating them until reboot.
+const updateExecStart = "/usr/bin/updex features update --no-refresh --quiet"
+
 type daemonStatus struct {
 	Installed bool   `json:"installed"`
 	Enabled   bool   `json:"enabled"`
@@ -94,7 +99,7 @@ func runDaemonEnable(cmd *cobra.Command, args []string) error {
 	service := &systemd.ServiceConfig{
 		Name:        unitName,
 		Description: "Automatic sysext update service",
-		ExecStart:   "/usr/bin/updex features update --no-refresh",
+		ExecStart:   updateExecStart,
 		Type:        "oneshot",
 	}
 
@@ -118,9 +123,9 @@ func runDaemonEnable(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Println("Auto-update daemon enabled.")
-	fmt.Println("Updates will run daily and download new versions.")
-	fmt.Println("Reboot required to activate downloaded extensions.")
+	outPrintln("Auto-update daemon enabled.")
+	outPrintln("Updates will run daily and download new versions.")
+	outPrintln("Reboot required to activate downloaded extensions.")
 	return nil
 }
 
@@ -169,8 +174,8 @@ func runDaemonDisable(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Println("Auto-update daemon disabled.")
-	fmt.Println("Automatic updates will no longer run.")
+	outPrintln("Auto-update daemon disabled.")
+	outPrintln("Automatic updates will no longer run.")
 	return nil
 }
 
@@ -218,14 +223,14 @@ func runDaemonStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	if !status.Installed {
-		fmt.Println("Auto-update daemon: not installed")
-		fmt.Println("Run 'updex daemon enable' to enable automatic updates.")
+		outPrintln("Auto-update daemon: not installed")
+		outPrintln("Run 'updex daemon enable' to enable automatic updates.")
 		return nil
 	}
 
-	fmt.Println("Auto-update daemon: installed")
-	fmt.Printf("  Enabled: %v\n", status.Enabled)
-	fmt.Printf("  Active: %v\n", status.Active)
-	fmt.Printf("  Schedule: %s\n", status.Schedule)
+	outPrintln("Auto-update daemon: installed")
+	outPrintf("  Enabled: %v\n", status.Enabled)
+	outPrintf("  Active: %v\n", status.Active)
+	outPrintf("  Schedule: %s\n", status.Schedule)
 	return nil
 }

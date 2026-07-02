@@ -16,8 +16,8 @@ func newClient() *updex.Client {
 		Definitions:        definitions,
 		Verify:             verify,
 		Verbose:            clix.Verbose,
-		Progress:           clix.NewReporter(),
-		OnDownloadProgress: newProgressBar,
+		Progress:           selectReporter(),
+		OnDownloadProgress: selectDownloadProgress(),
 	})
 }
 

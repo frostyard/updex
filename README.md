@@ -207,6 +207,7 @@ sudo updex daemon disable
 | `--json` | Output in JSON format (jq-compatible) |
 | `--dry-run` | Preview changes without modifying filesystem |
 | `--verbose` | Enable verbose output |
+| `-q, --quiet` | Suppress non-error output (progress, info logs, and result tables); errors still go to stderr |
 
 ## Configuration
 
