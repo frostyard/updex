@@ -91,7 +91,7 @@ Mode=0644
 | Key | Type | Description |
 |-----|------|-------------|
 | `Type` | string | Source type (currently `url-file` supported) |
-| `Path` | string | Base URL for downloads (must end with `/`) |
+| `Path` | string | Base URL for downloads; trailing slashes are trimmed during parsing |
 | `MatchPattern` | string | Filename pattern(s) with `@v` placeholder. Space-separated values define compression variants tried in order |
 
 ### `[Target]` section
@@ -107,7 +107,7 @@ Mode=0644
 
 ### Multiple `MatchPattern` values
 
-`MatchPattern` accepts space-separated patterns on a single line. The first is the primary pattern; additional entries are compression variants. During download, patterns are tried in order to find a matching file in the manifest.
+`MatchPattern` accepts space-separated patterns on a single line. The first is the primary pattern kept in `MatchPattern` for backward-compatible callers; the full ordered list is stored in `MatchPatterns`. During download, all valid source patterns are used to find matching files in the manifest.
 
 ```ini
 MatchPattern=component_@v.raw.xz component_@v.raw.gz component_@v.raw
@@ -115,7 +115,7 @@ MatchPattern=component_@v.raw.xz component_@v.raw.gz component_@v.raw
 
 Specifiers (`%a`, `%v`, `%w`, etc.) are expanded on each pattern after splitting.
 
-In Go code, the `Transfer` struct stores both `MatchPattern` (first pattern, for backward compatibility) and `MatchPatterns` (all patterns). The `Patterns()` method on `SourceSection`/`TargetSection` returns the canonical list.
+In Go code, the `Transfer` struct stores both `MatchPattern` (first pattern, for backward compatibility) and `MatchPatterns` (all patterns). The `Patterns()` method on `SourceSection`/`TargetSection` returns the canonical list. Invalid patterns are skipped by `version.ParsePatterns`; callers fail only when no valid pattern remains.
 
 ## Pattern Placeholders
 
@@ -160,4 +160,8 @@ String values in transfer files support systemd-style `%` specifiers, expanded a
 
 ## Version Comparison
 
-Versions extracted via `@v` are compared using `hashicorp/go-version` (semantic versioning). If a version string cannot be parsed as semver, string comparison is used as fallback. Versions are sorted descending (newest first) when selecting which version to install.
+Versions extracted via `@v` are sorted descending (newest first) when selecting which version to install. `version.Compare` uses a dpkg-compatible comparator for Debian-style versions containing `:` or `~` so epochs and tilde pre-release ordering work correctly. Other versions are compared with `hashicorp/go-version` after stripping a leading `v`/`V`; if parsing fails, plain string comparison is used as fallback.
+
+## Retention and Active Versions
+
+`InstancesMax` controls how many installed versions are normally retained. During `sysext.VacuumWithDetails`, the active version pointed to by `CurrentSymlink` is always kept even if it would otherwise sort outside the retention window, and `ProtectVersion` is always kept as well. If `InstancesMax <= 0`, vacuum falls back to the default of `2`.
