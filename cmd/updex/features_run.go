@@ -152,6 +152,7 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 	client := newClient()
 
 	opts := updex.UpdateFeaturesOptions{
+		DryRun:    clix.DryRun,
 		NoRefresh: noRefresh,
 		NoVacuum:  featureUpdateNoVac,
 	}
@@ -168,6 +169,10 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if clix.DryRun {
+		fmt.Println("[DRY RUN] Previewing feature updates.")
+	}
+
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "FEATURE\tCOMPONENT\tVERSION\tSTATUS")
 	for _, fr := range results {
@@ -175,6 +180,8 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 			status := "error"
 			if r.Error != "" {
 				status = r.Error
+			} else if r.DryRun && r.Downloaded {
+				status = "would download"
 			} else if r.Downloaded {
 				status = "downloaded"
 			} else if r.Installed {

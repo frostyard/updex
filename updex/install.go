@@ -67,6 +67,11 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 
 	// Download
 	downloadURL := transfer.Source.Path + "/" + sourceFile
+	if opts.DryRun {
+		c.debug("would download %s → %s", downloadURL, targetPath)
+		return versionToInstall, m, true, nil
+	}
+
 	c.debug("downloading %s → %s", downloadURL, targetPath)
 	err = download.Download(ctx, c.httpClient, downloadURL, targetPath, expectedHash, transfer.Target.Mode, c.config.OnDownloadProgress)
 	if err != nil {

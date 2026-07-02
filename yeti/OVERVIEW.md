@@ -133,7 +133,7 @@ Transfer file values support systemd-style `%` specifiers. See [Configuration Re
    - Atomically rename to final path, update `CurrentSymlink`
    - Create symlink in `/var/lib/extensions/` pointing to extension
    - Vacuum old versions per `InstancesMax`
-4. Call `systemd-sysext refresh` to reload all extensions (unless `--no-refresh`). Callers batch this — `installTransfer` is called with `NoRefresh: true` per-component, and a single refresh runs at the end
+4. Call `systemd-sysext refresh` to reload all extensions (unless `--no-refresh`). Callers batch this — `installTransfer` is called with `NoRefresh: true` per-component, and a single refresh runs at the end. With `--dry-run`, the same manifest/version resolution runs, but `installTransfer` returns before download; `UpdateFeatures` reports would-download/would-install results and read-only vacuum removals, then skips the final refresh.
 
 ### Enable/disable feature
 
@@ -151,6 +151,7 @@ updex features disable <name>           Disable a feature
   --force                               Allow removal of merged extensions
 updex features update                   Download and install new versions
   --no-vacuum                           Skip removing old versions
+  --dry-run                             Preview update work without filesystem/sysext changes
 updex features check                    Check for available updates
 
 updex daemon enable                     Install daily auto-update timer

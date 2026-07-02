@@ -161,12 +161,18 @@ OPTIONS:
   --no-refresh  Skip running systemd-sysext refresh after update
   --no-vacuum   Skip removing old versions after update
 
+Use --dry-run (global flag) to preview downloads, installs, refreshes, and
+vacuum removals without modifying filesystem or sysext state.
+
 Requires root privileges.`,
 		Example: `  # Update all enabled features
   sudo updex features update
 
   # Update without refreshing sysext
   sudo updex features update --no-refresh
+
+  # Preview what would be updated
+  sudo updex --dry-run features update
 
   # Update in JSON format
   sudo updex features update --json`,

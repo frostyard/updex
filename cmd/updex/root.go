@@ -11,6 +11,7 @@ var (
 	definitions string
 	verify      bool
 	noRefresh   bool
+	getEUID     = os.Geteuid
 )
 
 func registerAppFlags(cmd *cobra.Command) {
@@ -20,7 +21,7 @@ func registerAppFlags(cmd *cobra.Command) {
 }
 
 func requireRoot() error {
-	if os.Geteuid() != 0 {
+	if getEUID() != 0 {
 		return fmt.Errorf("this operation requires root privileges")
 	}
 	return nil

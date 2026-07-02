@@ -62,11 +62,12 @@ Enable creates a drop-in file setting `Enabled=true`. With `Now: true`, it downl
 func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions) ([]UpdateFeaturesResult, error)
 ```
 
-Downloads and installs the newest available version for each enabled feature's transfers. Delegates per-component work to the internal `installTransfer` pipeline (which handles download, symlink, sysext linking, and vacuum). Manifests are cached by source URL — transfers sharing the same source avoid redundant HTTP requests. Parsed source patterns are returned from version listing and reused by the install pipeline to avoid redundant pattern compilation. Refresh is batched — a single `systemd-sysext refresh` runs after all components are processed. Returns per-feature results with per-component status.
+Downloads and installs the newest available version for each enabled feature's transfers. Delegates per-component work to the internal `installTransfer` pipeline (which handles download, symlink, sysext linking, and vacuum). Manifests are cached by source URL — transfers sharing the same source avoid redundant HTTP requests. Parsed source patterns are returned from version listing and reused by the install pipeline to avoid redundant pattern compilation. Refresh is batched — a single `systemd-sysext refresh` runs after all components are processed. With `DryRun: true`, manifests are fetched and versions are selected, but download, symlink update, sysext linking, refresh, and vacuum deletion are skipped. Returns per-feature results with per-component status.
 
 **UpdateFeaturesOptions:**
 | Field | Type | Description |
 |-------|------|-------------|
+| `DryRun` | `bool` | Preview downloads, installs, refreshes, and vacuum removals without modifying filesystem or sysext state |
 | `NoRefresh` | `bool` | Skip `systemd-sysext refresh` after updates |
 | `NoVacuum` | `bool` | Skip removing old versions |
 
@@ -122,14 +123,18 @@ type UpdateFeaturesResult struct {
 }
 
 type UpdateResult struct {
-    Component         string `json:"component"`
-    Version           string `json:"version"`
-    Downloaded        bool   `json:"downloaded"`
-    Installed         bool   `json:"installed"`
-    Error             string `json:"error,omitempty"`
-    NextActionMessage string `json:"next_action_message,omitempty"`
+    Component         string   `json:"component"`
+    Version           string   `json:"version"`
+    Downloaded        bool     `json:"downloaded"`
+    Installed         bool     `json:"installed"`
+    DryRun            bool     `json:"dry_run,omitempty"`
+    Error             string   `json:"error,omitempty"`
+    NextActionMessage string   `json:"next_action_message,omitempty"`
+    RemovedVersions   []string `json:"removed_versions,omitzero"`
 }
 ```
+
+For dry-run update results, `Downloaded=true` means the component would be downloaded, `Installed=false` means no install was performed, and `RemovedVersions` lists versions vacuum would remove if `NoVacuum` is false.
 
 ### CheckFeaturesResult / CheckResult
 
@@ -191,6 +196,7 @@ type CheckResult struct {
 - `GetActiveVersion(t *config.Transfer) (string, error)` — Get version currently active in systemd-sysext (checks current symlink and `/run/extensions`)
 - `UpdateSymlink(targetDir, symlinkName, targetFile string) error`
 - `LinkToSysext(t *config.Transfer) / UnlinkFromSysext(t *config.Transfer)` — Manage `/var/lib/extensions` symlinks
+- `PlanVacuumAfterInstall(t *config.Transfer, activeVersion string) ([]string, []string, error)` — Preview vacuum removals/kept versions after installing a version without deleting files
 - `Vacuum(t *config.Transfer) / VacuumWithDetails(t *config.Transfer)` — Clean old versions
 - `RemoveAllVersions(t *config.Transfer) ([]string, error)` — Remove all versions and current symlink for a component
 - `GetExtensionName(filename string) string` — Extract extension name from filename (strips version and compression suffixes)
