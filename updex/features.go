@@ -392,9 +392,11 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 
 			result := UpdateResult{
 				Component: transfer.Component,
+				DryRun:    opts.DryRun,
 			}
 
 			v, m, downloaded, err := c.installTransfer(ctx, transfer, installTransferOptions{
+				DryRun:         opts.DryRun,
 				NoVacuum:       opts.NoVacuum,
 				NoRefresh:      true, // refresh is batched at the end
 				CachedManifest: manifestCache[transfer.Source.Path],
@@ -413,9 +415,24 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 			result.Version = v
 			if downloaded {
 				result.Downloaded = true
-				result.Installed = true
-				result.NextActionMessage = "Reboot required to activate changes"
-				c.msg("Installed version %s", v)
+				if opts.DryRun {
+					result.NextActionMessage = "Would download and install version " + v
+					if !opts.NoVacuum {
+						removed, _, err := sysext.PlanVacuumAfterInstall(transfer, v)
+						if err != nil {
+							c.warn("failed to plan vacuum for %s: %v", transfer.Component, err)
+						}
+						result.RemovedVersions = removed
+						if len(removed) > 0 {
+							result.NextActionMessage += fmt.Sprintf("; would remove old versions: %v", removed)
+						}
+					}
+					c.msg("Would install version %s", v)
+				} else {
+					result.Installed = true
+					result.NextActionMessage = "Reboot required to activate changes"
+					c.msg("Installed version %s", v)
+				}
 			} else {
 				result.Installed = true
 				c.msg("Version %s already installed and current", v)
@@ -427,7 +444,9 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 		allResults = append(allResults, featureResult)
 	}
 
-	if !opts.NoRefresh {
+	if opts.DryRun {
+		c.msg("Dry run: skipping sysext refresh")
+	} else if !opts.NoRefresh {
 		if err := c.runner.Refresh(); err != nil {
 			c.warn("sysext refresh failed: %v", err)
 		}

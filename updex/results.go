@@ -10,12 +10,14 @@ type CheckResult struct {
 
 // UpdateResult represents the result of an update operation for a single component.
 type UpdateResult struct {
-	Component         string `json:"component"`
-	Version           string `json:"version"`
-	Downloaded        bool   `json:"downloaded"`
-	Installed         bool   `json:"installed"`
-	Error             string `json:"error,omitempty"`
-	NextActionMessage string `json:"next_action_message,omitempty"`
+	Component         string   `json:"component"`
+	Version           string   `json:"version"`
+	Downloaded        bool     `json:"downloaded"`
+	Installed         bool     `json:"installed"`
+	DryRun            bool     `json:"dry_run,omitempty"`
+	Error             string   `json:"error,omitempty"`
+	NextActionMessage string   `json:"next_action_message,omitempty"`
+	RemovedVersions   []string `json:"removed_versions,omitzero"`
 }
 
 // UpdateFeaturesResult represents the result of updating all enabled features.

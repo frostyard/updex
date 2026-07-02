@@ -662,6 +662,86 @@ func TestUpdateFeatures_DownloadsForEnabledFeatures(t *testing.T) {
 	}
 }
 
+// TestUpdateFeatures_DryRun_NoMutations verifies dry-run reports planned work
+// without downloading, updating symlinks, linking sysexts, refreshing, or vacuuming.
+func TestUpdateFeatures_DryRun_NoMutations(t *testing.T) {
+	configDir := t.TempDir()
+	targetDir := t.TempDir()
+
+	mockRunner := &sysext.MockRunner{}
+
+	extContent := []byte("fake extension content for dry-run update test")
+	extHash := hashContent(extContent)
+
+	server := testutil.NewTestServer(t, testutil.TestServerFiles{
+		Files: map[string]string{
+			"testext_2.0.0.raw": extHash,
+		},
+		Content: map[string][]byte{
+			"testext_2.0.0.raw": extContent,
+		},
+	})
+	defer server.Close()
+
+	createFeatureFile(t, configDir, "testfeature", true)
+	createFeatureTransferFile(t, configDir, "testext", "testfeature", server.URL)
+	updateTransferTargetPath(t, configDir, targetDir)
+
+	for _, filename := range []string{"testext_0.9.0.raw", "testext_1.0.0.raw"} {
+		if err := os.WriteFile(filepath.Join(targetDir, filename), []byte("old extension"), 0644); err != nil {
+			t.Fatalf("failed to write %s: %v", filename, err)
+		}
+	}
+
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
+	results, err := client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{
+		DryRun: true,
+	})
+
+	if err != nil {
+		t.Fatalf("UpdateFeatures failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 feature result, got %d", len(results))
+	}
+	if len(results[0].Results) != 1 {
+		t.Fatalf("expected 1 component result, got %d", len(results[0].Results))
+	}
+
+	r := results[0].Results[0]
+	if !r.DryRun {
+		t.Error("expected DryRun=true")
+	}
+	if !r.Downloaded {
+		t.Error("expected Downloaded=true to mean would download")
+	}
+	if r.Installed {
+		t.Error("expected Installed=false in dry-run would-install result")
+	}
+	if r.Version != "2.0.0" {
+		t.Errorf("expected Version=2.0.0, got %q", r.Version)
+	}
+	if len(r.RemovedVersions) != 1 || r.RemovedVersions[0] != "0.9.0" {
+		t.Errorf("expected RemovedVersions=[0.9.0], got %v", r.RemovedVersions)
+	}
+
+	if _, err := os.Stat(filepath.Join(targetDir, "testext_2.0.0.raw")); !os.IsNotExist(err) {
+		t.Error("expected extension file to NOT exist in dry-run mode")
+	}
+	if _, err := os.Lstat(filepath.Join(targetDir, "testext.raw")); !os.IsNotExist(err) {
+		t.Error("expected current symlink to NOT exist in dry-run mode")
+	}
+	if _, err := os.Stat(filepath.Join(targetDir, "testext_0.9.0.raw")); err != nil {
+		t.Errorf("expected old extension to remain after dry-run vacuum preview: %v", err)
+	}
+	if mockRunner.LinkToSysextCalled {
+		t.Error("expected LinkToSysext to NOT be called in dry-run mode")
+	}
+	if mockRunner.RefreshCalled {
+		t.Error("expected Refresh to NOT be called in dry-run mode")
+	}
+}
+
 // TestUpdateFeatures_SkipsDisabledFeatures verifies UpdateFeatures skips disabled features
 func TestUpdateFeatures_SkipsDisabledFeatures(t *testing.T) {
 	configDir := t.TempDir()

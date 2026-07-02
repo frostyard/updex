@@ -29,7 +29,7 @@ Key packages:
 - `download/` — HTTP downloads with SHA256 verification and decompression (xz, gz, zstd)
 - `manifest/` — Fetches/parses SHA256SUMS manifests with optional GPG verification
 - `version/` — Pattern matching (`@v` placeholder) and semantic version comparison
-- `sysext/` — systemd-sysext integration with mockable `Runner` interface
+- `sysext/` — systemd-sysext integration with mockable `Runner` interface and read-only vacuum planning helpers
 - `systemd/` — Generates/installs systemd timer+service units, mockable `Runner` interface
 
 Entry point: `cmd/updex-cli/main.go` → `cmd/updex/root.go`

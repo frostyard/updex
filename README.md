@@ -150,6 +150,7 @@ type DisableFeatureOptions struct {
 }
 
 type UpdateFeaturesOptions struct {
+    DryRun    bool // Preview changes without modifying filesystem or sysext state
     NoRefresh bool // Skip systemd-sysext refresh after update
     NoVacuum  bool // Skip removing old versions after update
 }
@@ -183,6 +184,9 @@ sudo updex features update
 
 # Update without removing old versions
 sudo updex features update --no-vacuum
+
+# Preview downloads, installs, refreshes, and vacuum removals
+sudo updex --dry-run features update
 
 # Check for available updates (read-only)
 updex features check

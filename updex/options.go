@@ -4,6 +4,9 @@ import "github.com/frostyard/updex/manifest"
 
 // UpdateFeaturesOptions configures the UpdateFeatures operation.
 type UpdateFeaturesOptions struct {
+	// DryRun previews changes without modifying filesystem.
+	DryRun bool
+
 	// NoRefresh skips running systemd-sysext refresh after update.
 	NoRefresh bool
 
@@ -28,6 +31,9 @@ type EnableFeatureOptions struct {
 
 // installTransferOptions configures the installTransfer operation.
 type installTransferOptions struct {
+	// DryRun skips filesystem and sysext mutations.
+	DryRun bool
+
 	// NoVacuum skips removing old versions after install.
 	NoVacuum bool
 

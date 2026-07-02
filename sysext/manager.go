@@ -150,6 +150,17 @@ func UpdateSymlink(targetDir, symlinkName, targetFile string) error {
 	return nil
 }
 
+type versionFile struct {
+	version  string
+	filename string
+}
+
+// PlanVacuumAfterInstall returns the versions that vacuum would remove/keep
+// after installing activeVersion, without deleting files.
+func PlanVacuumAfterInstall(t *config.Transfer, activeVersion string) (removed []string, kept []string, err error) {
+	return planVacuum(t, activeVersion, nil, false)
+}
+
 // Vacuum removes old versions according to InstancesMax
 func Vacuum(t *config.Transfer) error {
 	_, _, err := VacuumWithDetails(t)
@@ -158,6 +169,10 @@ func Vacuum(t *config.Transfer) error {
 
 // VacuumWithDetails removes old versions and returns what was removed/kept
 func VacuumWithDetails(t *config.Transfer) (removed []string, kept []string, err error) {
+	return planVacuum(t, "", nil, true)
+}
+
+func planVacuum(t *config.Transfer, activeVersionOverride string, extraVersions []string, remove bool) (removed []string, kept []string, err error) {
 	patterns, err := parseTargetPatterns(t)
 	if err != nil {
 		return nil, nil, err
@@ -173,12 +188,8 @@ func VacuumWithDetails(t *config.Transfer) (removed []string, kept []string, err
 		return nil, nil, fmt.Errorf("failed to read directory: %w", err)
 	}
 
-	// Collect installed versions with their filenames
-	type versionFile struct {
-		version  string
-		filename string
-	}
 	var installed []versionFile
+	seenVersions := make(map[string]bool)
 
 	for _, entry := range entries {
 		name := entry.Name()
@@ -190,7 +201,18 @@ func VacuumWithDetails(t *config.Transfer) (removed []string, kept []string, err
 
 		if v, _, ok := version.ExtractVersionParsed(name, patterns); ok {
 			installed = append(installed, versionFile{v, name})
+			seenVersions[v] = true
 		}
+	}
+
+	for _, v := range extraVersions {
+		if v != "" && !seenVersions[v] {
+			installed = append(installed, versionFile{version: v})
+			seenVersions[v] = true
+		}
+	}
+	if activeVersionOverride != "" && !seenVersions[activeVersionOverride] {
+		installed = append(installed, versionFile{version: activeVersionOverride})
 	}
 
 	if len(installed) == 0 {
@@ -212,8 +234,8 @@ func VacuumWithDetails(t *config.Transfer) (removed []string, kept []string, err
 	// never be removed regardless of how it sorts, otherwise vacuum would leave
 	// a dangling symlink — which is exactly what happens when the version
 	// comparator can't rank a freshly downloaded image above older ones.
-	activeVersion := ""
-	if t.Target.CurrentSymlink != "" {
+	activeVersion := activeVersionOverride
+	if activeVersion == "" && t.Target.CurrentSymlink != "" {
 		symlinkPath := filepath.Join(targetDir, t.Target.CurrentSymlink)
 		if target, err := os.Readlink(symlinkPath); err == nil {
 			if v, _, ok := version.ExtractVersionParsed(filepath.Base(target), patterns); ok {
@@ -245,8 +267,10 @@ func VacuumWithDetails(t *config.Transfer) (removed []string, kept []string, err
 		}
 
 		// Remove old version
-		if err := os.Remove(fullPath); err != nil {
-			return removed, kept, fmt.Errorf("failed to remove %s: %w", vf.filename, err)
+		if remove {
+			if err := os.Remove(fullPath); err != nil {
+				return removed, kept, fmt.Errorf("failed to remove %s: %w", vf.filename, err)
+			}
 		}
 		removed = append(removed, v)
 	}
