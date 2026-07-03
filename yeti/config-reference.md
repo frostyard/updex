@@ -158,6 +158,8 @@ String values in transfer files support systemd-style `%` specifiers, expanded a
 | `%W` | `/etc/os-release` `VARIANT_ID=` | OS variant ID |
 | `%%` | — | Literal `%` |
 
+Expansion is a single left-to-right pass. Unknown specifiers are preserved literally, and `%%` becomes `%` without triggering a second expansion pass.
+
 ## Version Comparison
 
 Versions extracted via `@v` are sorted descending (newest first) when selecting which version to install. `version.Compare` uses a dpkg-compatible comparator for Debian-style versions containing `:` or `~` so epochs and tilde pre-release ordering work correctly. Other versions are compared with `hashicorp/go-version` after stripping a leading `v`/`V`; if parsing fails, plain string comparison is used as fallback.
