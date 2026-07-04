@@ -4,7 +4,7 @@
 
 updex is a Go SDK and CLI for managing [systemd-sysext](https://www.freedesktop.org/software/systemd/man/latest/systemd-sysext.html) images. It replicates `systemd-sysupdate` functionality for `url-file` transfers, providing feature-based management of system extensions with version tracking, SHA256 verification, optional GPG signing, and automatic cleanup.
 
-The project follows an **SDK-first design** for feature management: the core workflows live in public Go packages, and the CLI is mostly a thin wrapper that parses flags and formats output. The `daemon` command is the main exception: it imports the `systemd` package directly to install/remove timer units.
+The project follows an **SDK-first design** for feature management: the core workflows live in public Go packages, and the CLI is mostly a thin wrapper that parses flags and formats output. The `daemon` command is the main exception: it imports the `systemd` package directly to install/remove timer units because daemon lifecycle is systemd-unit management rather than feature update logic.
 
 ## Architecture
 
@@ -34,8 +34,9 @@ config/                         .transfer and .feature INI file parsing,
 download/                       HTTP download with SHA256 + decompression
 manifest/                       SHA256SUMS manifest fetch/parse + GPG verify
 version/                        Pattern matching (@v placeholder) + version compare
-sysext/                         systemd-sysext operations (refresh/merge/vacuum)
-systemd/                        systemd unit generation + systemctl management
+sysext/                         systemd-sysext runner, extension symlinks,
+                                installed/active version discovery, vacuum planning
+systemd/                        systemd timer/service generation + systemctl management
 internal/testutil/              HTTP test server helpers (module-internal)
 ```
 
@@ -59,6 +60,7 @@ CLI (cmd/daemon.go) → systemd (direct, bypasses SDK)
 - `ClientConfig.HTTPClient` is reused for manifest fetches and downloads; if nil, `NewClient` creates one with a 10-minute timeout
 - `ClientConfig.Progress` receives informational/warning/debug messages; `ClientConfig.OnDownloadProgress` is a separate download-byte callback
 - `UpdateFeatures` and `CheckFeatures` cache fetched manifests by `Transfer.Source.Path` only. Future changes that mix verification policy or auth by transfer for the same source URL need to revisit that cache key.
+- The feature SDK methods (`UpdateFeatures`, `CheckFeatures`, enable/disable with `Now`) use `config.GetTransfersForFeature`, which includes transfers where the feature appears in either `Features` or `RequisiteFeatures`. The more general `config.FilterTransfersByFeatures` implements full active-transfer logic, including standalone transfers and AND/OR feature requirements, but it is not the main path for current feature update/check workflows.
 - Error messages: lowercase, no trailing punctuation, wrapped with `fmt.Errorf("context: %w", err)`
 
 ### Testing patterns
@@ -90,7 +92,7 @@ All core packages (`config`, `version`, `download`, `manifest`, `sysext`, `syste
 
 - Every match pattern must contain `@v`; other `@` placeholders match UUIDs, flags, file metadata, and hashes but are not substituted when building target filenames
 - `.transfer` `MatchPattern` fields may contain multiple space-separated alternatives; the first is preserved in `MatchPattern`, while all alternatives are available via `Patterns()`
-- `%` specifiers in transfer values are expanded at parse time with a cached context per `LoadTransfers` call
+- `%` specifiers are expanded at parse time for `Source.MatchPattern`, `Target.MatchPattern`, and `Transfer.ProtectVersion` with a cached context per `LoadTransfers` call. `Source.Path`, `Target.Path`, and `CurrentSymlink` are not currently specifier-expanded.
 - `version.Compare` uses `hashicorp/go-version` for normal semver-like versions, but routes Debian/dpkg-looking versions containing `:` or `~` through a dpkg-compatible comparator so epochs and tildes sort correctly
 
 ## Configuration
@@ -111,6 +113,7 @@ See [Configuration Reference](config-reference.md) for detailed format documenta
 - **`.feature`** files define features (name, description, enabled state)
 - **`.transfer`** files define how components are downloaded and installed
 - **`.feature.d/`** drop-in directories override feature settings (applied alphabetically)
+- Masked feature files are symlinks to `/dev/null`. `LoadFeatures` still returns a masked feature entry, with `Enabled=false` and `Masked=true`, so list output can show it as masked while mutating SDK calls reject it.
 
 ### Key transfer settings
 
@@ -150,11 +153,12 @@ Transfer file values support systemd-style `%` specifiers. See [Configuration Re
    - Parse source patterns and extract available versions using pattern matching (`@v` placeholder); parsed patterns are returned to callers so `installTransfer` reuses them without re-parsing
    - Select newest version via `version.Sort` (semver where possible, Debian/dpkg ordering for versions with `:` or `~`, string fallback otherwise)
    - Skip if already installed (check target directory)
-   - Download file, retrying the same transient request/body-read failures and HTTP 5xx/429 from scratch without range/resume requests, then verify SHA256 hash of compressed bytes during transfer
+   - Download file, retrying the same transient request/body-read failures and HTTP 5xx/429 from scratch without range/resume requests. Each attempt uses a new temp file and invokes `OnDownloadProgress` again, so progress writers must be attempt-local. SHA256 is verified against the compressed bytes before decompression.
    - Decompress if needed (xz, gz, zstd — detected from filename)
-   - Atomically rename to final path, update `CurrentSymlink`
-   - Create symlink in `/var/lib/extensions/` pointing to extension
-   - Vacuum old versions per `InstancesMax`; the active symlink target and `ProtectVersion` are always kept
+   - Atomically rename to final path; on cross-device rename failure, copy to a temp file on the destination filesystem, sync it, chmod it, then rename
+   - Update `CurrentSymlink` in the target directory with an atomic temp-symlink rename
+   - Create or replace `/var/lib/extensions/<CurrentSymlink>` pointing to the resolved target image path; this is a hard error because `systemd-sysext refresh` cannot see the staged image without it
+   - Vacuum old versions per `InstancesMax`; the active symlink target and `ProtectVersion` are always kept. Non-dry-run `UpdateResult.RemovedVersions` is not populated because the install path calls `sysext.Vacuum`, while dry-run uses `PlanVacuumAfterInstall`
 4. Call `systemd-sysext refresh` to reload all extensions (unless `--no-refresh`). Callers batch this — `installTransfer` is called with `NoRefresh: true` per-component, and a single refresh runs at the end. With `--dry-run`, the same manifest/version resolution runs, but `installTransfer` returns before download; `UpdateFeatures` reports would-download/would-install results and read-only vacuum removals, then skips the final refresh.
 
 ### Enable/disable feature

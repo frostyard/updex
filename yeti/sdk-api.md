@@ -43,6 +43,8 @@ Enable creates a drop-in file setting `Enabled=true`. With `Now: true`, it downl
 
 In dry-run mode, enable/disable skip writing drop-ins and skip sysext/filesystem mutations. `EnableFeature` with `Now: true` records associated transfer components as would-download entries without fetching manifests or resolving exact versions. `DisableFeature` with `Now: true` still checks active versions for force-safety, then records component-level would-remove entries instead of deleting files.
 
+Both methods reject missing or masked features before writing drop-ins. Drop-ins are always targeted at `/etc/sysupdate.d/<feature>.feature.d/00-updex.conf`, even when `ClientConfig.Definitions` points at a custom read path; dry-run returns that would-be path but leaves `FeatureActionResult.DropIn` empty because no file was written.
+
 **EnableFeatureOptions:**
 | Field | Type | Description |
 |-------|------|-------------|
@@ -69,6 +71,8 @@ Downloads and installs the newest available version for each enabled feature's t
 The manifest cache key is `Transfer.Source.Path` only. The first transfer to fetch a source determines whether that cached manifest was GPG-verified, so changes that require different verification/auth behavior per transfer must change the cache key or bypass caching.
 
 Dry-run update results use the normal `UpdateResult` shape: `Downloaded=true` means the component would be downloaded, `Installed=false` means no install happened, and `RemovedVersions` is populated from `sysext.PlanVacuumAfterInstall` unless `NoVacuum` is true. The CLI still enforces root before calling this SDK method, but the SDK method itself is read-only in dry-run mode apart from remote manifest fetches.
+
+Already-current components are detected by `sysext.GetInstalledVersions`: the selected newest version must be both present on disk and equal to the current version resolved from `CurrentSymlink` (or newest installed when no symlink exists). A newer installed-but-not-current version is still treated as needing installation so the current symlink and `/var/lib/extensions` link can be updated.
 
 **UpdateFeaturesOptions:**
 | Field | Type | Description |
@@ -165,7 +169,7 @@ type CheckResult struct {
 - `LoadFeatures(customPath string) ([]*Feature, error)` — Load all `.feature` files
 - `LoadTransfers(customPath string) ([]*Transfer, error)` — Load all `.transfer` files
 - `FilterTransfersByFeatures(transfers []*Transfer, features []*Feature) []*Transfer` — Filter transfers to those matching enabled features
-- `GetTransfersForFeature(transfers []*Transfer, featureName string) []*Transfer` — Get transfers for a specific feature
+- `GetTransfersForFeature(transfers []*Transfer, featureName string) []*Transfer` — Get transfers associated with a specific feature by membership in `Features` or `RequisiteFeatures`; this is association lookup, not full active-transfer filtering
 - `GetEnabledFeatureNames(features []*Feature) []string`
 - `IsFeatureEnabled(features []*Feature, name string) bool`
 
@@ -177,7 +181,7 @@ type CheckResult struct {
 
 ### `download`
 
-- `Download(ctx context.Context, httpClient *http.Client, url, targetPath, expectedHash string, mode uint32, onProgress ProgressFunc, opts ...Option) error` — Download with hash verification (on compressed bytes) and auto-decompression. Uses atomic rename (falls back to atomic copy on cross-device). If `httpClient` is nil, a default client with a 10-minute timeout is used. Default mode: `0644` if `mode == 0`. GETs and response-body reads retry transient network failures and HTTP 5xx/429 up to 3 total attempts with exponential backoff; each retry re-requests the file from scratch. 4xx other than 429 and checksum mismatches fail immediately. `WithRetryConfig(maxAttempts int, baseDelay time.Duration)` overrides retry bounds for tests or SDK consumers; `WithRetryNotify(func(attempt, maxAttempts int, reason error))` reports retry attempts
+- `Download(ctx context.Context, httpClient *http.Client, url, targetPath, expectedHash string, mode uint32, onProgress ProgressFunc, opts ...Option) error` — Download with hash verification (on compressed bytes) and auto-decompression. Uses atomic rename; on cross-device rename failure, copies through a temp file on the destination device, syncs it, chmods it, then renames into place. If `httpClient` is nil, a default client with a 10-minute timeout is used. Default mode: `0644` if `mode == 0`. GETs and response-body reads retry transient network failures and HTTP 5xx/429 up to 3 total attempts with exponential backoff; each retry re-requests the file from scratch and uses a fresh temp file. 4xx other than 429 and checksum mismatches fail immediately. `WithRetryConfig(maxAttempts int, baseDelay time.Duration)` overrides retry bounds for tests or SDK consumers; `WithRetryNotify(func(attempt, maxAttempts int, reason error))` reports retry attempts
 - `ProgressFunc` — `func(contentLength int64) io.Writer` callback type for download progress. It may be called once per retry attempt, and should return a fresh independent writer each time to avoid double-counting
 - `DecompressReader(r io.Reader, compressionType string) (io.ReadCloser, error)` — Returns a decompressing reader for `"xz"`, `"gz"`, `"zstd"`, or passthrough for `""`
 
@@ -201,7 +205,7 @@ type CheckResult struct {
 - `GetInstalledVersions(t *config.Transfer) ([]string, string, error)` — List installed + current version
 - `GetActiveVersion(t *config.Transfer) (string, error)` — Get version currently active in systemd-sysext (checks current symlink and `/run/extensions`)
 - `UpdateSymlink(targetDir, symlinkName, targetFile string) error`
-- `LinkToSysext(t *config.Transfer) / UnlinkFromSysext(t *config.Transfer)` — Manage `/var/lib/extensions` symlinks
+- `LinkToSysext(t *config.Transfer) / UnlinkFromSysext(t *config.Transfer)` — Manage `/var/lib/extensions/<CurrentSymlink>` symlinks. `LinkToSysext` reads the staging `CurrentSymlink`, resolves relative targets against `Target.Path`, and points the sysext-visible link at the real image file
 - `PlanVacuumAfterInstall(t *config.Transfer, activeVersion string) ([]string, []string, error)` — Preview vacuum removals/kept versions after installing a version without deleting files
 - `Vacuum(t *config.Transfer) / VacuumWithDetails(t *config.Transfer)` — Clean old versions while keeping the active symlink target and `ProtectVersion`
 - `RemoveAllVersions(t *config.Transfer) ([]string, error)` — Remove all versions and current symlink for a component
