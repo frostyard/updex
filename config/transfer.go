@@ -46,7 +46,7 @@ type TargetSection struct {
 	Path           string   // Target directory path
 	MatchPattern   string   // Primary pattern with @v placeholder for version (first pattern)
 	MatchPatterns  []string // All patterns (for matching different compression formats)
-	CurrentSymlink string   // Name of symlink pointing to current version
+	CurrentSymlink string   // Optional legacy staging symlink name
 	Mode           uint32   // File mode (e.g., 0644)
 	ReadOnly       bool     // Whether to set read-only flag
 }
@@ -136,8 +136,8 @@ func parseTransferFile(filePath, component string, specCtx *specifierContext) (*
 			InstancesMax: 2,     // Default to 2
 		},
 		Target: TargetSection{
-			Path: "/var/lib/extensions", // Default sysext path
-			Mode: 0644,                  // Default file mode
+			Path: "/var/lib/extensions.d", // Default staging path
+			Mode: 0644,                    // Default file mode
 		},
 	}
 

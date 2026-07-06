@@ -66,13 +66,13 @@ Both methods reject missing or masked features before writing drop-ins. Drop-ins
 func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions) ([]UpdateFeaturesResult, error)
 ```
 
-Downloads and installs the newest available version for each enabled feature's transfers. Delegates per-component work to the internal `installTransfer` pipeline (which handles download, symlink, sysext linking, and vacuum). Manifests are cached by source URL — transfers sharing the same source avoid redundant HTTP requests. Parsed source patterns are returned from version listing and reused by the install pipeline to avoid redundant pattern compilation. Refresh is batched — a single `systemd-sysext refresh` runs after all components are processed. With `DryRun: true`, manifests are fetched and versions are selected, but download, symlink update, sysext linking, refresh, and vacuum deletion are skipped. Returns per-feature results with per-component status.
+Downloads and installs the newest available version for each enabled feature's transfers. Delegates per-component work to the internal `installTransfer` pipeline (which handles download, legacy staging-symlink cleanup, sysext linking, and vacuum). Manifests are cached by source URL — transfers sharing the same source avoid redundant HTTP requests. Parsed source patterns are returned from version listing and reused by the install pipeline to avoid redundant pattern compilation. Refresh is batched — a single `systemd-sysext refresh` runs after all components are processed. With `DryRun: true`, manifests are fetched and versions are selected, but download, legacy cleanup, sysext linking, refresh, and vacuum deletion are skipped. Returns per-feature results with per-component status.
 
 The manifest cache key is `Transfer.Source.Path` only. The first transfer to fetch a source determines whether that cached manifest was GPG-verified, so changes that require different verification/auth behavior per transfer must change the cache key or bypass caching.
 
 Dry-run update results use the normal `UpdateResult` shape: `Downloaded=true` means the component would be downloaded, `Installed=false` means no install happened, and `RemovedVersions` is populated from `sysext.PlanVacuumAfterInstall` unless `NoVacuum` is true. The CLI still enforces root before calling this SDK method, but the SDK method itself is read-only in dry-run mode apart from remote manifest fetches.
 
-Already-current components are detected by `sysext.GetInstalledVersions`: the selected newest version must be both present on disk and equal to the current version resolved from `CurrentSymlink` (or newest installed when no symlink exists). A newer installed-but-not-current version is still treated as needing installation so the current symlink and `/var/lib/extensions` link can be updated.
+Already-current components are detected by `sysext.GetInstalledVersions`: the selected newest version must be both present on disk and equal to the current version resolved from a legacy `CurrentSymlink` (or newest installed when no symlink exists). After current detection but before any no-op return, update removes the legacy staging symlink if the transfer defines one. A newer installed-but-not-current version is still treated as needing installation so the `/var/lib/extensions` link can be updated.
 
 **UpdateFeaturesOptions:**
 | Field | Type | Description |
@@ -205,13 +205,14 @@ type CheckResult struct {
 - `SysextRunner` interface — `Refresh()`, `Merge()`, `Unmerge()`, `LinkToSysext(*config.Transfer)` methods executed via `DefaultRunner` (real commands) or `MockRunner` (tests)
 - `GetInstalledVersions(t *config.Transfer) ([]string, string, error)` — List installed + current version
 - `GetActiveVersion(t *config.Transfer) (string, error)` — Get version currently active in systemd-sysext (checks current symlink and `/run/extensions`)
-- `UpdateSymlink(targetDir, symlinkName, targetFile string) error`
-- `LinkToSysext(t *config.Transfer) / UnlinkFromSysext(t *config.Transfer)` — Manage `/var/lib/extensions/<CurrentSymlink>` symlinks. `LinkToSysext` reads the staging `CurrentSymlink`, resolves relative targets against `Target.Path`, and points the sysext-visible link at the real image file
+- `SysextLinkName(t *config.Transfer) string` — Derive the sysext-visible link name from `Transfer.Component` plus the target pattern extension after stripping compression suffixes, e.g. `foo.transfer` and `foo_@v.raw.xz` produce `foo.raw`
+- `RemoveLegacyCurrentSymlink(t *config.Transfer) error` — Remove a staging `CurrentSymlink` only when the transfer defines one; absent directives and missing symlink files are no-ops
+- `LinkToSysext(t *config.Transfer) / UnlinkFromSysext(t *config.Transfer)` — Manage `/var/lib/extensions/<component>.<ext>` symlinks without requiring `CurrentSymlink`. `LinkToSysext` scans staged versioned files, selects the newest by `version.Compare`, and points the sysext-visible link at that file
 - `PlanVacuumAfterInstall(t *config.Transfer, activeVersion string) ([]string, []string, error)` — Preview vacuum removals/kept versions after installing a version without deleting files
 - `Vacuum(t *config.Transfer) / VacuumWithDetails(t *config.Transfer)` — Clean old versions while keeping the active symlink target and `ProtectVersion`
 - `RemoveAllVersions(t *config.Transfer) ([]string, error)` — Remove all versions and current symlink for a component
 - `GetExtensionName(filename string) string` — Extract extension name from filename (strips version and compression suffixes)
-- `SysextDir` — Constant: `/var/lib/extensions`
+- `SysextDir` — Package variable: `/var/lib/extensions`
 
 ### `systemd`
 

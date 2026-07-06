@@ -51,6 +51,26 @@ CurrentSymlink=` + component + `.raw
 	}
 }
 
+func createFeatureTransferFileWithoutCurrentSymlink(t *testing.T, configDir, component, featureName, baseURL, targetDir string) {
+	t.Helper()
+	content := `[Transfer]
+Features=` + featureName + `
+
+[Source]
+Type=url-file
+Path=` + baseURL + `
+MatchPattern=` + component + `_@v.raw
+
+[Target]
+Path=` + targetDir + `
+MatchPattern=` + component + `_@v.raw
+`
+	path := filepath.Join(configDir, component+".transfer")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to create transfer file: %v", err)
+	}
+}
+
 // hashContent returns the SHA256 hash of the given content
 func hashContent(content []byte) string {
 	h := sha256.Sum256(content)
@@ -331,7 +351,7 @@ func TestDisableFeature_MergedExtension_RequiresForce(t *testing.T) {
 	// Create feature file (enabled)
 	createFeatureFile(t, configDir, "testfeature", true)
 
-	// Create transfer file with CurrentSymlink (indicates installable extension)
+	// Create transfer file with a legacy CurrentSymlink so GetActiveVersion sees it.
 	content := `[Transfer]
 Features=testfeature
 
@@ -398,7 +418,7 @@ func TestDisableFeature_Force_DryRun_WithMerged(t *testing.T) {
 	// Create feature file (enabled)
 	createFeatureFile(t, configDir, "testfeature", true)
 
-	// Create transfer file with CurrentSymlink
+	// Create transfer file with a legacy CurrentSymlink.
 	content := `[Transfer]
 Features=testfeature
 
@@ -662,8 +682,176 @@ func TestUpdateFeatures_DownloadsForEnabledFeatures(t *testing.T) {
 	}
 }
 
+func TestUpdateFeatures_DownloadsWithoutCurrentSymlink(t *testing.T) {
+	configDir := t.TempDir()
+	targetDir := t.TempDir()
+	sysextDir := t.TempDir()
+	oldSysextDir := sysext.SysextDir
+	sysext.SysextDir = sysextDir
+	t.Cleanup(func() { sysext.SysextDir = oldSysextDir })
+
+	extContent := []byte("fake extension content without current symlink")
+	extHash := hashContent(extContent)
+
+	server := testutil.NewTestServer(t, testutil.TestServerFiles{
+		Files: map[string]string{
+			"testext_1.0.0.raw": extHash,
+		},
+		Content: map[string][]byte{
+			"testext_1.0.0.raw": extContent,
+		},
+	})
+	defer server.Close()
+
+	createFeatureFile(t, configDir, "testfeature", true)
+	createFeatureTransferFileWithoutCurrentSymlink(t, configDir, "testext", "testfeature", server.URL, targetDir)
+
+	client := NewClient(ClientConfig{Definitions: configDir})
+	results, err := client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{
+		NoRefresh: true,
+	})
+	if err != nil {
+		t.Fatalf("UpdateFeatures failed: %v", err)
+	}
+	if len(results) != 1 || len(results[0].Results) != 1 {
+		t.Fatalf("expected 1 feature result with 1 component, got %+v", results)
+	}
+	r := results[0].Results[0]
+	if r.Error != "" {
+		t.Fatalf("component update failed: %s", r.Error)
+	}
+	if !r.Downloaded {
+		t.Error("expected Downloaded=true")
+	}
+
+	extPath := filepath.Join(targetDir, "testext_1.0.0.raw")
+	if _, err := os.Stat(extPath); err != nil {
+		t.Fatalf("expected extension file to exist after update: %v", err)
+	}
+	linkPath := filepath.Join(sysextDir, "testext.raw")
+	target, err := os.Readlink(linkPath)
+	if err != nil {
+		t.Fatalf("expected sysext link to exist: %v", err)
+	}
+	if target != extPath {
+		t.Errorf("sysext link target = %q, want %q", target, extPath)
+	}
+	if _, err := os.Lstat(filepath.Join(targetDir, "testext.raw")); !os.IsNotExist(err) {
+		t.Errorf("expected no staging current symlink, stat err = %v", err)
+	}
+}
+
+func TestUpdateFeatures_RemovesLegacyCurrentSymlinkWhenAlreadyCurrent(t *testing.T) {
+	configDir := t.TempDir()
+	targetDir := t.TempDir()
+	mockRunner := &sysext.MockRunner{}
+
+	extContent := []byte("already installed extension content")
+	extHash := hashContent(extContent)
+
+	server := testutil.NewTestServer(t, testutil.TestServerFiles{
+		Files: map[string]string{
+			"testext_1.0.0.raw": extHash,
+		},
+		Content: map[string][]byte{
+			"testext_1.0.0.raw": extContent,
+		},
+	})
+	defer server.Close()
+
+	createFeatureFile(t, configDir, "testfeature", true)
+	createFeatureTransferFile(t, configDir, "testext", "testfeature", server.URL)
+	updateTransferTargetPath(t, configDir, targetDir)
+
+	extPath := filepath.Join(targetDir, "testext_1.0.0.raw")
+	if err := os.WriteFile(extPath, extContent, 0644); err != nil {
+		t.Fatalf("failed to create installed extension: %v", err)
+	}
+	legacyLink := filepath.Join(targetDir, "testext.raw")
+	if err := os.Symlink("testext_1.0.0.raw", legacyLink); err != nil {
+		t.Fatalf("failed to create legacy symlink: %v", err)
+	}
+
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
+	results, err := client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true})
+	if err != nil {
+		t.Fatalf("UpdateFeatures failed: %v", err)
+	}
+	if len(results) != 1 || len(results[0].Results) != 1 {
+		t.Fatalf("expected 1 feature result with 1 component, got %+v", results)
+	}
+	r := results[0].Results[0]
+	if r.Error != "" {
+		t.Fatalf("component update failed: %s", r.Error)
+	}
+	if r.Downloaded {
+		t.Error("expected already-current component not to download")
+	}
+	if _, err := os.Lstat(legacyLink); !os.IsNotExist(err) {
+		t.Errorf("expected legacy current symlink to be removed, stat err = %v", err)
+	}
+	if mockRunner.LinkToSysextCalled {
+		t.Error("expected no sysext relink when no update was needed")
+	}
+}
+
+func TestUpdateFeatures_LegacyCurrentSymlinkToOlderVersionStillUpdates(t *testing.T) {
+	configDir := t.TempDir()
+	targetDir := t.TempDir()
+	mockRunner := &sysext.MockRunner{}
+
+	extContent := []byte("new extension content")
+	extHash := hashContent(extContent)
+
+	server := testutil.NewTestServer(t, testutil.TestServerFiles{
+		Files: map[string]string{
+			"testext_2.0.0.raw": extHash,
+		},
+		Content: map[string][]byte{
+			"testext_2.0.0.raw": extContent,
+		},
+	})
+	defer server.Close()
+
+	createFeatureFile(t, configDir, "testfeature", true)
+	createFeatureTransferFile(t, configDir, "testext", "testfeature", server.URL)
+	updateTransferTargetPath(t, configDir, targetDir)
+
+	for _, filename := range []string{"testext_1.0.0.raw", "testext_2.0.0.raw"} {
+		if err := os.WriteFile(filepath.Join(targetDir, filename), []byte("old content"), 0644); err != nil {
+			t.Fatalf("failed to create installed extension %s: %v", filename, err)
+		}
+	}
+	legacyLink := filepath.Join(targetDir, "testext.raw")
+	if err := os.Symlink("testext_1.0.0.raw", legacyLink); err != nil {
+		t.Fatalf("failed to create legacy symlink: %v", err)
+	}
+
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
+	results, err := client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true})
+	if err != nil {
+		t.Fatalf("UpdateFeatures failed: %v", err)
+	}
+	if len(results) != 1 || len(results[0].Results) != 1 {
+		t.Fatalf("expected 1 feature result with 1 component, got %+v", results)
+	}
+	r := results[0].Results[0]
+	if r.Error != "" {
+		t.Fatalf("component update failed: %s", r.Error)
+	}
+	if !r.Downloaded {
+		t.Error("expected update because legacy symlink pointed at an older version")
+	}
+	if !mockRunner.LinkToSysextCalled {
+		t.Error("expected sysext link update")
+	}
+	if _, err := os.Lstat(legacyLink); !os.IsNotExist(err) {
+		t.Errorf("expected legacy current symlink to be removed, stat err = %v", err)
+	}
+}
+
 // TestUpdateFeatures_DryRun_NoMutations verifies dry-run reports planned work
-// without downloading, updating symlinks, linking sysexts, refreshing, or vacuuming.
+// without downloading, cleaning legacy symlinks, linking sysexts, refreshing, or vacuuming.
 func TestUpdateFeatures_DryRun_NoMutations(t *testing.T) {
 	configDir := t.TempDir()
 	targetDir := t.TempDir()

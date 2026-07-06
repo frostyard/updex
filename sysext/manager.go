@@ -126,30 +126,6 @@ func GetActiveVersion(t *config.Transfer) (string, error) {
 	return "", nil
 }
 
-// UpdateSymlink atomically updates or creates the current version symlink.
-// It creates a temporary symlink in the same directory, then renames it over the
-// target to ensure the symlink always exists and points to either the old or new target.
-func UpdateSymlink(targetDir, symlinkName, targetFile string) error {
-	symlinkPath := filepath.Join(targetDir, symlinkName)
-
-	// Create a temporary symlink with a unique name in the same directory
-	tmpPath := symlinkPath + ".tmp"
-	// Remove any stale temporary symlink from a previous interrupted attempt
-	_ = os.Remove(tmpPath)
-
-	if err := os.Symlink(targetFile, tmpPath); err != nil {
-		return fmt.Errorf("failed to create temporary symlink: %w", err)
-	}
-
-	// Atomically replace the target symlink
-	if err := os.Rename(tmpPath, symlinkPath); err != nil {
-		_ = os.Remove(tmpPath) // clean up on failure
-		return fmt.Errorf("failed to rename symlink: %w", err)
-	}
-
-	return nil
-}
-
 type versionFile struct {
 	version  string
 	filename string
@@ -300,36 +276,108 @@ func GetExtensionName(filename string) string {
 	return name
 }
 
-// SysextDir is the directory where systemd-sysext looks for extensions
-const SysextDir = "/var/lib/extensions"
+// SysextDir is the directory where systemd-sysext looks for extensions.
+var SysextDir = "/var/lib/extensions"
 
-// LinkToSysext creates a symlink in /var/lib/extensions pointing to the extension
-// in the staging directory (e.g., /var/lib/extensions.d/)
-func LinkToSysext(t *config.Transfer) error {
-	if t.Target.CurrentSymlink == "" {
-		return fmt.Errorf("no CurrentSymlink defined in transfer config")
+// SysextLinkName returns the /var/lib/extensions link name for a transfer.
+func SysextLinkName(t *config.Transfer) string {
+	if t.Component == "" || len(t.Target.Patterns()) == 0 {
+		return ""
 	}
+	return t.Component + targetExtension(t)
+}
 
-	// Source: the symlink in the staging directory (e.g., /var/lib/extensions.d/vscode.raw)
-	stagingSymlink := filepath.Join(t.Target.Path, t.Target.CurrentSymlink)
+func targetExtension(t *config.Transfer) string {
+	patterns := t.Target.Patterns()
+	if len(patterns) == 0 {
+		return ""
+	}
+	name := stripCompressionSuffix(patterns[0])
+	return filepath.Ext(name)
+}
 
-	// Resolve the actual target file the staging symlink points to
-	actualTarget, err := os.Readlink(stagingSymlink)
+func stripCompressionSuffix(name string) string {
+	lower := strings.ToLower(name)
+	for _, suffix := range []string{".zstd", ".zst", ".xz", ".gz"} {
+		if strings.HasSuffix(lower, suffix) {
+			return name[:len(name)-len(suffix)]
+		}
+	}
+	return name
+}
+
+func installedVersionFiles(t *config.Transfer) ([]versionFile, error) {
+	patterns, err := parseTargetPatterns(t)
 	if err != nil {
-		return fmt.Errorf("failed to read staging symlink %s: %w", stagingSymlink, err)
+		return nil, err
 	}
 
-	// Build the full path to the actual file
-	var actualTargetPath string
-	if filepath.IsAbs(actualTarget) {
-		actualTargetPath = actualTarget
-	} else {
-		actualTargetPath = filepath.Join(t.Target.Path, actualTarget)
+	dir := targetDir(t)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read directory: %w", err)
 	}
 
-	// Destination: symlink in /var/lib/extensions with the extension name
-	// Use the CurrentSymlink name (e.g., vscode.raw)
-	destSymlink := filepath.Join(SysextDir, t.Target.CurrentSymlink)
+	var files []versionFile
+	for _, entry := range entries {
+		if entry.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		if v, _, ok := version.ExtractVersionParsed(entry.Name(), patterns); ok {
+			files = append(files, versionFile{version: v, filename: entry.Name()})
+		}
+	}
+
+	slices.SortFunc(files, func(a, b versionFile) int {
+		return version.Compare(b.version, a.version)
+	})
+	return files, nil
+}
+
+// RemoveLegacyCurrentSymlink removes the staging CurrentSymlink if one is configured.
+func RemoveLegacyCurrentSymlink(t *config.Transfer) error {
+	if t.Target.CurrentSymlink == "" {
+		return nil
+	}
+
+	symlinkPath := filepath.Join(targetDir(t), t.Target.CurrentSymlink)
+	info, err := os.Lstat(symlinkPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to stat legacy symlink %s: %w", symlinkPath, err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return nil
+	}
+	if err := os.Remove(symlinkPath); err != nil {
+		return fmt.Errorf("failed to remove legacy symlink %s: %w", symlinkPath, err)
+	}
+	return nil
+}
+
+// LinkToSysext creates a symlink in /var/lib/extensions pointing to the newest
+// installed extension file in the staging directory (e.g., /var/lib/extensions.d/).
+func LinkToSysext(t *config.Transfer) error {
+	linkName := SysextLinkName(t)
+	if linkName == "" {
+		return fmt.Errorf("cannot determine sysext link name")
+	}
+
+	files, err := installedVersionFiles(t)
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		return fmt.Errorf("no installed versions found for %s", t.Component)
+	}
+
+	actualTargetPath := filepath.Join(targetDir(t), files[0].filename)
+	destSymlink := filepath.Join(SysextDir, linkName)
 
 	// Ensure the sysext directory exists
 	if err := os.MkdirAll(SysextDir, 0755); err != nil {
@@ -355,11 +403,12 @@ func LinkToSysext(t *config.Transfer) error {
 
 // UnlinkFromSysext removes the extension symlink from /var/lib/extensions
 func UnlinkFromSysext(t *config.Transfer) error {
-	if t.Target.CurrentSymlink == "" {
-		return fmt.Errorf("no CurrentSymlink defined in transfer config")
+	linkName := SysextLinkName(t)
+	if linkName == "" {
+		return fmt.Errorf("cannot determine sysext link name")
 	}
 
-	destSymlink := filepath.Join(SysextDir, t.Target.CurrentSymlink)
+	destSymlink := filepath.Join(SysextDir, linkName)
 
 	if _, err := os.Lstat(destSymlink); os.IsNotExist(err) {
 		return nil // Already removed

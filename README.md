@@ -243,9 +243,8 @@ MatchPattern=myext_@v.raw.xz
 
 [Target]
 Type=regular-file
-Path=/var/lib/extensions
+Path=/var/lib/extensions.d
 MatchPattern=myext_@v.raw
-CurrentSymlink=myext.raw
 Mode=0644
 ```
 
@@ -275,9 +274,9 @@ Mode=0644
 | Option | Description | Default |
 | --- | --- | --- |
 | `Type` | Must be `regular-file` | - |
-| `Path` | Target directory | `/var/lib/extensions` |
+| `Path` | Target staging directory for downloaded versions | `/var/lib/extensions.d` |
 | `MatchPattern` | Output filename pattern with `@v` | - |
-| `CurrentSymlink` | Symlink name pointing to current version | (none) |
+| `CurrentSymlink` | Optional legacy staging symlink name; if present, updex removes it during update | (none) |
 | `Mode` | File permissions (octal) | `0644` |
 
 ### Version Patterns
@@ -322,7 +321,7 @@ MatchPattern=devel-tools_@v.raw.xz
 
 [Target]
 Type=regular-file
-Path=/var/lib/extensions
+Path=/var/lib/extensions.d
 MatchPattern=devel-tools_@v.raw
 ```
 

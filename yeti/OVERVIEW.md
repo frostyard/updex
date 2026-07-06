@@ -78,7 +78,7 @@ CLI (cmd/daemon.go) → systemd (direct, bypasses SDK)
 
 ### Dry-run behavior
 
-- `UpdateFeaturesOptions.DryRun` is threaded through `UpdateFeatures` into `installTransfer`, which is the choke point before downloads, symlink updates, `/var/lib/extensions` linking, refresh, and vacuum deletion
+- `UpdateFeaturesOptions.DryRun` is threaded through `UpdateFeatures` into `installTransfer`, which is the choke point before downloads, legacy staging-symlink cleanup, `/var/lib/extensions` linking, refresh, and vacuum deletion
 - Update dry-runs still perform read-only work: load configs, fetch manifests, resolve versions, inspect installed files, and, unless `NoVacuum` is set, call `sysext.PlanVacuumAfterInstall` to populate `UpdateResult.RemovedVersions`
 - In update dry-run results, `Downloaded=true` means "would download", `Installed=false` means no install occurred, and `DryRun=true` disambiguates the status for JSON consumers
 - In non-dry-run update results, `Downloaded=true` means a new file was fetched and installed. `Installed=true` is also set for already-current components, so use `Downloaded` to distinguish "changed" from "already up to date".
@@ -125,7 +125,7 @@ See [Configuration Reference](config-reference.md) for detailed format documenta
 | `Verify` | `[Transfer]` | `false` | Require GPG signature verification |
 | `Features` | `[Transfer]` | — | OR list: any enabled feature activates this transfer |
 | `RequisiteFeatures` | `[Transfer]` | — | AND list: all must be enabled |
-| `CurrentSymlink` | `[Target]` | — | Symlink name pointing to current version |
+| `CurrentSymlink` | `[Target]` | — | Optional legacy staging symlink; when present, update removes it |
 
 ### GPG verification
 
@@ -156,8 +156,8 @@ Transfer file values support systemd-style `%` specifiers. See [Configuration Re
    - Download file, retrying the same transient request/body-read failures and HTTP 5xx/429 from scratch without range/resume requests. Each attempt uses a new temp file and invokes `OnDownloadProgress` again, so progress writers must be attempt-local. SHA256 is verified against the compressed bytes before decompression.
    - Decompress if needed (xz, gz, zstd — detected from filename). The installed filename is derived from the target patterns via `buildTargetFilename`: the first pattern that produces a name without a compression suffix wins, and if every target pattern is a compressed variant the suffix is stripped, so the on-disk name always matches the decompressed content regardless of which source pattern matched
    - Atomically rename to final path; on cross-device rename failure, copy to a temp file on the destination filesystem, sync it, chmod it, then rename
-   - Update `CurrentSymlink` in the target directory with an atomic temp-symlink rename
-   - Create or replace `/var/lib/extensions/<CurrentSymlink>` pointing to the resolved target image path; this is a hard error because `systemd-sysext refresh` cannot see the staged image without it
+   - Remove any legacy `CurrentSymlink` in the target directory when the transfer defines one. Current-version detection still reads the legacy symlink first so an installed-but-not-current newer image is not hidden by cleanup; cleanup then runs before any already-current return, so stale staging symlinks are removed even when no download is required.
+   - Create or replace `/var/lib/extensions/<component>.<ext>` pointing to the newest staged image path; the link name is derived from the transfer filename component and the target pattern extension with compression suffixes stripped. This is a hard error because `systemd-sysext refresh` cannot see the staged image without it
    - Vacuum old versions per `InstancesMax`; the active symlink target and `ProtectVersion` are always kept. Non-dry-run `UpdateResult.RemovedVersions` is not populated because the install path calls `sysext.Vacuum`, while dry-run uses `PlanVacuumAfterInstall`
 4. Call `systemd-sysext refresh` to reload all extensions (unless `--no-refresh`). Callers batch this — `installTransfer` is called with `NoRefresh: true` per-component, and a single refresh runs at the end. With `--dry-run`, the same manifest/version resolution runs, but `installTransfer` returns before download; `UpdateFeatures` reports would-download/would-install results and read-only vacuum removals, then skips the final refresh.
 

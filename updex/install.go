@@ -33,6 +33,11 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 
 	// Check if already installed and current
 	installed, current, _ := sysext.GetInstalledVersions(transfer)
+	if !opts.DryRun && transfer.Target.CurrentSymlink != "" {
+		if err := sysext.RemoveLegacyCurrentSymlink(transfer); err != nil {
+			c.warn("failed to remove legacy symlink for %s: %v", transfer.Component, err)
+		}
+	}
 	for _, v := range installed {
 		if v == versionToInstall && v == current {
 			return versionToInstall, m, false, nil
@@ -71,14 +76,6 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 	err = download.Download(ctx, c.httpClient, downloadURL, targetPath, expectedHash, transfer.Target.Mode, c.config.OnDownloadProgress, download.WithRetryNotify(c.retryNotify("download")))
 	if err != nil {
 		return "", nil, false, fmt.Errorf("download failed: %w", err)
-	}
-
-	// Update symlink if configured
-	if transfer.Target.CurrentSymlink != "" {
-		err = sysext.UpdateSymlink(transfer.Target.Path, transfer.Target.CurrentSymlink, targetFile)
-		if err != nil {
-			c.warn("failed to update symlink: %v", err)
-		}
 	}
 
 	// Link to /var/lib/extensions for systemd-sysext — without this the

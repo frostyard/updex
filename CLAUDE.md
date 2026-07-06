@@ -29,7 +29,7 @@ Key packages:
 - `download/` — HTTP downloads with bounded retry for transient failures, SHA256 verification, and decompression (xz, gz, zstd)
 - `manifest/` — Fetches/parses SHA256SUMS manifests with bounded retry for transient failures and optional GPG verification
 - `version/` — Pattern matching (`@v` placeholder) and semantic version comparison
-- `sysext/` — systemd-sysext integration with mockable `Runner` interface and read-only vacuum planning helpers
+- `sysext/` — systemd-sysext integration with mockable `Runner` interface, `/var/lib/extensions` link management, and read-only vacuum planning helpers
 - `systemd/` — Generates/installs systemd timer+service units, mockable `Runner` interface
 
 Entry point: `cmd/updex-cli/main.go` → `cmd/updex/root.go`
@@ -41,6 +41,7 @@ Entry point: `cmd/updex-cli/main.go` → `cmd/updex/root.go`
 - CLI output: `common.OutputJSON()` for `--json` flag, text tables otherwise
 - Tests use `t.TempDir()` for filesystem operations and mock runners for systemd commands
 - Configuration uses INI format with systemd-style priority paths: `/etc/sysupdate.d/`, `/run/sysupdate.d/`, `/usr/local/lib/sysupdate.d/`, `/usr/lib/sysupdate.d/`
+- Transfer targets default to staging in `/var/lib/extensions.d`; `CurrentSymlink` is optional legacy state and must not be required for `/var/lib/extensions` sysext links
 
 ## Go Version
 

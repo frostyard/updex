@@ -127,7 +127,7 @@ MatchPattern=myext_@v.raw.xz
 
 [Target]
 Type=regular-file
-Path=/var/lib/extensions
+Path=/var/lib/extensions.d
 MatchPattern=myext_@v.raw
 CurrentSymlink=myext.raw
 Mode=0755
@@ -221,8 +221,8 @@ MatchPattern=test_@v.raw
 	if tr.Transfer.Verify != false {
 		t.Errorf("default Verify = %v, want false", tr.Transfer.Verify)
 	}
-	if tr.Target.Path != "/var/lib/extensions" {
-		t.Errorf("default Target.Path = %q, want /var/lib/extensions", tr.Target.Path)
+	if tr.Target.Path != "/var/lib/extensions.d" {
+		t.Errorf("default Target.Path = %q, want /var/lib/extensions.d", tr.Target.Path)
 	}
 	if tr.Target.Mode != 0644 {
 		t.Errorf("default Target.Mode = %o, want 0644", tr.Target.Mode)
