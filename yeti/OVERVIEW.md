@@ -93,7 +93,7 @@ All core packages (`config`, `version`, `download`, `manifest`, `sysext`, `syste
 - Every match pattern must contain `@v`; other `@` placeholders match UUIDs, flags, file metadata, and hashes but are not substituted when building target filenames
 - `.transfer` `MatchPattern` fields may contain multiple space-separated alternatives; the first is preserved in `MatchPattern`, while all alternatives are available via `Patterns()`
 - `%` specifiers are expanded at parse time for `Source.MatchPattern`, `Target.MatchPattern`, and `Transfer.ProtectVersion` with a cached context per `LoadTransfers` call. `Source.Path`, `Target.Path`, and `CurrentSymlink` are not currently specifier-expanded.
-- `version.Compare` uses `hashicorp/go-version` for normal semver-like versions, but routes Debian/dpkg-looking versions containing `:` or `~` through a dpkg-compatible comparator so epochs and tildes sort correctly
+- `version.Compare` uses `hashicorp/go-version` for normal semver-like versions, but routes Debian/dpkg-looking versions containing `:`, `~`, or `+` through a dpkg-compatible comparator so epochs and tildes sort correctly. `+` is routed because semver ignores everything after it as build metadata, which collapses dpkg-derived versions like `1+7.2-debian13-<timestamp>` (epoch encoded as `+` in filename-safe sysext image names) to equal precedence
 
 ## Configuration
 
@@ -150,11 +150,11 @@ Transfer file values support systemd-style `%` specifiers. See [Configuration Re
 3. For each transfer:
    - Fetch `SHA256SUMS` manifest from source URL (+ GPG verify if configured); transient network failures during request or body read and HTTP 5xx/429 are retried up to 3 attempts with exponential backoff, while TLS/cert errors, unsupported protocols, 4xx other than 429, and checksum mismatches fail immediately. Manifests are cached by source URL across transfers so that multiple transfers sharing the same source make only one HTTP request
    - The manifest cache key is only the source URL path. Verification is decided during the first fetch for that path; avoid relying on mixed per-transfer `Verify` settings for one shared source URL unless the cache behavior is changed.
-   - Parse source patterns and extract available versions using pattern matching (`@v` placeholder); parsed patterns are returned to callers so `installTransfer` reuses them without re-parsing
-   - Select newest version via `version.Sort` (semver where possible, Debian/dpkg ordering for versions with `:` or `~`, string fallback otherwise)
+   - Parse source patterns and extract available versions using pattern matching (`@v` placeholder); parsed patterns are returned to callers so `installTransfer` reuses them without re-parsing. The candidate list is returned lexically sorted so that, with the stable `version.Sort`, selection stays deterministic even if two versions compare equal
+   - Select newest version via `version.Sort` (semver where possible, Debian/dpkg ordering for versions with `:`, `~`, or `+`, string fallback otherwise)
    - Skip if already installed (check target directory)
    - Download file, retrying the same transient request/body-read failures and HTTP 5xx/429 from scratch without range/resume requests. Each attempt uses a new temp file and invokes `OnDownloadProgress` again, so progress writers must be attempt-local. SHA256 is verified against the compressed bytes before decompression.
-   - Decompress if needed (xz, gz, zstd — detected from filename)
+   - Decompress if needed (xz, gz, zstd — detected from filename). The installed filename is derived from the target patterns via `buildTargetFilename`: the first pattern that produces a name without a compression suffix wins, and if every target pattern is a compressed variant the suffix is stripped, so the on-disk name always matches the decompressed content regardless of which source pattern matched
    - Atomically rename to final path; on cross-device rename failure, copy to a temp file on the destination filesystem, sync it, chmod it, then rename
    - Update `CurrentSymlink` in the target directory with an atomic temp-symlink rename
    - Create or replace `/var/lib/extensions/<CurrentSymlink>` pointing to the resolved target image path; this is a hard error because `systemd-sysext refresh` cannot see the staged image without it

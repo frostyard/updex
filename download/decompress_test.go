@@ -278,3 +278,23 @@ func TestDecompressFileNonexistentSource(t *testing.T) {
 		t.Error("expected error for nonexistent source file")
 	}
 }
+
+func TestStripCompressionSuffix(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"foo_1.0.raw.zst", "foo_1.0.raw"},
+		{"foo_1.0.raw.zstd", "foo_1.0.raw"},
+		{"foo_1.0.raw.xz", "foo_1.0.raw"},
+		{"foo_1.0.raw.gz", "foo_1.0.raw"},
+		{"foo_1.0.raw", "foo_1.0.raw"},
+		{"foo_1.0.RAW.ZST", "foo_1.0.RAW"},
+	}
+
+	for _, tt := range tests {
+		if got := StripCompressionSuffix(tt.in); got != tt.want {
+			t.Errorf("StripCompressionSuffix(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}

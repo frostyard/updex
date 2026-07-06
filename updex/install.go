@@ -54,15 +54,10 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 		return "", nil, false, fmt.Errorf("no file found for version %s", versionToInstall)
 	}
 
-	// Build target path using first target pattern
-	targetPatterns := transfer.Target.Patterns()
-
-	targetPattern, err := version.ParsePattern(targetPatterns[0])
+	targetFile, err := buildTargetFilename(transfer.Target.Patterns(), versionToInstall)
 	if err != nil {
-		return "", nil, false, fmt.Errorf("invalid target pattern: %w", err)
+		return "", nil, false, err
 	}
-
-	targetFile := targetPattern.BuildFilename(versionToInstall)
 	targetPath := filepath.Join(transfer.Target.Path, targetFile)
 
 	// Download
@@ -108,4 +103,36 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 	}
 
 	return versionToInstall, m, true, nil
+}
+
+// buildTargetFilename derives the installed filename for a version from the
+// target match patterns. Downloads are always stored decompressed, so it
+// prefers the first pattern whose name carries no compression suffix; if every
+// pattern is a compressed variant, it strips the suffix from the first one so
+// the on-disk name matches the actual content.
+func buildTargetFilename(targetPatterns []string, ver string) (string, error) {
+	var fallback string
+	var firstErr error
+	for _, patternStr := range targetPatterns {
+		p, err := version.ParsePattern(patternStr)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		name := p.BuildFilename(ver)
+		if stripped := download.StripCompressionSuffix(name); stripped == name {
+			return name, nil
+		} else if fallback == "" {
+			fallback = stripped
+		}
+	}
+	if fallback != "" {
+		return fallback, nil
+	}
+	if firstErr != nil {
+		return "", fmt.Errorf("invalid target pattern: %w", firstErr)
+	}
+	return "", fmt.Errorf("no target pattern configured")
 }

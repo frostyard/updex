@@ -192,6 +192,24 @@ func detectCompression(filename string) string {
 	}
 }
 
+// compressionSuffixes lists the filename suffixes Download decompresses,
+// longest first so ".zstd" is stripped before ".zst" can match.
+var compressionSuffixes = []string{".zstd", ".zst", ".xz", ".gz"}
+
+// StripCompressionSuffix removes a trailing compression suffix (.xz, .gz,
+// .zst, .zstd) from a filename. Download always stores files decompressed, so
+// installed filenames must not carry a compression suffix; use this to derive
+// the on-disk name from a pattern that includes one.
+func StripCompressionSuffix(filename string) string {
+	lower := strings.ToLower(filename)
+	for _, suffix := range compressionSuffixes {
+		if strings.HasSuffix(lower, suffix) {
+			return filename[:len(filename)-len(suffix)]
+		}
+	}
+	return filename
+}
+
 // copyFile atomically copies a file with the given mode. It writes to a temp
 // file on the destination device, syncs to disk, then renames into place.
 func copyFile(src, dst string, mode os.FileMode) error {

@@ -179,11 +179,15 @@ func normalizeVersion(v string) string {
 }
 
 // isDebianVersion reports whether v looks like a Debian/dpkg version string,
-// i.e. it carries an epoch (':') or a tilde ('~'). Tilde is never valid in
-// SemVer, and an explicit epoch is the canonical Debian marker, so either is a
-// reliable signal that semver comparison would be wrong.
+// i.e. it carries an epoch (':'), a tilde ('~'), or a '+'. Tilde is never
+// valid in SemVer and an explicit epoch is the canonical Debian marker. '+'
+// is routed here too: SemVer treats everything after '+' as build metadata
+// and ignores it, which collapses dpkg-derived versions like
+// "1+7.2-debian13-202607011055" (epoch encoded as '+' in sysext image names,
+// where ':' is not filename-safe) to the same precedence — dpkg comparison
+// orders them correctly.
 func isDebianVersion(v string) bool {
-	return strings.ContainsAny(v, "~:")
+	return strings.ContainsAny(v, "~:+")
 }
 
 // compareDebian compares two version strings using Debian/dpkg precedence

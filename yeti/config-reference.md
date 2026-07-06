@@ -111,6 +111,8 @@ Mode=0644
 
 `MatchPattern` accepts space-separated patterns on a single line. The first is the primary pattern kept in `MatchPattern` for backward-compatible callers; the full ordered list is stored in `MatchPatterns`. During download, all valid source patterns are used to find matching files in the manifest.
 
+Downloads are always stored decompressed, so the installed filename is derived from the first target pattern that yields a name without a compression suffix; if every target pattern carries one (e.g. a target list mirroring the source list), the suffix is stripped. A target `MatchPattern` list like `component_@v.raw.zst component_@v.raw` therefore installs `component_<version>.raw` no matter which source variant matched.
+
 ```ini
 MatchPattern=component_@v.raw.xz component_@v.raw.gz component_@v.raw
 ```
@@ -166,7 +168,9 @@ Specifier values are cached for a single `LoadTransfers` call. `/etc/os-release`
 
 ## Version Comparison
 
-Versions extracted via `@v` are sorted descending (newest first) when selecting which version to install. `version.Compare` uses a dpkg-compatible comparator for Debian-style versions containing `:` or `~` so epochs and tilde pre-release ordering work correctly. Other versions are compared with `hashicorp/go-version` after stripping a leading `v`/`V`; if parsing fails, plain string comparison is used as fallback.
+Versions extracted via `@v` are sorted descending (newest first) when selecting which version to install. `version.Compare` uses a dpkg-compatible comparator for Debian-style versions containing `:`, `~`, or `+` so epochs and tilde pre-release ordering work correctly. `+` is included because semver treats everything after it as ignorable build metadata, which collapsed dpkg-derived sysext versions like `1+7.2-debian13-202607011055` (epoch encoded as `+` because `:` is not filename-safe) to equal precedence and made selection random. Other versions are compared with `hashicorp/go-version` after stripping a leading `v`/`V`; if parsing fails, plain string comparison is used as fallback.
+
+Version candidates extracted from the manifest are deduplicated in a set and returned lexically sorted before `version.Sort` runs. Because `version.Sort` is stable, this keeps selection reproducible even if a comparator gap ever makes two distinct versions compare equal.
 
 ## Retention and Active Versions
 
