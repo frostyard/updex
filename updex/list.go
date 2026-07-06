@@ -3,6 +3,8 @@ package updex
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/frostyard/updex/config"
 	"github.com/frostyard/updex/manifest"
@@ -53,10 +55,10 @@ func (c *Client) getAvailableVersions(ctx context.Context, transfer *config.Tran
 		}
 	}
 
-	versions := make([]string, 0, len(versionSet))
-	for v := range versionSet {
-		versions = append(versions, v)
-	}
+	// Sort lexically so the order never depends on map iteration: version.Sort
+	// is stable, so if a comparator gap ever makes two distinct versions compare
+	// equal, selection stays reproducible instead of random.
+	versions := slices.Sorted(maps.Keys(versionSet))
 	c.debug("found %d matching version(s): %v", len(versions), versions)
 
 	return versions, m, patterns, nil

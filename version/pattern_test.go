@@ -296,6 +296,30 @@ func TestCompare(t *testing.T) {
 			want: -1,
 		},
 		{
+			name: "plus-encoded epoch: older timestamp less than newer",
+			v1:   "1+7.2-debian13-202607011055",
+			v2:   "1+7.2-debian13-202607011341",
+			want: -1,
+		},
+		{
+			name: "plus-encoded epoch: newer timestamp greater than older",
+			v1:   "1+7.2-debian13-202607011341",
+			v2:   "1+7.2-debian13-202607011055",
+			want: 1,
+		},
+		{
+			name: "plus-encoded epoch: identical versions equal",
+			v1:   "1+7.2-debian13-202607011055",
+			v2:   "1+7.2-debian13-202607011055",
+			want: 0,
+		},
+		{
+			name: "plus-encoded epoch: higher epoch wins over upstream version",
+			v1:   "2+6.0-debian13-202601010000",
+			v2:   "1+7.2-debian13-202607011341",
+			want: 1,
+		},
+		{
 			name: "v prefix stripped",
 			v1:   "v1.0.0",
 			v2:   "1.0.0",
@@ -663,6 +687,16 @@ func TestSort(t *testing.T) {
 			name:     "date versions",
 			versions: []string{"20240101", "20240115", "20240110"},
 			want:     []string{"20240115", "20240110", "20240101"},
+		},
+		{
+			name:     "plus-encoded debian versions, older first in input",
+			versions: []string{"1+7.2-debian13-202607011055", "1+7.2-debian13-202607011341"},
+			want:     []string{"1+7.2-debian13-202607011341", "1+7.2-debian13-202607011055"},
+		},
+		{
+			name:     "plus-encoded debian versions, newer first in input",
+			versions: []string{"1+7.2-debian13-202607011341", "1+7.2-debian13-202607011055"},
+			want:     []string{"1+7.2-debian13-202607011341", "1+7.2-debian13-202607011055"},
 		},
 		{
 			name:     "single version",
