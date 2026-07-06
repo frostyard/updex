@@ -36,7 +36,7 @@ Enabled=true
 
 ### Masked features
 
-A feature is **masked** when its file is a symlink to `/dev/null`. Masked features are always treated as disabled regardless of the `Enabled` setting.
+A feature is **masked** when its file is a symlink to `/dev/null`. `LoadFeatures` returns a masked entry with `Masked=true` and `Enabled=false` so callers can display it, but enable/disable operations reject masked features.
 
 ### Drop-in files
 
@@ -85,6 +85,8 @@ Mode=0644
 | `InstancesMax` | int | `2` | Maximum versions to keep; oldest removed first |
 | `Features` | string list | — | OR logic: transfer activates if *any* listed feature is enabled |
 | `RequisiteFeatures` | string list | — | AND logic: transfer activates only if *all* listed features are enabled |
+
+`config.FilterTransfersByFeatures` implements the full active-transfer rules: standalone transfers are included when no feature requirements are set, `Features` is OR, `RequisiteFeatures` is AND, and both conditions must pass if both fields are set. Current feature-oriented SDK methods use `config.GetTransfersForFeature` instead, which treats a transfer as associated with a feature if the feature name appears in either list.
 
 ### `[Source]` section
 
@@ -138,7 +140,7 @@ The `@v` placeholder is required in every `MatchPattern`. Additional placeholder
 
 ## Systemd Specifiers
 
-String values in transfer files support systemd-style `%` specifiers, expanded at parse time:
+Selected transfer values support systemd-style `%` specifiers, expanded at parse time. Current expansion applies to `Source.MatchPattern`, `Target.MatchPattern`, and `Transfer.ProtectVersion`; it does not apply to `Source.Path`, `Target.Path`, or `CurrentSymlink`.
 
 | Specifier | Source | Description |
 |-----------|--------|-------------|
@@ -160,6 +162,8 @@ String values in transfer files support systemd-style `%` specifiers, expanded a
 
 Expansion is a single left-to-right pass. Unknown specifiers are preserved literally, and `%%` becomes `%` without triggering a second expansion pass.
 
+Specifier values are cached for a single `LoadTransfers` call. `/etc/os-release` is read first with `/usr/lib/os-release` as fallback, and one-line host values are read from `/proc/sys/kernel/random/boot_id`, `/etc/machine-id`, and `/proc/sys/kernel/osrelease`.
+
 ## Version Comparison
 
 Versions extracted via `@v` are sorted descending (newest first) when selecting which version to install. `version.Compare` uses a dpkg-compatible comparator for Debian-style versions containing `:` or `~` so epochs and tilde pre-release ordering work correctly. Other versions are compared with `hashicorp/go-version` after stripping a leading `v`/`V`; if parsing fails, plain string comparison is used as fallback.
@@ -167,3 +171,5 @@ Versions extracted via `@v` are sorted descending (newest first) when selecting 
 ## Retention and Active Versions
 
 `InstancesMax` controls how many installed versions are normally retained. During `sysext.VacuumWithDetails`, the active version pointed to by `CurrentSymlink` is always kept even if it would otherwise sort outside the retention window, and `ProtectVersion` is always kept as well. If `InstancesMax <= 0`, vacuum falls back to the default of `2`.
+
+Dry-run updates call `sysext.PlanVacuumAfterInstall` with the would-install version as the active-version override, which lets the SDK report `RemovedVersions` without touching disk. Real installs call `sysext.Vacuum`, so the update result currently does not include removed-version details for non-dry-run runs.
