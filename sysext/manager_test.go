@@ -147,67 +147,6 @@ func TestGetInstalledVersionsNonexistentDir(t *testing.T) {
 	}
 }
 
-func TestUpdateSymlink(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create target file
-	targetFile := "myext_1.0.0.raw"
-	if err := os.WriteFile(filepath.Join(tmpDir, targetFile), []byte("test"), 0644); err != nil {
-		t.Fatalf("failed to create test file: %v", err)
-	}
-
-	// Create symlink
-	symlinkName := "myext.raw"
-	if err := UpdateSymlink(tmpDir, symlinkName, targetFile); err != nil {
-		t.Fatalf("UpdateSymlink() error = %v", err)
-	}
-
-	// Verify symlink
-	symlinkPath := filepath.Join(tmpDir, symlinkName)
-	target, err := os.Readlink(symlinkPath)
-	if err != nil {
-		t.Fatalf("failed to read symlink: %v", err)
-	}
-
-	if target != targetFile {
-		t.Errorf("symlink target = %q, want %q", target, targetFile)
-	}
-}
-
-func TestUpdateSymlinkReplace(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	// Create target files
-	for _, f := range []string{"myext_1.0.0.raw", "myext_2.0.0.raw"} {
-		if err := os.WriteFile(filepath.Join(tmpDir, f), []byte("test"), 0644); err != nil {
-			t.Fatalf("failed to create test file: %v", err)
-		}
-	}
-
-	symlinkName := "myext.raw"
-
-	// Create initial symlink
-	if err := UpdateSymlink(tmpDir, symlinkName, "myext_1.0.0.raw"); err != nil {
-		t.Fatalf("UpdateSymlink() first call error = %v", err)
-	}
-
-	// Update symlink to new target
-	if err := UpdateSymlink(tmpDir, symlinkName, "myext_2.0.0.raw"); err != nil {
-		t.Fatalf("UpdateSymlink() second call error = %v", err)
-	}
-
-	// Verify updated symlink
-	symlinkPath := filepath.Join(tmpDir, symlinkName)
-	target, err := os.Readlink(symlinkPath)
-	if err != nil {
-		t.Fatalf("failed to read symlink: %v", err)
-	}
-
-	if target != "myext_2.0.0.raw" {
-		t.Errorf("symlink target = %q, want %q", target, "myext_2.0.0.raw")
-	}
-}
-
 func TestVacuumWithDetails(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -261,6 +200,172 @@ func TestVacuumWithDetails(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(tmpDir, v)); err != nil {
 			t.Errorf("expected %s to still exist", v)
 		}
+	}
+}
+
+func TestSysextLinkName(t *testing.T) {
+	tests := []struct {
+		name      string
+		component string
+		pattern   string
+		want      string
+	}{
+		{
+			name:      "raw",
+			component: "myext",
+			pattern:   "different_@v.raw",
+			want:      "myext.raw",
+		},
+		{
+			name:      "compressed raw",
+			component: "myext",
+			pattern:   "different_@v.raw.xz",
+			want:      "myext.raw",
+		},
+		{
+			name:      "zstd long suffix",
+			component: "myext",
+			pattern:   "different_@v.raw.zstd",
+			want:      "myext.raw",
+		},
+		{
+			name:      "empty component",
+			component: "",
+			pattern:   "different_@v.raw",
+			want:      "",
+		},
+		{
+			name:      "empty pattern",
+			component: "myext",
+			pattern:   "",
+			want:      "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			transfer := &config.Transfer{
+				Component: tt.component,
+				Target: config.TargetSection{
+					MatchPattern: tt.pattern,
+				},
+			}
+			if got := SysextLinkName(transfer); got != tt.want {
+				t.Errorf("SysextLinkName() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRemoveLegacyCurrentSymlink(t *testing.T) {
+	t.Run("no current symlink configured", func(t *testing.T) {
+		transfer := &config.Transfer{
+			Target: config.TargetSection{
+				Path: t.TempDir(),
+			},
+		}
+		if err := RemoveLegacyCurrentSymlink(transfer); err != nil {
+			t.Fatalf("RemoveLegacyCurrentSymlink() error = %v", err)
+		}
+	})
+
+	t.Run("symlink present", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		targetFile := filepath.Join(tmpDir, "myext_1.0.0.raw")
+		if err := os.WriteFile(targetFile, []byte("test"), 0644); err != nil {
+			t.Fatalf("failed to create test file: %v", err)
+		}
+		symlinkPath := filepath.Join(tmpDir, "myext.raw")
+		if err := os.Symlink("myext_1.0.0.raw", symlinkPath); err != nil {
+			t.Fatalf("failed to create legacy symlink: %v", err)
+		}
+
+		transfer := &config.Transfer{
+			Target: config.TargetSection{
+				Path:           tmpDir,
+				CurrentSymlink: "myext.raw",
+			},
+		}
+		if err := RemoveLegacyCurrentSymlink(transfer); err != nil {
+			t.Fatalf("RemoveLegacyCurrentSymlink() error = %v", err)
+		}
+		if _, err := os.Lstat(symlinkPath); !os.IsNotExist(err) {
+			t.Errorf("expected legacy symlink to be removed, stat err = %v", err)
+		}
+	})
+
+	t.Run("symlink absent", func(t *testing.T) {
+		transfer := &config.Transfer{
+			Target: config.TargetSection{
+				Path:           t.TempDir(),
+				CurrentSymlink: "myext.raw",
+			},
+		}
+		if err := RemoveLegacyCurrentSymlink(transfer); err != nil {
+			t.Fatalf("RemoveLegacyCurrentSymlink() error = %v", err)
+		}
+	})
+}
+
+func TestLinkToSysextWithoutCurrentSymlink(t *testing.T) {
+	stagingDir := t.TempDir()
+	sysextDir := t.TempDir()
+	oldSysextDir := SysextDir
+	SysextDir = sysextDir
+	t.Cleanup(func() { SysextDir = oldSysextDir })
+
+	for _, f := range []string{"myext_1.0.0.raw", "myext_2.0.0.raw"} {
+		if err := os.WriteFile(filepath.Join(stagingDir, f), []byte("test"), 0644); err != nil {
+			t.Fatalf("failed to create test file: %v", err)
+		}
+	}
+
+	transfer := &config.Transfer{
+		Component: "myext",
+		Target: config.TargetSection{
+			Path:         stagingDir,
+			MatchPattern: "myext_@v.raw",
+		},
+	}
+
+	if err := LinkToSysext(transfer); err != nil {
+		t.Fatalf("LinkToSysext() error = %v", err)
+	}
+
+	linkPath := filepath.Join(sysextDir, "myext.raw")
+	target, err := os.Readlink(linkPath)
+	if err != nil {
+		t.Fatalf("failed to read sysext link: %v", err)
+	}
+	want := filepath.Join(stagingDir, "myext_2.0.0.raw")
+	if target != want {
+		t.Errorf("sysext link target = %q, want %q", target, want)
+	}
+}
+
+func TestUnlinkFromSysextWithoutCurrentSymlink(t *testing.T) {
+	sysextDir := t.TempDir()
+	oldSysextDir := SysextDir
+	SysextDir = sysextDir
+	t.Cleanup(func() { SysextDir = oldSysextDir })
+
+	linkPath := filepath.Join(sysextDir, "myext.raw")
+	if err := os.Symlink("/tmp/myext_1.0.0.raw", linkPath); err != nil {
+		t.Fatalf("failed to create sysext link: %v", err)
+	}
+
+	transfer := &config.Transfer{
+		Component: "myext",
+		Target: config.TargetSection{
+			MatchPattern: "myext_@v.raw",
+		},
+	}
+
+	if err := UnlinkFromSysext(transfer); err != nil {
+		t.Fatalf("UnlinkFromSysext() error = %v", err)
+	}
+	if _, err := os.Lstat(linkPath); !os.IsNotExist(err) {
+		t.Errorf("expected sysext link to be removed, stat err = %v", err)
 	}
 }
 
