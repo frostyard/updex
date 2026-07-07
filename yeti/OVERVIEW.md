@@ -125,7 +125,7 @@ See [Configuration Reference](config-reference.md) for detailed format documenta
 | `Verify` | `[Transfer]` | `false` | Require GPG signature verification |
 | `Features` | `[Transfer]` | — | OR list: any enabled feature activates this transfer |
 | `RequisiteFeatures` | `[Transfer]` | — | AND list: all must be enabled |
-| `CurrentSymlink` | `[Target]` | — | Optional legacy staging symlink; when present, update removes it |
+| `CurrentSymlink` | `[Target]` | — | Optional legacy staging symlink; when present, update/disable cleanup removes it after current-version checks |
 
 ### GPG verification
 
@@ -156,7 +156,7 @@ Transfer file values support systemd-style `%` specifiers. See [Configuration Re
    - Download file, retrying the same transient request/body-read failures and HTTP 5xx/429 from scratch without range/resume requests. Each attempt uses a new temp file and invokes `OnDownloadProgress` again, so progress writers must be attempt-local. SHA256 is verified against the compressed bytes before decompression.
    - Decompress if needed (xz, gz, zstd — detected from filename). The installed filename is derived from the target patterns via `buildTargetFilename`: the first pattern that produces a name without a compression suffix wins, and if every target pattern is a compressed variant the suffix is stripped, so the on-disk name always matches the decompressed content regardless of which source pattern matched
    - Atomically rename to final path; on cross-device rename failure, copy to a temp file on the destination filesystem, sync it, chmod it, then rename
-   - Remove any legacy `CurrentSymlink` in the target directory when the transfer defines one. Current-version detection still reads the legacy symlink first so an installed-but-not-current newer image is not hidden by cleanup; cleanup then runs before any already-current return, so stale staging symlinks are removed even when no download is required.
+   - Remove any legacy `CurrentSymlink` in the target directory when the transfer defines one. Current-version detection must read the legacy symlink before cleanup so an installed-but-not-current newer image is not hidden; cleanup then runs before any already-current return, so stale staging symlinks are removed even when no download is required.
    - Create or replace `/var/lib/extensions/<component>.<ext>` pointing to the newest staged image path; the link name is derived from the transfer filename component and the target pattern extension with compression suffixes stripped. This is a hard error because `systemd-sysext refresh` cannot see the staged image without it
    - Vacuum old versions per `InstancesMax`; the active symlink target and `ProtectVersion` are always kept. Non-dry-run `UpdateResult.RemovedVersions` is not populated because the install path calls `sysext.Vacuum`, while dry-run uses `PlanVacuumAfterInstall`
 4. Call `systemd-sysext refresh` to reload all extensions (unless `--no-refresh`). Callers batch this — `installTransfer` is called with `NoRefresh: true` per-component, and a single refresh runs at the end. With `--dry-run`, the same manifest/version resolution runs, but `installTransfer` returns before download; `UpdateFeatures` reports would-download/would-install results and read-only vacuum removals, then skips the final refresh.
@@ -164,7 +164,7 @@ Transfer file values support systemd-style `%` specifiers. See [Configuration Re
 ### Enable/disable feature
 
 - **Enable**: Creates drop-in at `/etc/sysupdate.d/<name>.feature.d/00-updex.conf` setting `Enabled=true`. With `--now`, also downloads extensions immediately.
-- **Disable**: Creates drop-in setting `Enabled=false`. With `--now`, calls `Unmerge()`, removes symlinks from `/var/lib/extensions/`, and deletes all versioned files. `--force` required if extensions are currently active/merged (changes take effect after reboot).
+- **Disable**: Creates drop-in setting `Enabled=false`. With `--now`, calls `Unmerge()`, removes the derived sysext-visible link from `/var/lib/extensions/`, deletes all versioned files, and removes a configured legacy staging `CurrentSymlink` if present. `--force` required if extensions are currently active/merged (changes take effect after reboot).
 
 ### Auto-update daemon
 

@@ -72,7 +72,7 @@ The manifest cache key is `Transfer.Source.Path` only. The first transfer to fet
 
 Dry-run update results use the normal `UpdateResult` shape: `Downloaded=true` means the component would be downloaded, `Installed=false` means no install happened, and `RemovedVersions` is populated from `sysext.PlanVacuumAfterInstall` unless `NoVacuum` is true. The CLI still enforces root before calling this SDK method, but the SDK method itself is read-only in dry-run mode apart from remote manifest fetches.
 
-Already-current components are detected by `sysext.GetInstalledVersions`: the selected newest version must be both present on disk and equal to the current version resolved from a legacy `CurrentSymlink` (or newest installed when no symlink exists). After current detection but before any no-op return, update removes the legacy staging symlink if the transfer defines one. A newer installed-but-not-current version is still treated as needing installation so the `/var/lib/extensions` link can be updated.
+Already-current components are detected by `sysext.GetInstalledVersions`: the selected newest version must be both present on disk and equal to the current version resolved from a legacy `CurrentSymlink` (or newest installed when no symlink exists). Current-version detection intentionally happens before legacy staging-symlink cleanup; otherwise a newer staged-but-not-current file could be mistaken for current and the required `/var/lib/extensions` relink could be skipped. After current detection but before any no-op return, update removes the legacy staging symlink if the transfer defines one.
 
 **UpdateFeaturesOptions:**
 | Field | Type | Description |
@@ -210,7 +210,7 @@ type CheckResult struct {
 - `LinkToSysext(t *config.Transfer) / UnlinkFromSysext(t *config.Transfer)` — Manage `/var/lib/extensions/<component>.<ext>` symlinks without requiring `CurrentSymlink`. `LinkToSysext` scans staged versioned files, selects the newest by `version.Compare`, and points the sysext-visible link at that file
 - `PlanVacuumAfterInstall(t *config.Transfer, activeVersion string) ([]string, []string, error)` — Preview vacuum removals/kept versions after installing a version without deleting files
 - `Vacuum(t *config.Transfer) / VacuumWithDetails(t *config.Transfer)` — Clean old versions while keeping the active symlink target and `ProtectVersion`
-- `RemoveAllVersions(t *config.Transfer) ([]string, error)` — Remove all versions and current symlink for a component
+- `RemoveAllVersions(t *config.Transfer) ([]string, error)` — Remove all versioned files and a configured legacy staging `CurrentSymlink` for a component; sysext-visible `/var/lib/extensions` links are handled separately by `UnlinkFromSysext`
 - `GetExtensionName(filename string) string` — Extract extension name from filename (strips version and compression suffixes)
 - `SysextDir` — Package variable: `/var/lib/extensions`
 

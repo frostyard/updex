@@ -102,7 +102,7 @@ Mode=0644
 | `Type` | string | — | Target type (`regular-file`, `directory`) |
 | `Path` | string | `/var/lib/extensions.d` | Staging directory for downloaded versioned files |
 | `MatchPattern` | string | — | Filename pattern with `@v` for installed files |
-| `CurrentSymlink` | string | — | Optional legacy staging symlink name; if configured and present, updex removes it during update |
+| `CurrentSymlink` | string | — | Optional legacy staging symlink name; if configured and present, updex reads it for current-version detection before removing it during update, and removes it during disable `--now` cleanup |
 | `Mode` | uint32 | `0644` | File permissions |
 | `ReadOnly` | bool | `false` | Whether target should be read-only |
 
@@ -174,5 +174,7 @@ Version candidates extracted from the manifest are deduplicated in a set and ret
 ## Retention and Active Versions
 
 `InstancesMax` controls how many installed versions are normally retained. During `sysext.VacuumWithDetails`, a legacy active version pointed to by `CurrentSymlink` is always kept even if it would otherwise sort outside the retention window, and `ProtectVersion` is always kept as well. If `InstancesMax <= 0`, vacuum falls back to the default of `2`.
+
+`CurrentSymlink` is legacy staging state, not the sysext-visible link. `/var/lib/extensions/<component>.<ext>` is derived from the transfer filename component and target pattern extension. Update code must inspect any legacy `CurrentSymlink` before removing it, because that symlink is the only signal that a newer staged file is installed but not yet current.
 
 Dry-run updates call `sysext.PlanVacuumAfterInstall` with the would-install version as the active-version override, which lets the SDK report `RemovedVersions` without touching disk. Real installs call `sysext.Vacuum`, so the update result currently does not include removed-version details for non-dry-run runs.
