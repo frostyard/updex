@@ -585,7 +585,7 @@ func TestFeatures_ListAllFeatures(t *testing.T) {
 
 	// Act
 	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
-	features, err := client.Features(t.Context())
+	features, err := client.Features(t.Context(), FeaturesOptions{})
 
 	// Assert
 	if err != nil {

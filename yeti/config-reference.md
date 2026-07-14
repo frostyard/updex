@@ -13,6 +13,25 @@ Searched in priority order (first occurrence of a filename wins):
 
 The `-C` / `--definitions` flag overrides all paths with a single custom directory.
 
+### Components
+
+The four roots above (`/etc`, `/run`, `/usr/local/lib`, `/usr/lib` —
+`config.SearchRoots`) are also searched for named `sysupdate.<name>.d/`
+directories (systemd-sysupdate "components", sysupdate.d(5) "Components"),
+with the same priority order per component: e.g.
+`/etc/sysupdate.docker.d/` overrides `/usr/lib/sysupdate.docker.d/`. `<name>`
+must match `[a-zA-Z0-9_-]+`.
+
+By default (no `-C`/`--definitions`, no `--component`), updex's config
+domain is the **union** of the legacy default `sysupdate.d/` directory above
+and every discovered component. Feature/transfer names are expected to be
+globally unique across that union; a name defined in more than one source
+resolves to the most specific one (a named component beats the legacy
+default directory) and is reported as a warning. `--component=<name>` scopes
+an operation to a single component's own search paths instead. `-C` bypasses
+component discovery entirely and behaves exactly as before components
+existed. See `yeti/OVERVIEW.md` ("Components") for the full design.
+
 ## Feature Files (`.feature`)
 
 Define a named feature that groups one or more transfers.
@@ -99,12 +118,23 @@ Mode=0644
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `Type` | string | — | Target type (`regular-file`, `directory`) |
+| `Type` | string | — | Target type (`regular-file`, `directory`; native OS images also use `partition`, which updex skips — see below) |
 | `Path` | string | `/var/lib/extensions.d` | Staging directory for downloaded versioned files |
+| `PathRelativeTo` | string | — | Base directory `Path` is relative to (e.g. `boot`, used by the UKI's `/EFI/Linux` target); parsed but only meaningful for non-sysext OS transfers, see below |
 | `MatchPattern` | string | — | Filename pattern with `@v` for installed files |
 | `CurrentSymlink` | string | — | Optional legacy staging symlink name; if configured and present, updex removes it during update |
 | `Mode` | uint32 | `0644` | File permissions |
 | `ReadOnly` | bool | `false` | Whether target should be read-only |
+
+### Non-sysext transfers (skipped, not errored)
+
+Native (bootc A/B) images share the legacy default `sysupdate.d/` directory
+between sysext transfers and the OS's own A/B partition and UKI transfers.
+`config.FilterSysextTransfers` (applied by the default union loader,
+`LoadAllTransfers`) keeps only `Source.Type == "url-file"` transfers whose
+target is empty-or-`regular-file` with no `PathRelativeTo` set, silently
+dropping `Target Type=partition` entries and the UKI's
+`Type=regular-file`+`PathRelativeTo=boot` entry rather than erroring on them.
 
 ### Multiple `MatchPattern` values
 

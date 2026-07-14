@@ -42,8 +42,9 @@ type SourceSection struct {
 
 // TargetSection represents the [Target] section of a .transfer file
 type TargetSection struct {
-	Type           string   // Target type (regular-file, directory, etc.)
+	Type           string   // Target type (regular-file, directory, partition, etc.)
 	Path           string   // Target directory path
+	PathRelativeTo string   // Base directory Path is relative to (e.g. "boot"); used by non-sysext OS transfers
 	MatchPattern   string   // Primary pattern with @v placeholder for version (first pattern)
 	MatchPatterns  []string // All patterns (for matching different compression formats)
 	CurrentSymlink string   // Optional legacy staging symlink name
@@ -75,24 +76,100 @@ func (t TargetSection) Patterns() []string {
 	return nil
 }
 
-// Default search paths for .transfer files (in priority order)
-var defaultSearchPaths = []string{
-	"/etc/sysupdate.d",
-	"/run/sysupdate.d",
-	"/usr/local/lib/sysupdate.d",
-	"/usr/lib/sysupdate.d",
+// LoadTransfers loads all .transfer files from the specified directory or
+// the legacy default search paths (/etc/sysupdate.d, /run/sysupdate.d, ...).
+// It does not discover named components or filter non-sysext transfers; see
+// LoadAllTransfers and LoadComponentTransfers for that.
+func LoadTransfers(customPath string) ([]*Transfer, error) {
+	if customPath != "" {
+		return loadTransfersFromPaths([]string{customPath})
+	}
+	return loadTransfersFromPaths(defaultSearchPaths())
 }
 
-// LoadTransfers loads all .transfer files from the specified directory or default paths
-func LoadTransfers(customPath string) ([]*Transfer, error) {
-	var searchPaths []string
+// LoadComponentTransfers loads .transfer files for a single named component,
+// following its own /etc > /run > /usr/local/lib > /usr/lib precedence (see
+// ComponentSearchPaths). Pass "" for the legacy default component. It does
+// not filter non-sysext transfers; see FilterSysextTransfers.
+func LoadComponentTransfers(name string) ([]*Transfer, error) {
+	return loadTransfersFromPaths(ComponentSearchPaths(name))
+}
 
+// LoadAllTransfers loads the transfer domain updex operates on by default:
+// the union of the legacy default sysupdate.d directory and every
+// discovered named component (see DiscoverComponents), keeping only
+// sysext-shaped transfers (see FilterSysextTransfers). If customPath is
+// non-empty, component discovery is bypassed entirely and this behaves like
+// LoadTransfers(customPath) with the sysext filter applied, matching the
+// explicit single-directory override semantics of the --definitions flag.
+//
+// Transfer names are expected to be globally unique across the union, since
+// they're derived from distinct sysext names. When the same name is defined
+// by more than one source, the most specific source wins — a named
+// component beats the legacy default directory, and among colliding
+// components the alphabetically last one wins — and the collision is
+// reported as a warning string rather than an error.
+func LoadAllTransfers(customPath string) ([]*Transfer, []string, error) {
 	if customPath != "" {
-		searchPaths = []string{customPath}
-	} else {
-		searchPaths = defaultSearchPaths
+		t, err := LoadTransfers(customPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		return FilterSysextTransfers(t), nil, nil
 	}
 
+	legacy, err := LoadTransfers("")
+	if err != nil {
+		return nil, nil, err
+	}
+	components, err := DiscoverComponents()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	byName := make(map[string]*Transfer)
+	sourceOf := make(map[string]string)
+	var order []string
+	var warnings []string
+
+	put := func(t *Transfer, source string) {
+		if prevSource, exists := sourceOf[t.Component]; exists {
+			warnings = append(warnings, fmt.Sprintf(
+				"transfer %q defined in both %s and %s; using %s", t.Component, prevSource, source, source))
+		} else {
+			order = append(order, t.Component)
+		}
+		byName[t.Component] = t
+		sourceOf[t.Component] = source
+	}
+
+	for _, t := range FilterSysextTransfers(legacy) {
+		put(t, "the default directory")
+	}
+	for _, comp := range components {
+		ct, err := LoadComponentTransfers(comp.Name)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, t := range FilterSysextTransfers(ct) {
+			put(t, fmt.Sprintf("component %q", comp.Name))
+		}
+	}
+
+	transfers := make([]*Transfer, 0, len(order))
+	for _, name := range order {
+		transfers = append(transfers, byName[name])
+	}
+	slices.SortFunc(transfers, func(a, b *Transfer) int {
+		return cmp.Compare(a.Component, b.Component)
+	})
+
+	return transfers, warnings, nil
+}
+
+// loadTransfersFromPaths loads all .transfer files found across
+// searchPaths, with earlier paths taking priority for a given filename.
+func loadTransfersFromPaths(searchPaths []string) ([]*Transfer, error) {
 	// Collect all .transfer files, with earlier paths taking priority
 	transferFiles, err := collectConfigFiles(searchPaths, transferSuffix)
 	if err != nil {
@@ -120,6 +197,39 @@ func LoadTransfers(customPath string) ([]*Transfer, error) {
 	})
 
 	return transfers, nil
+}
+
+// IsSysextTransfer reports whether t has the shape updex supports: a
+// url-file source downloaded to a regular-file target inside an extensions
+// staging directory. Native OS images share the legacy default sysupdate.d
+// directory with non-sysext transfers — GPT "partition" targets for the A/B
+// root, and a "regular-file" target relative to the ESP for the UKI (see
+// sysupdate.d(5), Target's PathRelativeTo=) — which updex must ignore
+// rather than fail on.
+func IsSysextTransfer(t *Transfer) bool {
+	if t.Source.Type != "url-file" {
+		return false
+	}
+	if t.Target.Type != "" && t.Target.Type != "regular-file" {
+		return false
+	}
+	if t.Target.PathRelativeTo != "" {
+		return false
+	}
+	return true
+}
+
+// FilterSysextTransfers returns the subset of transfers that are
+// sysext-shaped url-file-to-regular-file transfers (see IsSysextTransfer),
+// silently dropping OS transfers such as A/B partition updates or the UKI.
+func FilterSysextTransfers(transfers []*Transfer) []*Transfer {
+	var filtered []*Transfer
+	for _, t := range transfers {
+		if IsSysextTransfer(t) {
+			filtered = append(filtered, t)
+		}
+	}
+	return filtered
 }
 
 func parseTransferFile(filePath, component string, specCtx *specifierContext) (*Transfer, error) {
@@ -194,6 +304,9 @@ func parseTransferFile(filePath, component string, specCtx *specifierContext) (*
 		}
 		if key, err := sec.GetKey("Path"); err == nil {
 			t.Target.Path = key.String()
+		}
+		if key, err := sec.GetKey("PathRelativeTo"); err == nil {
+			t.Target.PathRelativeTo = key.String()
 		}
 		if key, err := sec.GetKey("MatchPattern"); err == nil {
 			// Handle multiple patterns (space-separated alternatives).

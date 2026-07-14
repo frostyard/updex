@@ -26,16 +26,95 @@ type Feature struct {
 	Transfers     []string // Names of transfers belonging to this feature
 }
 
-// LoadFeatures loads all .feature files from the specified directory or default paths
+// LoadFeatures loads all .feature files from the specified directory or the
+// legacy default search paths (/etc/sysupdate.d, /run/sysupdate.d, ...). It
+// does not discover named components; see LoadAllFeatures and
+// LoadComponentFeatures for that.
 func LoadFeatures(customPath string) ([]*Feature, error) {
-	var searchPaths []string
-
 	if customPath != "" {
-		searchPaths = []string{customPath}
-	} else {
-		searchPaths = defaultSearchPaths
+		return loadFeaturesFromPaths([]string{customPath})
+	}
+	return loadFeaturesFromPaths(defaultSearchPaths())
+}
+
+// LoadComponentFeatures loads .feature files for a single named component,
+// following its own /etc > /run > /usr/local/lib > /usr/lib precedence (see
+// ComponentSearchPaths). Pass "" for the legacy default component.
+func LoadComponentFeatures(name string) ([]*Feature, error) {
+	return loadFeaturesFromPaths(ComponentSearchPaths(name))
+}
+
+// LoadAllFeatures loads the feature domain updex operates on by default:
+// the union of the legacy default sysupdate.d directory and every
+// discovered named component (see DiscoverComponents). If customPath is
+// non-empty, component discovery is bypassed entirely and this behaves like
+// LoadFeatures(customPath), matching the explicit single-directory override
+// semantics of the --definitions flag.
+//
+// Feature names are expected to be globally unique across the union, since
+// they're derived from distinct sysext names. When the same name is defined
+// by more than one source, the most specific source wins — a named
+// component beats the legacy default directory, and among colliding
+// components the alphabetically last one wins — and the collision is
+// reported as a warning string rather than an error.
+func LoadAllFeatures(customPath string) ([]*Feature, []string, error) {
+	if customPath != "" {
+		f, err := LoadFeatures(customPath)
+		return f, nil, err
 	}
 
+	legacy, err := LoadFeatures("")
+	if err != nil {
+		return nil, nil, err
+	}
+	components, err := DiscoverComponents()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	byName := make(map[string]*Feature)
+	sourceOf := make(map[string]string)
+	var order []string
+	var warnings []string
+
+	put := func(f *Feature, source string) {
+		if prevSource, exists := sourceOf[f.Name]; exists {
+			warnings = append(warnings, fmt.Sprintf(
+				"feature %q defined in both %s and %s; using %s", f.Name, prevSource, source, source))
+		} else {
+			order = append(order, f.Name)
+		}
+		byName[f.Name] = f
+		sourceOf[f.Name] = source
+	}
+
+	for _, f := range legacy {
+		put(f, "the default directory")
+	}
+	for _, comp := range components {
+		cf, err := LoadComponentFeatures(comp.Name)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, f := range cf {
+			put(f, fmt.Sprintf("component %q", comp.Name))
+		}
+	}
+
+	features := make([]*Feature, 0, len(order))
+	for _, name := range order {
+		features = append(features, byName[name])
+	}
+	slices.SortFunc(features, func(a, b *Feature) int {
+		return cmp.Compare(a.Name, b.Name)
+	})
+
+	return features, warnings, nil
+}
+
+// loadFeaturesFromPaths loads all .feature files found across searchPaths,
+// with earlier paths taking priority for a given filename.
+func loadFeaturesFromPaths(searchPaths []string) ([]*Feature, error) {
 	// Collect all .feature files, with earlier paths taking priority
 	featureFiles, err := collectConfigFiles(searchPaths, featureSuffix)
 	if err != nil {

@@ -14,6 +14,7 @@ Designed for systems like Debian Trixie that don't ship with `systemd-sysupdate`
 ## Features
 
 - Feature-based management of sysext images (enable/disable groups of transfers)
+- systemd-sysupdate "component" discovery (`sysupdate.<name>.d/`, see sysupdate.d(5) "Components"), with the legacy default `sysupdate.d/` directory folded into the same domain
 - Download sysext images from remote HTTP sources
 - SHA256 hash verification via `SHA256SUMS` manifests
 - Bounded retry with exponential backoff for transient network failures and HTTP 5xx/429 responses
@@ -57,13 +58,23 @@ func main() {
 
     ctx := context.Background()
 
-    // List all features
-    features, err := client.Features(ctx)
+    // List all features (union of the legacy default directory and every
+    // discovered systemd-sysupdate component)
+    features, err := client.Features(ctx, updex.FeaturesOptions{})
     if err != nil {
         log.Fatal(err)
     }
     for _, f := range features {
         fmt.Printf("%s: enabled=%v (%s)\n", f.Name, f.Enabled, f.Description)
+    }
+
+    // List discovered components
+    components, err := client.Components(ctx)
+    if err != nil {
+        log.Fatal(err)
+    }
+    for _, c := range components {
+        fmt.Printf("%s: %s (%d features)\n", c.Name, c.SourceDir, c.FeatureCount)
     }
 
     // Enable a feature and download extensions immediately
@@ -114,11 +125,14 @@ func main() {
 
 | Method | Signature | Description |
 | --- | --- | --- |
-| `Features` | `Features(ctx) ([]FeatureInfo, error)` | List all features with status and associated transfers |
+| `Features` | `Features(ctx, FeaturesOptions) ([]FeatureInfo, error)` | List all features with status and associated transfers |
 | `EnableFeature` | `EnableFeature(ctx, name, EnableFeatureOptions) (*FeatureActionResult, error)` | Enable a feature via drop-in config |
 | `DisableFeature` | `DisableFeature(ctx, name, DisableFeatureOptions) (*FeatureActionResult, error)` | Disable a feature via drop-in config |
 | `UpdateFeatures` | `UpdateFeatures(ctx, UpdateFeaturesOptions) ([]UpdateFeaturesResult, error)` | Download and install newest versions for all enabled features |
 | `CheckFeatures` | `CheckFeatures(ctx, CheckFeaturesOptions) ([]CheckFeaturesResult, error)` | Check if newer versions are available |
+| `Components` | `Components(ctx) ([]ComponentInfo, error)` | List discovered systemd-sysupdate components (name, source directory, feature count) |
+
+`FeaturesOptions`, `EnableFeatureOptions`, `DisableFeatureOptions`, `UpdateFeaturesOptions`, and `CheckFeaturesOptions` all carry a `Component string` field that scopes the operation to a single named systemd-sysupdate component instead of the default union domain (see "systemd-sysupdate Components" below). It cannot be combined with a `Definitions` override on `ClientConfig`.
 
 ### ClientConfig
 
@@ -139,26 +153,35 @@ Manifest fetches and file downloads retry transient request/body-read failures a
 ### Option Structs
 
 ```go
+type FeaturesOptions struct {
+    Component string // Scope to a single named component (default: union of all)
+}
+
 type EnableFeatureOptions struct {
-    Now       bool // Immediately download extensions after enabling
-    DryRun    bool // Preview changes without modifying filesystem
-    NoRefresh bool // Skip systemd-sysext refresh after download
+    Now       bool   // Immediately download extensions after enabling
+    DryRun    bool   // Preview changes without modifying filesystem
+    NoRefresh bool   // Skip systemd-sysext refresh after download
+    Component string // Scope to a single named component (default: union of all)
 }
 
 type DisableFeatureOptions struct {
-    Now       bool // Immediately unmerge and remove extension files
-    Force     bool // Allow removal of merged extensions (requires reboot)
-    DryRun    bool // Preview changes without modifying filesystem
-    NoRefresh bool // Skip systemd-sysext refresh
+    Now       bool   // Immediately unmerge and remove extension files
+    Force     bool   // Allow removal of merged extensions (requires reboot)
+    DryRun    bool   // Preview changes without modifying filesystem
+    NoRefresh bool   // Skip systemd-sysext refresh
+    Component string // Scope to a single named component (default: union of all)
 }
 
 type UpdateFeaturesOptions struct {
-    DryRun    bool // Preview changes without modifying filesystem or sysext state
-    NoRefresh bool // Skip systemd-sysext refresh after update
-    NoVacuum  bool // Skip removing old versions after update
+    DryRun    bool   // Preview changes without modifying filesystem or sysext state
+    NoRefresh bool   // Skip systemd-sysext refresh after update
+    NoVacuum  bool   // Skip removing old versions after update
+    Component string // Scope to a single named component (default: union of all)
 }
 
-type CheckFeaturesOptions struct{}
+type CheckFeaturesOptions struct {
+    Component string // Scope to a single named component (default: union of all)
+}
 ```
 
 ## CLI Usage
@@ -194,6 +217,13 @@ sudo updex --dry-run features update
 # Check for available updates (read-only)
 updex features check
 
+# Scope any of the above to a single named component
+updex features list --component=docker
+sudo updex features update --component=docker
+
+# List discovered systemd-sysupdate components
+updex components
+
 # Enable automatic daily updates
 sudo updex daemon enable
 
@@ -215,16 +245,30 @@ sudo updex daemon disable
 | `--dry-run` | Preview changes without modifying filesystem |
 | `--verbose` | Enable verbose output |
 
+### `features` Flags
+
+| Flag | Description |
+| --- | --- |
+| `--component` | Scope the operation to a single named systemd-sysupdate component instead of the default union of the legacy default directory and every discovered component. Cannot be combined with `-C, --definitions`. |
+
 ## Configuration
 
-updex reads `.transfer` and `.feature` files from these directories (in priority order):
+By default updex reads `.transfer` and `.feature` files from the union of two kinds of sources:
+
+**The legacy default directories** (in priority order):
 
 1. `/etc/sysupdate.d/` (highest priority)
 2. `/run/sysupdate.d/`
 3. `/usr/local/lib/sysupdate.d/`
 4. `/usr/lib/sysupdate.d/`
 
-Only the first occurrence of a given filename is used. The `-C` flag overrides all search paths with a custom directory.
+**Every discovered systemd-sysupdate component** — a named grouping of `.transfer`/`.feature` files under a `sysupdate.<name>.d/` directory (see sysupdate.d(5) "Components"), searched across the same four roots with the same priority order, e.g. `/etc/sysupdate.docker.d/` overrides `/usr/lib/sysupdate.docker.d/`. Run `updex components` to see what's discovered.
+
+Within each source, only the first occurrence of a given filename is used. Feature and transfer names are expected to be globally unique across the whole union (they're derived from distinct sysext names); if a name is defined in more than one source, the most specific source wins — a named component beats the legacy default directory — and the collision is logged as a warning.
+
+Non-sysext transfers that may share the legacy default directory on native OS images (GPT `partition` targets for an A/B root, or the UKI's `regular-file` target relative to the ESP) are silently skipped rather than erroring.
+
+The `-C, --definitions` flag overrides all of the above with a single explicit directory (no component discovery, no union) — the original, pre-component behavior. It cannot be combined with `--component`. The `--component=<name>` flag instead scopes the read/write domain to one named component's own search paths.
 
 ### Example Transfer File
 
@@ -361,6 +405,39 @@ To completely hide a feature, create a symlink to `/dev/null`:
 ```bash
 ln -s /dev/null /etc/sysupdate.d/devel.feature
 ```
+
+## systemd-sysupdate Components
+
+A component is a named grouping of `.transfer`/`.feature` files, used to give a
+sysext its own versioning scope separate from the shared default directory
+(see sysupdate.d(5) "Components"). Move a sysext's files out of
+`/usr/lib/sysupdate.d/` into `/usr/lib/sysupdate.<name>.d/` and updex picks
+them up automatically as component `<name>`, with the same
+`/etc` > `/run` > `/usr/local/lib` > `/usr/lib` override precedence used for
+the legacy default directory:
+
+```
+/usr/lib/sysupdate.docker.d/docker.transfer
+/usr/lib/sysupdate.docker.d/docker.feature
+```
+
+List what's discovered:
+
+```bash
+updex components
+# COMPONENT  SOURCE                          FEATURES
+# docker     /usr/lib/sysupdate.docker.d     1
+# incus      /usr/lib/sysupdate.incus.d      1
+```
+
+`updex features list` (and every other `features` subcommand) reads the union
+of the legacy default directory and every discovered component by default;
+pass `--component=<name>` to scope to just one. Enabling or disabling a
+feature writes its drop-in under the matching scope — a component-scoped
+feature gets `/etc/sysupdate.<name>.d/<feature>.feature.d/00-updex.conf`, a
+legacy default (or `-C`/`--definitions`-loaded) feature keeps
+`/etc/sysupdate.d/<feature>.feature.d/00-updex.conf` — so reads and writes
+always agree on where a feature's overrides live.
 
 ## Remote Manifest Format
 

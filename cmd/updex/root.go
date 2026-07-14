@@ -37,16 +37,22 @@ func NewRootCmd() *cobra.Command {
 Features group related sysext transfers that can be enabled, disabled,
 updated, and checked together. Use 'updex features' to manage them.
 
-Configuration is read from .feature and .transfer files in:
+Configuration is read from .feature and .transfer files in the legacy
+default directories:
   - /etc/sysupdate.d/
   - /run/sysupdate.d/
   - /usr/local/lib/sysupdate.d/
-  - /usr/lib/sysupdate.d/`,
+  - /usr/lib/sysupdate.d/
+
+...and from every discovered systemd-sysupdate component directory
+(sysupdate.<name>.d/, see 'updex components' and sysupdate.d(5)
+"Components"), searched across the same four roots.`,
 	}
 
 	registerAppFlags(cmd)
 	cmd.AddCommand(newFeaturesCmd())
 	cmd.AddCommand(newDaemonCmd())
+	cmd.AddCommand(newComponentsCmd())
 
 	return cmd
 }
