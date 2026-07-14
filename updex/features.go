@@ -14,10 +14,19 @@ import (
 )
 
 // Features returns all configured features with their status.
-func (c *Client) Features(ctx context.Context, opts FeaturesOptions) ([]FeatureInfo, error) {
+//
+// opts is variadic for backward compatibility: only opts[0] is used, if
+// provided; additional elements are ignored. Callers with no options may
+// omit it entirely.
+func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]FeatureInfo, error) {
+	var opt FeaturesOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+
 	c.msg("Loading configurations")
 
-	features, transfers, err := c.loadDomain(opts.Component)
+	features, transfers, err := c.loadDomain(opt.Component)
 	if err != nil {
 		return nil, err
 	}

@@ -59,8 +59,10 @@ func main() {
     ctx := context.Background()
 
     // List all features (union of the legacy default directory and every
-    // discovered systemd-sysupdate component)
-    features, err := client.Features(ctx, updex.FeaturesOptions{})
+    // discovered systemd-sysupdate component). opts is variadic: omit it
+    // for the default domain, or pass updex.FeaturesOptions{Component: "docker"}
+    // to scope to one component.
+    features, err := client.Features(ctx)
     if err != nil {
         log.Fatal(err)
     }

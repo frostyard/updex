@@ -27,10 +27,10 @@ func NewClient(cfg ClientConfig) *Client
 ### Features
 
 ```go
-func (c *Client) Features(ctx context.Context, opts FeaturesOptions) ([]FeatureInfo, error)
+func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]FeatureInfo, error)
 ```
 
-Lists all configured features with their enabled/masked status and associated transfers.
+Lists all configured features with their enabled/masked status and associated transfers. `opts` is variadic for backward compatibility with the pre-component-scoping signature (`Features(ctx)`): only `opts[0]` is read when present, so callers may either omit `opts` entirely or pass a single `FeaturesOptions{}`.
 
 **FeaturesOptions:**
 | Field | Type | Description |
