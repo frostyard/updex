@@ -127,7 +127,7 @@ func main() {
 
 | Method | Signature | Description |
 | --- | --- | --- |
-| `Features` | `Features(ctx, FeaturesOptions) ([]FeatureInfo, error)` | List all features with status and associated transfers |
+| `Features` | `Features(ctx, opts ...FeaturesOptions) ([]FeatureInfo, error)` | List all features with status and associated transfers |
 | `EnableFeature` | `EnableFeature(ctx, name, EnableFeatureOptions) (*FeatureActionResult, error)` | Enable a feature via drop-in config |
 | `DisableFeature` | `DisableFeature(ctx, name, DisableFeatureOptions) (*FeatureActionResult, error)` | Disable a feature via drop-in config |
 | `UpdateFeatures` | `UpdateFeatures(ctx, UpdateFeaturesOptions) ([]UpdateFeaturesResult, error)` | Download and install newest versions for all enabled features |
