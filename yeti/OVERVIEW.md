@@ -13,6 +13,7 @@ cmd/updex-cli/main.go          Entry point (frostyard/clix bootstrap)
 cmd/updex/root.go               Cobra root command, global flags
 cmd/updex/features.go           features list|enable|disable|update|check
 cmd/updex/features_run.go       Run functions for feature subcommands
+cmd/updex/components.go         components (list discovered systemd-sysupdate components)
 cmd/updex/daemon.go             daemon enable|disable|status (direct systemd timers)
 cmd/updex/client.go             CLI → SDK client factory
 
@@ -20,17 +21,26 @@ updex/                          Public SDK (Client + methods)
   updex.go                      Client struct, NewClient()
   features.go                   Features(), EnableFeature(), DisableFeature(),
                                 UpdateFeatures(), CheckFeatures(),
-                                writeFeatureDropIn() helper
+                                writeFeatureDropIn() helper, lookupFeature() helper
+  domain.go                     loadDomain() — resolves the feature/transfer
+                                domain for every SDK method (Definitions
+                                override vs. one component vs. the default
+                                union); Components(), ComponentInfo, FeaturesOptions
   install.go                    installTransfer() — complete install pipeline
                                 (download, symlink, sysext link, refresh, vacuum)
                                 Reuses parsed patterns from getAvailableVersions
   list.go                       getAvailableVersions() — returns versions,
                                 manifest, and parsed patterns for caller reuse
-  options.go                    Option structs for all operations
+  options.go                    Option structs for all operations (each
+                                feature-related struct carries Component string)
   results.go                    Result structs for all operations
 
 config/                         .transfer and .feature INI file parsing,
                                 search paths, drop-ins, and specifiers
+config/component.go             systemd-sysupdate component discovery
+                                (SearchRoots, ComponentSearchPaths,
+                                DiscoverComponents, ComponentOfPath,
+                                EtcComponentDir) — see "Components" below
 download/                       HTTP download with SHA256 + decompression
 manifest/                       SHA256SUMS manifest fetch/parse + GPG verify
 version/                        Pattern matching (@v placeholder) + version compare
@@ -106,6 +116,95 @@ All core packages (`config`, `version`, `download`, `manifest`, `sysext`, `syste
 
 Only the first occurrence of a given filename is used. The `-C` flag overrides all search paths with a custom directory.
 
+### Components (`config/component.go`)
+
+A systemd-sysupdate "component" (sysupdate.d(5) "Components") is a named
+grouping of `.transfer`/`.feature` files under `sysupdate.<name>.d/`,
+searched across the same four roots (`config.SearchRoots`, a package var —
+overridable in tests the same way `sysext.SysextDir` is) with the same
+priority order as the legacy default `sysupdate.d/` directory. This exists
+because native OS images now put A/B partition and UKI transfers in the
+default directory (see "Non-sysext transfers" below), and package-versioned
+sysext transfers must not share that single systemd-sysupdate version-lock
+scope — moving a sysext's files to its own `sysupdate.<name>.d/` gives it an
+independent versioning scope. `<name>` must match `[a-zA-Z0-9_-]+`;
+dotted/empty names are ignored (not valid components).
+
+Key `config` functions:
+
+- `DiscoverComponents()` — scans `SearchRoots` for `sysupdate.<name>.d/`
+  directories, returns them sorted by name (does **not** include the legacy
+  default component; `SearchPaths` on each result lists only the
+  directories that actually exist, in priority order).
+- `ComponentSearchPaths(name)` — the four search-path directories for a
+  component (`""` = legacy default). `LoadComponentFeatures(name)` /
+  `LoadComponentTransfers(name)` load exactly one component this way.
+- `LoadAllFeatures(customPath)` / `LoadAllTransfers(customPath)` — the
+  **default read domain**: union of the legacy default directory and every
+  discovered component. A name collision (feature or transfer name defined
+  by more than one source) resolves to the most specific source — a named
+  component beats the legacy default directory, and among colliding
+  components the alphabetically last one wins — and is returned as a
+  warning string (not an error) for the caller to log. `customPath != ""`
+  bypasses discovery entirely and behaves like plain
+  `LoadFeatures`/`LoadTransfers(customPath)` (mirrors the `-C`/`--definitions`
+  override semantics: one explicit flat directory, no component concept).
+- `IsSysextTransfer(t)` / `FilterSysextTransfers(transfers)` — see
+  "Non-sysext transfers" below. `LoadAllTransfers` always applies this
+  filter; the plain `LoadTransfers`/`LoadComponentTransfers` loaders do not.
+- `ComponentOfPath(path)` — recovers the component name from a loaded
+  `Feature.FilePath`'s parent directory (`false` for the legacy default or a
+  `-C` override directory). `EtcComponentDir(name)` is the inverse: the
+  `/etc` override directory to write to for a given component.
+
+`updex.Client.loadDomain(component string)` in `updex/domain.go` is the
+single place every SDK method resolves its read domain from, in this order:
+`ClientConfig.Definitions` set → that one directory verbatim (`component`
+must be empty, else an error — the two are mutually exclusive); `component`
+non-empty → `LoadComponentFeatures`/`LoadComponentTransfers(component)`;
+otherwise → `LoadAllFeatures("")`/`LoadAllTransfers("")`, with any collision
+warnings routed through `c.warn` (the client's reporter). Every
+`*FeatureOptions`/`FeaturesOptions` struct carries `Component string` for
+this — extend an options struct for new component-scoped operations, never
+add package-level flag state to the SDK (see uber-go/CLAUDE.md conventions).
+
+`updex.Client.writeFeatureDropIn` uses `config.ComponentOfPath(f.FilePath)`
+to pick the drop-in directory: a feature discovered under a component writes
+to `EtcComponentDir(name)` (`/etc/sysupdate.<name>.d/<feature>.feature.d/`);
+everything else (legacy default or `-C` override) keeps the original
+`/etc/sysupdate.d/<feature>.feature.d/` path. Because `LoadComponentFeatures`
+reads drop-ins from the same component-scoped search paths on read, writes
+and reads always agree on scope without any extra bookkeeping.
+
+`updex.Client.Components(ctx)` (SDK) / `updex components` (CLI) list
+discovered components — name, highest-priority existing source directory,
+and that component's own feature count (not counting union collisions) —
+via `config.DiscoverComponents` + `LoadComponentFeatures` per component. It
+does not include the legacy default component; use `Features` with the
+default (empty) `Component` to see the full union, including anything still
+defined there.
+
+### Non-sysext transfers
+
+The legacy default `sysupdate.d/` directory on native (bootc A/B) images
+also carries the OS's own transfers, which are not sysext-shaped and which
+`config.FilterSysextTransfers` (used by `LoadAllTransfers`) silently drops
+rather than erroring on:
+
+- **A/B root partitions**: `[Target] Type=partition` (`MatchPartitionType=root`
+  / `root-verity`), `Path=auto`.
+- **UKI**: `[Target] Type=regular-file`, `Path=/EFI/Linux`,
+  `PathRelativeTo=boot` — the `PathRelativeTo` key (parsed into
+  `TargetSection.PathRelativeTo`) is the discriminator that separates this
+  from a genuine sysext regular-file target, since both have
+  `Type=regular-file`.
+
+`IsSysextTransfer(t)` requires `Source.Type == "url-file"`, `Target.Type`
+empty-or-`"regular-file"`, and `Target.PathRelativeTo == ""`. Empty
+`Target.Type` is treated as `regular-file` (not filtered) to match every
+existing sysext `.transfer` fixture in this repo, which never sets `Type=`
+explicitly in `[Target]`.
+
 ### File types
 
 See [Configuration Reference](config-reference.md) for detailed format documentation.
@@ -145,7 +244,7 @@ Transfer file values support systemd-style `%` specifiers. See [Configuration Re
 
 ### Feature update (end-to-end)
 
-1. Load all `.feature` and `.transfer` files from search paths
+1. Load all `.feature` and `.transfer` files: by default the union of the legacy default directory and every discovered component (`Client.loadDomain`, see "Components" above), or a single scope when `--component`/`-C` narrows it. Non-sysext transfers (A/B partition, UKI) are filtered out of the default union before this point.
 2. Filter transfers to those matching enabled features
 3. For each transfer:
    - Fetch `SHA256SUMS` manifest from source URL (+ GPG verify if configured); transient network failures during request or body read and HTTP 5xx/429 are retried up to 3 attempts with exponential backoff, while TLS/cert errors, unsupported protocols, 4xx other than 429, and checksum mismatches fail immediately. Manifests are cached by source URL across transfers so that multiple transfers sharing the same source make only one HTTP request
@@ -163,8 +262,8 @@ Transfer file values support systemd-style `%` specifiers. See [Configuration Re
 
 ### Enable/disable feature
 
-- **Enable**: Creates drop-in at `/etc/sysupdate.d/<name>.feature.d/00-updex.conf` setting `Enabled=true`. With `--now`, also downloads extensions immediately.
-- **Disable**: Creates drop-in setting `Enabled=false`. With `--now`, calls `Unmerge()`, removes symlinks from `/var/lib/extensions/`, and deletes all versioned files. `--force` required if extensions are currently active/merged (changes take effect after reboot).
+- **Enable**: Creates drop-in at `/etc/sysupdate.d/<name>.feature.d/00-updex.conf` (or `/etc/sysupdate.<component>.d/<name>.feature.d/00-updex.conf` for a component-scoped feature — see "Components" above) setting `Enabled=true`. With `--now`, also downloads extensions immediately.
+- **Disable**: Creates drop-in setting `Enabled=false` at the same scoped path. With `--now`, calls `Unmerge()`, removes symlinks from `/var/lib/extensions/`, and deletes all versioned files. `--force` required if extensions are currently active/merged (changes take effect after reboot).
 
 ### Auto-update daemon
 
@@ -186,13 +285,21 @@ updex features update                   Download and install new versions
   --no-vacuum                           Skip removing old versions
   --dry-run                             Preview update work without filesystem/sysext changes
 updex features check                    Check for available updates
+  --component <name>                    Scope any features subcommand above to one
+                                         named component (default: default-dir + every
+                                         discovered component); persistent flag on
+                                         `updex features`, mutually exclusive with -C
+
+updex components                        List discovered systemd-sysupdate components
+                                         (name, source dir, feature count)
 
 updex daemon enable                     Install daily auto-update timer
 updex daemon disable                    Remove auto-update timer
 updex daemon status                     Show timer status
 
 Global flags:
-  -C, --definitions <path>              Custom path to config files
+  -C, --definitions <path>              Custom path to config files (bypasses component
+                                         discovery entirely; mutually exclusive with --component)
   --verify                              Enable GPG verification
   --no-refresh                          Skip systemd-sysext refresh
   --json                                Output as JSON (from clix)

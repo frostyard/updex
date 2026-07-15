@@ -27,10 +27,41 @@ func NewClient(cfg ClientConfig) *Client
 ### Features
 
 ```go
-func (c *Client) Features(ctx context.Context) ([]FeatureInfo, error)
+func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]FeatureInfo, error)
 ```
 
-Lists all configured features with their enabled/masked status and associated transfers.
+Lists all configured features with their enabled/masked status and associated transfers. `opts` is variadic for backward compatibility with the pre-component-scoping signature (`Features(ctx)`): only `opts[0]` is read when present, so callers may either omit `opts` entirely or pass a single `FeaturesOptions{}`.
+
+**FeaturesOptions:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `Component` | `string` | Scope to one named systemd-sysupdate component instead of the default union (see "Component scoping" below); `""` = default |
+
+### Components
+
+```go
+func (c *Client) Components(ctx context.Context) ([]ComponentInfo, error)
+```
+
+Lists discovered systemd-sysupdate components (`sysupdate.<name>.d/` directories, see `config.DiscoverComponents`) — name, highest-priority existing source directory, and that component's own feature count. Does **not** include the legacy default `sysupdate.d/` "component"; call `Features` with the default (empty) `Component` to see the full union.
+
+```go
+type ComponentInfo struct {
+    Name         string `json:"name"`
+    SourceDir    string `json:"source_dir"`
+    FeatureCount int    `json:"feature_count"`
+}
+```
+
+### Component scoping
+
+Every feature-related options struct (`FeaturesOptions`, `EnableFeatureOptions`, `DisableFeatureOptions`, `UpdateFeaturesOptions`, `CheckFeaturesOptions`) carries a `Component string` field. All SDK methods resolve their read/write domain through the unexported `Client.loadDomain(component string)`:
+
+1. `ClientConfig.Definitions` set → load exactly that one directory (as before component support existed); `Component` must be `""` here, otherwise `loadDomain` returns an error (`Definitions` and `Component` are mutually exclusive).
+2. `Component` non-empty → load only that named component's own search paths (`config.LoadComponentFeatures`/`LoadComponentTransfers`).
+3. Otherwise (the default) → the union of the legacy default `sysupdate.d/` directory and every discovered component (`config.LoadAllFeatures`/`LoadAllTransfers`). Any name collision between sources is logged through the client's reporter as a warning (component wins over the legacy default directory), not returned as an error.
+
+In all three cases, transfers are filtered to sysext-shaped ones (`config.FilterSysextTransfers` / `IsSysextTransfer`): a `url-file` source to a `regular-file` target with no `PathRelativeTo`. This drops the non-sysext OS transfers (A/B partition, UKI) that share the legacy default directory on native images.
 
 ### EnableFeature / DisableFeature
 
@@ -43,7 +74,7 @@ Enable creates a drop-in file setting `Enabled=true`. With `Now: true`, it downl
 
 In dry-run mode, enable/disable skip writing drop-ins and skip sysext/filesystem mutations. `EnableFeature` with `Now: true` records associated transfer components as would-download entries without fetching manifests or resolving exact versions. `DisableFeature` with `Now: true` still checks active versions for force-safety, then records component-level would-remove entries instead of deleting files.
 
-Both methods reject missing or masked features before writing drop-ins. Drop-ins are always targeted at `/etc/sysupdate.d/<feature>.feature.d/00-updex.conf`, even when `ClientConfig.Definitions` points at a custom read path; dry-run returns that would-be path but leaves `FeatureActionResult.DropIn` empty because no file was written.
+Both methods reject missing or masked features before writing drop-ins. The drop-in target directory depends on where the feature file was discovered (`config.ComponentOfPath(f.FilePath)`): a feature found under a `sysupdate.<name>.d/` component writes to `/etc/sysupdate.<name>.d/<feature>.feature.d/00-updex.conf` (via `config.EtcComponentDir(name)`); a feature from the legacy default directory or a `ClientConfig.Definitions` override keeps the original `/etc/sysupdate.d/<feature>.feature.d/00-updex.conf` path. Dry-run returns that would-be path but leaves `FeatureActionResult.DropIn` empty because no file was written.
 
 **EnableFeatureOptions:**
 | Field | Type | Description |
@@ -51,6 +82,7 @@ Both methods reject missing or masked features before writing drop-ins. Drop-ins
 | `Now` | `bool` | Download extensions immediately after enabling |
 | `DryRun` | `bool` | Preview without modifying filesystem |
 | `NoRefresh` | `bool` | Skip `systemd-sysext refresh` |
+| `Component` | `string` | Scope to one named component; `""` = default union |
 
 **DisableFeatureOptions:**
 | Field | Type | Description |
@@ -59,6 +91,7 @@ Both methods reject missing or masked features before writing drop-ins. Drop-ins
 | `Force` | `bool` | Allow removal of currently merged extensions (requires reboot) |
 | `DryRun` | `bool` | Preview without modifying filesystem |
 | `NoRefresh` | `bool` | Skip `systemd-sysext refresh` |
+| `Component` | `string` | Scope to one named component; `""` = default union |
 
 ### UpdateFeatures
 
@@ -80,6 +113,7 @@ Already-current components are detected by `sysext.GetInstalledVersions`: the se
 | `DryRun` | `bool` | Preview downloads, installs, refreshes, and vacuum removals without modifying filesystem or sysext state; still fetches manifests and inspects local installed files |
 | `NoRefresh` | `bool` | Skip `systemd-sysext refresh` after updates |
 | `NoVacuum` | `bool` | Skip removing old versions |
+| `Component` | `string` | Scope to one named component; `""` = default union |
 
 ### CheckFeatures
 
@@ -87,7 +121,12 @@ Already-current components are detected by `sysext.GetInstalledVersions`: the se
 func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) ([]CheckFeaturesResult, error)
 ```
 
-Checks for available updates without downloading. Manifests are cached by source URL, same as `UpdateFeatures`. `CheckFeaturesOptions` is currently empty.
+Checks for available updates without downloading. Manifests are cached by source URL, same as `UpdateFeatures`.
+
+**CheckFeaturesOptions:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `Component` | `string` | Scope to one named component; `""` = default union |
 
 ## Result Types
 
@@ -166,12 +205,25 @@ type CheckResult struct {
 
 ### `config`
 
-- `LoadFeatures(customPath string) ([]*Feature, error)` — Load all `.feature` files
-- `LoadTransfers(customPath string) ([]*Transfer, error)` — Load all `.transfer` files
+- `LoadFeatures(customPath string) ([]*Feature, error)` — Load all `.feature` files from `customPath`, or the legacy default search paths if empty. No component discovery.
+- `LoadTransfers(customPath string) ([]*Transfer, error)` — Load all `.transfer` files from `customPath`, or the legacy default search paths if empty. No component discovery, no sysext-type filtering.
 - `FilterTransfersByFeatures(transfers []*Transfer, features []*Feature) []*Transfer` — Filter transfers to those matching enabled features
 - `GetTransfersForFeature(transfers []*Transfer, featureName string) []*Transfer` — Get transfers associated with a specific feature by membership in `Features` or `RequisiteFeatures`; this is association lookup, not full active-transfer filtering
 - `GetEnabledFeatureNames(features []*Feature) []string`
 - `IsFeatureEnabled(features []*Feature, name string) bool`
+
+**Component discovery** (`config/component.go`; see `yeti/OVERVIEW.md` "Components" for the full design):
+
+- `SearchRoots` — Package variable: `[]string{"/etc", "/run", "/usr/local/lib", "/usr/lib"}`, in priority order. Overridable in tests (same pattern as `sysext.SysextDir`).
+- `ComponentSearchPaths(name string) []string` — The four search-path directories for a component (`""` = legacy default `sysupdate.d/`).
+- `EtcComponentDir(name string) string` — The `/etc` override directory for a component's drop-ins (`""` = `/etc/sysupdate.d`).
+- `type Component struct { Name string; SearchPaths []string }` — `SearchPaths` lists only the directories that exist on disk, in priority order.
+- `DiscoverComponents() ([]Component, error)` — Scan `SearchRoots` for `sysupdate.<name>.d/` directories (`[a-zA-Z0-9_-]+` names; dotted/empty names ignored), sorted by name. Does not include the legacy default component.
+- `LoadComponentFeatures(name string) ([]*Feature, error)` / `LoadComponentTransfers(name string) ([]*Transfer, error)` — Load one named component (`""` = legacy default), following its own search-path precedence.
+- `LoadAllFeatures(customPath string) ([]*Feature, []string, error)` / `LoadAllTransfers(customPath string) ([]*Transfer, []string, error)` — Load the union of the legacy default directory and every discovered component; returns collision-warning strings alongside the result. `customPath != ""` bypasses discovery and behaves like the plain `Load*(customPath)` functions (`LoadAllTransfers` additionally applies `FilterSysextTransfers` in this case). `LoadAllTransfers` always applies `FilterSysextTransfers` to every source before merging.
+- `IsSysextTransfer(t *Transfer) bool` — `true` for a `url-file`-sourced transfer whose target is empty-or-`regular-file` with no `PathRelativeTo` set.
+- `FilterSysextTransfers(transfers []*Transfer) []*Transfer` — Keep only `IsSysextTransfer` matches.
+- `ComponentOfPath(path string) (name string, ok bool)` — Recover the component name from a loaded `Feature`/`Transfer`'s `FilePath` (its parent directory). `ok=false` for the legacy default directory or a `-C`/`Definitions` override directory.
 
 ### `manifest`
 

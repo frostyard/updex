@@ -12,10 +12,20 @@ type UpdateFeaturesOptions struct {
 
 	// NoVacuum skips removing old versions after update.
 	NoVacuum bool
+
+	// Component scopes the operation to a single named systemd-sysupdate
+	// component. Empty operates on the default domain: the union of the
+	// legacy default sysupdate.d directory and every discovered component.
+	Component string
 }
 
 // CheckFeaturesOptions configures the CheckFeatures operation.
-type CheckFeaturesOptions struct{}
+type CheckFeaturesOptions struct {
+	// Component scopes the operation to a single named systemd-sysupdate
+	// component. Empty operates on the default domain: the union of the
+	// legacy default sysupdate.d directory and every discovered component.
+	Component string
+}
 
 // EnableFeatureOptions configures the EnableFeature operation.
 type EnableFeatureOptions struct {
@@ -27,6 +37,11 @@ type EnableFeatureOptions struct {
 
 	// NoRefresh skips running systemd-sysext refresh after download.
 	NoRefresh bool
+
+	// Component scopes the operation to a single named systemd-sysupdate
+	// component. Empty operates on the default domain: the union of the
+	// legacy default sysupdate.d directory and every discovered component.
+	Component string
 }
 
 // installTransferOptions configures the installTransfer operation.
@@ -57,4 +72,9 @@ type DisableFeatureOptions struct {
 
 	// NoRefresh skips running systemd-sysext refresh.
 	NoRefresh bool
+
+	// Component scopes the operation to a single named systemd-sysupdate
+	// component. Empty operates on the default domain: the union of the
+	// legacy default sysupdate.d directory and every discovered component.
+	Component string
 }

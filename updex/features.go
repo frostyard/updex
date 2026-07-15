@@ -14,23 +14,26 @@ import (
 )
 
 // Features returns all configured features with their status.
-func (c *Client) Features(ctx context.Context) ([]FeatureInfo, error) {
+//
+// opts is variadic for backward compatibility: only opts[0] is used, if
+// provided; additional elements are ignored. Callers with no options may
+// omit it entirely.
+func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]FeatureInfo, error) {
+	var opt FeaturesOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+
 	c.msg("Loading configurations")
 
-	features, err := config.LoadFeatures(c.config.Definitions)
+	features, transfers, err := c.loadDomain(opt.Component)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load features: %w", err)
+		return nil, err
 	}
 
 	if len(features) == 0 {
 		c.msg("No features configured")
 		return []FeatureInfo{}, nil
-	}
-
-	// Load transfers to show which belong to each feature
-	transfers, err := config.LoadTransfers(c.config.Definitions)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load transfers: %w", err)
 	}
 
 	var featureInfos []FeatureInfo
@@ -60,15 +63,11 @@ func (c *Client) Features(ctx context.Context) ([]FeatureInfo, error) {
 	return featureInfos, nil
 }
 
-// findFeature loads all features and returns the one matching name. It returns
-// an error if the feature is not found or is masked. The action parameter
-// (e.g. "enabled", "disabled") is used in the masked error message.
-func (c *Client) findFeature(name, action string) (*config.Feature, error) {
-	features, err := config.LoadFeatures(c.config.Definitions)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load features: %w", err)
-	}
-
+// lookupFeature returns the feature matching name from an already-loaded
+// feature set. It returns an error if the feature is not found or is
+// masked. The action parameter (e.g. "enabled", "disabled") is used in the
+// masked error message.
+func lookupFeature(features []*config.Feature, name, action string) (*config.Feature, error) {
 	for _, f := range features {
 		if f.Name == name {
 			if f.Masked {
@@ -81,22 +80,17 @@ func (c *Client) findFeature(name, action string) (*config.Feature, error) {
 	return nil, fmt.Errorf("feature '%s' not found", name)
 }
 
-// loadFeatureTransfers loads all transfers and returns those associated with
-// the given feature name.
-func (c *Client) loadFeatureTransfers(name string) ([]*config.Transfer, error) {
-	transfers, err := config.LoadTransfers(c.config.Definitions)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load transfers: %w", err)
-	}
-
-	return config.GetTransfersForFeature(transfers, name), nil
-}
-
 // writeFeatureDropIn creates a drop-in configuration file that sets a
-// feature's enabled state. In dry-run mode it only logs what would happen
-// and returns the path without writing anything.
-func (c *Client) writeFeatureDropIn(name string, enabled bool, dryRun bool) (string, error) {
-	dropInDir := filepath.Join("/etc/sysupdate.d", name+".feature.d")
+// feature's enabled state. The drop-in is written under the same
+// systemd-sysupdate component scope the feature file itself was discovered
+// under (see config.ComponentOfPath): component-scoped features get
+// /etc/sysupdate.<name>.d/..., legacy default and --definitions-loaded
+// features keep the legacy /etc/sysupdate.d/... path. In dry-run mode it
+// only logs what would happen and returns the path without writing
+// anything.
+func (c *Client) writeFeatureDropIn(f *config.Feature, enabled bool, dryRun bool) (string, error) {
+	component, _ := config.ComponentOfPath(f.FilePath) // "" for the legacy default or a --definitions override
+	dropInDir := filepath.Join(config.EtcComponentDir(component), f.Name+".feature.d")
 	dropInFile := filepath.Join(dropInDir, "00-updex.conf")
 
 	if dryRun {
@@ -127,15 +121,23 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 		DryRun:  opts.DryRun,
 	}
 
+	features, transfers, err := c.loadDomain(opts.Component)
+	if err != nil {
+		result.Error = err.Error()
+		c.warn("%s", result.Error)
+		return result, err
+	}
+
 	// Verify the feature exists and is not masked
-	if _, err := c.findFeature(name, "enabled"); err != nil {
+	f, err := lookupFeature(features, name, "enabled")
+	if err != nil {
 		result.Error = err.Error()
 		c.warn("%s", result.Error)
 		return result, err
 	}
 
 	// Create drop-in directory and file
-	dropInFile, err := c.writeFeatureDropIn(name, true, opts.DryRun)
+	dropInFile, err := c.writeFeatureDropIn(f, true, opts.DryRun)
 	if err != nil {
 		result.Error = err.Error()
 		c.warn("%s", result.Error)
@@ -149,12 +151,7 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 	if opts.Now {
 		c.msg("Downloading extensions")
 
-		featureTransfers, err := c.loadFeatureTransfers(name)
-		if err != nil {
-			result.Error = err.Error()
-			c.warn("%s", result.Error)
-			return result, err
-		}
+		featureTransfers := config.GetTransfersForFeature(transfers, name)
 
 		if len(featureTransfers) == 0 {
 			c.msg("No transfers associated with this feature")
@@ -222,20 +219,23 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 		DryRun:  opts.DryRun,
 	}
 
-	// Verify the feature exists and is not masked
-	if _, err := c.findFeature(name, "disabled"); err != nil {
-		result.Error = err.Error()
-		c.warn("%s", result.Error)
-		return result, err
-	}
-
-	// Load transfers for this feature (needed for merge state check and file removal)
-	featureTransfers, err := c.loadFeatureTransfers(name)
+	features, transfers, err := c.loadDomain(opts.Component)
 	if err != nil {
 		result.Error = err.Error()
 		c.warn("%s", result.Error)
 		return result, err
 	}
+
+	// Verify the feature exists and is not masked
+	f, err := lookupFeature(features, name, "disabled")
+	if err != nil {
+		result.Error = err.Error()
+		c.warn("%s", result.Error)
+		return result, err
+	}
+
+	// Transfers for this feature (needed for merge state check and file removal)
+	featureTransfers := config.GetTransfersForFeature(transfers, name)
 
 	willRemoveFiles := opts.Now
 
@@ -271,7 +271,7 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 	}
 
 	// Create drop-in directory and file
-	dropInFile, err := c.writeFeatureDropIn(name, false, opts.DryRun)
+	dropInFile, err := c.writeFeatureDropIn(f, false, opts.DryRun)
 	if err != nil {
 		result.Error = err.Error()
 		c.warn("%s", result.Error)
@@ -356,14 +356,9 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 
 // UpdateFeatures downloads and installs new versions for all enabled features.
 func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions) ([]UpdateFeaturesResult, error) {
-	features, err := config.LoadFeatures(c.config.Definitions)
+	features, transfers, err := c.loadDomain(opts.Component)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load features: %w", err)
-	}
-
-	transfers, err := config.LoadTransfers(c.config.Definitions)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load transfers: %w", err)
+		return nil, err
 	}
 
 	var allResults []UpdateFeaturesResult
@@ -462,14 +457,9 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 
 // CheckFeatures checks if newer versions are available for all enabled features.
 func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) ([]CheckFeaturesResult, error) {
-	features, err := config.LoadFeatures(c.config.Definitions)
+	features, transfers, err := c.loadDomain(opts.Component)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load features: %w", err)
-	}
-
-	transfers, err := config.LoadTransfers(c.config.Definitions)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load transfers: %w", err)
+		return nil, err
 	}
 
 	var allResults []CheckFeaturesResult

@@ -583,7 +583,8 @@ func TestFeatures_ListAllFeatures(t *testing.T) {
 	targetDir := t.TempDir()
 	updateTransferTargetPath(t, configDir, targetDir)
 
-	// Act
+	// Act: call with no options at all, exercising the backward-compatible
+	// variadic signature (opts is optional).
 	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
 	features, err := client.Features(t.Context())
 
@@ -613,6 +614,39 @@ func TestFeatures_ListAllFeatures(t *testing.T) {
 	}
 	if !foundEnabled || !foundDisabled {
 		t.Error("expected to find both features")
+	}
+}
+
+// TestFeatures_VariadicOptions verifies the backward-compatible variadic
+// signature: Features(ctx) works with zero options, Features(ctx, opts)
+// works with exactly one (the pre-existing call form), and when multiple
+// options are passed only the first is honored.
+func TestFeatures_VariadicOptions(t *testing.T) {
+	configDir := t.TempDir()
+	mockRunner := &sysext.MockRunner{}
+
+	createFeatureFile(t, configDir, "feature1", true)
+
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
+
+	// Zero options: should behave like the zero value (Component == "").
+	if _, err := client.Features(t.Context()); err != nil {
+		t.Fatalf("Features() with no opts failed: %v", err)
+	}
+
+	// One option: the pre-existing call form must still compile and work.
+	if _, err := client.Features(t.Context(), FeaturesOptions{}); err != nil {
+		t.Fatalf("Features(opts) failed: %v", err)
+	}
+
+	// Multiple options: only the first is used. A non-empty Component on a
+	// Definitions-scoped client is rejected by loadDomain, so passing it
+	// first should surface that error; passing it second should not.
+	if _, err := client.Features(t.Context(), FeaturesOptions{Component: "bogus"}, FeaturesOptions{}); err == nil {
+		t.Error("expected error from first opts element with Component set on a Definitions-scoped client")
+	}
+	if _, err := client.Features(t.Context(), FeaturesOptions{}, FeaturesOptions{Component: "bogus"}); err != nil {
+		t.Errorf("expected second opts element to be ignored, got error: %v", err)
 	}
 }
 

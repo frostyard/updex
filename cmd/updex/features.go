@@ -9,6 +9,7 @@ var (
 	featureDisableForce bool
 	featureEnableNow    bool
 	featureUpdateNoVac  bool
+	featureComponent    string
 )
 
 func newFeaturesCmd() *cobra.Command {
@@ -28,6 +29,11 @@ CONFIGURATION FILES:
   - /usr/local/lib/sysupdate.d/*.feature
   - /usr/lib/sysupdate.d/*.feature
 
+By default, features and transfers are read from the union of the legacy
+default directories above and every discovered systemd-sysupdate component
+(sysupdate.<name>.d/*, see 'updex components'). Use --component=<name> to
+scope an operation to a single named component instead.
+
 SUBCOMMANDS:
   list     Show all features and their status
   enable   Enable a feature (optionally download immediately)
@@ -46,9 +52,11 @@ SUBCOMMANDS:
   # Update all enabled features
   sudo updex features update
 
-  # Check for available updates
-  updex features check`,
+  # Scope an operation to a single component
+  updex features list --component=docker`,
 	}
+
+	cmd.PersistentFlags().StringVar(&featureComponent, "component", "", "Scope the operation to a single named systemd-sysupdate component")
 
 	cmd.AddCommand(newFeaturesListCmd())
 	cmd.AddCommand(newFeaturesEnableCmd())
