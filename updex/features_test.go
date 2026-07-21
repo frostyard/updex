@@ -3,6 +3,7 @@ package updex
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1379,5 +1380,92 @@ func TestCheckFeatures_UpToDate(t *testing.T) {
 	}
 	if results[0].Results[0].UpdateAvailable {
 		t.Error("expected UpdateAvailable=false when up to date")
+	}
+}
+
+// TestCheckFeatures_EmptyResultsSerializeAsArray verifies that when there are
+// no enabled features (or no qualifying results), CheckFeatures returns a
+// non-nil slice that JSON-marshals to `[]` rather than `null`. Consumers such
+// as pilothouse and snosi scripts parse the CLI `--json` output and previously
+// broke on a top-level `null`. See docs in features.go.
+func TestCheckFeatures_EmptyResultsSerializeAsArray(t *testing.T) {
+	configDir := t.TempDir() // empty: no .feature/.transfer files
+
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: &sysext.MockRunner{}})
+	results, err := client.CheckFeatures(t.Context(), CheckFeaturesOptions{})
+	if err != nil {
+		t.Fatalf("CheckFeatures failed: %v", err)
+	}
+	if results == nil {
+		t.Fatal("expected non-nil slice, got nil (would serialize as JSON null)")
+	}
+	b, err := json.Marshal(results)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+	if string(b) != "[]" {
+		t.Errorf("expected JSON [], got %s", b)
+	}
+}
+
+// TestUpdateFeatures_EmptyResultsSerializeAsArray is the UpdateFeatures analog
+// of TestCheckFeatures_EmptyResultsSerializeAsArray.
+func TestUpdateFeatures_EmptyResultsSerializeAsArray(t *testing.T) {
+	configDir := t.TempDir() // empty: no .feature/.transfer files
+
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: &sysext.MockRunner{}})
+	results, err := client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true})
+	if err != nil {
+		t.Fatalf("UpdateFeatures failed: %v", err)
+	}
+	if results == nil {
+		t.Fatal("expected non-nil slice, got nil (would serialize as JSON null)")
+	}
+	b, err := json.Marshal(results)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+	if string(b) != "[]" {
+		t.Errorf("expected JSON [], got %s", b)
+	}
+}
+
+// TestCheckFeatures_NestedResultsSerializeAsArray covers the reachable case
+// where an enabled feature has a transfer but the manifest yields no matching
+// versions: the inner loop `continue`s without appending, so the feature's
+// nested `Results` stays empty. It must serialize as `"results":[]`, not
+// `"results":null`. This protects the load-bearing make([]CheckResult, 0) in
+// CheckFeatures.
+func TestCheckFeatures_NestedResultsSerializeAsArray(t *testing.T) {
+	configDir := t.TempDir()
+	targetDir := t.TempDir()
+
+	// Server offers no files at all -> manifest has zero available versions.
+	server := testutil.NewTestServer(t, testutil.TestServerFiles{
+		Files: map[string]string{},
+	})
+	defer server.Close()
+
+	createFeatureFile(t, configDir, "testfeature", true)
+	createFeatureTransferFile(t, configDir, "testext", "testfeature", server.URL)
+	updateTransferTargetPath(t, configDir, targetDir)
+
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: &sysext.MockRunner{}})
+	results, err := client.CheckFeatures(t.Context(), CheckFeaturesOptions{})
+	if err != nil {
+		t.Fatalf("CheckFeatures failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 feature result, got %d", len(results))
+	}
+	if len(results[0].Results) != 0 {
+		t.Fatalf("expected 0 component results, got %d", len(results[0].Results))
+	}
+	b, err := json.Marshal(results)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+	if !strings.Contains(string(b), `"results":[]`) {
+		t.Errorf("expected nested \"results\":[] in output, got %s", b)
 	}
 }
