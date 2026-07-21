@@ -165,6 +165,13 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 	results, err := client.UpdateFeatures(cmd.Context(), opts)
 
 	if clix.JSONOutput {
+		// Never emit JSON `null` on stdout, even on the error path where the
+		// client returns a nil slice (e.g. domain load failure). Consumers
+		// parse this stream and expect an array. The error is still returned
+		// (non-zero exit) via errors.Join below.
+		if results == nil {
+			results = []updex.UpdateFeaturesResult{}
+		}
 		_, jsonErr := clix.OutputJSON(results)
 		return errors.Join(err, jsonErr)
 	}
@@ -208,6 +215,12 @@ func runFeaturesCheck(cmd *cobra.Command, args []string) error {
 	})
 
 	if clix.JSONOutput {
+		// Never emit JSON `null` on stdout, even on the error path where the
+		// client returns a nil slice (e.g. domain load failure). See
+		// runFeaturesUpdate for the same rationale.
+		if results == nil {
+			results = []updex.CheckFeaturesResult{}
+		}
 		_, jsonErr := clix.OutputJSON(results)
 		return errors.Join(err, jsonErr)
 	}

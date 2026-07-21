@@ -361,7 +361,10 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 		return nil, err
 	}
 
-	var allResults []UpdateFeaturesResult
+	// Initialize as a non-nil slice so empty results serialize as JSON `[]`
+	// rather than `null`. Consumers (pilothouse, snosi scripts) that parse
+	// the CLI's `--json` output depend on an array being present.
+	allResults := make([]UpdateFeaturesResult, 0)
 	var hasErrors bool
 
 	// Cache manifests by source URL to avoid redundant HTTP requests
@@ -380,6 +383,9 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 
 		featureResult := UpdateFeaturesResult{
 			Feature: f.Name,
+			// Non-nil so a feature with no per-transfer result serializes
+			// its `results` as `[]` rather than `null`.
+			Results: make([]UpdateResult, 0),
 		}
 
 		for _, transfer := range featureTransfers {
@@ -462,7 +468,9 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 		return nil, err
 	}
 
-	var allResults []CheckFeaturesResult
+	// Initialize as a non-nil slice so empty results serialize as JSON `[]`
+	// rather than `null` (see UpdateFeatures for the same rationale).
+	allResults := make([]CheckFeaturesResult, 0)
 
 	// Cache manifests by source URL to avoid redundant HTTP requests
 	// when multiple transfers share the same source.
@@ -480,6 +488,9 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 
 		featureResult := CheckFeaturesResult{
 			Feature: f.Name,
+			// Non-nil so a feature with no per-transfer result serializes
+			// its `results` as `[]` rather than `null`.
+			Results: make([]CheckResult, 0),
 		}
 
 		for _, transfer := range featureTransfers {

@@ -135,3 +135,63 @@ func TestRunFeaturesUpdate_ThreadsDryRun(t *testing.T) {
 		t.Error("expected CLI dry-run to avoid creating the current symlink")
 	}
 }
+
+// TestRunFeaturesCheck_JSONErrorPathEmitsArray verifies that on the error path
+// (here: --definitions combined with --component, which fails loadDomain), the
+// --json output on stdout is `[]`, never `null`. The command still returns a
+// non-zero error. Regression guard for the null-vs-array contract that broke
+// pilothouse.
+func TestRunFeaturesCheck_JSONErrorPathEmitsArray(t *testing.T) {
+	oldDefinitions, oldComponent, oldJSONOutput := definitions, featureComponent, clix.JSONOutput
+	t.Cleanup(func() {
+		definitions = oldDefinitions
+		featureComponent = oldComponent
+		clix.JSONOutput = oldJSONOutput
+	})
+
+	definitions = t.TempDir()
+	featureComponent = "somecomponent" // combining the two makes loadDomain fail
+	clix.JSONOutput = true
+
+	output, err := captureStdout(t, func() error {
+		cmd := &cobra.Command{}
+		cmd.SetContext(t.Context())
+		return runFeaturesCheck(cmd, nil)
+	})
+	if err == nil {
+		t.Fatal("expected an error on the --definitions + --component path")
+	}
+	if strings.TrimSpace(output) != "[]" {
+		t.Errorf("expected stdout []; got %q", output)
+	}
+}
+
+// TestRunFeaturesUpdate_JSONErrorPathEmitsArray is the update analog. It also
+// sets getEUID to root so the requireRoot() guard is not what fails.
+func TestRunFeaturesUpdate_JSONErrorPathEmitsArray(t *testing.T) {
+	oldDefinitions, oldComponent, oldJSONOutput := definitions, featureComponent, clix.JSONOutput
+	oldGetEUID := getEUID
+	t.Cleanup(func() {
+		definitions = oldDefinitions
+		featureComponent = oldComponent
+		clix.JSONOutput = oldJSONOutput
+		getEUID = oldGetEUID
+	})
+
+	definitions = t.TempDir()
+	featureComponent = "somecomponent"
+	clix.JSONOutput = true
+	getEUID = func() int { return 0 }
+
+	output, err := captureStdout(t, func() error {
+		cmd := &cobra.Command{}
+		cmd.SetContext(t.Context())
+		return runFeaturesUpdate(cmd, nil)
+	})
+	if err == nil {
+		t.Fatal("expected an error on the --definitions + --component path")
+	}
+	if strings.TrimSpace(output) != "[]" {
+		t.Errorf("expected stdout []; got %q", output)
+	}
+}
