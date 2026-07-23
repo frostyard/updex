@@ -10,7 +10,7 @@ require (
 	github.com/klauspost/compress v1.19.0
 	github.com/schollz/progressbar/v3 v3.19.1
 	github.com/spf13/cobra v1.10.2
-	github.com/ulikunitz/xz v0.5.15
+	github.com/ulikunitz/xz v0.5.16
 	gopkg.in/ini.v1 v1.67.3
 )
 
