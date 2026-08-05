@@ -302,15 +302,33 @@ Design decisions (verified with the user, 2026-08):
   `filepath.Join` (definition paths or cache filenames) or URLs.
 - **Transactional add**: `CatalogAdd` snapshots the `.transfer`,
   `.feature`, and its `00-updex.conf` drop-in (`fileSnapshot` in
-  `updex/catalog.go`) before writing. If enable/download fails, every
-  snapshot is restored — a fresh add's files are removed, a re-add's
-  previous contents are rewritten — then the drop-in dir and (fresh adds
-  only) the component dir are `os.Remove`d, which no-ops when non-empty.
-  No enabled-but-broken state and no destroyed working definition.
+  `updex/catalog.go`) before writing, and every failure past that point
+  runs the same `rollback()` closure — including the `MkdirAll` and the
+  two `os.WriteFile` calls, which matters because `os.WriteFile`
+  truncates on open, so a failing write can destroy a working definition
+  by itself (third review round). Restore semantics: a fresh add's files
+  are removed, a re-add's previous contents are rewritten; then the
+  drop-in dir and (fresh adds only) the component dir are `os.Remove`d,
+  which no-ops when non-empty. No enabled-but-broken state, no destroyed
+  working definition, no mismatched old/new pair.
+- **Ownership checked before destruction**: `CatalogRemove` validates the
+  `.transfer`'s marker/repo *before* calling `DisableFeature{Now}` and
+  errors out on a mismatch, pointing at `updex features disable`. That
+  teardown removes images and links described by whatever transfer claims
+  the feature, so a post-hoc check would have already destroyed state
+  belonging to a definition it then refuses to delete (third review
+  round; reachable when an admin hand-replaces a generated `.transfer`
+  and keeps the generated `.feature`).
 - **Drop-in preservation**: removal deletes only `updexDropInName`
   (`00-updex.conf`, the single file updex writes, shared with
   `writeFeatureDropIn`) out of `<name>.feature.d`; administrator files
   like `50-local.conf` survive and keep the directory alive.
+- **Listing status is repo-scoped**: `CatalogList` marks
+  `Installed`/`Enabled` only when `GeneratedFileRepo(f.FilePath)` names
+  the listing repo (`f.FilePath` is the highest-priority file, i.e. the
+  `/etc` one catalog add writes). Two repos sharing a `Component` no
+  longer report each other's installs, and a hand-written or
+  `/usr/lib`-shipped same-named feature is not reported as catalog-added.
 - **After `add`, nothing knows about catalogs.** The generated `.feature`
   is `Enabled=false`; `CatalogAdd` then calls
   `EnableFeature{Now, Component: repo.Component}` so enabling goes through

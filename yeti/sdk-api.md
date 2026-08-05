@@ -145,8 +145,11 @@ client has a `Definitions` override.
   without one, with a warning — unless explicitly selected via
   `opts.Repo`, which errors instead) and cross-references
   `config.LoadComponentFeatures(repo.Component)` to fill
-  `Installed`/`Enabled`. `opts.Search` is a substring filter; search is
-  just `CatalogList` with `Search` set.
+  `Installed`/`Enabled`, which are set only when the matched feature's
+  marker names this repo (`catalog.GeneratedFileRepo(f.FilePath)`), so
+  repos sharing a `Component` don't inherit each other's status.
+  `opts.Search` is a substring filter; search is just `CatalogList` with
+  `Search` set.
 - `CatalogAdd` validates the name, resolves the repo (explicit
   `opts.Repo`, else probes every repo's `FetchConf` and errors on
   multiple hits listing `repo/name` candidates), refuses to overwrite
@@ -154,7 +157,8 @@ client has a `Definitions` override.
   (`catalog.GeneratedFileRepo`), writes `RenderTransfer`/`RenderFeature`
   output to `config.EtcComponentDir(repo.Component)`, then calls
   `EnableFeature{Now: true, Component: repo.Component}`. Writes are
-  snapshotted first, so a failed enable/download restores the prior state
+  snapshotted first and *every* failure after that point (the `MkdirAll`,
+  either `os.WriteFile`, or the enable/download) restores the prior state
   exactly: a fresh add's files are deleted (with the drop-in dir and
   component dir removed if empty), a re-add's previous
   `.transfer`/`.feature`/`00-updex.conf` contents are rewritten. With
@@ -163,12 +167,14 @@ client has a `Definitions` override.
 - `CatalogRemove` validates the name and finds the owning repo: the
   configured repo whose /etc component dir holds a `<name>.feature` whose
   marker names that repo. Errors when none — "not a catalog-managed
-  sysext" — or several. It then calls
+  sysext" — or several. Before anything destructive it also requires the
+  `<name>.transfer`, when present, to be marked by that repo, erroring
+  out otherwise (`DisableFeature{Now}` would delete images described by a
+  foreign transfer). It then calls
   `DisableFeature{Now: true, Force, Component}` and deletes the
-  repo-owned `.transfer` (skipped with a warning otherwise), the
-  `.feature`, and only updex's own `00-updex.conf` drop-in; the
-  `.feature.d` and component directories are removed only if they end up
-  empty, so administrator drop-ins survive.
+  `.transfer`, the `.feature`, and only updex's own `00-updex.conf`
+  drop-in; the `.feature.d` and component directories are removed only if
+  they end up empty, so administrator drop-ins survive.
 
 **CatalogListOptions:** `Repo`, `Search`, `NoCache` (bypass the listing
 cache — see `catalog.CachedList`; the CLI flag is `--no-cache`).

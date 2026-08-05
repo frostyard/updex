@@ -517,9 +517,12 @@ or that another catalog generated, and `catalog remove` only touches
 files marked by the repo it is acting for — so hand-written,
 package-shipped, or other-catalog definitions sharing a name or component
 are safe. A failed `add` restores the previous state exactly (a fresh add
-leaves nothing behind, a re-add keeps its previously working files), and
-`remove` deletes only updex's own `00-updex.conf` drop-in, leaving any
-administrator drop-ins in `<name>.feature.d` in place.
+leaves nothing behind, a re-add keeps its previously working files, even
+if the failure happens mid-write). `remove` refuses up front if the
+sysext's `.transfer` was replaced by one it doesn't own — rather than
+tearing down images that definition describes — and deletes only updex's
+own `00-updex.conf` drop-in, leaving any administrator drop-ins in
+`<name>.feature.d` in place.
 
 Sysexts are referenced as `NAME` or `REPO/NAME`; a bare `NAME` works
 whenever it is unambiguous across the configured catalogs, and `--repo` is

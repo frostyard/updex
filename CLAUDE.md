@@ -120,12 +120,20 @@ Key design points:
   validated (`catalog.ValidateSysextName`,
   `^[a-zA-Z0-9_][a-zA-Z0-9._+-]*$`) in the SDK and in `FetchConf`, and
   `CachedList` re-validates `Repo.Name`, so traversal-shaped values never
-  reach `filepath.Join` or URLs. A failed `CatalogAdd` restores exactly
-  what was there before via `fileSnapshot` (fresh add → files removed;
-  re-add → previous `.transfer`/`.feature`/drop-in contents rewritten).
-  Removal deletes only updex's `00-updex.conf` (`updexDropInName`) from
-  `<name>.feature.d`, leaving administrator drop-ins, and `os.Remove`s
-  the directories only when they end up empty.
+  reach `filepath.Join` or URLs. Any failure after the `fileSnapshot`s
+  are taken — including the definition writes themselves, since
+  `os.WriteFile` truncates on open — goes through one `rollback()`
+  closure that restores exactly what was there before (fresh add → files
+  removed; re-add → previous `.transfer`/`.feature`/drop-in contents
+  rewritten). `CatalogRemove` validates the `.transfer`'s ownership
+  *before* calling `DisableFeature{Now}` and refuses outright on a
+  mismatch, since that teardown deletes images described by whatever
+  transfer claims the feature; it then deletes only updex's
+  `00-updex.conf` (`updexDropInName`) from `<name>.feature.d`, leaving
+  administrator drop-ins, and `os.Remove`s the directories only when they
+  end up empty. `CatalogList` attributes `Installed`/`Enabled` via
+  `GeneratedFileRepo(f.FilePath)`, so a shared `Component` doesn't report
+  one repo's install under another.
 - The generated `.feature` has `Enabled=false`; enabling goes through the
   standard `EnableFeature{Now: true, Component: repo.Component}` drop-in
   path. After `add`, the sysext is indistinguishable from a hand-written
