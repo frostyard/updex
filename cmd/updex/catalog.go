@@ -14,6 +14,7 @@ import (
 var (
 	catalogRepo        string
 	catalogRemoveForce bool
+	catalogNoCache     bool
 )
 
 func newCatalogCmd() *cobra.Command {
@@ -70,11 +71,15 @@ it is unambiguous across the configured catalogs.`,
 }
 
 func newCatalogListCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List sysexts available from configured catalogs",
 		Long: `List the sysexts published by every configured catalog repo (or a
 single one with --repo), marking those already added and enabled.
+
+Listings are cached locally (default 60 minutes, ~/.cache/updex/) and
+revalidated with the catalog afterwards; use --no-cache to force a live
+query.
 
 OUTPUT COLUMNS:
   REPO       - Catalog repo publishing the sysext
@@ -85,19 +90,29 @@ OUTPUT COLUMNS:
   updex catalog list
 
   # List one repo in JSON format
-  updex catalog list --repo fedora --json`,
+  updex catalog list --repo fedora --json
+
+  # Bypass the local cache
+  updex catalog list --no-cache`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCatalogList(cmd, "")
 		},
 	}
+
+	cmd.Flags().BoolVar(&catalogNoCache, "no-cache", false, "Bypass the local listing cache and query the catalog directly")
+
+	return cmd
 }
 
 func newCatalogSearchCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "search TERM",
 		Short: "Search configured catalogs for a sysext",
-		Long:  `Search the configured catalog repos for sysexts whose name contains TERM.`,
+		Long: `Search the configured catalog repos for sysexts whose name contains TERM.
+
+Uses the same local listing cache as 'catalog list'; --no-cache forces a
+live query.`,
 		Example: `  # Find anything zoxide-related
   updex catalog search zoxide
 
@@ -108,6 +123,10 @@ func newCatalogSearchCmd() *cobra.Command {
 			return runCatalogList(cmd, args[0])
 		},
 	}
+
+	cmd.Flags().BoolVar(&catalogNoCache, "no-cache", false, "Bypass the local listing cache and query the catalog directly")
+
+	return cmd
 }
 
 func newCatalogAddCmd() *cobra.Command {
@@ -187,8 +206,9 @@ func runCatalogList(cmd *cobra.Command, search string) error {
 	client := newClient()
 
 	entries, err := client.CatalogList(cmd.Context(), updex.CatalogListOptions{
-		Repo:   catalogRepo,
-		Search: search,
+		Repo:    catalogRepo,
+		Search:  search,
+		NoCache: catalogNoCache,
 	})
 	if err != nil {
 		return err

@@ -15,13 +15,19 @@ import (
 )
 
 // withCatalogConfigRoots points catalog.ConfigRoots at a fresh temp
-// directory and returns it.
+// directory and returns it. It also redirects catalog.CacheDir to a temp
+// directory so no test ever reads or writes the real user cache.
 func withCatalogConfigRoots(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	original := catalog.ConfigRoots
 	catalog.ConfigRoots = []string{root}
-	t.Cleanup(func() { catalog.ConfigRoots = original })
+	originalCache := catalog.CacheDir
+	catalog.CacheDir = t.TempDir()
+	t.Cleanup(func() {
+		catalog.ConfigRoots = original
+		catalog.CacheDir = originalCache
+	})
 	return root
 }
 
@@ -458,7 +464,9 @@ func TestCatalogList(t *testing.T) {
 	roots := withComponentSearchRoots(t)
 	catalogRoot := withCatalogConfigRoots(t)
 
+	var apiRequests int
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiRequests++
 		_, _ = w.Write([]byte(`[
 			{"name": "btop", "type": "dir"},
 			{"name": "zoxide", "type": "dir"},
@@ -498,6 +506,20 @@ func TestCatalogList(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Name != "zoxide" {
 		t.Errorf("search: expected only zoxide, got %+v", entries)
+	}
+
+	// Repeated listings are served from the local cache: the two calls
+	// above made exactly one API request between them.
+	if apiRequests != 1 {
+		t.Errorf("expected 1 API request across cached listings, got %d", apiRequests)
+	}
+
+	// NoCache forces a live pull.
+	if _, err := client.CatalogList(t.Context(), CatalogListOptions{NoCache: true}); err != nil {
+		t.Fatalf("CatalogList with NoCache failed: %v", err)
+	}
+	if apiRequests != 2 {
+		t.Errorf("expected NoCache to make a live request, got %d total", apiRequests)
 	}
 
 	// Explicitly selecting a repo without ListURL is an error.

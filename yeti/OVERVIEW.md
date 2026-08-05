@@ -319,6 +319,21 @@ Design decisions (verified with the user, 2026-08):
   (`splitCatalogArg`, errors when both are given and conflict).
 - Catalog operations reject a `Definitions` override (component-scoped,
   same conflict as `--component` + `-C`).
+- **Listing cache** (`catalog/cache.go`): `CatalogList` uses
+  `catalog.CachedList`, a per-repo TTL+ETag cache stored as
+  `<catalog.CacheDir>/list-<repo>.json` (`CacheDir` defaults to
+  `os.UserCacheDir()/updex`; empty disables caching; package var,
+  test-overridable — the updex test helper always redirects it). Entry:
+  `{list_url, etag, fetched_at, names}`; `list_url` mismatch invalidates.
+  Flow: age < TTL (default 60 min, `DefaultListCacheTTL`) → serve cache,
+  zero network; expired → conditional GET with `If-None-Match` (GitHub's
+  304 costs no rate limit → bump `fetched_at`); live fetch failure with an
+  existing entry → serve stale with `CacheResult.Stale` (SDK warns);
+  `NoCache` (CLI `--no-cache` on list/search; named to avoid colliding
+  with the global `--no-refresh` sysext flag) always fetches live and
+  rewrites the cache. Reads/writes are best-effort — corrupt entries are
+  misses, write failures ignored. Only the ListURL enumeration is cached;
+  `FetchConf` and Installed/Enabled state are always live.
 - `config.EtcComponentDir` now derives from `SearchRoots[0]` (still `/etc`
   in production) so catalog/drop-in write paths are exercisable in tests
   that override `SearchRoots`.

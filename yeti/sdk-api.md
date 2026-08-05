@@ -167,9 +167,10 @@ client has a `Definitions` override.
   and `.feature.d` from the /etc component dir, removing the directory
   itself when empty.
 
-**CatalogListOptions:** `Repo`, `Search`. **CatalogAddOptions:** `Repo`,
-`DryRun`, `NoRefresh`. **CatalogRemoveOptions:** `Repo`, `Force`,
-`DryRun`, `NoRefresh`.
+**CatalogListOptions:** `Repo`, `Search`, `NoCache` (bypass the listing
+cache — see `catalog.CachedList`; the CLI flag is `--no-cache`).
+**CatalogAddOptions:** `Repo`, `DryRun`, `NoRefresh`.
+**CatalogRemoveOptions:** `Repo`, `Force`, `DryRun`, `NoRefresh`.
 
 **CatalogEntry:** `Name`, `Repo`, `Installed`, `Enabled`.
 **CatalogAddResult:** `Name`, `Repo`, `Component`, `TransferFile`,
@@ -282,7 +283,8 @@ Sysext catalog primitives; no built-in repos (see `OVERVIEW.md` "Catalogs").
 - `LoadRepos() ([]Repo, error)` — Load configured repos, sorted by name; returns `ErrNoCatalogs` when none exist.
 - `RepoByName(repos []Repo, name string) (Repo, bool)`
 - `type Repo struct { Name, SiteURL, ListURL, Component string }` — `Component` defaults to `catalog-<name>`; both names validated against `[a-zA-Z0-9_-]+`.
-- `List(ctx, *http.Client, Repo) ([]string, error)` — Enumerate sysexts via the repo's `ListURL` (GitHub contents API shape): top-level `dir` entries minus dotted names and `docs`/`LICENSES`. Sends `GITHUB_TOKEN` as a bearer token when set.
+- `List(ctx, *http.Client, Repo) ([]string, error)` — Enumerate sysexts via the repo's `ListURL` (GitHub contents API shape): top-level `dir` entries minus dotted names and `docs`/`LICENSES`. Sends `GITHUB_TOKEN` as a bearer token when set. Always live; no cache.
+- `CachedList(ctx, *http.Client, Repo, CachedListOptions) ([]string, CacheResult, error)` — `List` behind a per-repo TTL+ETag cache in `CacheDir` (default `os.UserCacheDir()/updex`, empty disables). `CachedListOptions{TTL /* 0 → DefaultListCacheTTL (60 min) */, NoCache}`; `CacheResult{FromCache, Stale, Age}`. Within TTL: cache, zero network. Expired: conditional GET (`If-None-Match`; 304 bumps the timestamp, rate-limit-free on GitHub). Fetch failure with an entry present: stale served, `Stale: true`. Entries are invalidated when the repo's `ListURL` changes; corrupt files are misses; writes are best-effort.
 - `FetchConf(ctx, *http.Client, Repo, name) ([]byte, error)` — GET `<SiteURL>/<name>/<name>.conf`; 404 wraps `ErrNotFound`. Validates `name` first.
 - `RenderTransfer(conf []byte, repo Repo, name string) ([]byte, error)` — Byte-preserving line transform: prepend the `GeneratedMarker` header, inject `Features=<name>` after `[Transfer]` (appending the section if missing, replacing an existing `Features` key), drop `Target CurrentSymlink`, keep `%w`/`%a` specifiers unexpanded. Validates `[Source]`/`[Target]` presence via `ini.Load`.
 - `RenderFeature(Repo, name) []byte` — `GeneratedMarker` header plus `[Feature]` stanza with `Description`, `Documentation=<SiteURL>/<name>/`, and `Enabled=false` (enabling goes through the standard drop-in).

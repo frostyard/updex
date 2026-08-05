@@ -521,6 +521,14 @@ Sysexts are referenced as `NAME` or `REPO/NAME`; a bare `NAME` works
 whenever it is unambiguous across the configured catalogs, and `--repo` is
 equivalent to the `REPO/` prefix.
 
+`catalog list`/`search` cache each repo's listing locally (in
+`~/.cache/updex/`, or `/root/.cache/updex/` under sudo) for 60 minutes.
+After the TTL the listing is revalidated with a conditional request — a
+`304 Not Modified` from the GitHub API costs no rate limit and just
+refreshes the cache. `--no-cache` forces a live query, and when a live
+fetch fails (offline, rate-limited) an expired cache is served with a
+warning so listing keeps working. `add`/`remove` never use the cache.
+
 ## Remote Manifest Format
 
 The source URL must contain a `SHA256SUMS` file:

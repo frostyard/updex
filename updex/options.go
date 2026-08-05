@@ -67,6 +67,10 @@ type CatalogListOptions struct {
 
 	// Search filters entries to names containing this substring.
 	Search string
+
+	// NoCache bypasses the local listing cache and queries the catalog
+	// directly (the result still refreshes the cache).
+	NoCache bool
 }
 
 // CatalogAddOptions configures the CatalogAdd operation.

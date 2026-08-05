@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/frostyard/updex/catalog"
 	"github.com/frostyard/updex/config"
@@ -73,9 +74,19 @@ func (c *Client) CatalogList(ctx context.Context, opts CatalogListOptions) ([]Ca
 		}
 
 		c.msg("Listing catalog %q", repo.Name)
-		names, err := catalog.List(ctx, c.httpClient, repo)
+		names, cacheRes, err := catalog.CachedList(ctx, c.httpClient, repo, catalog.CachedListOptions{
+			NoCache: opts.NoCache,
+		})
 		if err != nil {
 			return nil, err
+		}
+		switch {
+		case cacheRes.Stale:
+			c.warn("live fetch for catalog %q failed; using stale cached listing (age %s)",
+				repo.Name, cacheRes.Age.Round(time.Minute))
+		case cacheRes.FromCache && cacheRes.Age > 0:
+			c.msg("Using cached listing for %q (age %s); use --no-cache to refresh",
+				repo.Name, cacheRes.Age.Round(time.Minute))
 		}
 
 		features, err := config.LoadComponentFeatures(repo.Component)

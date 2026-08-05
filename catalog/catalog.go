@@ -83,36 +83,51 @@ type contentsEntry struct {
 // contents API endpoint): top-level directories minus dotted names and
 // known non-sysext directories, sorted. When the GITHUB_TOKEN environment
 // variable is set it is sent as a bearer token to raise the API rate limit.
+// List always fetches live; see CachedList for the TTL+ETag cached variant.
 func List(ctx context.Context, client *http.Client, repo Repo) ([]string, error) {
+	names, _, _, err := fetchList(ctx, client, repo, "")
+	return names, err
+}
+
+// fetchList performs the ListURL request. When etag is non-empty it is sent
+// as If-None-Match; a 304 Not Modified response — which GitHub does not
+// count against the API rate limit — returns notModified=true with no
+// names. newETag carries the response's ETag header for cache storage.
+func fetchList(ctx context.Context, client *http.Client, repo Repo, etag string) (names []string, newETag string, notModified bool, err error) {
 	if repo.ListURL == "" {
-		return nil, fmt.Errorf("catalog %q has no ListURL configured", repo.Name)
+		return nil, "", false, fmt.Errorf("catalog %q has no ListURL configured", repo.Name)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, repo.ListURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create list request: %w", err)
+		return nil, "", false, fmt.Errorf("failed to create list request: %w", err)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
+	if etag != "" {
+		req.Header.Set("If-None-Match", etag)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list catalog %q: %w", repo.Name, err)
+		return nil, "", false, fmt.Errorf("failed to list catalog %q: %w", repo.Name, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to list catalog %q: %s returned %s", repo.Name, repo.ListURL, resp.Status)
+	switch {
+	case resp.StatusCode == http.StatusNotModified:
+		return nil, etag, true, nil
+	case resp.StatusCode != http.StatusOK:
+		return nil, "", false, fmt.Errorf("failed to list catalog %q: %s returned %s", repo.Name, repo.ListURL, resp.Status)
 	}
 
 	var entries []contentsEntry
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxFetchSize)).Decode(&entries); err != nil {
-		return nil, fmt.Errorf("failed to decode catalog %q listing: %w", repo.Name, err)
+		return nil, "", false, fmt.Errorf("failed to decode catalog %q listing: %w", repo.Name, err)
 	}
 
-	var names []string
 	for _, e := range entries {
 		if e.Type != "dir" || strings.HasPrefix(e.Name, ".") || slices.Contains(nonSysextDirs, e.Name) {
 			continue
@@ -121,7 +136,7 @@ func List(ctx context.Context, client *http.Client, repo Repo) ([]string, error)
 	}
 	slices.Sort(names)
 
-	return names, nil
+	return names, resp.Header.Get("ETag"), false, nil
 }
 
 // FetchConf downloads the catalog-published sysupdate transfer definition

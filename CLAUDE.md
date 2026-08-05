@@ -130,6 +130,15 @@ Key design points:
 - Ambiguity: a bare name found in multiple repos (add) or managed by
   multiple repos (remove) errors listing `repo/name` candidates; the CLI
   accepts `REPO/NAME` or `--repo`.
+- Listing cache: `CatalogList` goes through `catalog.CachedList` — a
+  per-repo TTL (default 60 min, `catalog.DefaultListCacheTTL`) + ETag
+  cache in `catalog.CacheDir` (user cache dir /updex; empty disables;
+  test-overridable). Within the TTL no network; after expiry a
+  conditional GET revalidates (GitHub 304s are rate-limit-free); on live
+  fetch failure a stale entry is served with a warning. `--no-cache`
+  (`CatalogListOptions.NoCache`) bypasses and rewrites the cache. The
+  cache entry stores the repo's ListURL and is invalidated when it
+  changes. `add`/`remove`/`FetchConf` never use the cache.
 - Catalog operations error when `ClientConfig.Definitions` is set
   (component-scoped, incompatible with `-C`) and return setup guidance
   when no catalogs are configured (`catalog.ErrNoCatalogs`).
