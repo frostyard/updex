@@ -195,6 +195,38 @@ Expansion is a single left-to-right pass. Unknown specifiers are preserved liter
 
 Specifier values are cached for a single `LoadTransfers` call. `/etc/os-release` is read first with `/usr/lib/os-release` as fallback, and one-line host values are read from `/proc/sys/kernel/random/boot_id`, `/etc/machine-id`, and `/proc/sys/kernel/osrelease`.
 
+## Catalog Files (`.catalog`)
+
+Catalog repos for `updex catalog` are defined by `<name>.catalog` INI files
+(the filename stem is the repo name, `[a-zA-Z0-9_-]+`), searched in
+priority order (first occurrence of a filename wins):
+
+1. `/etc/updex/catalogs.d/`
+2. `/run/updex/catalogs.d/`
+3. `/usr/local/lib/updex/catalogs.d/`
+4. `/usr/lib/updex/catalogs.d/`
+
+There are no built-in repos; without at least one `.catalog` file every
+catalog operation fails with setup guidance.
+
+```ini
+# /etc/updex/catalogs.d/fedora.catalog
+[Catalog]
+SiteURL=https://extensions.fcos.fr/fedora
+ListURL=https://api.github.com/repos/fedora-sysexts/fedora/contents/
+# Component=catalog-fedora
+```
+
+| Key | Required | Description |
+|-----|----------|-------------|
+| `SiteURL` | yes | Base URL artifacts resolve under (`<SiteURL>/<sysext>/{<sysext>.conf,SHA256SUMS,*.raw}`); trailing slash trimmed |
+| `ListURL` | no | GitHub contents API endpoint for `catalog list`/`search`; without it the repo is skipped in listings (add/remove unaffected) |
+| `Component` | no | systemd-sysupdate component for generated files; default `catalog-<name>`, validated against `[a-zA-Z0-9_-]+` |
+
+`catalog add` writes the generated `<sysext>.transfer`/`<sysext>.feature`
+into `/etc/sysupdate.<Component>.d/`, which is discovered as a normal named
+component (see "Components" above).
+
 ## Version Comparison
 
 Versions extracted via `@v` are sorted descending (newest first) when selecting which version to install. `version.Compare` uses a dpkg-compatible comparator for Debian-style versions containing `:`, `~`, or `+` so epochs and tilde pre-release ordering work correctly. `+` is included because semver treats everything after it as ignorable build metadata, which collapsed dpkg-derived sysext versions like `1+7.2-debian13-202607011055` (epoch encoded as `+` because `:` is not filename-safe) to equal precedence and made selection random. Other versions are compared with `hashicorp/go-version` after stripping a leading `v`/`V`; if parsing fails, plain string comparison is used as fallback.

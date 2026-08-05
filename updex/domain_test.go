@@ -305,3 +305,162 @@ func TestEnableFeature_ComponentScoping(t *testing.T) {
 		}
 	})
 }
+
+// TestFeatures_Origin verifies that Features() attributes each feature to
+// where it came from: the catalog named in a generated file's marker, the
+// image for /usr/lib, the administered roots for /etc, /run and
+// /usr/local/lib, and unknown for a --definitions directory.
+func TestFeatures_Origin(t *testing.T) {
+	roots := withComponentSearchRoots(t)
+	withTestImageName(t, "ucore")
+
+	writeComponentFeature(t, filepath.Join(roots[0], "sysupdate.d"), "handwritten", false)
+	writeComponentFeature(t, filepath.Join(roots[1], "sysupdate.d"), "runtimegen", false)
+	writeComponentFeature(t, filepath.Join(roots[2], "sysupdate.d"), "siteinstalled", false)
+	writeComponentFeature(t, filepath.Join(roots[3], "sysupdate.d"), "shipped", false)
+	writeGeneratedFeature(t, filepath.Join(roots[0], "sysupdate.catalog-fedora.d"), "fedora", "zoxide")
+
+	client := NewClient(ClientConfig{})
+	features, err := client.Features(t.Context())
+	if err != nil {
+		t.Fatalf("Features() error = %v", err)
+	}
+
+	want := map[string][2]string{
+		"handwritten":   {FeatureOriginLocal, "etc"},
+		"runtimegen":    {FeatureOriginLocal, "run"},
+		"siteinstalled": {FeatureOriginLocal, "usr"},
+		"shipped":       {FeatureOriginImage, "ucore"},
+		"zoxide":        {FeatureOriginCatalog, "fedora"},
+	}
+
+	got := make(map[string][2]string)
+	for _, f := range features {
+		got[f.Name] = [2]string{f.Origin, f.OriginName}
+	}
+
+	for name, w := range want {
+		g, ok := got[name]
+		if !ok {
+			t.Errorf("feature %q missing from listing", name)
+			continue
+		}
+		if g != w {
+			t.Errorf("feature %q origin = %v, want %v", name, g, w)
+		}
+	}
+}
+
+// TestFeatures_OriginDefinitionsOverride verifies a feature loaded from a
+// -C/--definitions directory, which lies outside every search root, is
+// reported as unknown rather than attributed to a root.
+func TestFeatures_OriginDefinitionsOverride(t *testing.T) {
+	withComponentSearchRoots(t)
+	withTestImageName(t, "ucore")
+
+	customDir := t.TempDir()
+	writeComponentFeature(t, customDir, "custom", false)
+
+	client := NewClient(ClientConfig{Definitions: customDir})
+	features, err := client.Features(t.Context())
+	if err != nil {
+		t.Fatalf("Features() error = %v", err)
+	}
+	if len(features) != 1 {
+		t.Fatalf("expected 1 feature, got %d", len(features))
+	}
+	if features[0].Origin != FeatureOriginUnknown || features[0].OriginName != "" {
+		t.Errorf("origin = (%q, %q), want (unknown, \"\")", features[0].Origin, features[0].OriginName)
+	}
+}
+
+// TestFeatures_OriginDefinitionsUnderSearchRoot verifies that a
+// -C/--definitions directory which happens to live under a search root is
+// still reported as unknown. Path containment alone would claim these
+// files as local:etc or even image, but they were never discovered
+// through the search paths, so their location says nothing about where
+// they came from.
+func TestFeatures_OriginDefinitionsUnderSearchRoot(t *testing.T) {
+	roots := withComponentSearchRoots(t)
+	withTestImageName(t, "ucore")
+
+	for _, root := range []string{roots[0], roots[3]} {
+		customDir := filepath.Join(root, "my-definitions")
+		writeComponentFeature(t, customDir, "custom", false)
+
+		client := NewClient(ClientConfig{Definitions: customDir})
+		features, err := client.Features(t.Context())
+		if err != nil {
+			t.Fatalf("Features() error = %v", err)
+		}
+		if len(features) != 1 {
+			t.Fatalf("expected 1 feature, got %d", len(features))
+		}
+		if features[0].Origin != FeatureOriginUnknown || features[0].OriginName != "" {
+			t.Errorf("definitions dir under %s: origin = (%q, %q), want (unknown, \"\")",
+				root, features[0].Origin, features[0].OriginName)
+		}
+	}
+}
+
+// TestFeatures_OriginDefinitionsKeepsCatalogMarker verifies that a
+// generated file loaded through -C still reports its catalog: the marker
+// is a fact recorded in the file, not an inference from its location.
+func TestFeatures_OriginDefinitionsKeepsCatalogMarker(t *testing.T) {
+	roots := withComponentSearchRoots(t)
+	withTestImageName(t, "ucore")
+
+	customDir := filepath.Join(roots[0], "my-definitions")
+	writeGeneratedFeature(t, customDir, "fedora", "zoxide")
+
+	client := NewClient(ClientConfig{Definitions: customDir})
+	features, err := client.Features(t.Context())
+	if err != nil {
+		t.Fatalf("Features() error = %v", err)
+	}
+	if len(features) != 1 {
+		t.Fatalf("expected 1 feature, got %d", len(features))
+	}
+	if features[0].Origin != FeatureOriginCatalog || features[0].OriginName != "fedora" {
+		t.Errorf("origin = (%q, %q), want (catalog, fedora)", features[0].Origin, features[0].OriginName)
+	}
+}
+
+// TestFeatures_OriginImageWithoutIdentifier verifies an image-shipped
+// feature still classifies as image when os-release names no identifier.
+func TestFeatures_OriginImageWithoutIdentifier(t *testing.T) {
+	roots := withComponentSearchRoots(t)
+	withTestImageName(t, "")
+
+	writeComponentFeature(t, filepath.Join(roots[3], "sysupdate.d"), "shipped", false)
+
+	client := NewClient(ClientConfig{})
+	features, err := client.Features(t.Context())
+	if err != nil {
+		t.Fatalf("Features() error = %v", err)
+	}
+	if len(features) != 1 {
+		t.Fatalf("expected 1 feature, got %d", len(features))
+	}
+	if features[0].Origin != FeatureOriginImage || features[0].OriginName != "" {
+		t.Errorf("origin = (%q, %q), want (image, \"\")", features[0].Origin, features[0].OriginName)
+	}
+}
+
+// withTestImageName makes config.ImageName resolve to name by pointing
+// config.OSReleasePaths at a temp os-release file. An empty name writes an
+// os-release with no identifying fields.
+func withTestImageName(t *testing.T, name string) {
+	t.Helper()
+	content := "NAME=\"Test OS\"\n"
+	if name != "" {
+		content += "VARIANT_ID=" + name + "\n"
+	}
+	path := filepath.Join(t.TempDir(), "os-release")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write os-release: %v", err)
+	}
+	original := config.OSReleasePaths
+	config.OSReleasePaths = []string{path}
+	t.Cleanup(func() { config.OSReleasePaths = original })
+}

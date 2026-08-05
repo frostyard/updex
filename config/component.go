@@ -51,10 +51,12 @@ func defaultSearchPaths() []string {
 
 // EtcComponentDir returns the /etc override directory for a component's
 // definitions (e.g. "/etc/sysupdate.docker.d"), used when writing drop-in
-// configuration overrides. Pass "" for the legacy default component
-// (/etc/sysupdate.d).
+// configuration overrides and catalog-generated definitions. Pass "" for
+// the legacy default component (/etc/sysupdate.d). The highest-priority
+// search root is used so tests that override SearchRoots exercise real
+// writes; in production that root is /etc.
 func EtcComponentDir(name string) string {
-	return filepath.Join("/etc", componentDirName(name))
+	return filepath.Join(SearchRoots[0], componentDirName(name))
 }
 
 // componentNamePattern matches systemd-sysupdate component names (see
@@ -85,6 +87,31 @@ func parseComponentDirName(dirName string) (string, bool) {
 // component shape at all (e.g. a --definitions override directory).
 func ComponentOfPath(path string) (string, bool) {
 	return parseComponentDirName(filepath.Base(filepath.Dir(path)))
+}
+
+// SearchRootIndex returns the index into SearchRoots of the root that
+// contains path, or (-1, false) when path lies outside every root (e.g. a
+// --definitions override directory). The most specific root wins, so a
+// nested root is preferred over one that merely shares a prefix. Callers
+// use the index rather than the directory string because SearchRoots is
+// overridden with temporary directories in tests.
+func SearchRootIndex(path string) (int, bool) {
+	path = filepath.Clean(path)
+
+	best, bestLen := -1, 0
+	for i, root := range SearchRoots {
+		root = filepath.Clean(root)
+		if path != root && !strings.HasPrefix(path, root+string(filepath.Separator)) {
+			continue
+		}
+		if best == -1 || len(root) > bestLen {
+			best, bestLen = i, len(root)
+		}
+	}
+	if best == -1 {
+		return -1, false
+	}
+	return best, true
 }
 
 // Component describes a discovered systemd-sysupdate component: a named

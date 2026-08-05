@@ -12,6 +12,7 @@ import (
 
 	"github.com/frostyard/clix"
 	"github.com/frostyard/updex/internal/testutil"
+	"github.com/frostyard/updex/updex"
 	"github.com/spf13/cobra"
 )
 
@@ -193,5 +194,62 @@ func TestRunFeaturesUpdate_JSONErrorPathEmitsArray(t *testing.T) {
 	}
 	if strings.TrimSpace(output) != "[]" {
 		t.Errorf("expected stdout []; got %q", output)
+	}
+}
+
+func TestFormatOrigin(t *testing.T) {
+	tests := []struct {
+		name string
+		info updex.FeatureInfo
+		want string
+	}{
+		{
+			name: "catalog shows the bare catalog name",
+			info: updex.FeatureInfo{Origin: updex.FeatureOriginCatalog, OriginName: "fedora"},
+			want: "fedora",
+		},
+		{
+			name: "image is prefixed so it cannot read as a catalog",
+			info: updex.FeatureInfo{Origin: updex.FeatureOriginImage, OriginName: "ucore"},
+			want: "image:ucore",
+		},
+		{
+			name: "image without an identifier degrades to the kind",
+			info: updex.FeatureInfo{Origin: updex.FeatureOriginImage},
+			want: "image",
+		},
+		{
+			name: "local etc",
+			info: updex.FeatureInfo{Origin: updex.FeatureOriginLocal, OriginName: "etc"},
+			want: "local:etc",
+		},
+		{
+			name: "local usr",
+			info: updex.FeatureInfo{Origin: updex.FeatureOriginLocal, OriginName: "usr"},
+			want: "local:usr",
+		},
+		{
+			name: "local run",
+			info: updex.FeatureInfo{Origin: updex.FeatureOriginLocal, OriginName: "run"},
+			want: "local:run",
+		},
+		{
+			name: "unknown",
+			info: updex.FeatureInfo{Origin: updex.FeatureOriginUnknown},
+			want: "unknown",
+		},
+		{
+			name: "empty origin falls back to unknown",
+			info: updex.FeatureInfo{},
+			want: "unknown",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := formatOrigin(tc.info); got != tc.want {
+				t.Errorf("formatOrigin() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

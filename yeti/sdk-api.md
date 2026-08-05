@@ -128,6 +128,65 @@ Checks for available updates without downloading. Manifests are cached by source
 |-------|------|-------------|
 | `Component` | `string` | Scope to one named component; `""` = default union |
 
+### CatalogList / CatalogAdd / CatalogRemove
+
+```go
+func (c *Client) CatalogList(ctx context.Context, opts CatalogListOptions) ([]CatalogEntry, error)
+func (c *Client) CatalogAdd(ctx context.Context, name string, opts CatalogAddOptions) (*CatalogAddResult, error)
+func (c *Client) CatalogRemove(ctx context.Context, name string, opts CatalogRemoveOptions) (*CatalogRemoveResult, error)
+```
+
+Catalog operations over the repos configured via `catalog.LoadRepos()`
+(see the `catalog` package below and `OVERVIEW.md` "Catalogs"). All three
+error when no catalogs are configured (with setup guidance) or when the
+client has a `Definitions` override.
+
+- `CatalogList` enumerates each repo via its `ListURL` (skipping repos
+  without one, with a warning — unless explicitly selected via
+  `opts.Repo`, which errors instead) and cross-references
+  `config.LoadComponentFeatures(repo.Component)` to fill
+  `Installed`/`Enabled`, which are set only when the matched feature's
+  marker names this repo (`catalog.GeneratedFileRepo(f.FilePath)`), so
+  repos sharing a `Component` don't inherit each other's status.
+  `opts.Search` is a substring filter; search is just `CatalogList` with
+  `Search` set.
+- `CatalogAdd` validates the name, resolves the repo (explicit
+  `opts.Repo`, else probes every repo's `FetchConf` and errors on
+  multiple hits listing `repo/name` candidates), refuses to overwrite
+  target files that are unmarked or marked by a different repo
+  (`catalog.GeneratedFileRepo`), writes `RenderTransfer`/`RenderFeature`
+  output to `config.EtcComponentDir(repo.Component)`, then calls
+  `EnableFeature{Now: true, Component: repo.Component}`. Writes are
+  snapshotted first and *every* failure after that point (the `MkdirAll`,
+  either `os.WriteFile`, or the enable/download) restores the prior state
+  exactly: a fresh add's files are deleted (with the drop-in dir and
+  component dir removed if empty), a re-add's previous
+  `.transfer`/`.feature`/`00-updex.conf` contents are rewritten. With
+  `DryRun: true` it reports the target paths (conflict check still runs)
+  and skips the writes and the enable.
+- `CatalogRemove` validates the name and finds the owning repo: the
+  configured repo whose /etc component dir holds a `<name>.feature` whose
+  marker names that repo. Errors when none — "not a catalog-managed
+  sysext" — or several. Before anything destructive it also requires the
+  `<name>.transfer`, when present, to be marked by that repo, erroring
+  out otherwise (`DisableFeature{Now}` would delete images described by a
+  foreign transfer). It then calls
+  `DisableFeature{Now: true, Force, Component}` and deletes the
+  `.transfer`, the `.feature`, and only updex's own `00-updex.conf`
+  drop-in; the `.feature.d` and component directories are removed only if
+  they end up empty, so administrator drop-ins survive.
+
+**CatalogListOptions:** `Repo`, `Search`, `NoCache` (bypass the listing
+cache — see `catalog.CachedList`; the CLI flag is `--no-cache`).
+**CatalogAddOptions:** `Repo`, `DryRun`, `NoRefresh`.
+**CatalogRemoveOptions:** `Repo`, `Force`, `DryRun`, `NoRefresh`.
+
+**CatalogEntry:** `Name`, `Repo`, `Installed`, `Enabled`.
+**CatalogAddResult:** `Name`, `Repo`, `Component`, `TransferFile`,
+`FeatureFile`, `DryRun`, `Enable *FeatureActionResult`.
+**CatalogRemoveResult:** `Name`, `Repo`, `Component`, `RemovedFiles`,
+`DryRun`, `Disable *FeatureActionResult`.
+
 ## Result Types
 
 ### FeatureInfo
@@ -140,9 +199,27 @@ type FeatureInfo struct {
     Enabled       bool     `json:"enabled"`
     Masked        bool     `json:"masked,omitempty"`
     Source        string   `json:"source"`
+    Origin        string   `json:"origin"`
+    OriginName    string   `json:"origin_name,omitempty"`
     Transfers     []string `json:"transfers,omitzero"`
 }
 ```
+
+`Origin`/`OriginName` say where the feature came from, derived from
+`Source` alone by `updex.featureOrigin`. Kind and name are separate fields
+so consumers match on the kind (`select(.origin=="catalog")`) without
+having to disambiguate a catalog legitimately named `image` or `local`:
+
+| `Origin` (const) | `OriginName` | Source |
+|---|---|---|
+| `catalog` (`FeatureOriginCatalog`) | catalog repo, e.g. `fedora` | file carries the `catalog.GeneratedMarker` header — wins over the root |
+| `image` (`FeatureOriginImage`) | `config.ImageName()`, e.g. `ucore`; empty if os-release names none | `/usr/lib` |
+| `local` (`FeatureOriginLocal`) | `etc`, `usr` (/usr/local/lib), or `run` | administered on this machine |
+| `unknown` (`FeatureOriginUnknown`) | empty | loaded through `-C`/`--definitions` (whatever root that directory happens to sit under), or otherwise outside every search root |
+
+`Features()` resolves `config.ImageName()` once per call rather than per
+feature. The CLI renders this as the CATALOG column via `formatOrigin`:
+bare name for catalogs, `kind:name` otherwise.
 
 ### FeatureActionResult
 
@@ -215,6 +292,9 @@ type CheckResult struct {
 **Component discovery** (`config/component.go`; see `yeti/OVERVIEW.md` "Components" for the full design):
 
 - `SearchRoots` — Package variable: `[]string{"/etc", "/run", "/usr/local/lib", "/usr/lib"}`, in priority order. Overridable in tests (same pattern as `sysext.SysextDir`).
+- `SearchRootIndex(path string) (int, bool)` — Index into `SearchRoots` of the root containing `path` (most specific wins, whole-component match so `/usr/libfoo` misses `/usr/lib`), `(-1, false)` when outside all of them. Returns the index, not the directory, because tests override `SearchRoots` with temp dirs. Used by `updex.featureOrigin` to classify a feature's provenance.
+- `OSReleasePaths` — Package variable: `[]string{"/etc/os-release", "/usr/lib/os-release"}`, first readable wins. Overridable in tests.
+- `ImageName() string` — Identifier for the running OS image: first non-empty of `VARIANT_ID` (ublue-os images, Fedora variants), `IMAGE_ID` (frostyard/snosi images), `ID` (fallback); `""` if none. Order matters: on ucore `IMAGE_ID` is unset and `ID=fedora`, which would collide with the `fedora` catalog name, while `VARIANT_ID=ucore` is correct.
 - `ComponentSearchPaths(name string) []string` — The four search-path directories for a component (`""` = legacy default `sysupdate.d/`).
 - `EtcComponentDir(name string) string` — The `/etc` override directory for a component's drop-ins (`""` = `/etc/sysupdate.d`).
 - `type Component struct { Name string; SearchPaths []string }` — `SearchPaths` lists only the directories that exist on disk, in priority order.
@@ -224,6 +304,23 @@ type CheckResult struct {
 - `IsSysextTransfer(t *Transfer) bool` — `true` for a `url-file`-sourced transfer whose target is empty-or-`regular-file` with no `PathRelativeTo` set.
 - `FilterSysextTransfers(transfers []*Transfer) []*Transfer` — Keep only `IsSysextTransfer` matches.
 - `ComponentOfPath(path string) (name string, ok bool)` — Recover the component name from a loaded `Feature`/`Transfer`'s `FilePath` (its parent directory). `ok=false` for the legacy default directory or a `-C`/`Definitions` override directory.
+
+### `catalog`
+
+Sysext catalog primitives; no built-in repos (see `OVERVIEW.md` "Catalogs").
+
+- `ConfigRoots` — Package variable: the four `*/updex/catalogs.d` directories scanned for `<name>.catalog` files, earlier roots winning per filename. Overridable in tests.
+- `LoadRepos() ([]Repo, error)` — Load configured repos, sorted by name; returns `ErrNoCatalogs` when none exist.
+- `RepoByName(repos []Repo, name string) (Repo, bool)`
+- `type Repo struct { Name, SiteURL, ListURL, Component string }` — `Component` defaults to `catalog-<name>`; both names validated against `[a-zA-Z0-9_-]+`.
+- `List(ctx, *http.Client, Repo) ([]string, error)` — Enumerate sysexts via the repo's `ListURL` (GitHub contents API shape): top-level `dir` entries minus dotted names and `docs`/`LICENSES`. Sends `GITHUB_TOKEN` as a bearer token when set. Always live; no cache.
+- `CachedList(ctx, *http.Client, Repo, CachedListOptions) ([]string, CacheResult, error)` — `List` behind a per-repo TTL+ETag cache in `CacheDir` (default `os.UserCacheDir()/updex`, empty disables). `CachedListOptions{TTL /* 0 → DefaultListCacheTTL (60 min) */, NoCache}`; `CacheResult{FromCache, Stale, Age}`. Validates `Repo.Name` (public API: the name becomes a cache filename). Within TTL: cache, zero network. Expired: conditional GET (`If-None-Match`; 304 bumps the timestamp, rate-limit-free on GitHub). Fetch failure with an entry present: stale served, `Stale: true` — except `context.Canceled`/`DeadlineExceeded`, which propagate. Entries are invalidated when the repo's `ListURL` changes; corrupt files are misses; writes are best-effort.
+- `FetchConf(ctx, *http.Client, Repo, name) ([]byte, error)` — GET `<SiteURL>/<name>/<name>.conf`; 404 wraps `ErrNotFound`. Validates `name` first.
+- `RenderTransfer(conf []byte, repo Repo, name string) ([]byte, error)` — Byte-preserving line transform: prepend the `GeneratedMarker` header, inject `Features=<name>` after `[Transfer]` (appending the section if missing, replacing an existing `Features` key), drop `Target CurrentSymlink`, keep `%w`/`%a` specifiers unexpanded. Validates `[Source]`/`[Target]` presence via `ini.Load`.
+- `RenderFeature(Repo, name) []byte` — `GeneratedMarker` header plus `[Feature]` stanza with `Description`, `Documentation=<SiteURL>/<name>/`, and `Enabled=false` (enabling goes through the standard drop-in).
+- `GeneratedMarker` / `IsGenerated(data []byte) bool` / `IsGeneratedFile(path string) bool` — Ownership signal for generated files: the header `# Generated by updex catalog (repo: <name>); ...`.
+- `GeneratedRepo(data []byte) (repo string, ok bool)` / `GeneratedFileRepo(path string) (repo string, ok bool)` — Parse the generating repo out of the marker. `CatalogAdd`/`CatalogRemove` compare this against the acting repo, so neither a foreign file nor another catalog sharing the same `Component` can be overwritten or deleted.
+- `ValidateSysextName(name string) error` — Rejects names that aren't a safe single filename/URL component (`^[a-zA-Z0-9_][a-zA-Z0-9._+-]*$`).
 
 ### `manifest`
 

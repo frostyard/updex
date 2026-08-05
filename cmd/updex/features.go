@@ -77,7 +77,16 @@ OUTPUT COLUMNS:
   FEATURE      - Feature name
   DESCRIPTION  - Human-readable description
   ENABLED      - yes/no/masked
-  TRANSFERS    - Associated transfer configurations`,
+  CATALOG      - Where the feature came from (see below)
+  TRANSFERS    - Associated transfer configurations
+
+CATALOG VALUES:
+  <name>       - Added by 'updex catalog add' from that catalog
+  image:<id>   - Shipped in /usr/lib by the OS image
+  local:etc    - Written by hand in /etc
+  local:usr    - Installed in /usr/local/lib
+  local:run    - Generated at runtime in /run
+  unknown      - Loaded from a -C/--definitions directory`,
 		Example: `  # List all features
   updex features list
 

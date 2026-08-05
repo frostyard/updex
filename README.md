@@ -15,6 +15,7 @@ Designed for systems like Debian Trixie that don't ship with `systemd-sysupdate`
 
 - Feature-based management of sysext images (enable/disable groups of transfers)
 - systemd-sysupdate "component" discovery (`sysupdate.<name>.d/`, see sysupdate.d(5) "Components"), with the legacy default `sysupdate.d/` directory folded into the same domain
+- Catalog integration (`updex catalog list/search/add/remove`) for one-command installs from sysext catalogs like [fedora-sysexts](https://fedora-sysexts.github.io/)
 - Download sysext images from remote HTTP sources
 - SHA256 hash verification via `SHA256SUMS` manifests
 - Bounded retry with exponential backoff for transient network failures and HTTP 5xx/429 responses
@@ -133,6 +134,9 @@ func main() {
 | `UpdateFeatures` | `UpdateFeatures(ctx, UpdateFeaturesOptions) ([]UpdateFeaturesResult, error)` | Download and install newest versions for all enabled features |
 | `CheckFeatures` | `CheckFeatures(ctx, CheckFeaturesOptions) ([]CheckFeaturesResult, error)` | Check if newer versions are available |
 | `Components` | `Components(ctx) ([]ComponentInfo, error)` | List discovered systemd-sysupdate components (name, source directory, feature count) |
+| `CatalogList` | `CatalogList(ctx, CatalogListOptions) ([]CatalogEntry, error)` | Enumerate sysexts available from configured catalogs |
+| `CatalogAdd` | `CatalogAdd(ctx, name, CatalogAddOptions) (*CatalogAddResult, error)` | Install a sysext from a catalog (write definitions, enable, download) |
+| `CatalogRemove` | `CatalogRemove(ctx, name, CatalogRemoveOptions) (*CatalogRemoveResult, error)` | Remove a catalog-added sysext and its generated definitions |
 
 `FeaturesOptions`, `EnableFeatureOptions`, `DisableFeatureOptions`, `UpdateFeaturesOptions`, and `CheckFeaturesOptions` all carry a `Component string` field that scopes the operation to a single named systemd-sysupdate component instead of the default union domain (see "systemd-sysupdate Components" below). It cannot be combined with a `Definitions` override on `ClientConfig`.
 
@@ -189,8 +193,12 @@ type CheckFeaturesOptions struct {
 ## CLI Usage
 
 ```bash
-# List all features
+# List all features, including where each one came from
 updex features list
+# FEATURE   DESCRIPTION       ENABLED  CATALOG      TRANSFERS
+# docker    Docker CE         yes      image:ucore  docker
+# zoxide    zoxide sysext     yes      fedora       zoxide
+# mytool    Hand-written      no       local:etc    mytool
 
 # Enable a feature (downloads on next update)
 sudo updex features enable docker
@@ -225,6 +233,16 @@ sudo updex features update --component=docker
 
 # List discovered systemd-sysupdate components
 updex components
+
+# Browse configured sysext catalogs (see "Sysext Catalogs" below)
+updex catalog list
+updex catalog search zoxide
+
+# Install a sysext from a catalog (writes definitions, enables, downloads)
+sudo updex catalog add fedora/zoxide
+
+# Remove it again (definitions, images, and links)
+sudo updex catalog remove zoxide
 
 # Enable automatic daily updates
 sudo updex daemon enable
@@ -441,6 +459,89 @@ legacy default (or `-C`/`--definitions`-loaded) feature keeps
 `/etc/sysupdate.d/<feature>.feature.d/00-updex.conf` — so reads and writes
 always agree on where a feature's overrides live.
 
+## Sysext Catalogs
+
+`updex catalog` installs sysexts published by catalogs such as
+[fedora-sysexts](https://fedora-sysexts.github.io/), which serves prebuilt
+extensions for Fedora image-based systems (CoreOS/ucore, Silverblue,
+Kinoite) from GitHub releases behind stable URLs.
+
+updex ships no built-in catalogs — they only apply to specific systems —
+so configure them with `<name>.catalog` INI files searched across
+`/etc/updex/catalogs.d/`, `/run/updex/catalogs.d/`,
+`/usr/local/lib/updex/catalogs.d/`, and `/usr/lib/updex/catalogs.d/`
+(earlier directories win per filename). For fedora-sysexts, copy these two
+files:
+
+```ini
+# /etc/updex/catalogs.d/fedora.catalog
+[Catalog]
+SiteURL=https://extensions.fcos.fr/fedora
+ListURL=https://api.github.com/repos/fedora-sysexts/fedora/contents/
+```
+
+```ini
+# /etc/updex/catalogs.d/community.catalog
+[Catalog]
+SiteURL=https://extensions.fcos.fr/community
+ListURL=https://api.github.com/repos/fedora-sysexts/community/contents/
+```
+
+- `SiteURL` (required) — base URL the catalog serves artifacts from; the
+  published `<sysext>.conf`, `SHA256SUMS`, and `.raw` images all resolve
+  beneath `<SiteURL>/<sysext>/`.
+- `ListURL` (optional) — GitHub contents API endpoint used by
+  `catalog list`/`search` to enumerate available sysexts. `add`/`remove`
+  never use it. Set the `GITHUB_TOKEN` environment variable to raise the
+  API rate limit.
+- `Component` (optional) — systemd-sysupdate component the generated files
+  are written under; defaults to `catalog-<name>`
+  (e.g. `/etc/sysupdate.catalog-fedora.d/`).
+
+`sudo updex catalog add fedora/zoxide` fetches the catalog's published
+transfer definition, writes a standard `.transfer` (with `Features=zoxide`
+injected and `CurrentSymlink` dropped — updex manages the
+`/var/lib/extensions` link itself) plus a generated `.feature` into the
+catalog's component directory, enables the feature, and downloads the
+image. The `%w`/`%a` specifiers in the catalog's match patterns are kept
+unexpanded, so updates keep tracking the running Fedora release across OS
+upgrades.
+
+From then on the sysext is a completely normal feature: `updex features
+list/enable/disable/update/check` and the update daemon manage it like any
+hand-written one. The CATALOG column of `updex features list` still shows
+which catalog it came from, so catalog-added sysexts stay distinguishable
+from image-shipped (`image:<id>`) and hand-written (`local:etc`) ones. `sudo updex catalog remove zoxide` reverses the add —
+disable, unmerge, delete images and the extensions link, and delete the
+generated definition files (`--force` required while the extension is
+merged, as with `features disable --now`).
+
+Generated files carry a `# Generated by updex catalog (repo: <name>)`
+header as an ownership marker, and the repo it names is part of the
+check: `catalog add` refuses to overwrite definitions it did not generate
+or that another catalog generated, and `catalog remove` only touches
+files marked by the repo it is acting for — so hand-written,
+package-shipped, or other-catalog definitions sharing a name or component
+are safe. A failed `add` restores the previous state exactly (a fresh add
+leaves nothing behind, a re-add keeps its previously working files, even
+if the failure happens mid-write). `remove` refuses up front if the
+sysext's `.transfer` was replaced by one it doesn't own — rather than
+tearing down images that definition describes — and deletes only updex's
+own `00-updex.conf` drop-in, leaving any administrator drop-ins in
+`<name>.feature.d` in place.
+
+Sysexts are referenced as `NAME` or `REPO/NAME`; a bare `NAME` works
+whenever it is unambiguous across the configured catalogs, and `--repo` is
+equivalent to the `REPO/` prefix.
+
+`catalog list`/`search` cache each repo's listing locally (in
+`~/.cache/updex/`, or `/root/.cache/updex/` under sudo) for 60 minutes.
+After the TTL the listing is revalidated with a conditional request — a
+`304 Not Modified` from the GitHub API costs no rate limit and just
+refreshes the cache. `--no-cache` forces a live query, and when a live
+fetch fails (offline, rate-limited) an expired cache is served with a
+warning so listing keeps working. `add`/`remove` never use the cache.
+
 ## Remote Manifest Format
 
 The source URL must contain a `SHA256SUMS` file:
@@ -462,6 +563,9 @@ Use `--json` for machine-readable output:
 ```bash
 updex features list --json | jq '.[] | select(.enabled)'
 updex features check --json
+
+# Everything added from the fedora catalog
+updex features list --json | jq '.[] | select(.origin=="catalog" and .origin_name=="fedora")'
 ```
 
 ## Development

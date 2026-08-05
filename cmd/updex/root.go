@@ -53,6 +53,7 @@ default directories:
 	cmd.AddCommand(newFeaturesCmd())
 	cmd.AddCommand(newDaemonCmd())
 	cmd.AddCommand(newComponentsCmd())
+	cmd.AddCommand(newCatalogCmd())
 
 	return cmd
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/frostyard/updex/catalog"
 	"github.com/frostyard/updex/config"
 	"github.com/frostyard/updex/manifest"
 	"github.com/frostyard/updex/sysext"
@@ -38,6 +39,9 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 
 	var featureInfos []FeatureInfo
 
+	// Resolved once: os-release does not change between features.
+	imageName := config.ImageName()
+
 	for _, f := range features {
 		// Get transfers associated with this feature
 		featureTransfers := config.GetTransfersForFeature(transfers, f.Name)
@@ -46,6 +50,8 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 			transferNames = append(transferNames, t.Component)
 		}
 
+		origin, originName := featureOrigin(f.FilePath, imageName, c.config.Definitions != "")
+
 		info := FeatureInfo{
 			Name:          f.Name,
 			Description:   f.Description,
@@ -53,6 +59,8 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 			Enabled:       f.Enabled,
 			Masked:        f.Masked,
 			Source:        f.FilePath,
+			Origin:        origin,
+			OriginName:    originName,
 			Transfers:     transferNames,
 		}
 		featureInfos = append(featureInfos, info)
@@ -62,6 +70,49 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 
 	return featureInfos, nil
 }
+
+// featureOrigin classifies where a .feature file came from: a
+// catalog-generated file names its catalog in the marker header (see
+// catalog.GeneratedFileRepo), and everything else is identified by the
+// search root it lives under. imageName is passed in rather than resolved
+// here so a listing reads os-release once.
+//
+// definitionsOverride reports whether the whole domain came from a
+// -C/--definitions directory. That directory may itself sit under a
+// search root (e.g. -C /etc/my-defs), where path containment alone would
+// wrongly claim the file as local:etc or even image — the file was not
+// discovered through the search paths at all, so the root it happens to
+// live under says nothing about its provenance. The marker still wins,
+// because it is a fact recorded in the file rather than an inference
+// from its location.
+func featureOrigin(path, imageName string, definitionsOverride bool) (origin, originName string) {
+	if repo, ok := catalog.GeneratedFileRepo(path); ok {
+		return FeatureOriginCatalog, repo
+	}
+	if definitionsOverride {
+		return FeatureOriginUnknown, ""
+	}
+
+	// Index order matches config.SearchRoots: /etc, /run, /usr/local/lib,
+	// /usr/lib.
+	switch idx, ok := config.SearchRootIndex(path); {
+	case !ok:
+		return FeatureOriginUnknown, ""
+	case idx == 0:
+		return FeatureOriginLocal, "etc"
+	case idx == 1:
+		return FeatureOriginLocal, "run"
+	case idx == 2:
+		return FeatureOriginLocal, "usr"
+	default:
+		return FeatureOriginImage, imageName
+	}
+}
+
+// updexDropInName is the feature drop-in file updex owns. Everything else
+// in a <feature>.feature.d directory belongs to the administrator and must
+// be left alone (see CatalogRemove).
+const updexDropInName = "00-updex.conf"
 
 // lookupFeature returns the feature matching name from an already-loaded
 // feature set. It returns an error if the feature is not found or is
@@ -91,7 +142,7 @@ func lookupFeature(features []*config.Feature, name, action string) (*config.Fea
 func (c *Client) writeFeatureDropIn(f *config.Feature, enabled bool, dryRun bool) (string, error) {
 	component, _ := config.ComponentOfPath(f.FilePath) // "" for the legacy default or a --definitions override
 	dropInDir := filepath.Join(config.EtcComponentDir(component), f.Name+".feature.d")
-	dropInFile := filepath.Join(dropInDir, "00-updex.conf")
+	dropInFile := filepath.Join(dropInDir, updexDropInName)
 
 	if dryRun {
 		c.msg("Would create drop-in: %s", dropInFile)

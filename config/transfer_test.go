@@ -707,3 +707,76 @@ func TestTargetSectionPatterns(t *testing.T) {
 		})
 	}
 }
+
+// withTestOSRelease points OSReleasePaths at a temp file containing the
+// given os-release content for the duration of the test.
+func withTestOSRelease(t *testing.T, content string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "os-release")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write os-release: %v", err)
+	}
+	original := OSReleasePaths
+	OSReleasePaths = []string{path}
+	t.Cleanup(func() { OSReleasePaths = original })
+}
+
+func TestImageName(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			// A real ucore os-release: VARIANT_ID is the only useful
+			// identifier, and ID would wrongly report "fedora".
+			name:    "variant id wins",
+			content: "ID=fedora\nVERSION_ID=44\nVARIANT_ID=ucore\nIMAGE_VERSION='44.20260707.3.1'\n",
+			want:    "ucore",
+		},
+		{
+			name:    "variant id beats image id",
+			content: "ID=fedora\nIMAGE_ID=snosi\nVARIANT_ID=ucore\n",
+			want:    "ucore",
+		},
+		{
+			name:    "image id when no variant",
+			content: "ID=fedora\nIMAGE_ID=snosi\n",
+			want:    "snosi",
+		},
+		{
+			name:    "id as last resort",
+			content: "ID=fedora\nVERSION_ID=44\n",
+			want:    "fedora",
+		},
+		{
+			name:    "quoted values are unquoted",
+			content: "ID=\"fedora\"\nVARIANT_ID=\"cayo\"\n",
+			want:    "cayo",
+		},
+		{
+			name:    "none present",
+			content: "NAME=\"Some OS\"\nVERSION_ID=1\n",
+			want:    "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			withTestOSRelease(t, tc.content)
+			if got := ImageName(); got != tc.want {
+				t.Errorf("ImageName() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestImageNameNoOSRelease(t *testing.T) {
+	original := OSReleasePaths
+	OSReleasePaths = []string{filepath.Join(t.TempDir(), "missing")}
+	t.Cleanup(func() { OSReleasePaths = original })
+
+	if got := ImageName(); got != "" {
+		t.Errorf("ImageName() = %q, want empty when os-release is unreadable", got)
+	}
+}

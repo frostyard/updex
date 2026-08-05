@@ -26,6 +26,7 @@ Key packages:
 - `updex/` — Public SDK: `Client` struct with `Features()`, `EnableFeature()`, `DisableFeature()`, `UpdateFeatures()`, `CheckFeatures()`, `Components()`
 - `cmd/updex/` — Cobra command handlers calling SDK methods (flags, output formatting, progress bars)
 - `config/` — Parses `.transfer` and `.feature` INI files from systemd-style search paths, including systemd-sysupdate "component" discovery (see below)
+- `catalog/` — Sysext catalog primitives (see below): `*.catalog` repo config loading, sysext enumeration via a GitHub contents API endpoint, fetching the catalog's published `.conf`, and rendering it into updex `.transfer`/`.feature` files
 - `download/` — HTTP downloads with bounded retry for transient failures, SHA256 verification, and decompression (xz, gz, zstd)
 - `manifest/` — Fetches/parses SHA256SUMS manifests with bounded retry for transient failures and optional GPG verification
 - `version/` — Pattern matching (`@v` placeholder) and semantic version comparison
@@ -81,6 +82,94 @@ package-versioned sysext transfers) without updex losing track of them.
   structs carry a `Component string` field for this; extend the options
   struct for new component-scoped operations, never add package-level flag
   state to the SDK.
+
+### Catalog Support (`catalog/`, `updex/catalog.go`, `cmd/updex/catalog.go`)
+
+`updex catalog list|search|add|remove` consumes sysext catalogs like
+fedora-sysexts (https://fedora-sysexts.github.io/, served at
+extensions.fcos.fr). There are deliberately **no built-in repos** — such
+catalogs only apply to specific systems (ucore/Fedora atomic) — so repos
+come from `<name>.catalog` INI files searched across
+`catalog.ConfigRoots` (`/etc/updex/catalogs.d`, `/run/...`,
+`/usr/local/lib/...`, `/usr/lib/...`; earlier root wins per filename,
+test-overridable like `config.SearchRoots`). Each file defines `SiteURL`
+(required; artifacts resolve under `<SiteURL>/<sysext>/`), optional
+`ListURL` (GitHub contents API endpoint, only used by list/search;
+`GITHUB_TOKEN` honored), and optional `Component` (default
+`catalog-<name>`), the component the generated files land in.
+
+Key design points:
+
+- `CatalogAdd` fetches `<SiteURL>/<name>/<name>.conf` (a genuine
+  sysupdate transfer file the catalog publishes) and writes it via
+  `catalog.RenderTransfer` to `config.EtcComponentDir(repo.Component)`:
+  a line-based transform that prepends the `catalog.GeneratedMarker`
+  ownership header, injects `Features=<name>`, drops `CurrentSymlink`
+  (updex manages `/var/lib/extensions` links itself), and preserves
+  everything else byte-for-byte — critically `%w`/`%a` specifiers stay
+  **unexpanded** so the file survives Fedora release upgrades (expansion
+  happens at load time in `config`).
+- **Ownership and safety** (added after PR #137 review): the marker
+  header names its generating repo, and that pair is the ownership
+  signal — `catalog.GeneratedFileRepo(path)` must return *this* repo.
+  `CatalogAdd` refuses to overwrite a file that is unmarked (hand-written
+  or package-shipped) or marked by another repo, which is what isolates
+  two catalogs configured with the same `Component`; `CatalogRemove`
+  likewise only claims a sysext whose /etc `.feature` is marked by that
+  repo, and keeps a `.transfer` it doesn't own. Sysext names are
+  validated (`catalog.ValidateSysextName`,
+  `^[a-zA-Z0-9_][a-zA-Z0-9._+-]*$`) in the SDK and in `FetchConf`, and
+  `CachedList` re-validates `Repo.Name`, so traversal-shaped values never
+  reach `filepath.Join` or URLs. Any failure after the `fileSnapshot`s
+  are taken — including the definition writes themselves, since
+  `os.WriteFile` truncates on open — goes through one `rollback()`
+  closure that restores exactly what was there before (fresh add → files
+  removed; re-add → previous `.transfer`/`.feature`/drop-in contents
+  rewritten). A snapshot distinguishes `existed` from `captured`, so a
+  path that exists but cannot be read is never deleted by rollback, and
+  `managedFileExists` surfaces non-not-exist stat errors instead of
+  treating them as absence. Both it and `snapshotFile` use `os.Lstat` and
+  reject anything that is not a regular file: `os.Stat` calls a dangling
+  symlink absent, which skipped the ownership guard and let `os.WriteFile`
+  create the link's target outside the component directory as root. `CatalogRemove` validates the `.transfer`'s ownership
+  *before* calling `DisableFeature{Now}` and refuses outright on a
+  mismatch, since that teardown deletes images described by whatever
+  transfer claims the feature; it then deletes only updex's
+  `00-updex.conf` (`updexDropInName`) from `<name>.feature.d`, leaving
+  administrator drop-ins, and `os.Remove`s the directories only when they
+  end up empty. `CatalogList` attributes `Installed`/`Enabled` via
+  `GeneratedFileRepo(f.FilePath)`, so a shared `Component` doesn't report
+  one repo's install under another.
+- The generated `.feature` has `Enabled=false`; enabling goes through the
+  standard `EnableFeature{Now: true, Component: repo.Component}` drop-in
+  path. After `add`, the sysext is indistinguishable from a hand-written
+  feature — every `features` operation and the daemon manage it via the
+  normal union domain. Only `CatalogRemove` knows about catalogs: it runs
+  `DisableFeature{Now, Force}` then deletes the marker-owned
+  `.transfer`/`.feature`/`.feature.d` from the /etc component dir.
+- Ambiguity: a bare name found in multiple repos (add) or managed by
+  multiple repos (remove) errors listing `repo/name` candidates; the CLI
+  accepts `REPO/NAME` or `--repo`.
+- Listing cache: `CatalogList` goes through `catalog.CachedList` — a
+  per-repo TTL (default 60 min, `catalog.DefaultListCacheTTL`) + ETag
+  cache in `catalog.CacheDir` (user cache dir /updex; empty disables;
+  test-overridable). Within the TTL no network; after expiry a
+  conditional GET revalidates (GitHub 304s are rate-limit-free); on live
+  fetch failure a stale entry is served with a warning, except for
+  context cancellation/deadline errors, which propagate. `--no-cache`
+  (`CatalogListOptions.NoCache`) bypasses and rewrites the cache. The
+  cache entry stores the repo's ListURL and is invalidated when it
+  changes. `add`/`remove`/`FetchConf` never use the cache.
+- Provenance: `FeatureInfo.Origin`/`OriginName` (set by
+  `updex.featureOrigin` from the `.feature` path alone) drive the CATALOG
+  column of `features list` — a catalog name for marker-bearing files,
+  else `image:<config.ImageName()>` for `/usr/lib`, `local:etc|usr|run`
+  for the administered roots (`config.SearchRootIndex`), or `unknown`
+  outside them. Kind and name stay separate fields in JSON so a catalog
+  named `image` can't be confused for one.
+- Catalog operations error when `ClientConfig.Definitions` is set
+  (component-scoped, incompatible with `-C`) and return setup guidance
+  when no catalogs are configured (`catalog.ErrNoCatalogs`).
 
 ## Code Patterns
 

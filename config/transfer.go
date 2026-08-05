@@ -477,17 +477,39 @@ func readFileOneLine(path string) string {
 	return strings.TrimSpace(line)
 }
 
-// readOSRelease reads /etc/os-release and returns key-value pairs.
+// OSReleasePaths are the os-release files consulted for %-specifier
+// expansion and ImageName, in order; the first readable one wins.
+// Overridable in tests, like SearchRoots.
+var OSReleasePaths = []string{"/etc/os-release", "/usr/lib/os-release"}
+
+// ImageName returns an identifier for the OS image this system runs,
+// preferring VARIANT_ID (set by ublue-os images and Fedora variants),
+// then IMAGE_ID (set by frostyard/snosi images), then ID as a last
+// resort. It returns "" when os-release provides none of them.
+func ImageName() string {
+	osRelease := readOSRelease()
+	for _, key := range []string{"VARIANT_ID", "IMAGE_ID", "ID"} {
+		if v := osRelease[key]; v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// readOSRelease reads the first readable file in OSReleasePaths and
+// returns its key-value pairs.
 func readOSRelease() map[string]string {
 	result := make(map[string]string)
 
-	data, err := os.ReadFile("/etc/os-release")
-	if err != nil {
-		// Try /usr/lib/os-release as fallback
-		data, err = os.ReadFile("/usr/lib/os-release")
-		if err != nil {
-			return result
+	var data []byte
+	var err error
+	for _, path := range OSReleasePaths {
+		if data, err = os.ReadFile(path); err == nil {
+			break
 		}
+	}
+	if err != nil {
+		return result
 	}
 
 	for line := range strings.SplitSeq(string(data), "\n") {
