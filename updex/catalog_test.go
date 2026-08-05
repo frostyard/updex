@@ -31,6 +31,11 @@ func writeCatalogRepo(t *testing.T, dir, name, siteURL, listURL string) {
 	if listURL != "" {
 		content += "ListURL=" + listURL + "\n"
 	}
+	writeCatalogFileContent(t, dir, name, content)
+}
+
+func writeCatalogFileContent(t *testing.T, dir, name, content string) {
+	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name+".catalog"), []byte(content), 0644); err != nil {
 		t.Fatalf("failed to write catalog file: %v", err)
 	}
@@ -283,6 +288,152 @@ func TestCatalogRemove_FullCleanup(t *testing.T) {
 	if _, err := client.CatalogRemove(t.Context(), "zoxide", CatalogRemoveOptions{}); err == nil ||
 		!strings.Contains(err.Error(), "not a catalog-managed sysext") {
 		t.Fatalf("expected not-catalog-managed error, got %v", err)
+	}
+}
+
+func TestCatalogAdd_InvalidName(t *testing.T) {
+	withCatalogConfigRoots(t)
+	client := NewClient(ClientConfig{SysextRunner: &sysext.MockRunner{}})
+
+	for _, name := range []string{"../evil", ".hidden", "a/b", ""} {
+		if _, err := client.CatalogAdd(t.Context(), name, CatalogAddOptions{}); err == nil ||
+			!strings.Contains(err.Error(), "invalid sysext name") {
+			t.Errorf("CatalogAdd(%q): expected invalid-name error, got %v", name, err)
+		}
+		if _, err := client.CatalogRemove(t.Context(), name, CatalogRemoveOptions{}); err == nil ||
+			!strings.Contains(err.Error(), "invalid sysext name") {
+			t.Errorf("CatalogRemove(%q): expected invalid-name error, got %v", name, err)
+		}
+	}
+}
+
+func TestCatalogAdd_RefusesOverwriteUnmanaged(t *testing.T) {
+	roots := withComponentSearchRoots(t)
+	catalogRoot := withCatalogConfigRoots(t)
+	targetDir := t.TempDir()
+
+	server := newCatalogServer(t, "zoxide", "1.0.0", targetDir)
+	writeCatalogRepo(t, catalogRoot, "fedora", server.URL, "")
+
+	// A hand-written feature already lives at the target path (e.g. a
+	// Component= override pointing at an existing component).
+	componentDir := filepath.Join(roots[0], "sysupdate.catalog-fedora.d")
+	writeComponentFeature(t, componentDir, "zoxide", true)
+
+	client := NewClient(ClientConfig{SysextRunner: &sysext.MockRunner{}})
+
+	_, err := client.CatalogAdd(t.Context(), "zoxide", CatalogAddOptions{})
+	if err == nil || !strings.Contains(err.Error(), "refusing to overwrite") {
+		t.Fatalf("expected refusing-to-overwrite error, got %v", err)
+	}
+
+	// The hand-written file is untouched.
+	data, readErr := os.ReadFile(filepath.Join(componentDir, "zoxide.feature"))
+	if readErr != nil || !strings.Contains(string(data), "Enabled=true") {
+		t.Errorf("hand-written feature file modified (%v):\n%s", readErr, data)
+	}
+}
+
+func TestCatalogAdd_ReAddOwnedFiles(t *testing.T) {
+	withComponentSearchRoots(t)
+	catalogRoot := withCatalogConfigRoots(t)
+	targetDir := t.TempDir()
+
+	sysextDir := t.TempDir()
+	origSysextDir := sysext.SysextDir
+	sysext.SysextDir = sysextDir
+	t.Cleanup(func() { sysext.SysextDir = origSysextDir })
+
+	server := newCatalogServer(t, "zoxide", "1.0.0", targetDir)
+	writeCatalogRepo(t, catalogRoot, "fedora", server.URL, "")
+
+	client := NewClient(ClientConfig{SysextRunner: &sysext.MockRunner{}})
+
+	if _, err := client.CatalogAdd(t.Context(), "zoxide", CatalogAddOptions{}); err != nil {
+		t.Fatalf("first CatalogAdd failed: %v", err)
+	}
+	// Re-adding catalog-owned files is allowed (refresh/update case).
+	if _, err := client.CatalogAdd(t.Context(), "zoxide", CatalogAddOptions{}); err != nil {
+		t.Fatalf("re-add of catalog-owned sysext failed: %v", err)
+	}
+}
+
+func TestCatalogAdd_RollbackOnFailure(t *testing.T) {
+	roots := withComponentSearchRoots(t)
+	catalogRoot := withCatalogConfigRoots(t)
+	targetDir := t.TempDir()
+
+	// Server publishes the conf but no SHA256SUMS: the enable-with-download
+	// step fails after the definitions were written.
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/zoxide/zoxide.conf" {
+			_, _ = fmt.Fprintf(w, `[Transfer]
+Verify=false
+
+[Source]
+Type=url-file
+Path=%s/zoxide/
+MatchPattern=zoxide-@v.raw
+
+[Target]
+Type=regular-file
+Path=%s
+MatchPattern=zoxide-@v.raw
+`, server.URL, targetDir)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	writeCatalogRepo(t, catalogRoot, "fedora", server.URL, "")
+
+	client := NewClient(ClientConfig{SysextRunner: &sysext.MockRunner{}})
+
+	_, err := client.CatalogAdd(t.Context(), "zoxide", CatalogAddOptions{})
+	if err == nil {
+		t.Fatal("expected CatalogAdd to fail when the download fails")
+	}
+
+	// The failed fresh add must leave no persistent state behind.
+	componentDir := filepath.Join(roots[0], "sysupdate.catalog-fedora.d")
+	if _, err := os.Stat(componentDir); !os.IsNotExist(err) {
+		entries, _ := os.ReadDir(componentDir)
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("component dir not rolled back; remaining entries: %v", names)
+	}
+}
+
+func TestCatalogRemove_RefusesUnmanagedSameName(t *testing.T) {
+	roots := withComponentSearchRoots(t)
+	catalogRoot := withCatalogConfigRoots(t)
+
+	// Catalog configured with a Component pointing at an existing,
+	// hand-managed component ("docker"): remove must not touch it.
+	writeCatalogFileContent(t, catalogRoot, "fedora", `[Catalog]
+SiteURL=https://example.com/fedora
+Component=docker
+`)
+	componentDir := filepath.Join(roots[0], "sysupdate.docker.d")
+	writeComponentFeature(t, componentDir, "docker", true)
+	writeComponentTransfer(t, componentDir, "docker")
+
+	client := NewClient(ClientConfig{SysextRunner: &sysext.MockRunner{}})
+
+	_, err := client.CatalogRemove(t.Context(), "docker", CatalogRemoveOptions{})
+	if err == nil || !strings.Contains(err.Error(), "not a catalog-managed sysext") {
+		t.Fatalf("expected not-catalog-managed error, got %v", err)
+	}
+
+	// The hand-managed definitions are untouched.
+	for _, f := range []string{"docker.feature", "docker.transfer"} {
+		if _, err := os.Stat(filepath.Join(componentDir, f)); err != nil {
+			t.Errorf("%s was removed: %v", f, err)
+		}
 	}
 }
 

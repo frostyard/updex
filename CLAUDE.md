@@ -103,17 +103,29 @@ Key design points:
 - `CatalogAdd` fetches `<SiteURL>/<name>/<name>.conf` (a genuine
   sysupdate transfer file the catalog publishes) and writes it via
   `catalog.RenderTransfer` to `config.EtcComponentDir(repo.Component)`:
-  a line-based transform that injects `Features=<name>`, drops
-  `CurrentSymlink` (updex manages `/var/lib/extensions` links itself),
-  and preserves everything else byte-for-byte — critically `%w`/`%a`
-  specifiers stay **unexpanded** so the file survives Fedora release
-  upgrades (expansion happens at load time in `config`).
+  a line-based transform that prepends the `catalog.GeneratedMarker`
+  ownership header, injects `Features=<name>`, drops `CurrentSymlink`
+  (updex manages `/var/lib/extensions` links itself), and preserves
+  everything else byte-for-byte — critically `%w`/`%a` specifiers stay
+  **unexpanded** so the file survives Fedora release upgrades (expansion
+  happens at load time in `config`).
+- **Ownership and safety** (added after PR #137 review): the
+  `GeneratedMarker` header is the ownership signal. `CatalogAdd` refuses
+  to overwrite existing files that lack it (a `Component=` override may
+  point at a hand-managed component); `CatalogRemove` only treats a
+  sysext as catalog-managed when the /etc component dir's `.feature`
+  carries the marker, and keeps a non-generated `.transfer` in place.
+  Sysext names are validated (`catalog.ValidateSysextName`,
+  `^[a-zA-Z0-9_][a-zA-Z0-9._+-]*$`) in the SDK and in `FetchConf` so
+  traversal-shaped names never reach `filepath.Join` or URLs. A failed
+  *fresh* `CatalogAdd` rolls back its generated files and drop-ins
+  (re-adds keep their previous working files).
 - The generated `.feature` has `Enabled=false`; enabling goes through the
   standard `EnableFeature{Now: true, Component: repo.Component}` drop-in
   path. After `add`, the sysext is indistinguishable from a hand-written
   feature — every `features` operation and the daemon manage it via the
   normal union domain. Only `CatalogRemove` knows about catalogs: it runs
-  `DisableFeature{Now, Force}` then deletes the generated
+  `DisableFeature{Now, Force}` then deletes the marker-owned
   `.transfer`/`.feature`/`.feature.d` from the /etc component dir.
 - Ambiguity: a bare name found in multiple repos (add) or managed by
   multiple repos (remove) errors listing `repo/name` candidates; the CLI

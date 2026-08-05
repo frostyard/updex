@@ -147,19 +147,25 @@ client has a `Definitions` override.
   `config.LoadComponentFeatures(repo.Component)` to fill
   `Installed`/`Enabled`. `opts.Search` is a substring filter; search is
   just `CatalogList` with `Search` set.
-- `CatalogAdd` resolves the repo (explicit `opts.Repo`, else probes every
-  repo's `FetchConf` and errors on multiple hits listing `repo/name`
-  candidates), writes `RenderTransfer`/`RenderFeature` output to
+- `CatalogAdd` validates the name, resolves the repo (explicit
+  `opts.Repo`, else probes every repo's `FetchConf` and errors on
+  multiple hits listing `repo/name` candidates), refuses to overwrite
+  existing target files that lack the `GeneratedMarker` header, writes
+  `RenderTransfer`/`RenderFeature` output to
   `config.EtcComponentDir(repo.Component)`, then calls
-  `EnableFeature{Now: true, Component: repo.Component}`. With
-  `DryRun: true` it reports the target paths and skips both the writes and
-  the enable.
-- `CatalogRemove` finds the owning repo (the configured repo whose
-  component defines the feature; errors when none — "not a
-  catalog-managed sysext" — or several), calls
-  `DisableFeature{Now: true, Force, Component}`, then deletes the
-  generated `.transfer`, `.feature`, and `.feature.d` from the /etc
-  component dir, removing the directory itself when empty.
+  `EnableFeature{Now: true, Component: repo.Component}`. If the enable or
+  download of a *fresh* add fails, the generated files, `.feature.d`
+  drop-ins, and empty component dir are rolled back. With `DryRun: true`
+  it reports the target paths (conflict check still runs) and skips the
+  writes and the enable.
+- `CatalogRemove` validates the name and finds the owning repo: the
+  configured repo whose /etc component dir holds a marker-bearing
+  `<name>.feature` (`catalog.IsGeneratedFile`); errors when none — "not
+  a catalog-managed sysext" — or several. It then calls
+  `DisableFeature{Now: true, Force, Component}` and deletes the generated
+  `.transfer` (skipped with a warning if not marker-owned), `.feature`,
+  and `.feature.d` from the /etc component dir, removing the directory
+  itself when empty.
 
 **CatalogListOptions:** `Repo`, `Search`. **CatalogAddOptions:** `Repo`,
 `DryRun`, `NoRefresh`. **CatalogRemoveOptions:** `Repo`, `Force`,
@@ -277,9 +283,11 @@ Sysext catalog primitives; no built-in repos (see `OVERVIEW.md` "Catalogs").
 - `RepoByName(repos []Repo, name string) (Repo, bool)`
 - `type Repo struct { Name, SiteURL, ListURL, Component string }` — `Component` defaults to `catalog-<name>`; both names validated against `[a-zA-Z0-9_-]+`.
 - `List(ctx, *http.Client, Repo) ([]string, error)` — Enumerate sysexts via the repo's `ListURL` (GitHub contents API shape): top-level `dir` entries minus dotted names and `docs`/`LICENSES`. Sends `GITHUB_TOKEN` as a bearer token when set.
-- `FetchConf(ctx, *http.Client, Repo, name) ([]byte, error)` — GET `<SiteURL>/<name>/<name>.conf`; 404 wraps `ErrNotFound`.
-- `RenderTransfer(conf []byte, name string) ([]byte, error)` — Byte-preserving line transform: inject `Features=<name>` after `[Transfer]` (appending the section if missing, replacing an existing `Features` key), drop `Target CurrentSymlink`, keep `%w`/`%a` specifiers unexpanded. Validates `[Source]`/`[Target]` presence via `ini.Load`.
-- `RenderFeature(Repo, name) []byte` — `[Feature]` stanza with `Description`, `Documentation=<SiteURL>/<name>/`, and `Enabled=false` (enabling goes through the standard drop-in).
+- `FetchConf(ctx, *http.Client, Repo, name) ([]byte, error)` — GET `<SiteURL>/<name>/<name>.conf`; 404 wraps `ErrNotFound`. Validates `name` first.
+- `RenderTransfer(conf []byte, repo Repo, name string) ([]byte, error)` — Byte-preserving line transform: prepend the `GeneratedMarker` header, inject `Features=<name>` after `[Transfer]` (appending the section if missing, replacing an existing `Features` key), drop `Target CurrentSymlink`, keep `%w`/`%a` specifiers unexpanded. Validates `[Source]`/`[Target]` presence via `ini.Load`.
+- `RenderFeature(Repo, name) []byte` — `GeneratedMarker` header plus `[Feature]` stanza with `Description`, `Documentation=<SiteURL>/<name>/`, and `Enabled=false` (enabling goes through the standard drop-in).
+- `GeneratedMarker` / `IsGenerated(data []byte) bool` / `IsGeneratedFile(path string) bool` — Ownership signal for generated files; `CatalogAdd`/`CatalogRemove` use it to refuse overwriting or deleting anything catalog add didn't write.
+- `ValidateSysextName(name string) error` — Rejects names that aren't a safe single filename/URL component (`^[a-zA-Z0-9_][a-zA-Z0-9._+-]*$`).
 
 ### `manifest`
 
