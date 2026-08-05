@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -224,14 +225,48 @@ Enabled=false
 	}
 }
 
+func TestGeneratedRepo(t *testing.T) {
+	repo, ok := GeneratedRepo(RenderFeature(testRepo, "zoxide"))
+	if !ok || repo != "fedora" {
+		t.Errorf("GeneratedRepo = (%q, %v), want (fedora, true)", repo, ok)
+	}
+
+	out, err := RenderTransfer([]byte(zoxideConf), Repo{Name: "community", SiteURL: "https://x"}, "zoxide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repo, ok := GeneratedRepo(out); !ok || repo != "community" {
+		t.Errorf("GeneratedRepo(transfer) = (%q, %v), want (community, true)", repo, ok)
+	}
+
+	if _, ok := GeneratedRepo([]byte("[Feature]\nEnabled=true\n")); ok {
+		t.Error("hand-written content reported as generated")
+	}
+}
+
+func TestGeneratedFileRepo(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "zoxide.feature")
+	if err := os.WriteFile(path, RenderFeature(testRepo, "zoxide"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if repo, ok := GeneratedFileRepo(path); !ok || repo != "fedora" {
+		t.Errorf("GeneratedFileRepo = (%q, %v), want (fedora, true)", repo, ok)
+	}
+	if _, ok := GeneratedFileRepo(filepath.Join(dir, "missing")); ok {
+		t.Error("missing file reported as generated")
+	}
+}
+
 func TestIsGeneratedFile(t *testing.T) {
 	dir := t.TempDir()
 
-	generated := dir + "/gen.feature"
+	generated := filepath.Join(dir, "gen.feature")
 	if err := os.WriteFile(generated, RenderFeature(testRepo, "zoxide"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	handmade := dir + "/hand.feature"
+	handmade := filepath.Join(dir, "hand.feature")
 	if err := os.WriteFile(handmade, []byte("[Feature]\nEnabled=true\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +277,7 @@ func TestIsGeneratedFile(t *testing.T) {
 	if IsGeneratedFile(handmade) {
 		t.Error("hand-written file wrongly recognized as generated")
 	}
-	if IsGeneratedFile(dir + "/missing.feature") {
+	if IsGeneratedFile(filepath.Join(dir, "missing.feature")) {
 		t.Error("missing file wrongly recognized as generated")
 	}
 }

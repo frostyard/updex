@@ -1,6 +1,8 @@
 package catalog
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -239,6 +241,50 @@ func TestCachedList_StaleFallbackOnFetchError(t *testing.T) {
 	}
 	if len(names) != 2 {
 		t.Fatalf("unexpected stale names: %v", names)
+	}
+}
+
+func TestCachedList_CancelledContextDoesNotServeStale(t *testing.T) {
+	dir := withCacheDir(t)
+	server := newListServer(t)
+	repo := server.repo()
+
+	if _, _, err := CachedList(t.Context(), server.Client(), repo, CachedListOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	backdateCache(t, dir, repo, 2*time.Hour)
+
+	// A cancelled context is the caller aborting, not an unreachable
+	// catalog: it must surface rather than masquerade as a stale hit.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, res, err := CachedList(ctx, server.Client(), repo, CachedListOptions{})
+	if err == nil {
+		t.Fatalf("expected context error, got success (%+v)", res)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got %v", err)
+	}
+	if res.FromCache || res.Stale {
+		t.Errorf("expected no cache result on cancellation, got %+v", res)
+	}
+}
+
+func TestCachedList_InvalidRepoName(t *testing.T) {
+	withCacheDir(t)
+	server := newListServer(t)
+
+	// CachedList is public API: a hand-built Repo must not be able to
+	// steer the cache filename outside CacheDir.
+	repo := server.repo()
+	repo.Name = "../../outside"
+
+	if _, _, err := CachedList(t.Context(), server.Client(), repo, CachedListOptions{}); err == nil {
+		t.Fatal("expected error for traversal-shaped repo name")
+	}
+	if got := server.requests.Load(); got != 0 {
+		t.Errorf("expected no request for invalid repo name, got %d", got)
 	}
 }
 

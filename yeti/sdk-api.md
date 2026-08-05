@@ -150,22 +150,25 @@ client has a `Definitions` override.
 - `CatalogAdd` validates the name, resolves the repo (explicit
   `opts.Repo`, else probes every repo's `FetchConf` and errors on
   multiple hits listing `repo/name` candidates), refuses to overwrite
-  existing target files that lack the `GeneratedMarker` header, writes
-  `RenderTransfer`/`RenderFeature` output to
-  `config.EtcComponentDir(repo.Component)`, then calls
-  `EnableFeature{Now: true, Component: repo.Component}`. If the enable or
-  download of a *fresh* add fails, the generated files, `.feature.d`
-  drop-ins, and empty component dir are rolled back. With `DryRun: true`
-  it reports the target paths (conflict check still runs) and skips the
-  writes and the enable.
+  target files that are unmarked or marked by a different repo
+  (`catalog.GeneratedFileRepo`), writes `RenderTransfer`/`RenderFeature`
+  output to `config.EtcComponentDir(repo.Component)`, then calls
+  `EnableFeature{Now: true, Component: repo.Component}`. Writes are
+  snapshotted first, so a failed enable/download restores the prior state
+  exactly: a fresh add's files are deleted (with the drop-in dir and
+  component dir removed if empty), a re-add's previous
+  `.transfer`/`.feature`/`00-updex.conf` contents are rewritten. With
+  `DryRun: true` it reports the target paths (conflict check still runs)
+  and skips the writes and the enable.
 - `CatalogRemove` validates the name and finds the owning repo: the
-  configured repo whose /etc component dir holds a marker-bearing
-  `<name>.feature` (`catalog.IsGeneratedFile`); errors when none — "not
-  a catalog-managed sysext" — or several. It then calls
-  `DisableFeature{Now: true, Force, Component}` and deletes the generated
-  `.transfer` (skipped with a warning if not marker-owned), `.feature`,
-  and `.feature.d` from the /etc component dir, removing the directory
-  itself when empty.
+  configured repo whose /etc component dir holds a `<name>.feature` whose
+  marker names that repo. Errors when none — "not a catalog-managed
+  sysext" — or several. It then calls
+  `DisableFeature{Now: true, Force, Component}` and deletes the
+  repo-owned `.transfer` (skipped with a warning otherwise), the
+  `.feature`, and only updex's own `00-updex.conf` drop-in; the
+  `.feature.d` and component directories are removed only if they end up
+  empty, so administrator drop-ins survive.
 
 **CatalogListOptions:** `Repo`, `Search`, `NoCache` (bypass the listing
 cache — see `catalog.CachedList`; the CLI flag is `--no-cache`).
@@ -284,11 +287,12 @@ Sysext catalog primitives; no built-in repos (see `OVERVIEW.md` "Catalogs").
 - `RepoByName(repos []Repo, name string) (Repo, bool)`
 - `type Repo struct { Name, SiteURL, ListURL, Component string }` — `Component` defaults to `catalog-<name>`; both names validated against `[a-zA-Z0-9_-]+`.
 - `List(ctx, *http.Client, Repo) ([]string, error)` — Enumerate sysexts via the repo's `ListURL` (GitHub contents API shape): top-level `dir` entries minus dotted names and `docs`/`LICENSES`. Sends `GITHUB_TOKEN` as a bearer token when set. Always live; no cache.
-- `CachedList(ctx, *http.Client, Repo, CachedListOptions) ([]string, CacheResult, error)` — `List` behind a per-repo TTL+ETag cache in `CacheDir` (default `os.UserCacheDir()/updex`, empty disables). `CachedListOptions{TTL /* 0 → DefaultListCacheTTL (60 min) */, NoCache}`; `CacheResult{FromCache, Stale, Age}`. Within TTL: cache, zero network. Expired: conditional GET (`If-None-Match`; 304 bumps the timestamp, rate-limit-free on GitHub). Fetch failure with an entry present: stale served, `Stale: true`. Entries are invalidated when the repo's `ListURL` changes; corrupt files are misses; writes are best-effort.
+- `CachedList(ctx, *http.Client, Repo, CachedListOptions) ([]string, CacheResult, error)` — `List` behind a per-repo TTL+ETag cache in `CacheDir` (default `os.UserCacheDir()/updex`, empty disables). `CachedListOptions{TTL /* 0 → DefaultListCacheTTL (60 min) */, NoCache}`; `CacheResult{FromCache, Stale, Age}`. Validates `Repo.Name` (public API: the name becomes a cache filename). Within TTL: cache, zero network. Expired: conditional GET (`If-None-Match`; 304 bumps the timestamp, rate-limit-free on GitHub). Fetch failure with an entry present: stale served, `Stale: true` — except `context.Canceled`/`DeadlineExceeded`, which propagate. Entries are invalidated when the repo's `ListURL` changes; corrupt files are misses; writes are best-effort.
 - `FetchConf(ctx, *http.Client, Repo, name) ([]byte, error)` — GET `<SiteURL>/<name>/<name>.conf`; 404 wraps `ErrNotFound`. Validates `name` first.
 - `RenderTransfer(conf []byte, repo Repo, name string) ([]byte, error)` — Byte-preserving line transform: prepend the `GeneratedMarker` header, inject `Features=<name>` after `[Transfer]` (appending the section if missing, replacing an existing `Features` key), drop `Target CurrentSymlink`, keep `%w`/`%a` specifiers unexpanded. Validates `[Source]`/`[Target]` presence via `ini.Load`.
 - `RenderFeature(Repo, name) []byte` — `GeneratedMarker` header plus `[Feature]` stanza with `Description`, `Documentation=<SiteURL>/<name>/`, and `Enabled=false` (enabling goes through the standard drop-in).
-- `GeneratedMarker` / `IsGenerated(data []byte) bool` / `IsGeneratedFile(path string) bool` — Ownership signal for generated files; `CatalogAdd`/`CatalogRemove` use it to refuse overwriting or deleting anything catalog add didn't write.
+- `GeneratedMarker` / `IsGenerated(data []byte) bool` / `IsGeneratedFile(path string) bool` — Ownership signal for generated files: the header `# Generated by updex catalog (repo: <name>); ...`.
+- `GeneratedRepo(data []byte) (repo string, ok bool)` / `GeneratedFileRepo(path string) (repo string, ok bool)` — Parse the generating repo out of the marker. `CatalogAdd`/`CatalogRemove` compare this against the acting repo, so neither a foreign file nor another catalog sharing the same `Component` can be overwritten or deleted.
 - `ValidateSysextName(name string) error` — Rejects names that aren't a safe single filename/URL component (`^[a-zA-Z0-9_][a-zA-Z0-9._+-]*$`).
 
 ### `manifest`

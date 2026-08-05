@@ -109,17 +109,23 @@ Key design points:
   everything else byte-for-byte — critically `%w`/`%a` specifiers stay
   **unexpanded** so the file survives Fedora release upgrades (expansion
   happens at load time in `config`).
-- **Ownership and safety** (added after PR #137 review): the
-  `GeneratedMarker` header is the ownership signal. `CatalogAdd` refuses
-  to overwrite existing files that lack it (a `Component=` override may
-  point at a hand-managed component); `CatalogRemove` only treats a
-  sysext as catalog-managed when the /etc component dir's `.feature`
-  carries the marker, and keeps a non-generated `.transfer` in place.
-  Sysext names are validated (`catalog.ValidateSysextName`,
-  `^[a-zA-Z0-9_][a-zA-Z0-9._+-]*$`) in the SDK and in `FetchConf` so
-  traversal-shaped names never reach `filepath.Join` or URLs. A failed
-  *fresh* `CatalogAdd` rolls back its generated files and drop-ins
-  (re-adds keep their previous working files).
+- **Ownership and safety** (added after PR #137 review): the marker
+  header names its generating repo, and that pair is the ownership
+  signal — `catalog.GeneratedFileRepo(path)` must return *this* repo.
+  `CatalogAdd` refuses to overwrite a file that is unmarked (hand-written
+  or package-shipped) or marked by another repo, which is what isolates
+  two catalogs configured with the same `Component`; `CatalogRemove`
+  likewise only claims a sysext whose /etc `.feature` is marked by that
+  repo, and keeps a `.transfer` it doesn't own. Sysext names are
+  validated (`catalog.ValidateSysextName`,
+  `^[a-zA-Z0-9_][a-zA-Z0-9._+-]*$`) in the SDK and in `FetchConf`, and
+  `CachedList` re-validates `Repo.Name`, so traversal-shaped values never
+  reach `filepath.Join` or URLs. A failed `CatalogAdd` restores exactly
+  what was there before via `fileSnapshot` (fresh add → files removed;
+  re-add → previous `.transfer`/`.feature`/drop-in contents rewritten).
+  Removal deletes only updex's `00-updex.conf` (`updexDropInName`) from
+  `<name>.feature.d`, leaving administrator drop-ins, and `os.Remove`s
+  the directories only when they end up empty.
 - The generated `.feature` has `Enabled=false`; enabling goes through the
   standard `EnableFeature{Now: true, Component: repo.Component}` drop-in
   path. After `add`, the sysext is indistinguishable from a hand-written
@@ -135,7 +141,8 @@ Key design points:
   cache in `catalog.CacheDir` (user cache dir /updex; empty disables;
   test-overridable). Within the TTL no network; after expiry a
   conditional GET revalidates (GitHub 304s are rate-limit-free); on live
-  fetch failure a stale entry is served with a warning. `--no-cache`
+  fetch failure a stale entry is served with a warning, except for
+  context cancellation/deadline errors, which propagate. `--no-cache`
   (`CatalogListOptions.NoCache`) bypasses and rewrites the cache. The
   cache entry stores the repo's ListURL and is invalidated when it
   changes. `add`/`remove`/`FetchConf` never use the cache.

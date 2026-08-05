@@ -63,6 +63,11 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 	return featureInfos, nil
 }
 
+// updexDropInName is the feature drop-in file updex owns. Everything else
+// in a <feature>.feature.d directory belongs to the administrator and must
+// be left alone (see CatalogRemove).
+const updexDropInName = "00-updex.conf"
+
 // lookupFeature returns the feature matching name from an already-loaded
 // feature set. It returns an error if the feature is not found or is
 // masked. The action parameter (e.g. "enabled", "disabled") is used in the
@@ -91,7 +96,7 @@ func lookupFeature(features []*config.Feature, name, action string) (*config.Fea
 func (c *Client) writeFeatureDropIn(f *config.Feature, enabled bool, dryRun bool) (string, error) {
 	component, _ := config.ComponentOfPath(f.FilePath) // "" for the legacy default or a --definitions override
 	dropInDir := filepath.Join(config.EtcComponentDir(component), f.Name+".feature.d")
-	dropInFile := filepath.Join(dropInDir, "00-updex.conf")
+	dropInFile := filepath.Join(dropInDir, updexDropInName)
 
 	if dryRun {
 		c.msg("Would create drop-in: %s", dropInFile)

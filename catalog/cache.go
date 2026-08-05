@@ -3,6 +3,7 @@ package catalog
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -71,6 +72,13 @@ type CacheResult struct {
 // Stale set so callers can warn. Cache reads and writes are best-effort:
 // corrupt entries are treated as misses and write failures are ignored.
 func CachedList(ctx context.Context, client *http.Client, repo Repo, opts CachedListOptions) ([]string, CacheResult, error) {
+	// The repo name becomes a cache filename. LoadRepos validates it, but
+	// CachedList is public API and can be handed a hand-built Repo, so
+	// re-check here rather than trusting the caller.
+	if !repoNamePattern.MatchString(repo.Name) {
+		return nil, CacheResult{}, fmt.Errorf("invalid catalog name %q (allowed: [a-zA-Z0-9_-]+)", repo.Name)
+	}
+
 	ttl := opts.TTL
 	if ttl <= 0 {
 		ttl = DefaultListCacheTTL
@@ -95,6 +103,12 @@ func CachedList(ctx context.Context, client *http.Client, repo Repo, opts Cached
 
 	names, newETag, notModified, err := fetchList(ctx, client, repo, etag)
 	if err != nil {
+		// A cancelled or timed-out context is the caller aborting, not a
+		// catalog being unreachable: propagate it instead of reporting
+		// success with stale data.
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, CacheResult{}, err
+		}
 		if entry != nil {
 			return entry.Names, CacheResult{FromCache: true, Stale: true, Age: time.Since(entry.FetchedAt)}, nil
 		}
