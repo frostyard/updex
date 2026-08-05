@@ -673,6 +673,96 @@ func TestCatalogAdd_StatFailureIsFatal(t *testing.T) {
 	}
 }
 
+// TestCatalogAdd_RefusesSymlinkedDefinition verifies that a symlink at a
+// managed definition path is never followed. A dangling link in
+// particular used to stat as absent, skipping the ownership check, after
+// which os.WriteFile would follow it and create the target outside the
+// component directory — a privileged write, since add runs as root.
+func TestCatalogAdd_RefusesSymlinkedDefinition(t *testing.T) {
+	roots := withComponentSearchRoots(t)
+	catalogRoot := withCatalogConfigRoots(t)
+	targetDir := t.TempDir()
+
+	server := newCatalogServer(t, "zoxide", "1.0.0", targetDir)
+	writeCatalogRepo(t, catalogRoot, "fedora", server.URL, "")
+
+	componentDir := filepath.Join(roots[0], "sysupdate.catalog-fedora.d")
+	if err := os.MkdirAll(componentDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// The link target is outside the component directory and does not
+	// exist yet: writing through the link would create it.
+	outside := filepath.Join(t.TempDir(), "outside.conf")
+	if err := os.Symlink(outside, filepath.Join(componentDir, "zoxide.feature")); err != nil {
+		t.Fatal(err)
+	}
+
+	client := NewClient(ClientConfig{SysextRunner: &sysext.MockRunner{}})
+
+	_, err := client.CatalogAdd(t.Context(), "zoxide", CatalogAddOptions{})
+	if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("expected a symlinked definition to be refused, got %v", err)
+	}
+	if _, statErr := os.Stat(outside); !os.IsNotExist(statErr) {
+		t.Errorf("add wrote through the symlink to %s (stat err %v)", outside, statErr)
+	}
+	// The transfer is written before the feature, so a refusal that came
+	// too late would have left it behind.
+	if _, statErr := os.Stat(filepath.Join(componentDir, "zoxide.transfer")); !os.IsNotExist(statErr) {
+		t.Errorf("add wrote definitions before refusing (stat err %v)", statErr)
+	}
+}
+
+// TestCatalogRemove_RefusesSymlinkedDefinition verifies removal validates
+// the definition paths before the destructive disable, so a symlink can
+// neither be followed nor cause a half-completed teardown.
+func TestCatalogRemove_RefusesSymlinkedDefinition(t *testing.T) {
+	roots := withComponentSearchRoots(t)
+	catalogRoot := withCatalogConfigRoots(t)
+	targetDir := t.TempDir()
+
+	sysextDir := t.TempDir()
+	origSysextDir := sysext.SysextDir
+	sysext.SysextDir = sysextDir
+	t.Cleanup(func() { sysext.SysextDir = origSysextDir })
+
+	server := newCatalogServer(t, "zoxide", "1.0.0", targetDir)
+	writeCatalogRepo(t, catalogRoot, "fedora", server.URL, "")
+
+	mockRunner := &sysext.MockRunner{}
+	client := NewClient(ClientConfig{SysextRunner: mockRunner})
+	if _, err := client.CatalogAdd(t.Context(), "zoxide", CatalogAddOptions{}); err != nil {
+		t.Fatalf("CatalogAdd failed: %v", err)
+	}
+
+	// Replace the generated transfer with a symlink to it: ownership still
+	// reads through, but the path is no longer one updex will manage.
+	componentDir := filepath.Join(roots[0], "sysupdate.catalog-fedora.d")
+	transferPath := filepath.Join(componentDir, "zoxide.transfer")
+	kept := filepath.Join(t.TempDir(), "zoxide.transfer")
+	if err := os.Rename(transferPath, kept); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(kept, transferPath); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := client.CatalogRemove(t.Context(), "zoxide", CatalogRemoveOptions{})
+	if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("expected a symlinked definition to be refused, got %v", err)
+	}
+	if mockRunner.UnmergeCalled {
+		t.Error("teardown ran before the definition paths were validated")
+	}
+	if _, statErr := os.Lstat(transferPath); statErr != nil {
+		t.Errorf("symlink was removed: %v", statErr)
+	}
+	if _, statErr := os.Stat(kept); statErr != nil {
+		t.Errorf("symlink target was deleted: %v", statErr)
+	}
+}
+
 func TestFileExists(t *testing.T) {
 	dir := t.TempDir()
 
@@ -681,16 +771,71 @@ func TestFileExists(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if ok, err := fileExists(present); err != nil || !ok {
-		t.Errorf("fileExists(present) = (%v, %v), want (true, nil)", ok, err)
+	if ok, err := managedFileExists(present); err != nil || !ok {
+		t.Errorf("managedFileExists(present) = (%v, %v), want (true, nil)", ok, err)
 	}
-	if ok, err := fileExists(filepath.Join(dir, "missing")); err != nil || ok {
-		t.Errorf("fileExists(missing) = (%v, %v), want (false, nil)", ok, err)
+	if ok, err := managedFileExists(filepath.Join(dir, "missing")); err != nil || ok {
+		t.Errorf("managedFileExists(missing) = (%v, %v), want (false, nil)", ok, err)
 	}
 	// ENOTDIR: a path below a regular file exists in neither sense, but it
 	// is not "absent" either — the caller must hear about it.
-	if ok, err := fileExists(filepath.Join(present, "child")); err == nil || ok {
-		t.Errorf("fileExists(under a file) = (%v, %v), want (false, error)", ok, err)
+	if ok, err := managedFileExists(filepath.Join(present, "child")); err == nil || ok {
+		t.Errorf("managedFileExists(under a file) = (%v, %v), want (false, error)", ok, err)
+	}
+
+	// Symlinks are reported as errors rather than followed, dangling ones
+	// included: Stat would call a dangling link absent and let the caller
+	// write straight through it.
+	live := filepath.Join(dir, "live-link")
+	if err := os.Symlink(present, live); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := managedFileExists(live); err == nil || ok {
+		t.Errorf("managedFileExists(symlink) = (%v, %v), want (false, error)", ok, err)
+	}
+	dangling := filepath.Join(dir, "dangling-link")
+	if err := os.Symlink(filepath.Join(dir, "nowhere"), dangling); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := managedFileExists(dangling); err == nil || ok {
+		t.Errorf("managedFileExists(dangling symlink) = (%v, %v), want (false, error)", ok, err)
+	}
+
+	// A directory is likewise not something updex manages in place.
+	sub := filepath.Join(dir, "subdir")
+	if err := os.Mkdir(sub, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := managedFileExists(sub); err == nil || ok {
+		t.Errorf("managedFileExists(dir) = (%v, %v), want (false, error)", ok, err)
+	}
+}
+
+func TestFileSnapshotSymlinkIsNotFollowed(t *testing.T) {
+	dir := t.TempDir()
+
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte("original target\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	s := snapshotFile(link)
+	if !s.existed || s.captured {
+		t.Errorf("snapshot of a symlink = (existed %v, captured %v), want (true, false)", s.existed, s.captured)
+	}
+
+	// Restore must neither delete the link nor rewrite its target.
+	s.restore()
+	if _, err := os.Lstat(link); err != nil {
+		t.Errorf("restore removed the symlink: %v", err)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil || string(data) != "original target\n" {
+		t.Errorf("restore wrote through the symlink (%v): %q", err, data)
 	}
 }
 

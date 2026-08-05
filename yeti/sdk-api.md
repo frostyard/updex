@@ -215,7 +215,7 @@ having to disambiguate a catalog legitimately named `image` or `local`:
 | `catalog` (`FeatureOriginCatalog`) | catalog repo, e.g. `fedora` | file carries the `catalog.GeneratedMarker` header — wins over the root |
 | `image` (`FeatureOriginImage`) | `config.ImageName()`, e.g. `ucore`; empty if os-release names none | `/usr/lib` |
 | `local` (`FeatureOriginLocal`) | `etc`, `usr` (/usr/local/lib), or `run` | administered on this machine |
-| `unknown` (`FeatureOriginUnknown`) | empty | outside every search root, i.e. a `-C`/`--definitions` directory |
+| `unknown` (`FeatureOriginUnknown`) | empty | loaded through `-C`/`--definitions` (whatever root that directory happens to sit under), or otherwise outside every search root |
 
 `Features()` resolves `config.ImageName()` once per call rather than per
 feature. The CLI renders this as the CATALOG column via `formatOrigin`:

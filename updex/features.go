@@ -50,7 +50,7 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 			transferNames = append(transferNames, t.Component)
 		}
 
-		origin, originName := featureOrigin(f.FilePath, imageName)
+		origin, originName := featureOrigin(f.FilePath, imageName, c.config.Definitions != "")
 
 		info := FeatureInfo{
 			Name:          f.Name,
@@ -71,14 +71,26 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 	return featureInfos, nil
 }
 
-// featureOrigin classifies where a .feature file came from, from its path
-// alone: a catalog-generated file names its catalog in the marker header
-// (see catalog.GeneratedFileRepo), and everything else is identified by
-// the search root it lives under. imageName is passed in rather than
-// resolved here so a listing reads os-release once.
-func featureOrigin(path, imageName string) (origin, originName string) {
+// featureOrigin classifies where a .feature file came from: a
+// catalog-generated file names its catalog in the marker header (see
+// catalog.GeneratedFileRepo), and everything else is identified by the
+// search root it lives under. imageName is passed in rather than resolved
+// here so a listing reads os-release once.
+//
+// definitionsOverride reports whether the whole domain came from a
+// -C/--definitions directory. That directory may itself sit under a
+// search root (e.g. -C /etc/my-defs), where path containment alone would
+// wrongly claim the file as local:etc or even image — the file was not
+// discovered through the search paths at all, so the root it happens to
+// live under says nothing about its provenance. The marker still wins,
+// because it is a fact recorded in the file rather than an inference
+// from its location.
+func featureOrigin(path, imageName string, definitionsOverride bool) (origin, originName string) {
 	if repo, ok := catalog.GeneratedFileRepo(path); ok {
 		return FeatureOriginCatalog, repo
+	}
+	if definitionsOverride {
+		return FeatureOriginUnknown, ""
 	}
 
 	// Index order matches config.SearchRoots: /etc, /run, /usr/local/lib,

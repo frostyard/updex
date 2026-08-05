@@ -315,10 +315,19 @@ Design decisions (verified with the user, 2026-08):
   `captured` (contents read): a path that exists but cannot be read — a
   directory in the way, an unreadable file — is left strictly alone by
   `restore`, with a warning, because removing it would destroy state the
-  snapshot cannot rebuild (Copilot review). Likewise `fileExists` returns
-  stat failures other than not-exist as errors instead of reading them as
-  "absent", so a stat error can never skip the ownership guard in
+  snapshot cannot rebuild (Copilot review). Likewise `managedFileExists`
+  returns stat failures other than not-exist as errors instead of reading
+  them as "absent", so a stat error can never skip the ownership guard in
   `CatalogAdd`/`CatalogRemove` or silently under-report removed files.
+- **Definitions are regular files, never symlinks** (fourth review round):
+  `managedFileExists` and `snapshotFile` use `os.Lstat`, and anything
+  present that is not a regular file is an error. `os.Stat` reports a
+  *dangling* symlink as absent, which skipped the ownership check and let
+  the following `os.WriteFile` follow the link and create its target
+  outside the component directory — a root-privileged write. `CatalogRemove`
+  validates both the `.feature` and `.transfer` paths this way before
+  `DisableFeature{Now}`, so a symlink cannot produce a half-completed
+  teardown either.
 - **Ownership checked before destruction**: `CatalogRemove` validates the
   `.transfer`'s marker/repo *before* calling `DisableFeature{Now}` and
   errors out on a mismatch, pointing at `updex features disable`. That
@@ -331,6 +340,13 @@ Design decisions (verified with the user, 2026-08):
   (`00-updex.conf`, the single file updex writes, shared with
   `writeFeatureDropIn`) out of `<name>.feature.d`; administrator files
   like `50-local.conf` survive and keep the directory alive.
+- **Provenance respects `-C`**: `updex.featureOrigin` takes a
+  `definitionsOverride` flag, because a `--definitions` directory may sit
+  under a search root (`-C /etc/my-defs`) where containment alone would
+  report `local:etc` or even `image`. Such files were not discovered
+  through the search paths at all, so they are `unknown`. The catalog
+  marker still wins over the flag — it is recorded in the file rather
+  than inferred from its location (fourth review round).
 - **Listing status is repo-scoped**: `CatalogList` marks
   `Installed`/`Enabled` only when `GeneratedFileRepo(f.FilePath)` names
   the listing repo (`f.FilePath` is the highest-priority file, i.e. the

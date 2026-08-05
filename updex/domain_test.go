@@ -374,6 +374,58 @@ func TestFeatures_OriginDefinitionsOverride(t *testing.T) {
 	}
 }
 
+// TestFeatures_OriginDefinitionsUnderSearchRoot verifies that a
+// -C/--definitions directory which happens to live under a search root is
+// still reported as unknown. Path containment alone would claim these
+// files as local:etc or even image, but they were never discovered
+// through the search paths, so their location says nothing about where
+// they came from.
+func TestFeatures_OriginDefinitionsUnderSearchRoot(t *testing.T) {
+	roots := withComponentSearchRoots(t)
+	withTestImageName(t, "ucore")
+
+	for _, root := range []string{roots[0], roots[3]} {
+		customDir := filepath.Join(root, "my-definitions")
+		writeComponentFeature(t, customDir, "custom", false)
+
+		client := NewClient(ClientConfig{Definitions: customDir})
+		features, err := client.Features(t.Context())
+		if err != nil {
+			t.Fatalf("Features() error = %v", err)
+		}
+		if len(features) != 1 {
+			t.Fatalf("expected 1 feature, got %d", len(features))
+		}
+		if features[0].Origin != FeatureOriginUnknown || features[0].OriginName != "" {
+			t.Errorf("definitions dir under %s: origin = (%q, %q), want (unknown, \"\")",
+				root, features[0].Origin, features[0].OriginName)
+		}
+	}
+}
+
+// TestFeatures_OriginDefinitionsKeepsCatalogMarker verifies that a
+// generated file loaded through -C still reports its catalog: the marker
+// is a fact recorded in the file, not an inference from its location.
+func TestFeatures_OriginDefinitionsKeepsCatalogMarker(t *testing.T) {
+	roots := withComponentSearchRoots(t)
+	withTestImageName(t, "ucore")
+
+	customDir := filepath.Join(roots[0], "my-definitions")
+	writeGeneratedFeature(t, customDir, "fedora", "zoxide")
+
+	client := NewClient(ClientConfig{Definitions: customDir})
+	features, err := client.Features(t.Context())
+	if err != nil {
+		t.Fatalf("Features() error = %v", err)
+	}
+	if len(features) != 1 {
+		t.Fatalf("expected 1 feature, got %d", len(features))
+	}
+	if features[0].Origin != FeatureOriginCatalog || features[0].OriginName != "fedora" {
+		t.Errorf("origin = (%q, %q), want (catalog, fedora)", features[0].Origin, features[0].OriginName)
+	}
+}
+
 // TestFeatures_OriginImageWithoutIdentifier verifies an image-shipped
 // feature still classifies as image when os-release names no identifier.
 func TestFeatures_OriginImageWithoutIdentifier(t *testing.T) {

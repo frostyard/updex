@@ -201,7 +201,7 @@ func (c *Client) CatalogAdd(ctx context.Context, name string, opts CatalogAddOpt
 	// Component all stop the add rather than being clobbered.
 	existedBefore := false
 	for _, path := range []string{result.TransferFile, result.FeatureFile} {
-		exists, err := fileExists(path)
+		exists, err := managedFileExists(path)
 		if err != nil {
 			return nil, fmt.Errorf("cannot determine whether %s exists: %w", path, err)
 		}
@@ -289,17 +289,30 @@ func (c *Client) CatalogAdd(ctx context.Context, name string, opts CatalogAddOpt
 	return result, nil
 }
 
-// fileExists reports whether path exists. A stat failure for any reason
-// other than absence is returned as an error rather than reported as "not
-// there": callers use this to gate ownership checks and deletions, where
-// silently reading an unreadable path as absent would skip a safety check
-// or under-report what was left behind.
-func fileExists(path string) (bool, error) {
-	if _, err := os.Stat(path); err != nil {
+// managedFileExists reports whether a regular file exists at path, which
+// is the only thing updex generates or deletes at a managed definition
+// path.
+//
+// It uses Lstat, never Stat: a symlink must be seen as itself rather than
+// followed. A dangling link would otherwise stat as absent, skipping the
+// ownership check, and the subsequent os.WriteFile would follow it and
+// create the target wherever it points — a privileged write outside the
+// component directory. Anything present that is not a regular file is an
+// error so the operator resolves it deliberately.
+//
+// A stat failure for any reason other than absence is likewise an error
+// rather than "not there": reading an unreadable path as absent would
+// skip a safety check or under-report what was left behind.
+func managedFileExists(path string) (bool, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
 		return false, err
+	}
+	if !info.Mode().IsRegular() {
+		return false, fmt.Errorf("%s is not a regular file (mode %s); updex manages definitions in place and will not write through it", path, info.Mode().Type())
 	}
 	return true, nil
 }
@@ -322,11 +335,17 @@ type fileSnapshot struct {
 
 func snapshotFile(path string) fileSnapshot {
 	s := fileSnapshot{path: path, mode: 0644}
-	info, err := os.Stat(path)
+	// Lstat, not Stat: a symlink is state in its own right. Reading and
+	// rewriting its target would both mis-capture it and write outside
+	// the component directory on restore.
+	info, err := os.Lstat(path)
 	if err != nil {
 		return s
 	}
 	s.existed = true
+	if !info.Mode().IsRegular() {
+		return s
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return s
@@ -405,12 +424,17 @@ func (c *Client) CatalogRemove(ctx context.Context, name string, opts CatalogRem
 	transferFile := filepath.Join(dir, name+".transfer")
 	dropInDir := filepath.Join(dir, name+".feature.d")
 
-	// Validate the transfer's ownership *before* anything destructive
-	// runs. DisableFeature{Now} removes images and links described by
-	// whatever transfer currently claims this feature, so discovering a
-	// foreign transfer afterwards would mean having already destroyed
-	// state belonging to a definition we then refuse to delete.
-	transferExists, err := fileExists(transferFile)
+	// Validate both definitions *before* anything destructive runs.
+	// DisableFeature{Now} removes images and links described by whatever
+	// transfer currently claims this feature, so discovering a foreign
+	// transfer — or a path we refuse to manage, such as a symlink —
+	// afterwards would mean having already destroyed state belonging to a
+	// definition we then decline to delete.
+	featureFile := filepath.Join(dir, name+".feature")
+	if _, err := managedFileExists(featureFile); err != nil {
+		return nil, fmt.Errorf("cannot determine whether %s exists: %w", featureFile, err)
+	}
+	transferExists, err := managedFileExists(transferFile)
 	if err != nil {
 		return nil, fmt.Errorf("cannot determine whether %s exists: %w", transferFile, err)
 	}
@@ -446,11 +470,11 @@ func (c *Client) CatalogRemove(ctx context.Context, name string, opts CatalogRem
 	// belongs to the operator and outlives the catalog sysext.
 	paths := []string{
 		transferFile,
-		filepath.Join(dir, name+".feature"),
+		featureFile,
 		filepath.Join(dropInDir, updexDropInName),
 	}
 	for _, path := range paths {
-		exists, err := fileExists(path)
+		exists, err := managedFileExists(path)
 		if err != nil {
 			return result, fmt.Errorf("cannot determine whether %s exists: %w", path, err)
 		}
