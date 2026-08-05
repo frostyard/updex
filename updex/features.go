@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/frostyard/updex/catalog"
 	"github.com/frostyard/updex/config"
 	"github.com/frostyard/updex/manifest"
 	"github.com/frostyard/updex/sysext"
@@ -38,6 +39,9 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 
 	var featureInfos []FeatureInfo
 
+	// Resolved once: os-release does not change between features.
+	imageName := config.ImageName()
+
 	for _, f := range features {
 		// Get transfers associated with this feature
 		featureTransfers := config.GetTransfersForFeature(transfers, f.Name)
@@ -46,6 +50,8 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 			transferNames = append(transferNames, t.Component)
 		}
 
+		origin, originName := featureOrigin(f.FilePath, imageName)
+
 		info := FeatureInfo{
 			Name:          f.Name,
 			Description:   f.Description,
@@ -53,6 +59,8 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 			Enabled:       f.Enabled,
 			Masked:        f.Masked,
 			Source:        f.FilePath,
+			Origin:        origin,
+			OriginName:    originName,
 			Transfers:     transferNames,
 		}
 		featureInfos = append(featureInfos, info)
@@ -61,6 +69,32 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 	c.msg("Found %d feature(s)", len(featureInfos))
 
 	return featureInfos, nil
+}
+
+// featureOrigin classifies where a .feature file came from, from its path
+// alone: a catalog-generated file names its catalog in the marker header
+// (see catalog.GeneratedFileRepo), and everything else is identified by
+// the search root it lives under. imageName is passed in rather than
+// resolved here so a listing reads os-release once.
+func featureOrigin(path, imageName string) (origin, originName string) {
+	if repo, ok := catalog.GeneratedFileRepo(path); ok {
+		return FeatureOriginCatalog, repo
+	}
+
+	// Index order matches config.SearchRoots: /etc, /run, /usr/local/lib,
+	// /usr/lib.
+	switch idx, ok := config.SearchRootIndex(path); {
+	case !ok:
+		return FeatureOriginUnknown, ""
+	case idx == 0:
+		return FeatureOriginLocal, "etc"
+	case idx == 1:
+		return FeatureOriginLocal, "run"
+	case idx == 2:
+		return FeatureOriginLocal, "usr"
+	default:
+		return FeatureOriginImage, imageName
+	}
 }
 
 // updexDropInName is the feature drop-in file updex owns. Everything else

@@ -32,6 +32,24 @@ type CheckFeaturesResult struct {
 	Results []CheckResult `json:"results"`
 }
 
+// Feature origin kinds reported in FeatureInfo.Origin. Kind and name are
+// kept separate so consumers can match on the kind without having to
+// disambiguate a catalog legitimately named "image" or "local".
+const (
+	// FeatureOriginCatalog: added by 'updex catalog add'. OriginName is
+	// the catalog repo, e.g. "fedora".
+	FeatureOriginCatalog = "catalog"
+	// FeatureOriginImage: shipped in /usr/lib by the OS image. OriginName
+	// is the image identifier (see config.ImageName), e.g. "ucore".
+	FeatureOriginImage = "image"
+	// FeatureOriginLocal: administered on this machine. OriginName is the
+	// search root: "etc", "usr" (/usr/local/lib), or "run".
+	FeatureOriginLocal = "local"
+	// FeatureOriginUnknown: outside every search root, i.e. loaded from a
+	// --definitions override directory. OriginName is empty.
+	FeatureOriginUnknown = "unknown"
+)
+
 // FeatureInfo represents feature information.
 type FeatureInfo struct {
 	Name          string   `json:"name"`
@@ -40,6 +58,8 @@ type FeatureInfo struct {
 	Enabled       bool     `json:"enabled"`
 	Masked        bool     `json:"masked,omitempty"`
 	Source        string   `json:"source"`
+	Origin        string   `json:"origin"`
+	OriginName    string   `json:"origin_name,omitempty"`
 	Transfers     []string `json:"transfers,omitzero"`
 }
 

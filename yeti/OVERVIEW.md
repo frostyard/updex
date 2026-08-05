@@ -403,6 +403,8 @@ Design decisions (verified with the user, 2026-08):
 
 ```
 updex features list                     List all features with status (alias: updex feature)
+                                         CATALOG column shows provenance: a catalog
+                                         name, image:<id>, local:etc|usr|run, or unknown
 updex features enable <name>            Enable a feature
   --now                                 Download extensions immediately
 updex features disable <name>           Disable a feature

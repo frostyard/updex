@@ -89,6 +89,31 @@ func ComponentOfPath(path string) (string, bool) {
 	return parseComponentDirName(filepath.Base(filepath.Dir(path)))
 }
 
+// SearchRootIndex returns the index into SearchRoots of the root that
+// contains path, or (-1, false) when path lies outside every root (e.g. a
+// --definitions override directory). The most specific root wins, so a
+// nested root is preferred over one that merely shares a prefix. Callers
+// use the index rather than the directory string because SearchRoots is
+// overridden with temporary directories in tests.
+func SearchRootIndex(path string) (int, bool) {
+	path = filepath.Clean(path)
+
+	best, bestLen := -1, 0
+	for i, root := range SearchRoots {
+		root = filepath.Clean(root)
+		if path != root && !strings.HasPrefix(path, root+string(filepath.Separator)) {
+			continue
+		}
+		if best == -1 || len(root) > bestLen {
+			best, bestLen = i, len(root)
+		}
+	}
+	if best == -1 {
+		return -1, false
+	}
+	return best, true
+}
+
 // Component describes a discovered systemd-sysupdate component: a named
 // grouping of .transfer/.feature files under sysupdate.<name>.d directories
 // (see sysupdate.d(5) "Components"). Components let a sysext's transfer and

@@ -32,7 +32,7 @@ func runFeaturesList(cmd *cobra.Command, args []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "FEATURE\tDESCRIPTION\tENABLED\tTRANSFERS")
+	_, _ = fmt.Fprintln(w, "FEATURE\tDESCRIPTION\tENABLED\tCATALOG\tTRANSFERS")
 	for _, f := range features {
 		status := "no"
 		if f.Masked {
@@ -52,11 +52,29 @@ func runFeaturesList(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", f.Name, f.Description, status, transfersStr)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", f.Name, f.Description, status, formatOrigin(f), transfersStr)
 	}
 	_ = w.Flush()
 
 	return nil
+}
+
+// formatOrigin renders a feature's origin for the CATALOG column: a bare
+// catalog name for catalog-added features (the column header already says
+// what it is), and a kind:detail form otherwise so nothing else can be
+// misread as a catalog name.
+func formatOrigin(f updex.FeatureInfo) string {
+	switch {
+	case f.Origin == updex.FeatureOriginCatalog:
+		return f.OriginName
+	case f.Origin == "" || f.Origin == updex.FeatureOriginUnknown:
+		return updex.FeatureOriginUnknown
+	case f.OriginName == "":
+		// e.g. an image whose os-release names no identifier.
+		return f.Origin
+	default:
+		return f.Origin + ":" + f.OriginName
+	}
 }
 
 func runFeaturesEnable(cmd *cobra.Command, args []string) error {

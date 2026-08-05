@@ -569,6 +569,77 @@ func TestLoadAllTransfers_CustomPathFiltersNonSysext(t *testing.T) {
 	}
 }
 
+func TestSearchRootIndex(t *testing.T) {
+	roots := withTestSearchRoots(t)
+
+	tests := []struct {
+		name  string
+		path  string
+		want  int
+		found bool
+	}{
+		{"etc feature", filepath.Join(roots[0], "sysupdate.d", "docker.feature"), 0, true},
+		{"run feature", filepath.Join(roots[1], "sysupdate.d", "docker.feature"), 1, true},
+		{"usr local lib feature", filepath.Join(roots[2], "sysupdate.d", "docker.feature"), 2, true},
+		{"usr lib feature", filepath.Join(roots[3], "sysupdate.d", "docker.feature"), 3, true},
+		{"component dir under usr lib", filepath.Join(roots[3], "sysupdate.docker.d", "docker.feature"), 3, true},
+		{"root itself", roots[0], 0, true},
+		{"unrelated path", "/definitely/not/a/search/root/x.feature", -1, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := SearchRootIndex(tc.path)
+			if ok != tc.found || got != tc.want {
+				t.Errorf("SearchRootIndex(%q) = (%d, %v), want (%d, %v)", tc.path, got, ok, tc.want, tc.found)
+			}
+		})
+	}
+}
+
+// TestSearchRootIndexBoundaries verifies that a root only matches whole
+// path components: /usr/local/lib must not be attributed to /usr/lib, and
+// a sibling like /usr/libfoo must not match /usr/lib at all.
+func TestSearchRootIndexBoundaries(t *testing.T) {
+	original := SearchRoots
+	SearchRoots = []string{"/etc", "/run", "/usr/local/lib", "/usr/lib"}
+	t.Cleanup(func() { SearchRoots = original })
+
+	tests := []struct {
+		path  string
+		want  int
+		found bool
+	}{
+		{"/usr/local/lib/sysupdate.d/docker.feature", 2, true},
+		{"/usr/lib/sysupdate.d/docker.feature", 3, true},
+		{"/usr/libfoo/sysupdate.d/docker.feature", -1, false},
+		{"/etcetera/sysupdate.d/docker.feature", -1, false},
+		{"/usr/lib/../lib/sysupdate.d/docker.feature", 3, true},
+	}
+
+	for _, tc := range tests {
+		got, ok := SearchRootIndex(tc.path)
+		if ok != tc.found || got != tc.want {
+			t.Errorf("SearchRootIndex(%q) = (%d, %v), want (%d, %v)", tc.path, got, ok, tc.want, tc.found)
+		}
+	}
+}
+
+// TestSearchRootIndexNestedRoots verifies the most specific root wins when
+// one search root lives inside another.
+func TestSearchRootIndexNestedRoots(t *testing.T) {
+	original := SearchRoots
+	SearchRoots = []string{"/usr", "/usr/lib"}
+	t.Cleanup(func() { SearchRoots = original })
+
+	if got, ok := SearchRootIndex("/usr/lib/sysupdate.d/docker.feature"); !ok || got != 1 {
+		t.Errorf("SearchRootIndex() = (%d, %v), want (1, true)", got, ok)
+	}
+	if got, ok := SearchRootIndex("/usr/share/x.feature"); !ok || got != 0 {
+		t.Errorf("SearchRootIndex() = (%d, %v), want (0, true)", got, ok)
+	}
+}
+
 // containsAll reports whether s contains every substring in subs.
 func containsAll(s string, subs ...string) bool {
 	for _, sub := range subs {

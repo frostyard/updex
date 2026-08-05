@@ -154,6 +154,13 @@ Key design points:
   (`CatalogListOptions.NoCache`) bypasses and rewrites the cache. The
   cache entry stores the repo's ListURL and is invalidated when it
   changes. `add`/`remove`/`FetchConf` never use the cache.
+- Provenance: `FeatureInfo.Origin`/`OriginName` (set by
+  `updex.featureOrigin` from the `.feature` path alone) drive the CATALOG
+  column of `features list` — a catalog name for marker-bearing files,
+  else `image:<config.ImageName()>` for `/usr/lib`, `local:etc|usr|run`
+  for the administered roots (`config.SearchRootIndex`), or `unknown`
+  outside them. Kind and name stay separate fields in JSON so a catalog
+  named `image` can't be confused for one.
 - Catalog operations error when `ClientConfig.Definitions` is set
   (component-scoped, incompatible with `-C`) and return setup guidance
   when no catalogs are configured (`catalog.ErrNoCatalogs`).

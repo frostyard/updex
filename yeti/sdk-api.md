@@ -199,9 +199,27 @@ type FeatureInfo struct {
     Enabled       bool     `json:"enabled"`
     Masked        bool     `json:"masked,omitempty"`
     Source        string   `json:"source"`
+    Origin        string   `json:"origin"`
+    OriginName    string   `json:"origin_name,omitempty"`
     Transfers     []string `json:"transfers,omitzero"`
 }
 ```
+
+`Origin`/`OriginName` say where the feature came from, derived from
+`Source` alone by `updex.featureOrigin`. Kind and name are separate fields
+so consumers match on the kind (`select(.origin=="catalog")`) without
+having to disambiguate a catalog legitimately named `image` or `local`:
+
+| `Origin` (const) | `OriginName` | Source |
+|---|---|---|
+| `catalog` (`FeatureOriginCatalog`) | catalog repo, e.g. `fedora` | file carries the `catalog.GeneratedMarker` header — wins over the root |
+| `image` (`FeatureOriginImage`) | `config.ImageName()`, e.g. `ucore`; empty if os-release names none | `/usr/lib` |
+| `local` (`FeatureOriginLocal`) | `etc`, `usr` (/usr/local/lib), or `run` | administered on this machine |
+| `unknown` (`FeatureOriginUnknown`) | empty | outside every search root, i.e. a `-C`/`--definitions` directory |
+
+`Features()` resolves `config.ImageName()` once per call rather than per
+feature. The CLI renders this as the CATALOG column via `formatOrigin`:
+bare name for catalogs, `kind:name` otherwise.
 
 ### FeatureActionResult
 
@@ -274,6 +292,9 @@ type CheckResult struct {
 **Component discovery** (`config/component.go`; see `yeti/OVERVIEW.md` "Components" for the full design):
 
 - `SearchRoots` — Package variable: `[]string{"/etc", "/run", "/usr/local/lib", "/usr/lib"}`, in priority order. Overridable in tests (same pattern as `sysext.SysextDir`).
+- `SearchRootIndex(path string) (int, bool)` — Index into `SearchRoots` of the root containing `path` (most specific wins, whole-component match so `/usr/libfoo` misses `/usr/lib`), `(-1, false)` when outside all of them. Returns the index, not the directory, because tests override `SearchRoots` with temp dirs. Used by `updex.featureOrigin` to classify a feature's provenance.
+- `OSReleasePaths` — Package variable: `[]string{"/etc/os-release", "/usr/lib/os-release"}`, first readable wins. Overridable in tests.
+- `ImageName() string` — Identifier for the running OS image: first non-empty of `VARIANT_ID` (ublue-os images, Fedora variants), `IMAGE_ID` (frostyard/snosi images), `ID` (fallback); `""` if none. Order matters: on ucore `IMAGE_ID` is unset and `ID=fedora`, which would collide with the `fedora` catalog name, while `VARIANT_ID=ucore` is correct.
 - `ComponentSearchPaths(name string) []string` — The four search-path directories for a component (`""` = legacy default `sysupdate.d/`).
 - `EtcComponentDir(name string) string` — The `/etc` override directory for a component's drop-ins (`""` = `/etc/sysupdate.d`).
 - `type Component struct { Name string; SearchPaths []string }` — `SearchPaths` lists only the directories that exist on disk, in priority order.

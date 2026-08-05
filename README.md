@@ -193,8 +193,12 @@ type CheckFeaturesOptions struct {
 ## CLI Usage
 
 ```bash
-# List all features
+# List all features, including where each one came from
 updex features list
+# FEATURE   DESCRIPTION       ENABLED  CATALOG      TRANSFERS
+# docker    Docker CE         yes      image:ucore  docker
+# zoxide    zoxide sysext     yes      fedora       zoxide
+# mytool    Hand-written      no       local:etc    mytool
 
 # Enable a feature (downloads on next update)
 sudo updex features enable docker
@@ -505,7 +509,9 @@ upgrades.
 
 From then on the sysext is a completely normal feature: `updex features
 list/enable/disable/update/check` and the update daemon manage it like any
-hand-written one. `sudo updex catalog remove zoxide` reverses the add —
+hand-written one. The CATALOG column of `updex features list` still shows
+which catalog it came from, so catalog-added sysexts stay distinguishable
+from image-shipped (`image:<id>`) and hand-written (`local:etc`) ones. `sudo updex catalog remove zoxide` reverses the add —
 disable, unmerge, delete images and the extensions link, and delete the
 generated definition files (`--force` required while the extension is
 merged, as with `features disable --now`).
@@ -557,6 +563,9 @@ Use `--json` for machine-readable output:
 ```bash
 updex features list --json | jq '.[] | select(.enabled)'
 updex features check --json
+
+# Everything added from the fedora catalog
+updex features list --json | jq '.[] | select(.origin=="catalog" and .origin_name=="fedora")'
 ```
 
 ## Development
