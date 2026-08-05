@@ -59,6 +59,46 @@ type installTransferOptions struct {
 	CachedManifest *manifest.Manifest
 }
 
+// CatalogListOptions configures the CatalogList operation.
+type CatalogListOptions struct {
+	// Repo limits the listing to a single configured catalog repo.
+	// Empty lists every configured repo.
+	Repo string
+
+	// Search filters entries to names containing this substring.
+	Search string
+}
+
+// CatalogAddOptions configures the CatalogAdd operation.
+type CatalogAddOptions struct {
+	// Repo selects the catalog repo to add from. Empty probes every
+	// configured repo and errors when the name exists in more than one.
+	Repo string
+
+	// DryRun previews changes without modifying filesystem.
+	DryRun bool
+
+	// NoRefresh skips running systemd-sysext refresh after download.
+	NoRefresh bool
+}
+
+// CatalogRemoveOptions configures the CatalogRemove operation.
+type CatalogRemoveOptions struct {
+	// Repo selects the catalog repo the sysext was added from. Empty
+	// locates it automatically and errors when the name is managed by
+	// more than one configured repo.
+	Repo string
+
+	// Force allows removal of merged extensions (requires reboot).
+	Force bool
+
+	// DryRun previews changes without modifying filesystem.
+	DryRun bool
+
+	// NoRefresh skips running systemd-sysext refresh.
+	NoRefresh bool
+}
+
 // DisableFeatureOptions configures the DisableFeature operation.
 type DisableFeatureOptions struct {
 	// Now immediately removes files AND unmerges extensions.

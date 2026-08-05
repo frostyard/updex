@@ -26,6 +26,7 @@ Key packages:
 - `updex/` — Public SDK: `Client` struct with `Features()`, `EnableFeature()`, `DisableFeature()`, `UpdateFeatures()`, `CheckFeatures()`, `Components()`
 - `cmd/updex/` — Cobra command handlers calling SDK methods (flags, output formatting, progress bars)
 - `config/` — Parses `.transfer` and `.feature` INI files from systemd-style search paths, including systemd-sysupdate "component" discovery (see below)
+- `catalog/` — Sysext catalog primitives (see below): `*.catalog` repo config loading, sysext enumeration via a GitHub contents API endpoint, fetching the catalog's published `.conf`, and rendering it into updex `.transfer`/`.feature` files
 - `download/` — HTTP downloads with bounded retry for transient failures, SHA256 verification, and decompression (xz, gz, zstd)
 - `manifest/` — Fetches/parses SHA256SUMS manifests with bounded retry for transient failures and optional GPG verification
 - `version/` — Pattern matching (`@v` placeholder) and semantic version comparison
@@ -81,6 +82,45 @@ package-versioned sysext transfers) without updex losing track of them.
   structs carry a `Component string` field for this; extend the options
   struct for new component-scoped operations, never add package-level flag
   state to the SDK.
+
+### Catalog Support (`catalog/`, `updex/catalog.go`, `cmd/updex/catalog.go`)
+
+`updex catalog list|search|add|remove` consumes sysext catalogs like
+fedora-sysexts (https://fedora-sysexts.github.io/, served at
+extensions.fcos.fr). There are deliberately **no built-in repos** — such
+catalogs only apply to specific systems (ucore/Fedora atomic) — so repos
+come from `<name>.catalog` INI files searched across
+`catalog.ConfigRoots` (`/etc/updex/catalogs.d`, `/run/...`,
+`/usr/local/lib/...`, `/usr/lib/...`; earlier root wins per filename,
+test-overridable like `config.SearchRoots`). Each file defines `SiteURL`
+(required; artifacts resolve under `<SiteURL>/<sysext>/`), optional
+`ListURL` (GitHub contents API endpoint, only used by list/search;
+`GITHUB_TOKEN` honored), and optional `Component` (default
+`catalog-<name>`), the component the generated files land in.
+
+Key design points:
+
+- `CatalogAdd` fetches `<SiteURL>/<name>/<name>.conf` (a genuine
+  sysupdate transfer file the catalog publishes) and writes it via
+  `catalog.RenderTransfer` to `config.EtcComponentDir(repo.Component)`:
+  a line-based transform that injects `Features=<name>`, drops
+  `CurrentSymlink` (updex manages `/var/lib/extensions` links itself),
+  and preserves everything else byte-for-byte — critically `%w`/`%a`
+  specifiers stay **unexpanded** so the file survives Fedora release
+  upgrades (expansion happens at load time in `config`).
+- The generated `.feature` has `Enabled=false`; enabling goes through the
+  standard `EnableFeature{Now: true, Component: repo.Component}` drop-in
+  path. After `add`, the sysext is indistinguishable from a hand-written
+  feature — every `features` operation and the daemon manage it via the
+  normal union domain. Only `CatalogRemove` knows about catalogs: it runs
+  `DisableFeature{Now, Force}` then deletes the generated
+  `.transfer`/`.feature`/`.feature.d` from the /etc component dir.
+- Ambiguity: a bare name found in multiple repos (add) or managed by
+  multiple repos (remove) errors listing `repo/name` candidates; the CLI
+  accepts `REPO/NAME` or `--repo`.
+- Catalog operations error when `ClientConfig.Definitions` is set
+  (component-scoped, incompatible with `-C`) and return setup guidance
+  when no catalogs are configured (`catalog.ErrNoCatalogs`).
 
 ## Code Patterns
 

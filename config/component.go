@@ -51,10 +51,12 @@ func defaultSearchPaths() []string {
 
 // EtcComponentDir returns the /etc override directory for a component's
 // definitions (e.g. "/etc/sysupdate.docker.d"), used when writing drop-in
-// configuration overrides. Pass "" for the legacy default component
-// (/etc/sysupdate.d).
+// configuration overrides and catalog-generated definitions. Pass "" for
+// the legacy default component (/etc/sysupdate.d). The highest-priority
+// search root is used so tests that override SearchRoots exercise real
+// writes; in production that root is /etc.
 func EtcComponentDir(name string) string {
-	return filepath.Join("/etc", componentDirName(name))
+	return filepath.Join(SearchRoots[0], componentDirName(name))
 }
 
 // componentNamePattern matches systemd-sysupdate component names (see

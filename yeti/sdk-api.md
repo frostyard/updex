@@ -128,6 +128,49 @@ Checks for available updates without downloading. Manifests are cached by source
 |-------|------|-------------|
 | `Component` | `string` | Scope to one named component; `""` = default union |
 
+### CatalogList / CatalogAdd / CatalogRemove
+
+```go
+func (c *Client) CatalogList(ctx context.Context, opts CatalogListOptions) ([]CatalogEntry, error)
+func (c *Client) CatalogAdd(ctx context.Context, name string, opts CatalogAddOptions) (*CatalogAddResult, error)
+func (c *Client) CatalogRemove(ctx context.Context, name string, opts CatalogRemoveOptions) (*CatalogRemoveResult, error)
+```
+
+Catalog operations over the repos configured via `catalog.LoadRepos()`
+(see the `catalog` package below and `OVERVIEW.md` "Catalogs"). All three
+error when no catalogs are configured (with setup guidance) or when the
+client has a `Definitions` override.
+
+- `CatalogList` enumerates each repo via its `ListURL` (skipping repos
+  without one, with a warning — unless explicitly selected via
+  `opts.Repo`, which errors instead) and cross-references
+  `config.LoadComponentFeatures(repo.Component)` to fill
+  `Installed`/`Enabled`. `opts.Search` is a substring filter; search is
+  just `CatalogList` with `Search` set.
+- `CatalogAdd` resolves the repo (explicit `opts.Repo`, else probes every
+  repo's `FetchConf` and errors on multiple hits listing `repo/name`
+  candidates), writes `RenderTransfer`/`RenderFeature` output to
+  `config.EtcComponentDir(repo.Component)`, then calls
+  `EnableFeature{Now: true, Component: repo.Component}`. With
+  `DryRun: true` it reports the target paths and skips both the writes and
+  the enable.
+- `CatalogRemove` finds the owning repo (the configured repo whose
+  component defines the feature; errors when none — "not a
+  catalog-managed sysext" — or several), calls
+  `DisableFeature{Now: true, Force, Component}`, then deletes the
+  generated `.transfer`, `.feature`, and `.feature.d` from the /etc
+  component dir, removing the directory itself when empty.
+
+**CatalogListOptions:** `Repo`, `Search`. **CatalogAddOptions:** `Repo`,
+`DryRun`, `NoRefresh`. **CatalogRemoveOptions:** `Repo`, `Force`,
+`DryRun`, `NoRefresh`.
+
+**CatalogEntry:** `Name`, `Repo`, `Installed`, `Enabled`.
+**CatalogAddResult:** `Name`, `Repo`, `Component`, `TransferFile`,
+`FeatureFile`, `DryRun`, `Enable *FeatureActionResult`.
+**CatalogRemoveResult:** `Name`, `Repo`, `Component`, `RemovedFiles`,
+`DryRun`, `Disable *FeatureActionResult`.
+
 ## Result Types
 
 ### FeatureInfo
@@ -224,6 +267,19 @@ type CheckResult struct {
 - `IsSysextTransfer(t *Transfer) bool` — `true` for a `url-file`-sourced transfer whose target is empty-or-`regular-file` with no `PathRelativeTo` set.
 - `FilterSysextTransfers(transfers []*Transfer) []*Transfer` — Keep only `IsSysextTransfer` matches.
 - `ComponentOfPath(path string) (name string, ok bool)` — Recover the component name from a loaded `Feature`/`Transfer`'s `FilePath` (its parent directory). `ok=false` for the legacy default directory or a `-C`/`Definitions` override directory.
+
+### `catalog`
+
+Sysext catalog primitives; no built-in repos (see `OVERVIEW.md` "Catalogs").
+
+- `ConfigRoots` — Package variable: the four `*/updex/catalogs.d` directories scanned for `<name>.catalog` files, earlier roots winning per filename. Overridable in tests.
+- `LoadRepos() ([]Repo, error)` — Load configured repos, sorted by name; returns `ErrNoCatalogs` when none exist.
+- `RepoByName(repos []Repo, name string) (Repo, bool)`
+- `type Repo struct { Name, SiteURL, ListURL, Component string }` — `Component` defaults to `catalog-<name>`; both names validated against `[a-zA-Z0-9_-]+`.
+- `List(ctx, *http.Client, Repo) ([]string, error)` — Enumerate sysexts via the repo's `ListURL` (GitHub contents API shape): top-level `dir` entries minus dotted names and `docs`/`LICENSES`. Sends `GITHUB_TOKEN` as a bearer token when set.
+- `FetchConf(ctx, *http.Client, Repo, name) ([]byte, error)` — GET `<SiteURL>/<name>/<name>.conf`; 404 wraps `ErrNotFound`.
+- `RenderTransfer(conf []byte, name string) ([]byte, error)` — Byte-preserving line transform: inject `Features=<name>` after `[Transfer]` (appending the section if missing, replacing an existing `Features` key), drop `Target CurrentSymlink`, keep `%w`/`%a` specifiers unexpanded. Validates `[Source]`/`[Target]` presence via `ini.Load`.
+- `RenderFeature(Repo, name) []byte` — `[Feature]` stanza with `Description`, `Documentation=<SiteURL>/<name>/`, and `Enabled=false` (enabling goes through the standard drop-in).
 
 ### `manifest`
 

@@ -14,6 +14,8 @@ cmd/updex/root.go               Cobra root command, global flags
 cmd/updex/features.go           features list|enable|disable|update|check
 cmd/updex/features_run.go       Run functions for feature subcommands
 cmd/updex/components.go         components (list discovered systemd-sysupdate components)
+cmd/updex/catalog.go            catalog list|search|add|remove ([REPO/]NAME parsing,
+                                --repo/--force flags, output formatting)
 cmd/updex/daemon.go             daemon enable|disable|status (direct systemd timers)
 cmd/updex/client.go             CLI → SDK client factory
 
@@ -34,7 +36,16 @@ updex/                          Public SDK (Client + methods)
   options.go                    Option structs for all operations (each
                                 feature-related struct carries Component string)
   results.go                    Result structs for all operations
+  catalog.go                    CatalogList(), CatalogAdd(), CatalogRemove() —
+                                orchestrate catalog/ primitives plus
+                                EnableFeature/DisableFeature reuse
 
+catalog/                        Sysext catalog primitives (no built-in repos):
+                                *.catalog INI repo config (ConfigRoots,
+                                LoadRepos, ErrNoCatalogs), List() via GitHub
+                                contents API, FetchConf(), RenderTransfer()
+                                (Features= injection + CurrentSymlink drop,
+                                byte-preserving), RenderFeature()
 config/                         .transfer and .feature INI file parsing,
                                 search paths, drop-ins, and specifiers
 config/component.go             systemd-sysupdate component discovery
@@ -55,6 +66,7 @@ internal/testutil/              HTTP test server helpers (module-internal)
 ```
 CLI (cmd/features*) → SDK (updex/) → config, manifest, download, version, sysext
                                   → sysext → config, version
+CLI (cmd/catalog.go) → SDK (updex/catalog.go) → catalog, config
 CLI (cmd/daemon.go) → systemd (direct, bypasses SDK)
 ```
 
@@ -240,6 +252,56 @@ Only the main `SHA256SUMS` fetch has bounded retry behavior. The detached `.gpg`
 
 Transfer file values support systemd-style `%` specifiers. See [Configuration Reference](config-reference.md#systemd-specifiers) for the full list.
 
+## Catalogs (`catalog/`, `updex/catalog.go`)
+
+`updex catalog list|search|add|remove` consumes sysext catalogs like
+fedora-sysexts (https://fedora-sysexts.github.io/, served at
+extensions.fcos.fr): per sysext, a stable GitHub release tagged `<name>`
+publishes `<name>.conf` (a genuine sysupdate transfer file with
+`MatchPattern=<name>-@v-%w-%a.raw`) and an aggregate `SHA256SUMS` covering
+all versions/Fedora releases/arches; `<SiteURL>/<name>/<file>` redirects to
+the right release asset for the `.conf`, `SHA256SUMS`, and `.raw` alike.
+
+Design decisions (verified with the user, 2026-08):
+
+- **No built-in repos.** These catalogs only apply to ucore/Fedora-atomic
+  systems, so repos come exclusively from `<name>.catalog` INI files across
+  `catalog.ConfigRoots` (`/etc/updex/catalogs.d` > `/run/...` >
+  `/usr/local/lib/...` > `/usr/lib/...`; earlier root wins per filename;
+  package var, test-overridable). Keys: `SiteURL` (required), `ListURL`
+  (optional GitHub contents API endpoint for list/search only;
+  `GITHUB_TOKEN` env honored as bearer token), `Component` (optional,
+  default `catalog-<repo>`). Missing config → `catalog.ErrNoCatalogs`,
+  surfaced by the SDK with setup guidance.
+- **`RenderTransfer` is a byte-preserving line transform**, not an INI
+  round-trip: it injects `Features=<name>` right after `[Transfer]` and
+  drops `Target CurrentSymlink` (updex manages `/var/lib/extensions` links
+  itself and removes legacy symlinks), leaving everything else verbatim.
+  `%w`/`%a` specifiers deliberately stay **unexpanded** in the written
+  `.transfer` — expansion happens at config load time — so the file keeps
+  tracking the running Fedora release across OS upgrades. `ini.Load` is
+  used only to validate `[Source]`/`[Target]` exist.
+- **After `add`, nothing knows about catalogs.** The generated `.feature`
+  is `Enabled=false`; `CatalogAdd` then calls
+  `EnableFeature{Now, Component: repo.Component}` so enabling goes through
+  the standard drop-in and the download reuses `installTransfer`. All
+  `features` operations and the daemon manage the sysext via the normal
+  union domain. `CatalogRemove` is the only catalog-aware teardown:
+  `DisableFeature{Now, Force}` (unmerge + image/link removal, `--force`
+  when merged) then deletes `<name>.transfer`/`<name>.feature`/
+  `<name>.feature.d` from `config.EtcComponentDir(repo.Component)` and the
+  directory itself if empty.
+- **Repo disambiguation**: bare names are probed against every repo
+  (`FetchConf` 404 → `catalog.ErrNotFound` distinguishes "not here" from
+  transport errors); multiple hits error listing `repo/name` candidates.
+  CLI accepts `REPO/NAME` or the persistent `--repo` flag
+  (`splitCatalogArg`, errors when both are given and conflict).
+- Catalog operations reject a `Definitions` override (component-scoped,
+  same conflict as `--component` + `-C`).
+- `config.EtcComponentDir` now derives from `SearchRoots[0]` (still `/etc`
+  in production) so catalog/drop-in write paths are exercisable in tests
+  that override `SearchRoots`.
+
 ## Data Flow
 
 ### Feature update (end-to-end)
@@ -292,6 +354,15 @@ updex features check                    Check for available updates
 
 updex components                        List discovered systemd-sysupdate components
                                          (name, source dir, feature count)
+
+updex catalog list                      List sysexts from configured catalogs
+updex catalog search <term>             Substring search across catalogs
+updex catalog add [REPO/]NAME           Fetch conf, write .transfer/.feature into the
+                                         catalog's component, enable + download now
+updex catalog remove [REPO/]NAME        DisableFeature --now + delete generated files
+  --force                               Allow removal of merged extensions
+  --repo <name>                         Persistent flag on `updex catalog`, equivalent
+                                         to the REPO/ prefix (error if they conflict)
 
 updex daemon enable                     Install daily auto-update timer
 updex daemon disable                    Remove auto-update timer
