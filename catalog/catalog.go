@@ -284,8 +284,12 @@ func iniKeyOf(trimmedLine string) string {
 // enabling happens through the standard drop-in written by EnableFeature,
 // so later enable/disable cycles work exactly like any hand-written
 // feature.
+//
+// The description names the sysext only: the originating catalog is
+// already reported in its own column by 'updex features list' (see
+// FeatureInfo.Origin), so repeating it here is noise.
 func RenderFeature(repo Repo, name string) []byte {
 	return fmt.Appendf(nil,
-		"%s[Feature]\nDescription=%s sysext from the %s catalog\nDocumentation=%s/%s/\nEnabled=false\n",
-		markerLine(repo), name, repo.Name, repo.SiteURL, name)
+		"%s[Feature]\nDescription=%s sysext\nDocumentation=%s/%s/\nEnabled=false\n",
+		markerLine(repo), name, repo.SiteURL, name)
 }
