@@ -627,6 +627,95 @@ func TestCatalogAdd_WriteFailureRestoresPrevious(t *testing.T) {
 	if string(transferAfter) != string(transferBefore) {
 		t.Errorf("transfer not restored after write failure:\ngot:\n%s\nwant:\n%s", transferAfter, transferBefore)
 	}
+
+	// The directory standing in for the feature file existed but could not
+	// be snapshotted, so rollback must leave it strictly alone rather than
+	// deleting state it cannot rebuild.
+	if info, err := os.Stat(featurePath); err != nil {
+		t.Errorf("rollback removed the pre-existing path it could not back up: %v", err)
+	} else if !info.IsDir() {
+		t.Errorf("expected %s to still be a directory", featurePath)
+	}
+}
+
+// TestCatalogAdd_StatFailureIsFatal verifies that a stat failure which is
+// not "file absent" stops the add instead of being read as "nothing there"
+// — that would skip the ownership check guarding existing definitions.
+func TestCatalogAdd_StatFailureIsFatal(t *testing.T) {
+	roots := withComponentSearchRoots(t)
+	catalogRoot := withCatalogConfigRoots(t)
+	targetDir := t.TempDir()
+
+	server := newCatalogServer(t, "zoxide", "1.0.0", targetDir)
+	writeCatalogRepo(t, catalogRoot, "fedora", server.URL, "")
+
+	// A regular file where the component directory belongs: stat of any
+	// path beneath it fails with ENOTDIR, which is not os.IsNotExist.
+	componentPath := filepath.Join(roots[0], "sysupdate.catalog-fedora.d")
+	if err := os.MkdirAll(filepath.Dir(componentPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(componentPath, []byte("not a directory\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	client := NewClient(ClientConfig{SysextRunner: &sysext.MockRunner{}})
+
+	_, err := client.CatalogAdd(t.Context(), "zoxide", CatalogAddOptions{})
+	if err == nil || !strings.Contains(err.Error(), "cannot determine whether") {
+		t.Fatalf("expected a stat failure to be fatal, got %v", err)
+	}
+
+	// The blocking file is untouched.
+	data, readErr := os.ReadFile(componentPath)
+	if readErr != nil || string(data) != "not a directory\n" {
+		t.Errorf("component path was modified (%v): %q", readErr, data)
+	}
+}
+
+func TestFileExists(t *testing.T) {
+	dir := t.TempDir()
+
+	present := filepath.Join(dir, "present")
+	if err := os.WriteFile(present, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if ok, err := fileExists(present); err != nil || !ok {
+		t.Errorf("fileExists(present) = (%v, %v), want (true, nil)", ok, err)
+	}
+	if ok, err := fileExists(filepath.Join(dir, "missing")); err != nil || ok {
+		t.Errorf("fileExists(missing) = (%v, %v), want (false, nil)", ok, err)
+	}
+	// ENOTDIR: a path below a regular file exists in neither sense, but it
+	// is not "absent" either — the caller must hear about it.
+	if ok, err := fileExists(filepath.Join(present, "child")); err == nil || ok {
+		t.Errorf("fileExists(under a file) = (%v, %v), want (false, error)", ok, err)
+	}
+}
+
+func TestFileSnapshotUnreadableIsNotRemoved(t *testing.T) {
+	dir := t.TempDir()
+
+	// A directory stands in for any path that exists but whose contents
+	// cannot be captured.
+	path := filepath.Join(dir, "unreadable")
+	if err := os.Mkdir(path, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	s := snapshotFile(path)
+	if !s.existed {
+		t.Error("expected existed=true for a path that is present")
+	}
+	if s.captured {
+		t.Error("expected captured=false for contents that cannot be read")
+	}
+
+	s.restore()
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("restore removed a path it could not back up: %v", err)
+	}
 }
 
 // TestCatalogRemove_RefusesForeignTransfer verifies removal aborts before

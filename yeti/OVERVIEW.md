@@ -311,6 +311,14 @@ Design decisions (verified with the user, 2026-08):
   drop-in dir and (fresh adds only) the component dir are `os.Remove`d,
   which no-ops when non-empty. No enabled-but-broken state, no destroyed
   working definition, no mismatched old/new pair.
+  `fileSnapshot` tracks `existed` (stat succeeded) separately from
+  `captured` (contents read): a path that exists but cannot be read — a
+  directory in the way, an unreadable file — is left strictly alone by
+  `restore`, with a warning, because removing it would destroy state the
+  snapshot cannot rebuild (Copilot review). Likewise `fileExists` returns
+  stat failures other than not-exist as errors instead of reading them as
+  "absent", so a stat error can never skip the ownership guard in
+  `CatalogAdd`/`CatalogRemove` or silently under-report removed files.
 - **Ownership checked before destruction**: `CatalogRemove` validates the
   `.transfer`'s marker/repo *before* calling `DisableFeature{Now}` and
   errors out on a mismatch, pointing at `updex features disable`. That

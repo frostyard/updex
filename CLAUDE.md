@@ -125,7 +125,10 @@ Key design points:
   `os.WriteFile` truncates on open — goes through one `rollback()`
   closure that restores exactly what was there before (fresh add → files
   removed; re-add → previous `.transfer`/`.feature`/drop-in contents
-  rewritten). `CatalogRemove` validates the `.transfer`'s ownership
+  rewritten). A snapshot distinguishes `existed` from `captured`, so a
+  path that exists but cannot be read is never deleted by rollback, and
+  `fileExists` surfaces non-not-exist stat errors instead of treating
+  them as absence. `CatalogRemove` validates the `.transfer`'s ownership
   *before* calling `DisableFeature{Now}` and refuses outright on a
   mismatch, since that teardown deletes images described by whatever
   transfer claims the feature; it then deletes only updex's
