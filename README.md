@@ -613,7 +613,7 @@ make clean
 
 ### Contributing
 
-When contributing:
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. In short:
 
 - Keep the SDK layer free of CLI dependencies (no Cobra, pflag, etc.)
 - SDK functions should return structured data, not formatted output
