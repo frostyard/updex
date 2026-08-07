@@ -1,0 +1,36 @@
+# Codecov configuration for updex.
+#
+# Coverage is uploaded by the "Unit Tests" job in .github/workflows/test.yml.
+# The gates below run as status checks on pull requests.
+
+coverage:
+  precision: 2
+  round: down
+  range: "50...90"
+
+  status:
+    project:
+      default:
+        # Compare against the base commit; allow a small drop so that
+        # unrelated refactors do not block a pull request.
+        target: auto
+        threshold: 1%
+        if_ci_failed: error
+    patch:
+      default:
+        # New and changed lines should be covered by tests.
+        target: 70%
+        threshold: 5%
+        if_ci_failed: error
+
+comment:
+  layout: "reach, diff, flags, files"
+  behavior: default
+  require_changes: true
+
+ignore:
+  - "**/*_test.go"
+  - "internal/testutil/**"
+  - "docs/**"
+  - "yeti/**"
+  - "scripts/**"

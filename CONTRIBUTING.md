@@ -159,6 +159,11 @@ lint (golangci-lint), security scan (`govulncheck`), unit tests with coverage,
 race-detector tests, verification (`go mod tidy` cleanliness, `go vet`,
 `gofmt`), and cross-compiled builds for linux/amd64 and linux/arm64.
 
+Coverage from the unit test job is uploaded to Codecov. The gates are defined
+in `codecov.yml`: the project coverage must not drop more than 1% against the
+base commit, and changed lines in a pull request should be at least 70%
+covered.
+
 ## Releases
 
 Releases are tagged with semantic versions (`vMAJOR.MINOR.PATCH`) and built by
