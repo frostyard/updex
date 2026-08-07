@@ -16,6 +16,8 @@ make tidy         # go mod tidy
 
 Run a single test: `go test -v -run TestName ./updex/`
 
+End-to-end tests live in `tests/e2e/`: black-box tests that build the real `updex` binary and run it as a subprocess against a fake HTTP transfer source, covering only read-only commands (no root required). Run with `go test -v ./tests/e2e/...`.
+
 ## Architecture
 
 updex is a Go SDK and CLI for managing systemd-sysext images. It replicates `systemd-sysupdate` functionality for `url-file` transfers.

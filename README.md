@@ -609,7 +609,18 @@ make build
 
 # Clean build artifacts
 make clean
+
+# Run end-to-end tests (builds and runs the real updex binary)
+go test -v ./tests/e2e/...
 ```
+
+### End-to-End Tests
+
+`tests/e2e/` contains black-box tests that build the real `updex` binary
+and run it as a subprocess against a fake HTTP transfer source, the same
+way an operator would invoke it (`updex features list`, `updex features
+check`, `updex --help`, `updex completion`). They only exercise read-only
+commands so they can run without root privileges.
 
 ### Contributing
 
