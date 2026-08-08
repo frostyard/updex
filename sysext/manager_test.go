@@ -3,6 +3,8 @@ package sysext
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/frostyard/updex/config"
@@ -144,6 +146,125 @@ func TestGetInstalledVersionsNonexistentDir(t *testing.T) {
 
 	if current != "" {
 		t.Errorf("current = %q, want empty", current)
+	}
+}
+
+func TestRemoveAllVersions(t *testing.T) {
+	stagingDir := t.TempDir()
+	versionedFiles := []string{
+		"myext_1.0.0.raw",
+		"myext_2.0.0.raw",
+	}
+	for _, name := range append(versionedFiles, "other_1.0.0.raw") {
+		if err := os.WriteFile(filepath.Join(stagingDir, name), []byte("test"), 0644); err != nil {
+			t.Fatalf("failed to create test file: %v", err)
+		}
+	}
+
+	currentLink := filepath.Join(stagingDir, "myext.raw")
+	if err := os.Symlink(versionedFiles[1], currentLink); err != nil {
+		t.Fatalf("failed to create current symlink: %v", err)
+	}
+	versionedLink := filepath.Join(stagingDir, "myext_3.0.0.raw")
+	if err := os.Symlink(versionedFiles[1], versionedLink); err != nil {
+		t.Fatalf("failed to create versioned symlink: %v", err)
+	}
+
+	transfer := &config.Transfer{
+		Target: config.TargetSection{
+			Path:           stagingDir,
+			MatchPattern:   "myext_@v.raw",
+			CurrentSymlink: "myext.raw",
+		},
+	}
+
+	removed, err := RemoveAllVersions(transfer)
+	if err != nil {
+		t.Fatalf("RemoveAllVersions() error = %v", err)
+	}
+
+	wantRemoved := []string{
+		currentLink,
+		filepath.Join(stagingDir, versionedFiles[0]),
+		filepath.Join(stagingDir, versionedFiles[1]),
+	}
+	if !slices.Equal(removed, wantRemoved) {
+		t.Errorf("RemoveAllVersions() removed = %v, want %v", removed, wantRemoved)
+	}
+	for _, path := range wantRemoved {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Errorf("expected %s to be removed, stat err = %v", path, err)
+		}
+	}
+	for _, name := range []string{"other_1.0.0.raw", filepath.Base(versionedLink)} {
+		path := filepath.Join(stagingDir, name)
+		if _, err := os.Lstat(path); err != nil {
+			t.Errorf("expected %s to remain: %v", path, err)
+		}
+	}
+}
+
+func TestRemoveAllVersionsAbsentDirectory(t *testing.T) {
+	transfer := &config.Transfer{
+		Target: config.TargetSection{
+			Path:         filepath.Join(t.TempDir(), "absent"),
+			MatchPattern: "myext_@v.raw",
+		},
+	}
+
+	removed, err := RemoveAllVersions(transfer)
+	if err != nil {
+		t.Fatalf("RemoveAllVersions() error = %v", err)
+	}
+	if removed != nil {
+		t.Errorf("RemoveAllVersions() removed = %v, want nil", removed)
+	}
+}
+
+func TestRemoveAllVersionsPartialFailure(t *testing.T) {
+	stagingDir := t.TempDir()
+	firstVersion := filepath.Join(stagingDir, "myext_1.0.0.raw")
+	if err := os.WriteFile(firstVersion, []byte("test"), 0644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+	failingVersion := filepath.Join(stagingDir, "myext_2.0.0.raw")
+	if err := os.Mkdir(failingVersion, 0755); err != nil {
+		t.Fatalf("failed to create test directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(failingVersion, "keep"), []byte("test"), 0644); err != nil {
+		t.Fatalf("failed to populate test directory: %v", err)
+	}
+	currentLink := filepath.Join(stagingDir, "myext.raw")
+	if err := os.Symlink(filepath.Base(firstVersion), currentLink); err != nil {
+		t.Fatalf("failed to create current symlink: %v", err)
+	}
+
+	transfer := &config.Transfer{
+		Target: config.TargetSection{
+			Path:           stagingDir,
+			MatchPattern:   "myext_@v.raw",
+			CurrentSymlink: filepath.Base(currentLink),
+		},
+	}
+
+	removed, err := RemoveAllVersions(transfer)
+	if err == nil {
+		t.Fatal("RemoveAllVersions() error = nil, want removal error")
+	}
+	if !strings.Contains(err.Error(), failingVersion) {
+		t.Errorf("RemoveAllVersions() error = %q, want path %q", err, failingVersion)
+	}
+	wantRemoved := []string{currentLink, firstVersion}
+	if !slices.Equal(removed, wantRemoved) {
+		t.Errorf("RemoveAllVersions() removed = %v, want %v", removed, wantRemoved)
+	}
+	for _, path := range wantRemoved {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Errorf("expected %s to be removed before failure, stat err = %v", path, err)
+		}
+	}
+	if _, err := os.Stat(failingVersion); err != nil {
+		t.Errorf("expected failed removal target to remain: %v", err)
 	}
 }
 
