@@ -484,3 +484,13 @@ Mutating commands enforce root before reading `--dry-run`, so examples that prev
 | `github.com/ulikunitz/xz` | XZ decompression |
 | `github.com/klauspost/compress` | ZSTD decompression |
 | `github.com/ProtonMail/go-crypto` | GPG signature verification (openpgp) |
+
+## CI and Releases
+
+`.github/workflows/snapshot.yml` runs after successful `Tests` workflows on
+`main` and publishes a GoReleaser Pro nightly under the singleton `dev` tag.
+GoReleaser's `nightly.keep_single_release` deletes and recreates that release,
+so concurrent runs race while uploading the same artifact names and fail with
+GitHub HTTP 422 `already_exists`. Workflow-level concurrency group
+`goreleaser-nightly` allows only one publisher at a time and cancels stale runs
+so the newest successful test result is the release that survives.

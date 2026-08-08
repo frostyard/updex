@@ -18,6 +18,15 @@ Run a single test: `go test -v -run TestName ./updex/`
 
 End-to-end tests live in `tests/e2e/`: black-box tests that build the real `updex` binary and run it as a subprocess against a fake HTTP transfer source, covering only read-only commands (no root required). Run with `go test -v ./tests/e2e/...`.
 
+## Release Automation
+
+`.github/workflows/snapshot.yml` publishes the singleton GoReleaser nightly
+release under the `dev` tag after successful `main` tests. Its
+`goreleaser-nightly` concurrency group must keep `cancel-in-progress: true`:
+overlapping runs delete and recreate the same release, then collide while
+uploading identically named assets. The newest successful test run supersedes
+older snapshot work.
+
 ## Architecture
 
 updex is a Go SDK and CLI for managing systemd-sysext images. It replicates `systemd-sysupdate` functionality for `url-file` transfers.
