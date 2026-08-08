@@ -1,0 +1,58 @@
+name: Automated Copilot Review
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions: {}
+
+concurrency:
+  group: auto-review-${{ github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  request-review:
+    name: Request Copilot review
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      # pull_request_target permits review requests for fork PRs. Never check
+      # out or execute pull-request-controlled code in this workflow.
+      - name: Request review
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::Invalid pull request number: $PR_NUMBER"
+            exit 1
+          fi
+
+          response="$(
+            jq -n '{reviewers: ["copilot-pull-request-reviewer[bot]"]}' |
+              gh api \
+                --method POST \
+                --header "Accept: application/vnd.github+json" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/requested_reviewers" \
+                --input -
+          )"
+
+          if ! jq -e '
+            any(
+              .requested_reviewers[]?;
+              .login == "copilot-pull-request-reviewer" or
+              .login == "copilot-pull-request-reviewer[bot]"
+            )
+          ' <<<"$response" >/dev/null; then
+            echo "::error::GitHub did not add Copilot as a requested reviewer"
+            exit 1
+          fi
+
+          echo "Requested a Copilot review for pull request #$PR_NUMBER." >>"$GITHUB_STEP_SUMMARY"
