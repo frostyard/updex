@@ -164,6 +164,11 @@ Before requesting review, check the change against the
 [pull request review rubric](docs/review-rubric.md). Reviewers use its gates and
 feedback labels to keep decisions consistent and actionable.
 
+Pull requests are automatically labeled for documentation, Go, GitHub Actions,
+and dependency changes according to [`.github/labeler.yml`](.github/labeler.yml).
+The labeler adds matching labels without removing labels applied by contributors
+or reviewers.
+
 CI runs on every pull request (`.github/workflows/test.yml`) and must pass:
 lint (golangci-lint), security scan (`govulncheck`), unit tests with coverage,
 race-detector tests, verification (`go mod tidy` cleanliness, `go vet`,
