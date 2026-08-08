@@ -137,7 +137,7 @@ changes, update:
 - `yeti/OVERVIEW.md`, `yeti/sdk-api.md`, `yeti/config-reference.md` — the
   agent-oriented architecture, SDK, and configuration references
 - `CLAUDE.md` / `AGENTS.md` — when conventions or the build workflow change
-- `docs/` — topic guides such as `docs/patterns.md`
+- `docs/` — topic guides such as `docs/patterns.md` and `docs/metrics.md`
 
 Durable, non-obvious rationale that future contributors would otherwise have
 to rediscover belongs in `yeti/learnings/`.
