@@ -2,7 +2,9 @@
 
 Changes produced with AI assistance follow the same review and quality gates as
 all other contributions to updex. AI-generated changes are not merged solely on
-the basis of generated output.
+the basis of generated output. The
+[AI security policy](security/SECURITY-AI.md) defines the access, data-handling,
+human-oversight, and tool-safety boundaries for that assistance.
 
 [![Tests](https://github.com/frostyard/updex/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/frostyard/updex/actions/workflows/test.yml?query=branch%3Amain)
 [![codecov](https://codecov.io/gh/frostyard/updex/graph/badge.svg?branch=main)](https://codecov.io/gh/frostyard/updex)
@@ -19,6 +21,7 @@ coverage trends.
 | Nightly compliance | [Nightly compliance workflow](https://github.com/frostyard/updex/actions/workflows/nightly-compliance.yml) | Dependency integrity, current vulnerability data, uncached race tests, static analysis, and supported Linux builds pass |
 | Test coverage | [Codecov dashboard](https://codecov.io/gh/frostyard/updex) | Project coverage stays within the configured 1% threshold and changed lines meet the 70% target |
 | Pull request review | [Open pull requests](https://github.com/frostyard/updex/pulls) | Reviewers can audit the diff and CI history before merge |
+| AI fix requests | [AI Fix Requested workflow](https://github.com/frostyard/updex/actions/workflows/ai-fix-requested.yml) | Labeled issues are assigned to Copilot through an auditable workflow run |
 | Releases | [Release workflow](https://github.com/frostyard/updex/actions/workflows/release.yml) | Release artifacts are built from reviewed repository history |
 
 The workflow definitions and exact coverage tolerances remain versioned in
@@ -26,6 +29,7 @@ The workflow definitions and exact coverage tolerances remain versioned in
 [`.github/workflows/nightly-compliance.yml`](../.github/workflows/nightly-compliance.yml),
 and [`codecov.yml`](../codecov.yml), so dashboard results can be traced to the
 gates that produced them.
+
 
 ## Nightly compliance
 
@@ -40,6 +44,19 @@ The job has read-only repository permissions, persists no checkout credentials,
 uses no secrets, and never publishes or modifies repository state. A failure is
 a signal for maintainer investigation; it does not automatically weaken a gate
 or modify code.
+
+## Auto-QA self-tuning
+
+`.github/auto-qa-tuning.json` defines the machine-readable feedback policy for
+the monthly [pull request acceptance metric](metrics.md#pull-request-acceptance).
+A window with fewer than ten resolved pull requests holds the current policy.
+With enough data, a relative regression of ten percent or more routes the
+observed failure pattern to focused contributor guidance or a targeted local
+check. Relaxation requires two consecutive improved windows.
+
+Required, security, and coverage checks are never relaxed. Any policy
+adjustment must be reviewed through a pull request.
+
 
 ## Required checks
 
@@ -56,6 +73,24 @@ make build
 Changes should include focused tests when behavior changes. Reviewers should
 confirm that the implementation is limited to the requested scope, errors are
 handled safely, and no credentials or other sensitive values are present.
+
+## AI fix requests
+
+Adding the `ai-fix-requested` label to an open issue runs
+[`ai-fix-requested.yml`](../.github/workflows/ai-fix-requested.yml), which
+assigns the issue to GitHub Copilot on the repository's default branch. A
+maintainer can retry a request with the workflow's `issue_number` manual input.
+The issue must still be open and carry the label, and an issue already assigned
+to Copilot is treated as complete.
+
+The workflow requires a repository secret named `COPILOT_ASSIGN_PAT`. It must
+contain a user token from a Copilot-licensed maintainer, scoped only to this
+repository. For a fine-grained token, grant read access to metadata and
+read/write access to Actions, Contents, Issues, and Pull requests, as required
+by GitHub's agent-assignment API. The workflow does not check out issue-authored
+content or grant permissions to its `GITHUB_TOKEN`; it uses the user token only
+for fixed GitHub API requests. Failed assignments remain visibly labeled and
+can be retried after correcting the configuration.
 
 ## Human oversight
 

@@ -125,6 +125,10 @@ extra scrutiny:
   any failure, as `updex.Client.CatalogAdd` does.
 - Never commit secrets or credentials.
 
+AI-assisted contributions must also follow the
+[AI security policy](docs/security/SECURITY-AI.md), including its least
+privilege, data-handling, prompt-injection, and human-review requirements.
+
 If you believe you have found a security vulnerability, please report it
 privately to the maintainers rather than opening a public issue.
 
@@ -151,12 +155,19 @@ to rediscover belongs in `yeti/learnings/`.
    release tooling derives version bumps from them.
 4. Run `make check` and make sure it passes.
 5. Update the documentation and add tests for your change.
-6. Open the PR with a description of what changed and why, and link any
+6. Classify the change using the [risk tier guide](docs/risk-tiers.md) and
+   include the tier rationale in the pull request.
+7. Open the PR with a description of what changed and why, and link any
    related issue.
 
 Before requesting review, check the change against the
 [pull request review rubric](docs/review-rubric.md). Reviewers use its gates and
 feedback labels to keep decisions consistent and actionable.
+
+Pull requests are automatically labeled for documentation, Go, GitHub Actions,
+and dependency changes according to [`.github/labeler.yml`](.github/labeler.yml).
+The labeler adds matching labels without removing labels applied by contributors
+or reviewers.
 
 CI runs on every pull request (`.github/workflows/test.yml`) and must pass:
 lint (golangci-lint), security scan (`govulncheck`), unit tests with coverage,

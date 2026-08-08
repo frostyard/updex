@@ -17,6 +17,14 @@ updex is a Go library (SDK) and CLI tool for managing systemd-sysext images, rep
 - **Main Use Case**: Automated downloading, verification, and installation of system extension images from remote HTTP sources
 - **Key Value**: Provides a lightweight, secure way to manage system extensions with version control, GPG verification, and automatic cleanup
 
+## Pull Request Reviews
+
+Apply the gates in [`docs/review-rubric.md`](../docs/review-rubric.md) to every
+pull request review. Classify feedback as blocking, non-blocking, question, or
+nit; explain the impact of each finding and suggest a concrete resolution.
+Treat automated feedback as advisory: do not approve changes, weaken required
+checks, or claim verification passed without evidence from the pull request.
+
 ### Tech Stack
 
 - **Language**: Go 1.25
