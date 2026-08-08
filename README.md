@@ -2,6 +2,12 @@
 
 A Go library (SDK) and CLI tool for managing systemd-sysext images, replicating the functionality of `systemd-sysupdate` for `url-file` transfers.
 
+[![Tests](https://github.com/frostyard/updex/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/frostyard/updex/actions/workflows/test.yml?query=branch%3Amain)
+[![codecov](https://codecov.io/gh/frostyard/updex/graph/badge.svg?branch=main)](https://codecov.io/gh/frostyard/updex)
+
+See the [quality dashboard](docs/AI-QUALITY-ASSURANCE.md) for the project's
+quality gates and review expectations.
+
 ## What is updex?
 
 **updex** provides two ways to manage system extensions:
