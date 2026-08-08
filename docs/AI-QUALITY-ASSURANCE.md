@@ -25,6 +25,18 @@ The workflow definitions and exact coverage tolerances remain versioned in
 [`codecov.yml`](../codecov.yml), so dashboard results can be traced to the
 gates that produced them.
 
+## Auto-QA self-tuning
+
+`.github/auto-qa-tuning.json` defines the machine-readable feedback policy for
+the monthly [pull request acceptance metric](metrics.md#pull-request-acceptance).
+A window with fewer than ten resolved pull requests holds the current policy.
+With enough data, a relative regression of ten percent or more routes the
+observed failure pattern to focused contributor guidance or a targeted local
+check. Relaxation requires two consecutive improved windows.
+
+Required, security, and coverage checks are never relaxed. Any policy
+adjustment must be reviewed through a pull request.
+
 ## Required checks
 
 Contributors should run the repository's standard checks before requesting
