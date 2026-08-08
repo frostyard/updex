@@ -4,19 +4,26 @@ Changes produced with AI assistance follow the same review and quality gates as
 all other contributions to updex. AI-generated changes are not merged solely on
 the basis of generated output.
 
-## Quality signals
+[![Tests](https://github.com/frostyard/updex/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/frostyard/updex/actions/workflows/test.yml?query=branch%3Amain)
+[![codecov](https://codecov.io/gh/frostyard/updex/graph/badge.svg?branch=main)](https://codecov.io/gh/frostyard/updex)
 
-- Pull requests expose test results from `.github/workflows/test.yml`.
-- Code coverage is reported by Codecov. Project and patch thresholds are defined
-  in `codecov.yml`.
-- Reviewers can audit the complete pull request diff and CI history before
-  merge.
-- Releases are built from reviewed repository history through the release
-  workflow.
+## Quality dashboard
 
-These signals form the project's quality dashboard: pull request checks show
-whether a change builds and passes tests, while Codecov reports project and
-changed-line coverage.
+The badges above report the current state of the default branch. Use the live
+views below to inspect individual workflow runs, pull request checks, and
+coverage trends.
+
+| Signal | Live view | Quality gate |
+| --- | --- | --- |
+| Continuous integration | [Tests workflow](https://github.com/frostyard/updex/actions/workflows/test.yml) | Lint, security, unit, end-to-end, race, verification, and build jobs pass |
+| Test coverage | [Codecov dashboard](https://codecov.io/gh/frostyard/updex) | Project coverage stays within the configured 1% threshold and changed lines meet the 70% target |
+| Pull request review | [Open pull requests](https://github.com/frostyard/updex/pulls) | Reviewers can audit the diff and CI history before merge |
+| Releases | [Release workflow](https://github.com/frostyard/updex/actions/workflows/release.yml) | Release artifacts are built from reviewed repository history |
+
+The workflow definitions and exact coverage tolerances remain versioned in
+[`.github/workflows/test.yml`](../.github/workflows/test.yml) and
+[`codecov.yml`](../codecov.yml), so dashboard results can be traced to the
+gates that produced them.
 
 ## Required checks
 
