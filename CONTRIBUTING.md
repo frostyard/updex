@@ -151,7 +151,9 @@ to rediscover belongs in `yeti/learnings/`.
    release tooling derives version bumps from them.
 4. Run `make check` and make sure it passes.
 5. Update the documentation and add tests for your change.
-6. Open the PR with a description of what changed and why, and link any
+6. Classify the change using the [risk tier guide](docs/risk-tiers.md) and
+   include the tier rationale in the pull request.
+7. Open the PR with a description of what changed and why, and link any
    related issue.
 
 Before requesting review, check the change against the

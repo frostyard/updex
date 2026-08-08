@@ -7,24 +7,29 @@ introduced by the pull request.
 
 A pull request is ready to approve when all applicable gates pass:
 
-1. **Correctness and scope**
+1. **Risk classification**
+   - The author selected the highest applicable tier from the
+     [change risk guide](risk-tiers.md) and provided a rationale.
+   - The tests, analysis, documentation, and oversight required for that tier
+     are present.
+2. **Correctness and scope**
    - The change solves the linked problem and handles relevant error cases.
    - The diff is focused; unrelated refactors and generated artifacts are absent.
-2. **Architecture and API**
+3. **Architecture and API**
    - Business logic is implemented in the public SDK, with CLI code kept as a
      thin wrapper.
    - Public APIs use contexts, option structs, structured results, and compatible
      behavior unless a breaking change is intentional and documented.
-3. **Security and reliability**
+4. **Security and reliability**
    - Inputs, paths, downloaded content, and managed files are validated safely.
    - Errors do not expose credentials, and privileged filesystem operations are
      resistant to traversal and symlink attacks.
    - Multi-step mutations leave a consistent state on failure.
-4. **Tests and verification**
+5. **Tests and verification**
    - New or changed behavior has focused tests, including meaningful failure
      paths, or the pull request explains why tests are not applicable.
    - `make check` passes, including formatting, linting, and tests.
-5. **Documentation and maintainability**
+6. **Documentation and maintainability**
    - User-facing and agent-oriented documentation reflects behavior changes.
    - Code follows repository conventions and is understandable without
      unnecessary complexity.
