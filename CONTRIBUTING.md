@@ -125,6 +125,10 @@ extra scrutiny:
   any failure, as `updex.Client.CatalogAdd` does.
 - Never commit secrets or credentials.
 
+AI-assisted contributions must also follow the
+[AI security policy](docs/security/SECURITY-AI.md), including its least
+privilege, data-handling, prompt-injection, and human-review requirements.
+
 If you believe you have found a security vulnerability, please report it
 privately to the maintainers rather than opening a public issue.
 

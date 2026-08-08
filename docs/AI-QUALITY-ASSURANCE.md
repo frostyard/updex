@@ -2,7 +2,9 @@
 
 Changes produced with AI assistance follow the same review and quality gates as
 all other contributions to updex. AI-generated changes are not merged solely on
-the basis of generated output.
+the basis of generated output. The
+[AI security policy](security/SECURITY-AI.md) defines the access, data-handling,
+human-oversight, and tool-safety boundaries for that assistance.
 
 [![Tests](https://github.com/frostyard/updex/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/frostyard/updex/actions/workflows/test.yml?query=branch%3Amain)
 [![codecov](https://codecov.io/gh/frostyard/updex/graph/badge.svg?branch=main)](https://codecov.io/gh/frostyard/updex)
