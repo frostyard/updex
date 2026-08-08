@@ -18,15 +18,32 @@ coverage trends.
 | Signal | Live view | Quality gate |
 | --- | --- | --- |
 | Continuous integration | [Tests workflow](https://github.com/frostyard/updex/actions/workflows/test.yml) | Lint, security, unit, end-to-end, race, verification, and build jobs pass |
+| Nightly compliance | [Nightly compliance workflow](https://github.com/frostyard/updex/actions/workflows/nightly-compliance.yml) | Dependency integrity, current vulnerability data, uncached race tests, static analysis, and supported Linux builds pass |
 | Test coverage | [Codecov dashboard](https://codecov.io/gh/frostyard/updex) | Project coverage stays within the configured 1% threshold and changed lines meet the 70% target |
 | Pull request review | [Open pull requests](https://github.com/frostyard/updex/pulls) | Reviewers can audit the diff and CI history before merge |
 | AI fix requests | [AI Fix Requested workflow](https://github.com/frostyard/updex/actions/workflows/ai-fix-requested.yml) | Labeled issues are assigned to Copilot through an auditable workflow run |
 | Releases | [Release workflow](https://github.com/frostyard/updex/actions/workflows/release.yml) | Release artifacts are built from reviewed repository history |
 
 The workflow definitions and exact coverage tolerances remain versioned in
-[`.github/workflows/test.yml`](../.github/workflows/test.yml) and
-[`codecov.yml`](../codecov.yml), so dashboard results can be traced to the
+[`.github/workflows/test.yml`](../.github/workflows/test.yml),
+[`.github/workflows/nightly-compliance.yml`](../.github/workflows/nightly-compliance.yml),
+and [`codecov.yml`](../codecov.yml), so dashboard results can be traced to the
 gates that produced them.
+
+
+## Nightly compliance
+
+The nightly workflow runs against the latest default-branch revision at 03:27
+UTC and can also be dispatched manually. It re-verifies downloaded module
+content, requires `go mod tidy` to remain clean, queries the current Go
+vulnerability database with a pinned scanner, runs the complete suite uncached
+under the race detector, runs `go vet`, and cross-builds the supported Linux
+architectures.
+
+The job has read-only repository permissions, persists no checkout credentials,
+uses no secrets, and never publishes or modifies repository state. A failure is
+a signal for maintainer investigation; it does not automatically weaken a gate
+or modify code.
 
 ## Auto-QA self-tuning
 
@@ -39,6 +56,7 @@ check. Relaxation requires two consecutive improved windows.
 
 Required, security, and coverage checks are never relaxed. Any policy
 adjustment must be reviewed through a pull request.
+
 
 ## Required checks
 
