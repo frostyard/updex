@@ -554,6 +554,75 @@ func TestVacuumWithDetailsKeepsActiveSymlinkedVersion(t *testing.T) {
 	}
 }
 
+func TestPlanVacuumAfterInstallPreservesFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	files := []string{
+		"myext_1.0.0.raw",
+		"myext_2.0.0.raw",
+		"myext_3.0.0.raw",
+	}
+	for _, name := range files {
+		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte("test"), 0644); err != nil {
+			t.Fatalf("failed to create test file: %v", err)
+		}
+	}
+
+	transfer := &config.Transfer{
+		Transfer: config.TransferSection{
+			InstancesMax: 1,
+		},
+		Target: config.TargetSection{
+			Path:         tmpDir,
+			MatchPattern: "myext_@v.raw",
+		},
+	}
+
+	removed, kept, err := PlanVacuumAfterInstall(transfer, "1.0.0")
+	if err != nil {
+		t.Fatalf("PlanVacuumAfterInstall() error = %v", err)
+	}
+	if len(removed) != 1 || removed[0] != "2.0.0" {
+		t.Errorf("PlanVacuumAfterInstall() removed = %v, want [2.0.0]", removed)
+	}
+	if !slices.Equal(kept, []string{"3.0.0", "1.0.0"}) {
+		t.Errorf("PlanVacuumAfterInstall() kept = %v, want [3.0.0 1.0.0]", kept)
+	}
+
+	for _, name := range files {
+		if _, err := os.Stat(filepath.Join(tmpDir, name)); err != nil {
+			t.Errorf("dry-run planner removed %s: %v", name, err)
+		}
+	}
+}
+
+func TestGetActiveVersionUsesCurrentSymlink(t *testing.T) {
+	tmpDir := t.TempDir()
+	for _, name := range []string{"myext_1.0.0.raw", "myext_2.0.0.raw"} {
+		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte("test"), 0644); err != nil {
+			t.Fatalf("failed to create test file: %v", err)
+		}
+	}
+	if err := os.Symlink("myext_1.0.0.raw", filepath.Join(tmpDir, "myext.raw")); err != nil {
+		t.Fatalf("failed to create current symlink: %v", err)
+	}
+
+	transfer := &config.Transfer{
+		Target: config.TargetSection{
+			Path:           tmpDir,
+			MatchPattern:   "myext_@v.raw",
+			CurrentSymlink: "myext.raw",
+		},
+	}
+
+	active, err := GetActiveVersion(transfer)
+	if err != nil {
+		t.Fatalf("GetActiveVersion() error = %v", err)
+	}
+	if active != "1.0.0" {
+		t.Errorf("GetActiveVersion() = %q, want 1.0.0", active)
+	}
+}
+
 func TestVacuumWithDetailsProtectedVersion(t *testing.T) {
 	tmpDir := t.TempDir()
 
