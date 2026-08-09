@@ -4,7 +4,7 @@ go 1.26.5
 
 require (
 	github.com/ProtonMail/go-crypto v1.4.1
-	github.com/frostyard/clix v0.3.0
+	github.com/frostyard/clix v0.3.1
 	github.com/frostyard/std v0.2.0
 	github.com/hashicorp/go-version v1.9.0
 	github.com/klauspost/compress v1.19.0
