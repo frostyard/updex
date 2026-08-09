@@ -62,10 +62,28 @@ make install
 
 ## Library (SDK) Usage
 
-The SDK is built around a `Client` struct that provides all operations:
+Create a module for the example:
+
+```bash
+mkdir updex-quickstart
+cd updex-quickstart
+go mod init example.com/updex-quickstart
+go get github.com/frostyard/updex/updex
+```
+
+Save the following as `main.go`. The SDK is built around a `Client` struct
+that provides all operations:
 
 ```go
-import "github.com/frostyard/updex/updex"
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    "github.com/frostyard/updex/updex"
+)
 
 func main() {
     client := updex.NewClient(updex.ClientConfig{
@@ -139,6 +157,16 @@ func main() {
     }
 }
 ```
+
+Run the example from the module directory:
+
+```bash
+go run .
+```
+
+The enable, update, and disable calls change system state. Run the complete
+example only on a configured test system with permission to manage system
+extensions.
 
 ### Client Methods
 
