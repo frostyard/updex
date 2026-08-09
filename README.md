@@ -55,7 +55,15 @@ make install
 The SDK is built around a `Client` struct that provides all operations:
 
 ```go
-import "github.com/frostyard/updex/updex"
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    "github.com/frostyard/updex/updex"
+)
 
 func main() {
     client := updex.NewClient(updex.ClientConfig{
