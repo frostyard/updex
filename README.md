@@ -34,6 +34,16 @@ Designed for systems like Debian Trixie that don't ship with `systemd-sysupdate`
 
 ## Installation
 
+### Prerequisites
+
+- [Go 1.26.5 or newer](https://go.dev/doc/install) (the version required by `go.mod`)
+- `make` when using the Makefile commands below
+
+Building the library and CLI, and running unit tests, do not require systemd.
+Using updex to manage system extensions requires a systemd-based Linux system
+with `systemd-sysext`; operations that modify system state also require root
+privileges.
+
 ### As a Library
 
 ```bash
