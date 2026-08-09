@@ -6,10 +6,14 @@ on:
   pull_request:
     branches: [main]
 
+permissions: {}
+
 jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -27,6 +31,8 @@ jobs:
   security:
     name: Security Scan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -36,8 +42,8 @@ jobs:
         with:
           go-version: "1.26.5"
 
-      - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: Install pinned govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
 
       - name: Run govulncheck
         run: govulncheck ./...
@@ -45,6 +51,10 @@ jobs:
   unit-test:
     name: Unit Tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Codecov's tokenless OIDC upload needs this job-scoped permission.
+      id-token: write
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -63,6 +73,7 @@ jobs:
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
+          use_oidc: true
           files: ./coverage.out
           fail_ci_if_error: false
           verbose: true
@@ -91,6 +102,8 @@ jobs:
   race-test:
     name: Race Detection
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -109,6 +122,8 @@ jobs:
   verify:
     name: Verify
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -136,6 +151,8 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       matrix:
         goos: [linux]
@@ -153,4 +170,3 @@ jobs:
         run: |
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} make build
           ls -lh build/
-
