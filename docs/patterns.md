@@ -1,6 +1,7 @@
 # Transfer File Patterns
 
-updex supports two pattern styles for sysext transfers:
+updex accepts any sysext transfer pattern containing the required `@v`
+version placeholder. This document describes two common naming styles:
 
 ## Pattern Styles
 
@@ -31,7 +32,8 @@ docker_@v_39_x86-64.raw
 - Arch-specific: uses systemd architecture naming
 - Underscore-based naming convention (unlike fedora-sysexts which uses hyphens)
 - Explicit specifiers in configuration: visible in `.transfer` files
-- OS version is now required (unlike the old frostyard pattern)
+- `%w` and `%a` are optional; the pattern shown above uses them to scope
+  artifacts to the current OS version and architecture
 
 ### Fedora-Sysexts Pattern
 ```
@@ -65,7 +67,8 @@ docker-@v-39-x86-64.raw
 
 ### `@` Placeholders (File Content)
 
-Placeholders matched directly in filenames:
+Placeholders matched directly in filenames. Only `@v` is required; all other
+`@` placeholders are optional:
 
 | Placeholder | Matches | Regex |
 |-------------|---------|-------|
@@ -77,7 +80,8 @@ Placeholders matched directly in filenames:
 
 ### `%` Specifiers (Config-Time Expansion)
 
-Specifiers expanded when loading `.transfer` files:
+Specifiers expanded when loading `.transfer` files. All `%` specifiers are
+optional and constrain a pattern only when included:
 
 | Specifier | Expands To | Example |
 |-----------|-----------|---------|
@@ -165,17 +169,26 @@ docker-1.0.0-39-x86-64.raw.gz       ✓ (fedora-sysexts, gzip compressed)
 
 ## Pattern Comparison
 
+The table compares the OS- and architecture-specific forms shown above. The
+`%w` and `%a` specifiers are optional in both styles.
+
 | Aspect | Frostyard | Fedora-Sysexts |
 |--------|---------------------|-----------------|
 | Pattern | `<name>_@v_%w_%a.raw` | `<name>-@v-%w-%a.raw` |
 | Delimiter Style | Underscores (`_`) | Hyphens (`-`) |
-| OS Version | Included (`%w`) | Included (`%w`) |
-| Architecture | Included (`%a`) | Included (`%a`) |
+| OS Version | Shown with `%w` (optional) | Shown with `%w` (optional) |
+| Architecture | Shown with `%a` (optional) | Shown with `%a` (optional) |
 | Example filename (Fedora 39/x86-64) | `docker_1.0.0_39_x86-64.raw` | `docker-1.0.0-39-x86-64.raw` |
 | Example filename (Ubuntu 22.04/arm64) | `htop_7.2.0_22.04_arm64.raw` | `htop-7.2.0-22.04-arm64.raw` |
 
 ## Migration Note
 
-The new Frostyard pattern (`<name>_@v_%w_%a.raw`) is a replacement for the older Frostyard pattern (`<name>_@v_@a.raw`). No backwards compatibility is maintained. If you were previously using the older pattern without OS version specificity, you must update your `.transfer` files to use the new pattern with `%w` to specify OS version requirements.
+There is no required migration to `<name>_@v_%w_%a.raw`. Existing patterns
+such as `<name>_@v.raw` remain valid because `@v` is the only required
+placeholder. Add `%w` only when filenames include an OS version, and add `%a`
+only when they include an architecture. Note that `@a` is a GPT NoAuto flag
+placeholder, not an architecture specifier.
 
-Both patterns (Frostyard and Fedora-Sysexts) can coexist in a single `.transfer` file by space-separating them in `MatchPattern` if you need to support multiple naming conventions.
+Frostyard and Fedora-Sysexts naming styles can coexist in a single `.transfer`
+file by space-separating patterns in `MatchPattern` when multiple naming
+conventions are needed.
