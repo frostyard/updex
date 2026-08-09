@@ -581,7 +581,7 @@ func TestPlanVacuumAfterInstallPreservesFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PlanVacuumAfterInstall() error = %v", err)
 	}
-	if !slices.Equal(removed, []string{"2.0.0"}) {
+	if len(removed) != 1 || removed[0] != "2.0.0" {
 		t.Errorf("PlanVacuumAfterInstall() removed = %v, want [2.0.0]", removed)
 	}
 	if !slices.Equal(kept, []string{"3.0.0", "1.0.0"}) {
