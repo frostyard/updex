@@ -34,7 +34,7 @@ jobs:
             exit 1
           fi
 
-          response="$(
+          if ! response="$(
             jq -n '{reviewers: ["copilot-pull-request-reviewer[bot]"]}' |
               gh api \
                 --method POST \
@@ -42,17 +42,21 @@ jobs:
                 --header "X-GitHub-Api-Version: 2022-11-28" \
                 "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/requested_reviewers" \
                 --input -
-          )"
+          )"; then
+            echo "::warning::GitHub did not accept the Copilot review request; verify Copilot code review is enabled"
+            echo "⚠️ GitHub did not accept the Copilot review request for pull request #$PR_NUMBER." >>"$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
 
-          if ! jq -e '
+          if jq -e '
             any(
               .requested_reviewers[]?;
               .login == "copilot-pull-request-reviewer" or
               .login == "copilot-pull-request-reviewer[bot]"
             )
           ' <<<"$response" >/dev/null; then
-            echo "::error::GitHub did not add Copilot as a requested reviewer"
-            exit 1
+            echo "Requested a Copilot review for pull request #$PR_NUMBER." >>"$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::GitHub accepted the request but did not confirm Copilot as a requested reviewer"
+            echo "⚠️ GitHub did not confirm Copilot as a reviewer for pull request #$PR_NUMBER." >>"$GITHUB_STEP_SUMMARY"
           fi
-
-          echo "Requested a Copilot review for pull request #$PR_NUMBER." >>"$GITHUB_STEP_SUMMARY"
