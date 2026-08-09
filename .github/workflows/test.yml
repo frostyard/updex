@@ -53,6 +53,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # Codecov's tokenless OIDC upload needs this job-scoped permission.
+      id-token: write
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -71,6 +73,7 @@ jobs:
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
+          use_oidc: true
           files: ./coverage.out
           fail_ci_if_error: false
           verbose: true
