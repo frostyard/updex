@@ -27,7 +27,7 @@ checks, or claim verification passed without evidence from the pull request.
 
 ### Tech Stack
 
-- **Language**: Go 1.25
+- **Language**: Go 1.26.5
 - **CLI Framework**: Cobra (github.com/spf13/cobra) with clix for unified CLI functionality
 - **Configuration**: INI files (gopkg.in/ini.v1)
 - **Compression**: XZ, gzip, zstd support
@@ -70,36 +70,34 @@ This formats all Go source files with `gofmt`.
 
 ```
 updex/
-├── updex/                    # PUBLIC SDK - Core library (importable)
-│   ├── updex.go              # Main SDK entry point and Client type
-│   ├── options.go            # SDK options and configuration
-│   ├── results.go            # Result types returned by SDK
-│   ├── features.go           # Features operations
-│   ├── install.go            # Install operation
-│   ├── list.go               # List operation
-│   ├── features_test.go      # Tests for features operations
-│   └── test_helpers_test.go  # Shared test helpers
-├── cmd/                      # CLI layer (thin wrappers)
-│   ├── commands/             # Cobra command wrappers
+├── updex/                    # Public SDK and Client methods
+│   ├── updex.go              # ClientConfig, Client, and NewClient
+│   ├── options.go            # Per-operation option types
+│   ├── results.go            # Structured SDK result types
+│   ├── domain.go             # Definition and component discovery
+│   ├── features.go           # Feature operations
+│   └── catalog.go            # Catalog operations
+├── cmd/
+│   ├── updex/                # Cobra commands and SDK adapters
+│   │   ├── root.go           # Root command and global flags
+│   │   ├── client.go         # ClientConfig construction
+│   │   ├── features.go       # Feature command definitions
+│   │   ├── features_run.go   # Feature command execution/output
+│   │   ├── catalog.go        # Catalog commands
 │   │   ├── components.go     # Components command
-│   │   ├── features.go       # Features command (list/enable/disable/update/check)
-│   │   ├── daemon.go         # Daemon command (enable/disable/status)
-│   │   └── completion_test.go
-│   ├── common/               # CLI utilities (flags, formatting, etc.)
-│   │   ├── common.go
-│   │   └── common_test.go
-│   ├── updex/                # updex CLI root command
-│   │   └── root.go
-│   └── updex-cli/            # updex binary entry point
-│       └── main.go
-├── internal/                 # Internal implementation (used by SDK)
-│   ├── config/               # .transfer and .feature file parsing
-│   ├── manifest/             # SHA256SUMS handling, GPG verification
-│   ├── download/             # HTTP downloads, decompression
-│   ├── version/              # Pattern matching, version comparison
-│   ├── sysext/               # systemd-sysext integration
-│   ├── systemd/              # systemd timer+service unit generation
+│   │   └── daemon.go         # Daemon commands
+│   └── updex-cli/main.go     # Binary entry point
+├── catalog/                  # Catalog configuration, cache, and repositories
+├── config/                   # .catalog, .feature, and .transfer parsing
+├── download/                 # HTTP downloads and decompression
+├── manifest/                 # SHA256SUMS handling and GPG verification
+├── sysext/                   # systemd-sysext integration
+├── systemd/                  # Timer and service unit management
+├── version/                  # Pattern matching and version comparison
+├── internal/
+│   ├── retry/                # Internal HTTP retry policy
 │   └── testutil/             # Shared test utilities
+├── tests/e2e/                # End-to-end tests
 ├── Makefile
 ├── go.mod
 └── go.sum
@@ -115,7 +113,7 @@ updex/
 - Use descriptive variable names; avoid single-letter variables except for very short scopes (loop indices, etc.)
 - Add comments for exported functions and types following Go documentation conventions
 
-## Go 1.25 Modern Idioms
+## Go 1.26 Modern Idioms
 
 Use these modern Go patterns throughout the codebase:
 
@@ -135,8 +133,8 @@ Use these modern Go patterns throughout the codebase:
 
 #### SDK Design
 
-- `Client` struct is the main entry point with methods: `Features()`, `EnableFeature()`, `DisableFeature()`, `UpdateFeatures()`, `CheckFeatures()`
-- SDK functions accept a `context.Context` and an options struct, return result structs + error
+- `Client` is the main entry point. Its methods cover features, components, updates, and catalog operations.
+- SDK methods accept a `context.Context`; operations with tunable behavior also take an options struct and return structured results + error
 - No CLI dependencies: SDK code must NOT import Cobra, pflag, or CLI-specific packages
 
 #### Adding a New Operation
@@ -147,11 +145,11 @@ Use these modern Go patterns throughout the codebase:
    - Return structured results that can be consumed programmatically
    - Document with Go doc comments
 
-2. **Create CLI Wrapper** (`cmd/commands/<operation>.go`):
+2. **Create CLI Wrapper** (`cmd/updex/<operation>.go`):
    - Create a thin Cobra command that calls the SDK method
    - Parse CLI flags into the options struct
-   - Call the SDK method via the client
-   - Format output (text or JSON) using `cmd/common` utilities
+   - Construct the SDK client with `newClient()`
+   - Format JSON with `clix.OutputJSON()` and text with the existing command's output conventions
    - Handle errors and exit codes
 
 3. **Register Command**:
@@ -170,35 +168,30 @@ Use these modern Go patterns throughout the codebase:
 CLI commands should be thin wrappers:
 
 ```go
-var myCmd = &cobra.Command{
-    Use:   "my-command",
-    Short: "Description",
-    RunE: func(cmd *cobra.Command, args []string) error {
-        // 1. Build options from flags
-        opts := updex.MyOptions{
-            DefinitionsPath: definitionsPath,
-            Component:       component,
-        }
+func runFeaturesList(cmd *cobra.Command, args []string) error {
+    client := newClient()
+    features, err := client.Features(cmd.Context(), updex.FeaturesOptions{
+        Component: featureComponent,
+    })
+    if err != nil {
+        return err
+    }
 
-        // 2. Call SDK via client
-        results, err := client.MyOperation(cmd.Context(), opts)
-        if err != nil {
-            return err
-        }
+    if clix.JSONOutput {
+        _, err = clix.OutputJSON(features)
+        return err
+    }
 
-        // 3. Format output
-        if jsonOutput {
-            return common.OutputJSON(results)
-        }
-        outputText(results)
-        return nil
-    },
+    for _, feature := range features {
+        fmt.Println(feature.Name)
+    }
+    return nil
 }
 ```
 
 ### JSON Output
 
-All SDK functions return structured data. CLI commands handle formatting using `common.OutputJSON()` for `--json` flag, text tables otherwise.
+SDK operations return structured data. CLI commands handle formatting using `clix.OutputJSON()` for the `--json` flag and text tables otherwise.
 
 ### Transfer Configuration
 
@@ -213,23 +206,34 @@ Configuration is read from `.transfer` and `.feature` INI files from systemd-sty
 Other Go applications can import and use updex as a library:
 
 ```go
-import "github.com/frostyard/updex/updex"
+import (
+    "context"
+    "fmt"
+    "log"
+
+    "github.com/frostyard/updex/updex"
+)
 
 func main() {
-    client := updex.NewClient(updex.ClientOptions{
-        DefinitionsPath: "/etc/sysupdate.d",
+    client := updex.NewClient(updex.ClientConfig{
+        Definitions: "/etc/sysupdate.d",
+        Verify:      true,
     })
+
+    ctx := context.Background()
 
     // Update all features
     results, err := client.UpdateFeatures(ctx, updex.UpdateFeaturesOptions{
-        Verify: true,
+        NoVacuum: true,
     })
     if err != nil {
         log.Fatal(err)
     }
 
-    for _, r := range results {
-        fmt.Printf("Updated %s to %s\n", r.Feature, r.Version)
+    for _, feature := range results {
+        for _, result := range feature.Results {
+            fmt.Printf("Updated %s to %s\n", result.Component, result.Version)
+        }
     }
 }
 ```
@@ -302,6 +306,15 @@ Manages the updex systemd daemon:
 - `daemon disable` — Remove systemd timer+service units
 - `daemon status` — Show daemon status
 
+### `catalog` command
+
+Browses and manages sysexts from configured catalogs:
+
+- `catalog list` — List available sysexts
+- `catalog search <query>` — Search available sysexts
+- `catalog add <name>` — Install and enable a catalog sysext
+- `catalog remove <name>` — Remove a catalog-managed sysext
+
 ## Common Tasks
 
 ### Adding a New Option
@@ -313,21 +326,21 @@ Manages the updex systemd daemon:
 
 ### Adding a New Compression Format
 
-1. Add decompressor in `internal/download/decompress.go`
-2. Update `detectCompression()` in `internal/download/download.go`
+1. Add the decompressor in `download/decompress.go`
+2. Update compression detection in `download/download.go`
 3. Run `make fmt && make build`
 
 ### Adding a New Global Flag
 
-1. Add field to the relevant options struct in `updex/options.go` (SDK)
+1. Add the SDK field to `ClientConfig` in `updex/updex.go` or the relevant operation options in `updex/options.go`
 2. Add CLI variable in `cmd/updex/root.go`
-3. Register in `init()` with `rootCmd.PersistentFlags()`
-4. Pass flag value to SDK via options struct
+3. Register the flag in `registerAppFlags()`
+4. Pass the flag value through `cmd/updex/client.go` or the relevant operation options
 5. Run `make fmt && make build`
 
 ### Modifying Transfer Config Parsing
 
-1. Update structs in `internal/config/`
+1. Update structs in `config/`
 2. Update the relevant parse functions
 3. Run `make fmt && make build`
 
@@ -345,7 +358,7 @@ Manages the updex systemd daemon:
 
 ### Build Issues
 
-- If `make build` fails, ensure Go 1.25+ is installed: `go version`
+- If `make build` fails, ensure Go 1.26.5 is installed: `go version`
 - If dependencies fail to download, try: `make tidy` or `go mod tidy`
 - If golangci-lint is not found, it's optional; the build will continue
 
