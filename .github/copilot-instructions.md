@@ -87,8 +87,8 @@ updex/
 │   │   ├── components.go     # Components command
 │   │   └── daemon.go         # Daemon commands
 │   └── updex-cli/main.go     # Binary entry point
-├── catalog/                  # Catalog configuration, cache, and repositories
-├── config/                   # .catalog, .feature, and .transfer parsing
+├── catalog/                  # .catalog parsing, cache, and repositories
+├── config/                   # .feature and .transfer parsing
 ├── download/                 # HTTP downloads and decompression
 ├── manifest/                 # SHA256SUMS handling and GPG verification
 ├── sysext/                   # systemd-sysext integration
