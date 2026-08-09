@@ -35,9 +35,15 @@ func verifySignature(ctx context.Context, client *http.Client, sigURL string, co
 		return fmt.Errorf("signature fetch failed with status: %s", resp.Status)
 	}
 
-	sigData, err := io.ReadAll(resp.Body)
+	// Limit signature reads to 1 MiB to prevent memory exhaustion from
+	// a malicious or misbehaving server returning an unbounded response.
+	const maxSigSize = 1 << 20 // 1 MiB
+	sigData, err := io.ReadAll(io.LimitReader(resp.Body, maxSigSize+1))
 	if err != nil {
 		return fmt.Errorf("failed to read signature: %w", err)
+	}
+	if len(sigData) > maxSigSize {
+		return fmt.Errorf("signature response exceeds maximum allowed size (%d bytes)", maxSigSize)
 	}
 
 	// Load keyring
