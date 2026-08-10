@@ -6,6 +6,12 @@ pull request automation, review, documentation, CI, and release-related work.
 AI output is treated as untrusted until it has passed the same human review and
 automated checks as any other contribution.
 
+The machine-readable [AI governance policy](../../.github/policies/ai-governance.json)
+exposes these controls to repository automation and agents. This document,
+the [risk tiers](../risk-tiers.md), and the
+[review rubric](../review-rubric.md) remain authoritative for their detailed
+requirements.
+
 ## Core principles
 
 - **Human accountability:** Maintainers remain responsible for accepting,
