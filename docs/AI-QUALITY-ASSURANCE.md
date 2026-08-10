@@ -13,7 +13,8 @@ human-oversight, and tool-safety boundaries for that assistance.
 
 The badges above report the current state of the default branch. Use the live
 views below to inspect individual workflow runs, pull request checks, and
-coverage trends.
+coverage trends. The [public metrics index](metrics/) provides a stable map to
+those live sources and the reproducible acceptance-rate definition.
 
 | Signal | Live view | Quality gate |
 | --- | --- | --- |
@@ -48,7 +49,7 @@ or modify code.
 ## Auto-QA self-tuning
 
 `.github/auto-qa-tuning.json` defines the machine-readable feedback policy for
-the monthly [pull request acceptance metric](metrics.md#pull-request-acceptance).
+the monthly [pull request acceptance metric](metrics/#pull-request-acceptance).
 A window with fewer than ten resolved pull requests holds the current policy.
 With enough data, a relative regression of ten percent or more routes the
 observed failure pattern to focused contributor guidance or a targeted local

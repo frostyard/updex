@@ -6,6 +6,8 @@ updex is a Go SDK and CLI for managing [systemd-sysext](https://www.freedesktop.
 
 The project follows an **SDK-first design** for feature management: the core workflows live in public Go packages, and the CLI is mostly a thin wrapper that parses flags and formats output. The `daemon` command is the main exception: it imports the `systemd` package directly to install/remove timer units because daemon lifecycle is systemd-unit management rather than feature update logic.
 
+Public repository observability is indexed at `docs/metrics/README.md`. That canonical page links live CI, nightly compliance, Codecov, pull-request, AI-fix, and release evidence; defines the monthly acceptance metric consumed by `.github/auto-qa-tuning.json`; and excludes secrets, private prompts, vulnerability embargoes, and managed-host telemetry. `updex/public_metrics_contract_test.go` prevents the ACMM path, substantive signal contract, and tuning reference from drifting apart.
+
 ## Architecture
 
 ```
