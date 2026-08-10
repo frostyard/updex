@@ -20,13 +20,14 @@ coverage trends.
 | Continuous integration | [Tests workflow](https://github.com/frostyard/updex/actions/workflows/test.yml) | Lint, security, unit, end-to-end, race, verification, and build jobs pass |
 | Nightly compliance | [Nightly compliance workflow](https://github.com/frostyard/updex/actions/workflows/nightly-compliance.yml) | Dependency integrity, current vulnerability data, uncached race tests, static analysis, and supported Linux builds pass |
 | Test coverage | [Codecov dashboard](https://codecov.io/gh/frostyard/updex) | Project coverage stays within the configured 1% threshold and changed lines meet the 70% target |
-| Pull request review | [Open pull requests](https://github.com/frostyard/updex/pulls) | Reviewers can audit the diff and CI history before merge |
+| Pull request review | [Automated Copilot Code Review workflow](https://github.com/frostyard/updex/actions/workflows/claude-code-review.yml) | Copilot review is requested for each non-draft pull request; reviewers can audit the advisory findings and CI history before merge |
 | AI fix requests | [AI Fix Requested workflow](https://github.com/frostyard/updex/actions/workflows/ai-fix-requested.yml) | Labeled issues are assigned to Copilot through an auditable workflow run |
 | Releases | [Release workflow](https://github.com/frostyard/updex/actions/workflows/release.yml) | Release artifacts are built from reviewed repository history |
 
 The workflow definitions and exact coverage tolerances remain versioned in
 [`.github/workflows/test.yml`](../.github/workflows/test.yml),
 [`.github/workflows/nightly-compliance.yml`](../.github/workflows/nightly-compliance.yml),
+[`.github/workflows/claude-code-review.yml`](../.github/workflows/claude-code-review.yml),
 and [`codecov.yml`](../codecov.yml), so dashboard results can be traced to the
 gates that produced them.
 
