@@ -3,7 +3,7 @@
   "rolling_window_days": 30,
   "minimum_sample_size": 10,
   "signals": {
-    "pr_acceptance_rate": "docs/metrics.md#pull-request-acceptance"
+    "pr_acceptance_rate": "docs/metrics/README.md#pull-request-acceptance"
   },
   "thresholds": {
     "relative_regression": 0.1,
