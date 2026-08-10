@@ -1,4 +1,4 @@
-name: Automated Copilot Review
+name: Automated Copilot Code Review
 
 on:
   pull_request_target:
