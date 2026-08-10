@@ -182,6 +182,18 @@ Key design points:
   (component-scoped, incompatible with `-C`) and return setup guidance
   when no catalogs are configured (`catalog.ErrNoCatalogs`).
 
+## Troubleshooting
+
+- **GPG verification failures:** First check that the systemd import keyring is
+  configured for the transfer's signing key. To intentionally use an unsigned
+  source, set `Verify=no` in that source's `.transfer` file. The CLI's
+  `--verify` flag is force-enable only: effective verification is the logical
+  OR of the flag and the transfer setting, and omitting `Verify=` defaults the
+  transfer setting to `yes`. Consequently, `--verify=false` cannot disable
+  verification for a transfer that enables it. See the
+  [README transfer configuration](README.md#transfer-section) for the
+  operator-facing reference.
+
 ## Code Patterns
 
 - Error messages: lowercase, no trailing punctuation, wrap with `fmt.Errorf("context: %w", err)`
