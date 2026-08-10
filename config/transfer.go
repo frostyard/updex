@@ -26,7 +26,7 @@ type Transfer struct {
 type TransferSection struct {
 	MinVersion        string   // Minimum version to consider
 	ProtectVersion    string   // Version to never remove (supports specifiers)
-	Verify            bool     // Verify GPG signatures (default: false for this implementation)
+	Verify            bool     // Verify GPG signatures (default: true)
 	InstancesMax      int      // Maximum number of versions to keep (default: 2)
 	Features          []string // Features this transfer belongs to (OR logic: any enabled activates)
 	RequisiteFeatures []string // All of these features must be enabled (AND logic)
@@ -242,8 +242,8 @@ func parseTransferFile(filePath, component string, specCtx *specifierContext) (*
 		Component: component,
 		FilePath:  filePath,
 		Transfer: TransferSection{
-			Verify:       false, // Default to false
-			InstancesMax: 2,     // Default to 2
+			Verify:       true, // Match systemd-sysupdate's default
+			InstancesMax: 2,    // Default to 2
 		},
 		Target: TargetSection{
 			Path: "/var/lib/extensions.d", // Default staging path
@@ -260,7 +260,7 @@ func parseTransferFile(filePath, component string, specCtx *specifierContext) (*
 			t.Transfer.ProtectVersion = expandSpecifiers(key.String(), specCtx)
 		}
 		if key, err := sec.GetKey("Verify"); err == nil {
-			t.Transfer.Verify = key.MustBool(false)
+			t.Transfer.Verify = key.MustBool(true)
 		}
 		if key, err := sec.GetKey("InstancesMax"); err == nil {
 			t.Transfer.InstancesMax = key.MustInt(2)
