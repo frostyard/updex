@@ -24,6 +24,8 @@ pull request review. Classify feedback as blocking, non-blocking, question, or
 nit; explain the impact of each finding and suggest a concrete resolution.
 Treat automated feedback as advisory: do not approve changes, weaken required
 checks, or claim verification passed without evidence from the pull request.
+Apply the machine-readable controls in
+[`policies/ai-governance.json`](policies/ai-governance.json) to all agent work.
 
 ### Tech Stack
 
