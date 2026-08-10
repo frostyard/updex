@@ -32,6 +32,7 @@ func writeFeatureTransferFile(t *testing.T, configDir, targetDir, component, fea
 	t.Helper()
 	content := `[Transfer]
 Features=` + feature + `
+Verify=false
 
 [Source]
 Type=url-file

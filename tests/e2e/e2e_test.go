@@ -165,7 +165,7 @@ func TestE2E_FeaturesListAndCheck(t *testing.T) {
 	writeFile(t, filepath.Join(configDir, "e2efeature.feature"), ""+
 		"[Feature]\nDescription=E2E test feature\nEnabled=true\n")
 	writeFile(t, filepath.Join(configDir, "testext.transfer"), ""+
-		"[Transfer]\nFeatures=e2efeature\n\n"+
+		"[Transfer]\nFeatures=e2efeature\nVerify=false\n\n"+
 		"[Source]\nType=url-file\nPath="+server.URL+"\nMatchPattern=testext_@v.raw\n\n"+
 		"[Target]\nPath="+t.TempDir()+"\nMatchPattern=testext_@v.raw\n")
 

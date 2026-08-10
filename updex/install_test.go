@@ -17,6 +17,7 @@ func createTransferFileWithPatterns(t *testing.T, configDir, component, featureN
 	t.Helper()
 	content := `[Transfer]
 Features=` + featureName + `
+Verify=false
 
 [Source]
 Type=url-file

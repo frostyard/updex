@@ -36,6 +36,7 @@ func createFeatureTransferFile(t *testing.T, configDir, component, featureName, 
 	t.Helper()
 	content := `[Transfer]
 Features=` + featureName + `
+Verify=false
 
 [Source]
 Type=url-file
@@ -56,6 +57,7 @@ func createFeatureTransferFileWithoutCurrentSymlink(t *testing.T, configDir, com
 	t.Helper()
 	content := `[Transfer]
 Features=` + featureName + `
+Verify=false
 
 [Source]
 Type=url-file
