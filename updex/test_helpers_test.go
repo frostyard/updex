@@ -12,6 +12,7 @@ func createFeatureTransferFileWithMinVersion(t *testing.T, configDir, component,
 	content := `[Transfer]
 Features=` + featureName + `
 MinVersion=` + minVersion + `
+Verify=false
 
 [Source]
 Type=url-file

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -218,8 +219,8 @@ MatchPattern=test_@v.raw
 	if tr.Transfer.InstancesMax != 2 {
 		t.Errorf("default InstancesMax = %d, want 2", tr.Transfer.InstancesMax)
 	}
-	if tr.Transfer.Verify != false {
-		t.Errorf("default Verify = %v, want false", tr.Transfer.Verify)
+	if !tr.Transfer.Verify {
+		t.Errorf("default Verify = %v, want true", tr.Transfer.Verify)
 	}
 	if tr.Target.Path != "/var/lib/extensions.d" {
 		t.Errorf("default Target.Path = %q, want /var/lib/extensions.d", tr.Target.Path)
@@ -501,10 +502,22 @@ MatchPattern=test_@v.raw
 }
 
 func TestLoadTransfersVerifyFlag(t *testing.T) {
-	tmpDir := t.TempDir()
+	tests := []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "enabled", value: "true", want: true},
+		{name: "disabled", value: "false", want: false},
+		{name: "invalid fails secure", value: "invalid", want: true},
+	}
 
-	content := `[Transfer]
-Verify=true
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+
+			content := fmt.Sprintf(`[Transfer]
+Verify=%s
 
 [Source]
 Type=url-file
@@ -513,18 +526,20 @@ MatchPattern=test_@v.raw
 
 [Target]
 MatchPattern=test_@v.raw
-`
-	if err := os.WriteFile(filepath.Join(tmpDir, "test.transfer"), []byte(content), 0644); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
+`, tt.value)
+			if err := os.WriteFile(filepath.Join(tmpDir, "test.transfer"), []byte(content), 0644); err != nil {
+				t.Fatalf("failed to write test file: %v", err)
+			}
 
-	transfers, err := LoadTransfers(tmpDir)
-	if err != nil {
-		t.Fatalf("LoadTransfers() error = %v", err)
-	}
+			transfers, err := LoadTransfers(tmpDir)
+			if err != nil {
+				t.Fatalf("LoadTransfers() error = %v", err)
+			}
 
-	if !transfers[0].Transfer.Verify {
-		t.Error("Verify = false, want true")
+			if transfers[0].Transfer.Verify != tt.want {
+				t.Errorf("Verify = %v, want %v", transfers[0].Transfer.Verify, tt.want)
+			}
+		})
 	}
 }
 

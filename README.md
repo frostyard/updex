@@ -25,7 +25,7 @@ Designed for systems like Debian Trixie that don't ship with `systemd-sysupdate`
 - Download sysext images from remote HTTP sources
 - SHA256 hash verification via `SHA256SUMS` manifests
 - Bounded retry with exponential backoff for transient network failures and HTTP 5xx/429 responses
-- Optional GPG signature verification (`--verify`)
+- GPG signature verification by default, matching systemd-sysupdate (`Verify=no` opts out)
 - Automatic decompression (xz, gz, zstd)
 - Version management with configurable retention (`InstancesMax`)
 - Automatic update daemon via systemd timers
@@ -342,7 +342,7 @@ Create `/etc/sysupdate.d/myext.transfer`:
 [Transfer]
 MinVersion=1.0.0
 InstancesMax=3
-Verify=no
+Verify=yes
 
 [Source]
 Type=url-file
@@ -364,10 +364,12 @@ Mode=0644
 | --- | --- | --- |
 | `MinVersion` | Minimum version to consider | (none) |
 | `ProtectVersion` | Version to never remove (supports `%A` specifiers) | (none) |
-| `Verify` | Verify GPG signatures | `no` |
+| `Verify` | Verify GPG signatures | `yes` |
 | `InstancesMax` | Maximum versions to keep | `2` |
 | `Features` | Space-separated feature names (OR logic) | (none) |
 | `RequisiteFeatures` | Space-separated feature names (AND logic) | (none) |
+
+Omitting `Verify=` enables signature verification, matching systemd-sysupdate. Set `Verify=no` explicitly to disable it; the global `--verify` flag forces verification even for transfers that opt out.
 
 #### [Source] Section
 

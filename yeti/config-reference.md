@@ -77,7 +77,7 @@ Define how a single component (e.g., a kernel image, extension image) is downloa
 [Transfer]
 MinVersion=1.0.0
 ProtectVersion=2.1.0
-Verify=false
+Verify=true
 InstancesMax=2
 Features=devel
 
@@ -99,7 +99,7 @@ Mode=0644
 |-----|------|---------|-------------|
 | `MinVersion` | string | — | Only consider versions >= this value |
 | `ProtectVersion` | string | — | Never remove this version during vacuum |
-| `Verify` | bool | `false` | Require GPG signature on SHA256SUMS |
+| `Verify` | bool | `true` | Require GPG signature on SHA256SUMS; set false to opt out |
 | `InstancesMax` | int | `2` | Maximum versions to keep; oldest removed first |
 | `Features` | string list | — | OR logic: transfer activates if *any* listed feature is enabled |
 | `RequisiteFeatures` | string list | — | AND logic: transfer activates only if *all* listed features are enabled |

@@ -39,7 +39,7 @@ Key packages:
 - `config/` — Parses `.transfer` and `.feature` INI files from systemd-style search paths, including systemd-sysupdate "component" discovery (see below)
 - `catalog/` — Sysext catalog primitives (see below): `*.catalog` repo config loading, sysext enumeration via a GitHub contents API endpoint, fetching the catalog's published `.conf`, and rendering it into updex `.transfer`/`.feature` files
 - `download/` — HTTP downloads with bounded retry for transient failures, SHA256 verification, and decompression (xz, gz, zstd)
-- `manifest/` — Fetches/parses SHA256SUMS manifests with bounded retry for transient failures and optional GPG verification
+- `manifest/` — Fetches/parses SHA256SUMS manifests with bounded retry for transient failures and GPG verification (enabled by default per systemd-sysupdate)
 - `version/` — Pattern matching (`@v` placeholder) and semantic version comparison
 - `sysext/` — systemd-sysext integration with mockable `Runner` interface, `/var/lib/extensions` link management, and read-only vacuum planning helpers
 - `systemd/` — Generates/installs systemd timer+service units, mockable `Runner` interface

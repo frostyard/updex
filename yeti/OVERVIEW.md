@@ -233,14 +233,14 @@ See [Configuration Reference](config-reference.md) for detailed format documenta
 | `InstancesMax` | `[Transfer]` | `2` | Max versions to keep on disk |
 | `ProtectVersion` | `[Transfer]` | — | Version that is never removed |
 | `MinVersion` | `[Transfer]` | — | Minimum version to consider |
-| `Verify` | `[Transfer]` | `false` | Require GPG signature verification |
+| `Verify` | `[Transfer]` | `true` | Require GPG signature verification; set false to opt out |
 | `Features` | `[Transfer]` | — | OR list: any enabled feature activates this transfer |
 | `RequisiteFeatures` | `[Transfer]` | — | AND list: all must be enabled |
 | `CurrentSymlink` | `[Target]` | — | Optional legacy staging symlink; when present, update removes it |
 
 ### GPG verification
 
-When enabled, fetches `SHA256SUMS.gpg` (detached signature) and verifies against keyrings at:
+Enabled by default to match systemd-sysupdate. Set `Verify=no` explicitly to opt out; the client's global `Verify` setting (the CLI's `--verify` flag) forces verification even for transfers that opt out. When enabled, fetches `SHA256SUMS.gpg` (detached signature) and verifies against keyrings at:
 1. `/etc/systemd/import-pubring.gpg`
 2. `/usr/lib/systemd/import-pubring.gpg`
 
