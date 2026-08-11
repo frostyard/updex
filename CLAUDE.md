@@ -16,7 +16,7 @@ make tidy         # go mod tidy
 
 Run a single test: `go test -v -run TestName ./updex/`
 
-End-to-end tests live in `tests/e2e/`: black-box tests that build the real `updex` binary and run it as a subprocess against a fake HTTP transfer source, covering only read-only commands (no root required). Run with `go test -v ./tests/e2e/...`.
+End-to-end tests live in `tests/e2e/`: black-box tests that build the real `updex` binary and run it as a subprocess against fake files and HTTP sources. Successful operations are read-only (no root required); mutating command variants are covered at the argument-validation boundary. CLI integration tests in `cmd/updex/` additionally override package search roots to exercise default component discovery and fake catalogs safely. Run both with `go test -v ./cmd/updex ./tests/e2e/...`.
 
 ## Release Automation
 
