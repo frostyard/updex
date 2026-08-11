@@ -35,30 +35,49 @@ Designed for systems like Debian Trixie that don't ship with `systemd-sysupdate`
 
 ## Installation
 
-### Prerequisites
+### Install a release
 
-- [Go 1.26.5 or newer](https://go.dev/doc/install) (the version required by `go.mod`)
-- `make` when using the Makefile commands below
+Download the latest CLI package for your system from the
+[GitHub releases page](https://github.com/frostyard/updex/releases/latest):
 
-Building the library and CLI, and running unit tests, do not require systemd.
-Using updex to manage system extensions requires a systemd-based Linux system
-with `systemd-sysext`; operations that modify system state also require root
-privileges.
+| System | Release artifact |
+| --- | --- |
+| Debian/Ubuntu | `frostyard-updex_<version>_amd64.deb` or `frostyard-updex_<version>_arm64.deb` |
+| Fedora/RHEL | `frostyard-updex-<version>-1.x86_64.rpm` or `frostyard-updex-<version>-1.aarch64.rpm` |
+| Alpine | `frostyard-updex_<version>_x86_64.apk` or `frostyard-updex_<version>_aarch64.apk` |
+| Other Linux distributions | `updex_<version>_linux_amd64.tar.gz` or `updex_<version>_linux_arm64.tar.gz` |
 
-### As a Library
+Download `checksums.txt` from the same release and verify the package before
+installing it:
 
 ```bash
-go get github.com/frostyard/updex/updex
+sha256sum --ignore-missing --check checksums.txt
 ```
 
-### As CLI Tools
+Running the packaged CLI does not require Go or `make`. It requires a
+systemd-based Linux system with `systemd-sysext`; operations that modify system
+state also require root privileges.
+
+### Build from source
+
+Building the CLI or library and running unit tests requires
+[Go 1.26.5 or newer](https://go.dev/doc/install) (the version required by
+`go.mod`) and `make` for the Makefile commands below. Building and testing do
+not require systemd.
 
 ```bash
-# Build from source
 make build
 
 # Install to GOPATH/bin
 make install
+```
+
+### As a Library
+
+Using updex as a Go library requires Go 1.26.5 or newer:
+
+```bash
+go get github.com/frostyard/updex/updex
 ```
 
 ## Library (SDK) Usage

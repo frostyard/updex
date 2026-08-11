@@ -129,8 +129,9 @@ AI-assisted contributions must also follow the
 [AI security policy](docs/security/SECURITY-AI.md), including its least
 privilege, data-handling, prompt-injection, and human-review requirements.
 
-If you believe you have found a security vulnerability, please report it
-privately to the maintainers rather than opening a public issue.
+If you believe you have found a security vulnerability, do not open a public
+issue. Report it privately by emailing the maintainer at
+[bketelsen@gmail.com](mailto:bketelsen@gmail.com).
 
 ## Documentation
 
