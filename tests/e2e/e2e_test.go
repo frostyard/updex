@@ -150,6 +150,16 @@ func TestE2E_HelpAndCompletion(t *testing.T) {
 	}
 }
 
+func TestE2E_FeaturesListRejectsExtraArgs(t *testing.T) {
+	out, err := runUpdex(t, "features", "list", "unexpected")
+	if err == nil {
+		t.Fatalf("updex features list unexpectedly accepted an argument:\n%s", out)
+	}
+	if !strings.Contains(out, "Unknown command") {
+		t.Errorf("features list error missing argument validation message:\n%s", out)
+	}
+}
+
 // TestE2E_FeaturesListAndCheck drives the full read-only feature lifecycle
 // against a real HTTP transfer source and a real config directory on disk:
 // discover the feature via "features list", then confirm "features check"
