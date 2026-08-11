@@ -92,6 +92,7 @@ CATALOG VALUES:
 
   # List in JSON format
   updex features list --json`,
+		Args: cobra.NoArgs,
 		RunE: runFeaturesList,
 	}
 }

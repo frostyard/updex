@@ -665,9 +665,13 @@ go test -v ./tests/e2e/...
 
 `tests/e2e/` contains black-box tests that build the real `updex` binary
 and run it as a subprocess against a fake HTTP transfer source, the same
-way an operator would invoke it (`updex features list`, `updex features
-check`, `updex --help`, `updex completion`). They only exercise read-only
-commands so they can run without root privileges.
+way an operator would invoke it. The suite covers help, version and shell
+completion output; argument and exit-code handling for every command variant;
+configuration errors; and text/JSON feature listing and update checks.
+Successful operations are read-only so the tests run without root privileges.
+Additional CLI integration tests in `cmd/updex/` use temporary search roots
+and a fake catalog server to cover default component discovery and
+`GITHUB_TOKEN` request authentication.
 
 ### Contributing
 

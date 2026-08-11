@@ -93,6 +93,7 @@ CLI (cmd/daemon.go) → systemd (direct, bypasses SDK)
 - `ClientConfig.SysextRunner` field for injecting mocks into the SDK client — `NewClient` stores the runner directly on the `Client` struct (does not mutate global state)
 - `internal/testutil.NewTestServer()` creates `httptest.Server` with configurable manifests and file content
 - `t.TempDir()` for filesystem operations, `t.Context()` for context
+- `tests/e2e/` builds and runs the real CLI subprocess for argument, exit-code, output, custom-config, and read-only HTTP checks. `cmd/updex/integration_test.go` runs the full Cobra/clix command in-process so package search roots can point at temporary default component and catalog trees; keep mutating subprocess paths behind parser failures so CI does not require root.
 
 ### CLI output
 
