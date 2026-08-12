@@ -4,11 +4,11 @@
 
 set -e
 
-UPDEX="${1:-./bin/updex}"
+UPDEX="${1:-./build/updex}"
 
 if [ ! -x "$UPDEX" ]; then
     echo "Error: updex binary not found at $UPDEX"
-    echo "Build first: go build -o ./bin/updex ./cmd/updex-cli/"
+    echo "Build first: make build"
     exit 1
 fi
 
