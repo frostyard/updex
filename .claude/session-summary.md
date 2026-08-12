@@ -10,8 +10,8 @@ continue unfinished work without reconstructing the previous session.
   concrete follow-up work.
 - Link issues, pull requests, and commits instead of copying long logs or diffs.
 - Never include credentials, tokens, private user data, or raw command output.
-- Move durable architecture decisions and non-obvious lessons to
-  `yeti/learnings/`; this file is for session continuity.
+- Fold durable architecture decisions and non-obvious lessons into the right
+  `docs/` page (or the `.memory/` inbox); this file is for session continuity.
 - Remove the placeholder once the first summary is recorded, and prune entries
   after their follow-up work is complete or captured in permanent docs.
 

@@ -58,10 +58,10 @@ systemd/          Timer/service unit generation and systemctl management
 internal/testutil HTTP test server helpers
 ```
 
-`yeti/OVERVIEW.md` is the detailed architecture document — read it (plus
-`yeti/sdk-api.md` and `yeti/config-reference.md`) before making non-trivial
-changes. The `yeti/` directory is written for AI agents and maintainers who
-need decision rationale, not as user-facing documentation.
+`docs/design/overview.md` is the detailed architecture document — read it
+(plus `docs/specs/sdk-api.md` and `docs/specs/config-reference.md`) before
+making non-trivial changes. These docs are written for AI agents and
+maintainers who need decision rationale, not as user-facing documentation.
 
 ### Adding a new operation
 
@@ -139,13 +139,15 @@ A change is not complete until the documentation matches it. When behavior
 changes, update:
 
 - `README.md` — user-facing usage and flags
-- `yeti/OVERVIEW.md`, `yeti/sdk-api.md`, `yeti/config-reference.md` — the
-  agent-oriented architecture, SDK, and configuration references
+- `docs/design/overview.md`, `docs/specs/sdk-api.md`,
+  `docs/specs/config-reference.md` — the agent-oriented architecture,
+  SDK, and configuration references
 - `AGENTS.md` (`CLAUDE.md` is a symlink to it) — when conventions or the build workflow change
-- `docs/` — topic guides such as `docs/patterns.md` and the public `docs/metrics/` index
+- `docs/` — topic guides such as `docs/patterns.md` and the public `docs/metrics/` index (index every new doc in `docs/README.md`)
 
 Durable, non-obvious rationale that future contributors would otherwise have
-to rediscover belongs in `yeti/learnings/`.
+to rediscover belongs in the relevant `docs/` page, or in the `.memory/`
+inbox until it can be folded in.
 
 ## Pull Requests
 

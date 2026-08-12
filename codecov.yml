@@ -32,5 +32,4 @@ ignore:
   - "**/*_test.go"
   - "internal/testutil/**"
   - "docs/**"
-  - "yeti/**"
   - "scripts/**"
