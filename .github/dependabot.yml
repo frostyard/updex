@@ -6,6 +6,9 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    commit-message:
+      prefix: "feat"
+      include: "scope"
 
   # Maintain GitHub Actions
   - package-ecosystem: "github-actions"
@@ -13,3 +16,6 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    commit-message:
+      prefix: "feat"
+      include: "scope"
