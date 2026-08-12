@@ -137,7 +137,7 @@ func (c *Client) CatalogRemove(ctx context.Context, name string, opts CatalogRem
 ```
 
 Catalog operations over the repos configured via `catalog.LoadRepos()`
-(see the `catalog` package below and `OVERVIEW.md` "Catalogs"). All three
+(see the `catalog` package below and `docs/design/overview.md` "Catalogs"). All three
 error when no catalogs are configured (with setup guidance) or when the
 client has a `Definitions` override.
 
@@ -289,7 +289,7 @@ type CheckResult struct {
 - `GetEnabledFeatureNames(features []*Feature) []string`
 - `IsFeatureEnabled(features []*Feature, name string) bool`
 
-**Component discovery** (`config/component.go`; see `yeti/OVERVIEW.md` "Components" for the full design):
+**Component discovery** (`config/component.go`; see `docs/design/overview.md` "Components" for the full design):
 
 - `SearchRoots` — Package variable: `[]string{"/etc", "/run", "/usr/local/lib", "/usr/lib"}`, in priority order. Overridable in tests (same pattern as `sysext.SysextDir`).
 - `SearchRootIndex(path string) (int, bool)` — Index into `SearchRoots` of the root containing `path` (most specific wins, whole-component match so `/usr/libfoo` misses `/usr/lib`), `(-1, false)` when outside all of them. Returns the index, not the directory, because tests override `SearchRoots` with temp dirs. Used by `updex.featureOrigin` to classify a feature's provenance.
@@ -307,7 +307,7 @@ type CheckResult struct {
 
 ### `catalog`
 
-Sysext catalog primitives; no built-in repos (see `OVERVIEW.md` "Catalogs").
+Sysext catalog primitives; no built-in repos (see `docs/design/overview.md` "Catalogs").
 
 - `ConfigRoots` — Package variable: the four `*/updex/catalogs.d` directories scanned for `<name>.catalog` files, earlier roots winning per filename. Overridable in tests.
 - `LoadRepos() ([]Repo, error)` — Load configured repos, sorted by name; returns `ErrNoCatalogs` when none exist.

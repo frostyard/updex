@@ -30,7 +30,7 @@ resolves to the most specific one (a named component beats the legacy
 default directory) and is reported as a warning. `--component=<name>` scopes
 an operation to a single component's own search paths instead. `-C` bypasses
 component discovery entirely and behaves exactly as before components
-existed. See `yeti/OVERVIEW.md` ("Components") for the full design.
+existed. See `docs/design/overview.md` ("Components") for the full design.
 
 ## Feature Files (`.feature`)
 

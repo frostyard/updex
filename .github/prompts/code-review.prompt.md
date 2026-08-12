@@ -23,8 +23,8 @@ Review the diff and flag violations of these project rules:
 6. **Tests** — new behavior should include table-driven tests using
    `t.TempDir()` for filesystem state and mock `Runner` implementations for
    systemd/sysext commands, consistent with existing `_test.go` files.
-7. **Documentation** — check whether `CLAUDE.md`, `README.md`, or files under
-   `yeti/` need updating to reflect the change, per this repo's convention of
+7. **Documentation** — check whether `AGENTS.md`, `README.md`, or files under
+   `docs/` need updating to reflect the change, per this repo's convention of
    keeping AI-facing documentation current.
 
 Report findings as a checklist grouped by severity (must-fix vs. suggestion),

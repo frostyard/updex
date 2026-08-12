@@ -11,7 +11,7 @@
   },
   "actions": {
     "pr_acceptance_rate": [
-      "tighten affected guidance in AGENTS.md, CLAUDE.md, docs/review-rubric.md, or yeti/",
+      "tighten affected guidance in AGENTS.md (CLAUDE.md is a symlink), docs/review-rubric.md, or docs/design/overview.md",
       "add or document a targeted local check when rework reveals a validation gap"
     ]
   },

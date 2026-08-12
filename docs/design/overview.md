@@ -1,4 +1,4 @@
-# updex Documentation
+# updex Design Overview
 
 ## Purpose
 
@@ -222,7 +222,7 @@ explicitly in `[Target]`.
 
 ### File types
 
-See [Configuration Reference](config-reference.md) for detailed format documentation.
+See [Configuration Reference](../specs/config-reference.md) for detailed format documentation.
 
 - **`.feature`** files define features (name, description, enabled state)
 - **`.transfer`** files define how components are downloaded and installed
@@ -253,7 +253,7 @@ Only the main `SHA256SUMS` fetch has bounded retry behavior. The detached `.gpg`
 
 ### Systemd specifiers
 
-Transfer file values support systemd-style `%` specifiers. See [Configuration Reference](config-reference.md#systemd-specifiers) for the full list.
+Transfer file values support systemd-style `%` specifiers. See [Configuration Reference](../specs/config-reference.md#systemd-specifiers) for the full list.
 
 ## Catalogs (`catalog/`, `updex/catalog.go`)
 
@@ -409,7 +409,7 @@ Design decisions (verified with the user, 2026-08):
    - Download file, retrying the same transient request/body-read failures and HTTP 5xx/429 from scratch without range/resume requests. Each attempt uses a new temp file and invokes `OnDownloadProgress` again, so progress writers must be attempt-local. SHA256 is verified against the compressed bytes before decompression.
    - Decompress if needed (xz, gz, zstd — detected from filename). The installed filename is derived from the target patterns via `buildTargetFilename`: the first pattern that produces a name without a compression suffix wins, and if every target pattern is a compressed variant the suffix is stripped, so the on-disk name always matches the decompressed content regardless of which source pattern matched
    - Atomically rename to final path; on cross-device rename failure, copy to a temp file on the destination filesystem, sync it, chmod it, then rename
-   - Remove any legacy `CurrentSymlink` in the target directory when the transfer defines one. Current-version detection still reads the legacy symlink first so an installed-but-not-current newer image is not hidden by cleanup; cleanup then runs before any already-current return, so stale staging symlinks are removed even when no download is required.
+   - Remove any legacy `CurrentSymlink` in the target directory when the transfer defines one. The ordering in `installTransfer` is load-bearing: (1) fetch available versions and select the newest candidate, (2) call `sysext.GetInstalledVersions` while any legacy `CurrentSymlink` still exists, (3) remove the legacy staging symlink, (4) only then return early if the selected version was already both installed and current. `GetInstalledVersions` can still use a legacy `CurrentSymlink` to distinguish "newest version is staged but not current" from "already current"; deleting that symlink first makes the newest staged file look current and can skip the required `/var/lib/extensions/<component>.<ext>` relink. Because cleanup runs before any already-current return, stale staging symlinks are removed even when no download is required.
    - Create or replace `/var/lib/extensions/<component>.<ext>` pointing to the newest staged image path; the link name is derived from the transfer filename component and the target pattern extension with compression suffixes stripped. This is a hard error because `systemd-sysext refresh` cannot see the staged image without it
    - Vacuum old versions per `InstancesMax`; the active symlink target and `ProtectVersion` are always kept. Non-dry-run `UpdateResult.RemovedVersions` is not populated because the install path calls `sysext.Vacuum`, while dry-run uses `PlanVacuumAfterInstall`
 4. Call `systemd-sysext refresh` to reload all extensions (unless `--no-refresh`). Callers batch this — `installTransfer` is called with `NoRefresh: true` per-component, and a single refresh runs at the end. With `--dry-run`, the same manifest/version resolution runs, but `installTransfer` returns before download; `UpdateFeatures` reports would-download/would-install results and read-only vacuum removals, then skips the final refresh.
