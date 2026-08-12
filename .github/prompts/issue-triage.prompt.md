@@ -10,7 +10,7 @@ Use this prompt when triaging a new GitHub issue or bug report for updex.
    - **SDK bug** — logic error in `updex/`, `config/`, `catalog/`,
      `download/`, `manifest/`, `version/`, `sysext/`, or `systemd/`.
    - **CLI bug** — flag parsing or output formatting in `cmd/updex/`.
-   - **Docs gap** — missing or stale guidance in `CLAUDE.md`, `README.md`, or
+   - **Docs gap** — missing or stale guidance in `AGENTS.md`, `README.md`, or
      `yeti/`.
    - **ACMM/process gap** — repository hygiene or agent-maturity criterion
      (see `.github/copilot-instructions.md`).
