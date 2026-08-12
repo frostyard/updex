@@ -119,9 +119,13 @@ Key design points:
   a line-based transform that prepends the `catalog.GeneratedMarker`
   ownership header, injects `Features=<name>`, drops `CurrentSymlink`
   (updex manages `/var/lib/extensions` links itself), and preserves
-  everything else byte-for-byte — critically `%w`/`%a` specifiers stay
+  non-sensitive content byte-for-byte — critically `%w`/`%a` specifiers stay
   **unexpanded** so the file survives Fedora release upgrades (expansion
-  happens at load time in `config`).
+  happens at load time in `config`). Security-sensitive fields are canonical:
+  the source must be `url-file` at this repo's `<SiteURL>/<name>/`, patterns
+  must be basename-only, and the target is always a regular `0644` file under
+  trusted `catalog.TargetPath` (default `/var/lib/extensions.d`); alternate
+  paths and target shapes are rejected.
 - **Ownership and safety** (added after PR #137 review): the marker
   header names its generating repo, and that pair is the ownership
   signal — `catalog.GeneratedFileRepo(path)` must return *this* repo.

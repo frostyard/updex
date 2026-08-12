@@ -566,12 +566,16 @@ ListURL=https://api.github.com/repos/fedora-sysexts/community/contents/
 
 `sudo updex catalog add fedora/zoxide` fetches the catalog's published
 transfer definition, writes a standard `.transfer` (with `Features=zoxide`
-injected and `CurrentSymlink` dropped — updex manages the
-`/var/lib/extensions` link itself) plus a generated `.feature` into the
-catalog's component directory, enables the feature, and downloads the
-image. The `%w`/`%a` specifiers in the catalog's match patterns are kept
-unexpanded, so updates keep tracking the running Fedora release across OS
-upgrades.
+injected and security-sensitive source/target fields canonicalized) plus a
+generated `.feature` into the catalog's component directory, enables the
+feature, and downloads the image. Catalog transfers must use a `url-file`
+source at the configured `<SiteURL>/<sysext>/` path and unquoted,
+basename-only match patterns. Their target is always a regular `0644` file under the trusted
+`catalog.TargetPath` (default `/var/lib/extensions.d`); catalog-provided target paths, modes,
+`PathRelativeTo`, and `CurrentSymlink` values cannot redirect root-owned
+writes. updex manages the `/var/lib/extensions` link itself. The `%w`/`%a`
+specifiers in the catalog's match patterns are kept unexpanded, so updates
+keep tracking the running Fedora release across OS upgrades.
 
 From then on the sysext is a completely normal feature: `updex features
 list/enable/disable/update/check` and the update daemon manage it like any
