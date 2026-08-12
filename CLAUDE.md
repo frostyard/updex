@@ -213,3 +213,9 @@ Go 1.26. Use modern idioms: `any`, `slices`/`maps`/`cmp` packages, `t.Context()`
 **yeti/ directory** The `yeti/` directory contains documentation written for AI consumption and context enhancement, not primarily for humans. Jobs like `doc-maintainer` and `issue-worker` instruct the AI to read `yeti/OVERVIEW.md` and related files for codebase context before performing tasks. Write content in this directory to be maximally useful to an AI agent understanding the codebase — detailed architecture, patterns, and decision rationale rather than user-facing guides.
 
 **session handoffs** Use `.claude/session-summary.md` for concise context needed to continue unfinished work in a later session. Keep durable architecture decisions and non-obvious lessons in `yeti/learnings/` instead.
+
+## Org-wide decisions
+
+Org-level conventions this repo follows are recorded as ADRs in
+frostyard/core — see [docs/org-adrs.md](docs/org-adrs.md) for the list that
+binds this repo. Change the ADR (in core) before changing behavior it covers.
