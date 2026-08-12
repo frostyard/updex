@@ -106,7 +106,8 @@ maintainers who need decision rationale, not as user-facing documentation.
 - Use `internal/testutil.NewTestServer()` for HTTP sources and manifests.
 - Override package vars such as `config.SearchRoots`, `sysext.SysextDir`,
   `catalog.ConfigRoots`, and `catalog.CacheDir` instead of writing to real
-  system paths, and restore them with `t.Cleanup`.
+  system paths, and restore them with `t.Cleanup` (see
+  [ADR-0009](docs/adr/0009-overridable-system-path-vars.md)).
 - Keep tests idempotent so they can run in parallel.
 
 ## Security
@@ -122,7 +123,8 @@ extra scrutiny:
   definition path — `os.Stat` reports a dangling symlink as absent, which
   would let a root-privileged write escape its directory.
 - Make multi-file writes recoverable: snapshot before writing and roll back on
-  any failure, as `updex.Client.CatalogAdd` does.
+  any failure, as `updex.Client.CatalogAdd` does (both rules are recorded in
+  [ADR-0005](docs/adr/0005-transactional-writes-lstat-checks.md)).
 - Never commit secrets or credentials.
 
 AI-assisted contributions must also follow the

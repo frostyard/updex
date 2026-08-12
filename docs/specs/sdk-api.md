@@ -55,13 +55,13 @@ type ComponentInfo struct {
 
 ### Component scoping
 
-Every feature-related options struct (`FeaturesOptions`, `EnableFeatureOptions`, `DisableFeatureOptions`, `UpdateFeaturesOptions`, `CheckFeaturesOptions`) carries a `Component string` field. All SDK methods resolve their read/write domain through the unexported `Client.loadDomain(component string)`:
+Every feature-related options struct (`FeaturesOptions`, `EnableFeatureOptions`, `DisableFeatureOptions`, `UpdateFeaturesOptions`, `CheckFeaturesOptions`) carries a `Component string` field. All SDK methods resolve their read/write domain through the unexported `Client.loadDomain(component string)` (decision recorded in [ADR-0001](../adr/0001-read-domain-resolution-via-loaddomain.md)):
 
 1. `ClientConfig.Definitions` set → load exactly that one directory (as before component support existed); `Component` must be `""` here, otherwise `loadDomain` returns an error (`Definitions` and `Component` are mutually exclusive).
 2. `Component` non-empty → load only that named component's own search paths (`config.LoadComponentFeatures`/`LoadComponentTransfers`).
 3. Otherwise (the default) → the union of the legacy default `sysupdate.d/` directory and every discovered component (`config.LoadAllFeatures`/`LoadAllTransfers`). Any name collision between sources is logged through the client's reporter as a warning (component wins over the legacy default directory), not returned as an error.
 
-In all three cases, transfers are filtered to sysext-shaped ones (`config.FilterSysextTransfers` / `IsSysextTransfer`): a `url-file` source to a `regular-file` target with no `PathRelativeTo`. This drops the non-sysext OS transfers (A/B partition, UKI) that share the legacy default directory on native images.
+In all three cases, transfers are filtered to sysext-shaped ones (`config.FilterSysextTransfers` / `IsSysextTransfer`): a `url-file` source to a `regular-file` target with no `PathRelativeTo`. This drops the non-sysext OS transfers (A/B partition, UKI) that share the legacy default directory on native images (decision recorded in [ADR-0002](../adr/0002-skip-non-sysext-transfers.md)).
 
 ### EnableFeature / DisableFeature
 
@@ -139,7 +139,10 @@ func (c *Client) CatalogRemove(ctx context.Context, name string, opts CatalogRem
 Catalog operations over the repos configured via `catalog.LoadRepos()`
 (see the `catalog` package below and `docs/design/overview.md` "Catalogs"). All three
 error when no catalogs are configured (with setup guidance) or when the
-client has a `Definitions` override.
+client has a `Definitions` override. Ownership checks are pinned by
+[ADR-0003](../adr/0003-catalog-ownership-marker.md); the snapshot/rollback
+and Lstat rules by
+[ADR-0005](../adr/0005-transactional-writes-lstat-checks.md).
 
 - `CatalogList` enumerates each repo via its `ListURL` (skipping repos
   without one, with a warning — unless explicitly selected via
@@ -291,7 +294,7 @@ type CheckResult struct {
 
 **Component discovery** (`config/component.go`; see `docs/design/overview.md` "Components" for the full design):
 
-- `SearchRoots` — Package variable: `[]string{"/etc", "/run", "/usr/local/lib", "/usr/lib"}`, in priority order. Overridable in tests (same pattern as `sysext.SysextDir`).
+- `SearchRoots` — Package variable: `[]string{"/etc", "/run", "/usr/local/lib", "/usr/lib"}`, in priority order. Overridable in tests (same pattern as `sysext.SysextDir`; the exported-var pattern is recorded in [ADR-0009](../adr/0009-overridable-system-path-vars.md)).
 - `SearchRootIndex(path string) (int, bool)` — Index into `SearchRoots` of the root containing `path` (most specific wins, whole-component match so `/usr/libfoo` misses `/usr/lib`), `(-1, false)` when outside all of them. Returns the index, not the directory, because tests override `SearchRoots` with temp dirs. Used by `updex.featureOrigin` to classify a feature's provenance.
 - `OSReleasePaths` — Package variable: `[]string{"/etc/os-release", "/usr/lib/os-release"}`, first readable wins. Overridable in tests.
 - `ImageName() string` — Identifier for the running OS image: first non-empty of `VARIANT_ID` (ublue-os images, Fedora variants), `IMAGE_ID` (frostyard/snosi images), `ID` (fallback); `""` if none. Order matters: on ucore `IMAGE_ID` is unset and `ID=fedora`, which would collide with the `fedora` catalog name, while `VARIANT_ID=ucore` is correct.
@@ -316,9 +319,9 @@ Sysext catalog primitives; no built-in repos (see `docs/design/overview.md` "Cat
 - `List(ctx, *http.Client, Repo) ([]string, error)` — Enumerate sysexts via the repo's `ListURL` (GitHub contents API shape): top-level `dir` entries minus dotted names and `docs`/`LICENSES`. Sends `GITHUB_TOKEN` as a bearer token when set. Always live; no cache.
 - `CachedList(ctx, *http.Client, Repo, CachedListOptions) ([]string, CacheResult, error)` — `List` behind a per-repo TTL+ETag cache in `CacheDir` (default `os.UserCacheDir()/updex`, empty disables). `CachedListOptions{TTL /* 0 → DefaultListCacheTTL (60 min) */, NoCache}`; `CacheResult{FromCache, Stale, Age}`. Validates `Repo.Name` (public API: the name becomes a cache filename). Within TTL: cache, zero network. Expired: conditional GET (`If-None-Match`; 304 bumps the timestamp, rate-limit-free on GitHub). Fetch failure with an entry present: stale served, `Stale: true` — except `context.Canceled`/`DeadlineExceeded`, which propagate. Entries are invalidated when the repo's `ListURL` changes; corrupt files are misses; writes are best-effort.
 - `FetchConf(ctx, *http.Client, Repo, name) ([]byte, error)` — GET `<SiteURL>/<name>/<name>.conf`; 404 wraps `ErrNotFound`. Validates `name` first.
-- `RenderTransfer(conf []byte, repo Repo, name string) ([]byte, error)` — Byte-preserving line transform: prepend the `GeneratedMarker` header, inject `Features=<name>` after `[Transfer]` (appending the section if missing, replacing an existing `Features` key), drop `Target CurrentSymlink`, keep `%w`/`%a` specifiers unexpanded. Validates `[Source]`/`[Target]` presence via `ini.Load`.
+- `RenderTransfer(conf []byte, repo Repo, name string) ([]byte, error)` — Byte-preserving line transform ([ADR-0006](../adr/0006-byte-preserving-render-transfer.md)): prepend the `GeneratedMarker` header, inject `Features=<name>` after `[Transfer]` (appending the section if missing, replacing an existing `Features` key), drop `Target CurrentSymlink`, keep `%w`/`%a` specifiers unexpanded. Validates `[Source]`/`[Target]` presence via `ini.Load`.
 - `RenderFeature(Repo, name) []byte` — `GeneratedMarker` header plus `[Feature]` stanza with `Description`, `Documentation=<SiteURL>/<name>/`, and `Enabled=false` (enabling goes through the standard drop-in).
-- `GeneratedMarker` / `IsGenerated(data []byte) bool` / `IsGeneratedFile(path string) bool` — Ownership signal for generated files: the header `# Generated by updex catalog (repo: <name>); ...`.
+- `GeneratedMarker` / `IsGenerated(data []byte) bool` / `IsGeneratedFile(path string) bool` — Ownership signal for generated files: the header `# Generated by updex catalog (repo: <name>); ...` ([ADR-0003](../adr/0003-catalog-ownership-marker.md)).
 - `GeneratedRepo(data []byte) (repo string, ok bool)` / `GeneratedFileRepo(path string) (repo string, ok bool)` — Parse the generating repo out of the marker. `CatalogAdd`/`CatalogRemove` compare this against the acting repo, so neither a foreign file nor another catalog sharing the same `Component` can be overwritten or deleted.
 - `ValidateSysextName(name string) error` — Rejects names that aren't a safe single filename/URL component (`^[a-zA-Z0-9_][a-zA-Z0-9._+-]*$`).
 
@@ -329,6 +332,9 @@ Sysext catalog primitives; no built-in repos (see `docs/design/overview.md` "Cat
 - `VerifyHashReader(r io.Reader, expectedHash string) *HashVerifyReader` — Streaming hash verification
 
 ### `download`
+
+The retry policy shared by `download` and `manifest` (`internal/retry`) is
+recorded in [ADR-0008](../adr/0008-bounded-retry-no-resume.md).
 
 - `Download(ctx context.Context, httpClient *http.Client, url, targetPath, expectedHash string, mode uint32, onProgress ProgressFunc, opts ...Option) error` — Download with hash verification (on compressed bytes) and auto-decompression. Uses atomic rename; on cross-device rename failure, copies through a temp file on the destination device, syncs it, chmods it, then renames into place. If `httpClient` is nil, a default client with a 10-minute timeout is used. Default mode: `0644` if `mode == 0`. GETs and response-body reads retry transient network failures and HTTP 5xx/429 up to 3 total attempts with exponential backoff; each retry re-requests the file from scratch and uses a fresh temp file. 4xx other than 429 and checksum mismatches fail immediately. `WithRetryConfig(maxAttempts int, baseDelay time.Duration)` overrides retry bounds for tests or SDK consumers; `WithRetryNotify(func(attempt, maxAttempts int, reason error))` reports retry attempts
 - `ProgressFunc` — `func(contentLength int64) io.Writer` callback type for download progress. It may be called once per retry attempt, and should return a fresh independent writer each time to avoid double-counting
