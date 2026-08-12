@@ -23,6 +23,7 @@ import (
 	"github.com/frostyard/std/reporter"
 	"github.com/frostyard/updex/download"
 	"github.com/frostyard/updex/sysext"
+	"github.com/frostyard/updex/systemd"
 )
 
 // Client provides programmatic access to updex operations.
@@ -31,6 +32,7 @@ type Client struct {
 	httpClient *http.Client
 	reporter   reporter.Reporter
 	runner     sysext.SysextRunner
+	systemd    *systemd.Manager
 }
 
 // ClientConfig holds configuration for the Client.
@@ -58,6 +60,11 @@ type ClientConfig struct {
 	// Set this in tests to inject a mock.
 	SysextRunner sysext.SysextRunner
 
+	// SystemdManager is an optional manager for systemd unit files and commands.
+	// If nil, uses a manager for /etc/systemd/system.
+	// Set this in tests to inject a manager with a temporary unit path.
+	SystemdManager *systemd.Manager
+
 	// OnDownloadProgress is an optional callback for download progress tracking.
 	// If non-nil, it is passed to [download.Download] and called with the
 	// response content length (-1 if unknown). The returned io.Writer receives
@@ -83,6 +90,10 @@ func NewClient(cfg ClientConfig) *Client {
 	if sr == nil {
 		sr = &sysext.DefaultRunner{}
 	}
+	sm := cfg.SystemdManager
+	if sm == nil {
+		sm = systemd.NewManager()
+	}
 	hc := cfg.HTTPClient
 	if hc == nil {
 		hc = &http.Client{
@@ -94,6 +105,7 @@ func NewClient(cfg ClientConfig) *Client {
 		httpClient: hc,
 		reporter:   r,
 		runner:     sr,
+		systemd:    sm,
 	}
 }
 

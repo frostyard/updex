@@ -36,7 +36,7 @@ updex is a Go SDK and CLI for managing systemd-sysext images. It replicates `sys
 **SDK-first design**: All logic lives in the `updex/` package as a public Go API. CLI commands in `cmd/` are thin Cobra wrappers that parse flags, call SDK functions, and format output. SDK code must never import CLI packages.
 
 Key packages:
-- `updex/` — Public SDK: `Client` struct with `Features()`, `EnableFeature()`, `DisableFeature()`, `UpdateFeatures()`, `CheckFeatures()`, `Components()`
+- `updex/` — Public SDK: `Client` struct with feature, component, catalog, and daemon lifecycle methods (`EnableDaemon()`, `DisableDaemon()`, `DaemonStatus()`)
 - `cmd/updex/` — Cobra command handlers calling SDK methods (flags, output formatting, progress bars)
 - `config/` — Parses `.transfer` and `.feature` INI files from systemd-style search paths, including systemd-sysupdate "component" discovery (see below)
 - `catalog/` — Sysext catalog primitives (see below): `*.catalog` repo config loading, sysext enumeration via a GitHub contents API endpoint, fetching the catalog's published `.conf`, and rendering it into updex `.transfer`/`.feature` files
@@ -45,6 +45,13 @@ Key packages:
 - `version/` — Pattern matching (`@v` placeholder) and semantic version comparison
 - `sysext/` — systemd-sysext integration with mockable `Runner` interface, `/var/lib/extensions` link management, and read-only vacuum planning helpers
 - `systemd/` — Generates/installs systemd timer+service units, mockable `Runner` interface
+
+Daemon lifecycle follows the same SDK-first boundary as feature and catalog
+operations: `cmd/updex/daemon.go` performs root authorization and output
+formatting, while `updex.Client` owns unit configuration and enable, disable,
+and status orchestration. Tests inject one `systemd.Manager` through
+`ClientConfig`; the manager owns the runner used for every unit-file and
+systemctl primitive.
 
 Entry point: `cmd/updex-cli/main.go` → `cmd/updex/root.go`
 

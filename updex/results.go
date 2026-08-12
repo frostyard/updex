@@ -1,5 +1,20 @@
 package updex
 
+// DaemonActionResult represents the result of enabling or disabling the
+// automatic update daemon.
+type DaemonActionResult struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+// DaemonStatusResult represents the automatic update daemon's current state.
+type DaemonStatusResult struct {
+	Installed bool   `json:"installed"`
+	Enabled   bool   `json:"enabled"`
+	Active    bool   `json:"active"`
+	Schedule  string `json:"schedule,omitempty"`
+}
+
 // CheckResult represents the result of a check operation for a single component.
 type CheckResult struct {
 	Component       string `json:"component"`

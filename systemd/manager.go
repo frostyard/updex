@@ -31,6 +31,26 @@ func NewTestManager(unitPath string, runner SystemctlRunner) *Manager {
 	}
 }
 
+// Enable enables a systemd unit.
+func (m *Manager) Enable(unit string) error {
+	return m.runner.Enable(unit)
+}
+
+// Start starts a systemd unit.
+func (m *Manager) Start(unit string) error {
+	return m.runner.Start(unit)
+}
+
+// IsEnabled reports whether a systemd unit is enabled.
+func (m *Manager) IsEnabled(unit string) (bool, error) {
+	return m.runner.IsEnabled(unit)
+}
+
+// IsActive reports whether a systemd unit is active.
+func (m *Manager) IsActive(unit string) (bool, error) {
+	return m.runner.IsActive(unit)
+}
+
 // Install installs timer and service unit files atomically.
 // It generates both files from the configs, writes them to UnitPath,
 // and calls daemon-reload after installation.

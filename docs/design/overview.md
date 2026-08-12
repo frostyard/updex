@@ -4,7 +4,10 @@
 
 updex is a Go SDK and CLI for managing [systemd-sysext](https://www.freedesktop.org/software/systemd/man/latest/systemd-sysext.html) images. It replicates `systemd-sysupdate` functionality for `url-file` transfers, providing feature-based management of system extensions with version tracking, SHA256 verification, optional GPG signing, and automatic cleanup.
 
-The project follows an **SDK-first design** for feature management: the core workflows live in public Go packages, and the CLI is mostly a thin wrapper that parses flags and formats output. The `daemon` command is the main exception: it imports the `systemd` package directly to install/remove timer units because daemon lifecycle is systemd-unit management rather than feature update logic.
+The project follows an **SDK-first design**: core feature, catalog, component,
+and daemon workflows live in the public `updex` package, while the CLI is a
+thin wrapper that performs authorization, parses flags, invokes SDK methods,
+and formats output.
 
 Public repository observability is indexed at `docs/metrics/README.md`. That canonical page links live CI, nightly compliance, Codecov, pull-request, AI-fix, and release evidence; defines the monthly acceptance metric consumed by `.github/auto-qa-tuning.json`; and excludes secrets, private prompts, vulnerability embargoes, and managed-host telemetry. `updex/public_metrics_contract_test.go` prevents the ACMM path, substantive signal contract, and tuning reference from drifting apart.
 
@@ -18,7 +21,7 @@ cmd/updex/features_run.go       Run functions for feature subcommands
 cmd/updex/components.go         components (list discovered systemd-sysupdate components)
 cmd/updex/catalog.go            catalog list|search|add|remove ([REPO/]NAME parsing,
                                 --repo/--force flags, output formatting)
-cmd/updex/daemon.go             daemon enable|disable|status (direct systemd timers)
+cmd/updex/daemon.go             daemon enable|disable|status (SDK adapter)
 cmd/updex/client.go             CLI → SDK client factory
 
 updex/                          Public SDK (Client + methods)
@@ -41,6 +44,8 @@ updex/                          Public SDK (Client + methods)
   catalog.go                    CatalogList(), CatalogAdd(), CatalogRemove() —
                                 orchestrate catalog/ primitives plus
                                 EnableFeature/DisableFeature reuse
+  daemon.go                     EnableDaemon(), DisableDaemon(), DaemonStatus() —
+                                systemd unit configuration and lifecycle orchestration
 
 catalog/                        Sysext catalog primitives (no built-in repos):
                                 *.catalog INI repo config (ConfigRoots,
@@ -69,10 +74,8 @@ internal/testutil/              HTTP test server helpers (module-internal)
 CLI (cmd/features*) → SDK (updex/) → config, manifest, download, version, sysext
                                   → sysext → config, version
 CLI (cmd/catalog.go) → SDK (updex/catalog.go) → catalog, config
-CLI (cmd/daemon.go) → systemd (direct, bypasses SDK)
+CLI (cmd/daemon.go) → SDK (updex/daemon.go) → systemd
 ```
-
-> Note: `cmd/updex/daemon.go` imports `systemd` directly rather than through the SDK layer. This is a known architectural deviation from the SDK-first pattern.
 
 ## Key Patterns
 
@@ -91,6 +94,11 @@ CLI (cmd/daemon.go) → systemd (direct, bypasses SDK)
 
 - Mock interfaces for system commands: `sysext.SysextRunner`, `systemd.SystemctlRunner`
 - `ClientConfig.SysextRunner` field for injecting mocks into the SDK client — `NewClient` stores the runner directly on the `Client` struct (does not mutate global state)
+- `ClientConfig.SystemdManager` injects the daemon collaborator. The manager
+  owns both unit-file operations and all systemctl primitives, so they cannot
+  use different runners. Production defaults manage `/etc/systemd/system` and
+  execute `systemctl`; focused SDK tests use `systemd.NewTestManager` with a
+  temporary directory and a mock runner.
 - `internal/testutil.NewTestServer()` creates `httptest.Server` with configurable manifests and file content
 - `t.TempDir()` for filesystem operations, `t.Context()` for context
 - `tests/e2e/` builds and runs the real CLI subprocess for argument, exit-code, output, custom-config, and read-only HTTP checks. `cmd/updex/integration_test.go` runs the full Cobra/clix command in-process so package search roots can point at temporary default component and catalog trees; keep mutating subprocess paths behind parser failures so CI does not require root.
@@ -444,6 +452,9 @@ The daemon stages updates but never activates them (decision recorded in
 - The timer runs `daily`, is `Persistent=true`, and uses `RandomizedDelaySec=3600`
 - The service command is `/usr/bin/updex features update --no-refresh`, so automatic downloads are staged and not refreshed/activated until a later refresh or reboot
 - Unit installation refuses to overwrite existing timer/service files; callers must disable first
+- `updex.Client.EnableDaemon`, `DisableDaemon`, and `DaemonStatus` own this
+  orchestration. The CLI retains root checks for enable/disable and preserves
+  the existing text and JSON formatting.
 
 ## CLI Commands
 

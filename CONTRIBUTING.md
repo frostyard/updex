@@ -101,8 +101,9 @@ maintainers who need decision rationale, not as user-facing documentation.
   happy path.
 - Use `t.TempDir()` for filesystem work and `t.Context()` for contexts.
 - Mock system commands through the `sysext.SysextRunner` and
-  `systemd.SystemctlRunner` interfaces; inject them via
-  `ClientConfig.SysextRunner` rather than mutating global state.
+  `systemd.SystemctlRunner` interfaces. Inject sysext runners via
+  `ClientConfig.SysextRunner`; inject systemctl runners through a
+  `systemd.NewTestManager` assigned to `ClientConfig.SystemdManager`.
 - Use `internal/testutil.NewTestServer()` for HTTP sources and manifests.
 - Override package vars such as `config.SearchRoots`, `sysext.SysextDir`,
   `catalog.ConfigRoots`, and `catalog.CacheDir` instead of writing to real

@@ -4,18 +4,9 @@ import (
 	"fmt"
 
 	"github.com/frostyard/clix"
-	"github.com/frostyard/updex/systemd"
+	sdk "github.com/frostyard/updex/updex"
 	"github.com/spf13/cobra"
 )
-
-const unitName = "updex-update"
-
-type daemonStatus struct {
-	Installed bool   `json:"installed"`
-	Enabled   bool   `json:"enabled"`
-	Active    bool   `json:"active"`
-	Schedule  string `json:"schedule,omitempty"`
-}
 
 func newDaemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -78,43 +69,13 @@ func runDaemonEnable(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	mgr := systemd.NewManager()
-
-	if mgr.Exists(unitName) {
-		return fmt.Errorf("timer already installed; run 'updex daemon disable' first to reinstall")
-	}
-
-	timer := &systemd.TimerConfig{
-		Name:           unitName,
-		Description:    "Automatic sysext updates",
-		OnCalendar:     "daily",
-		Persistent:     true,
-		RandomDelaySec: 3600,
-	}
-	service := &systemd.ServiceConfig{
-		Name:        unitName,
-		Description: "Automatic sysext update service",
-		ExecStart:   "/usr/bin/updex features update --no-refresh",
-		Type:        "oneshot",
-	}
-
-	if err := mgr.Install(timer, service); err != nil {
-		return fmt.Errorf("failed to install timer: %w", err)
-	}
-
-	runner := &systemd.DefaultSystemctlRunner{}
-	if err := runner.Enable(unitName + ".timer"); err != nil {
-		return fmt.Errorf("failed to enable timer: %w", err)
-	}
-	if err := runner.Start(unitName + ".timer"); err != nil {
-		return fmt.Errorf("failed to start timer: %w", err)
+	result, err := newClient().EnableDaemon(cmd.Context(), sdk.EnableDaemonOptions{})
+	if err != nil {
+		return err
 	}
 
 	if clix.JSONOutput {
-		_, err := clix.OutputJSON(map[string]any{
-			"success": true,
-			"message": "Auto-update daemon enabled",
-		})
+		_, err := clix.OutputJSON(result)
 		return err
 	}
 
@@ -151,21 +112,13 @@ func runDaemonDisable(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	mgr := systemd.NewManager()
-
-	if !mgr.Exists(unitName) {
-		return fmt.Errorf("timer not installed; nothing to disable")
-	}
-
-	if err := mgr.Remove(unitName); err != nil {
-		return fmt.Errorf("failed to remove timer: %w", err)
+	result, err := newClient().DisableDaemon(cmd.Context(), sdk.DisableDaemonOptions{})
+	if err != nil {
+		return err
 	}
 
 	if clix.JSONOutput {
-		_, err := clix.OutputJSON(map[string]any{
-			"success": true,
-			"message": "Auto-update daemon disabled",
-		})
+		_, err := clix.OutputJSON(result)
 		return err
 	}
 
@@ -199,17 +152,9 @@ OUTPUT:
 }
 
 func runDaemonStatus(cmd *cobra.Command, args []string) error {
-	mgr := systemd.NewManager()
-	runner := &systemd.DefaultSystemctlRunner{}
-
-	status := daemonStatus{
-		Installed: mgr.Exists(unitName),
-	}
-
-	if status.Installed {
-		status.Enabled, _ = runner.IsEnabled(unitName + ".timer")
-		status.Active, _ = runner.IsActive(unitName + ".timer")
-		status.Schedule = "daily"
+	status, err := newClient().DaemonStatus(cmd.Context(), sdk.DaemonStatusOptions{})
+	if err != nil {
+		return err
 	}
 
 	if clix.JSONOutput {

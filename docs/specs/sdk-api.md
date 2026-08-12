@@ -13,6 +13,7 @@ type ClientConfig struct {
     Verbose            bool                  // Enable debug output
     Progress           reporter.Reporter     // Progress reporter (optional)
     SysextRunner       sysext.SysextRunner   // Mock runner for tests (optional)
+    SystemdManager     *systemd.Manager       // Daemon unit manager (optional)
     OnDownloadProgress download.ProgressFunc // Download progress callback (optional)
     HTTPClient         *http.Client          // Shared HTTP client (optional)
 }
@@ -20,9 +21,47 @@ type ClientConfig struct {
 func NewClient(cfg ClientConfig) *Client
 ```
 
-`NewClient` stores the provided `SysextRunner` directly on the `Client` struct. If `SysextRunner` is nil, it defaults to `&sysext.DefaultRunner{}`. If `Progress` is nil, it defaults to `reporter.NoopReporter{}`. `OnDownloadProgress` is passed through to `download.Download` calls — when non-nil, it is called with the HTTP response content length (-1 if unknown) and should return an `io.Writer` that receives downloaded bytes for progress tracking (return nil to skip progress for that download). Retries call this callback once per attempt, so implementations must return a fresh independent writer each time to avoid double-counting progress. If `HTTPClient` is nil, a default `http.Client` with a 10-minute timeout is created and reused for all manifest fetches and file downloads, enabling HTTP keep-alive connection reuse. The client stores the original config and does not mutate global package state.
+`NewClient` stores the provided collaborators directly on the `Client` struct.
+`SysextRunner` defaults to `&sysext.DefaultRunner{}`. `SystemdManager` defaults
+to `systemd.NewManager()`; tests can inject
+`systemd.NewTestManager(unitPath, runner)` to exercise daemon sequencing
+without touching `/etc` or invoking `systemctl`. The manager owns its runner
+and uses it for installation, removal, enablement, startup, and status queries.
+If `Progress` is nil, it defaults to `reporter.NoopReporter{}`.
+`OnDownloadProgress` is passed through to `download.Download` calls — when
+non-nil, it is called with the HTTP response content length (-1 if unknown)
+and should return an `io.Writer` that receives downloaded bytes for progress
+tracking (return nil to skip progress for that download). Retries call this
+callback once per attempt, so implementations must return a fresh independent
+writer each time to avoid double-counting progress. If `HTTPClient` is nil, a
+default `http.Client` with a 10-minute timeout is created and reused for all
+manifest fetches and file downloads, enabling HTTP keep-alive connection
+reuse. The client stores the original config and does not mutate global
+package state.
 
 ## Methods
+
+### EnableDaemon / DisableDaemon / DaemonStatus
+
+```go
+func (c *Client) EnableDaemon(ctx context.Context, opts EnableDaemonOptions) (*DaemonActionResult, error)
+func (c *Client) DisableDaemon(ctx context.Context, opts DisableDaemonOptions) (*DaemonActionResult, error)
+func (c *Client) DaemonStatus(ctx context.Context, opts DaemonStatusOptions) (*DaemonStatusResult, error)
+```
+
+`EnableDaemon` installs `updex-update.timer` and `updex-update.service`,
+reloads systemd, enables the timer, then starts it. It refuses to overwrite
+either existing unit. `DisableDaemon` requires an installed unit, then stops
+and disables the timer, removes both units, and reloads systemd.
+`DaemonStatus` reports installation from unit-file presence; when installed,
+it queries enabled and active state and reports the `daily` schedule. As in
+the CLI's historical behavior, it ignores errors from the two status queries
+and assigns each returned boolean rather than failing the status operation.
+
+The option structures are currently empty extension points. The unit names,
+daily schedule, persistent catch-up, one-hour randomized delay, service type,
+and `/usr/bin/updex features update --no-refresh` command are fixed parts of
+the operation contract.
 
 ### Features
 
@@ -191,6 +230,25 @@ cache — see `catalog.CachedList`; the CLI flag is `--no-cache`).
 `DryRun`, `Disable *FeatureActionResult`.
 
 ## Result Types
+
+### DaemonActionResult / DaemonStatusResult
+
+```go
+type DaemonActionResult struct {
+    Success bool   `json:"success"`
+    Message string `json:"message"`
+}
+
+type DaemonStatusResult struct {
+    Installed bool   `json:"installed"`
+    Enabled   bool   `json:"enabled"`
+    Active    bool   `json:"active"`
+    Schedule  string `json:"schedule,omitempty"`
+}
+```
+
+These tags preserve the CLI's existing JSON shapes. Successful action messages
+are `Auto-update daemon enabled` and `Auto-update daemon disabled`.
 
 ### FeatureInfo
 
@@ -375,5 +433,6 @@ recorded in [ADR-0008](../adr/0008-bounded-retry-no-resume.md).
 - `NewTestManager(unitPath string, runner SystemctlRunner) *Manager` — Create manager with custom paths and runner for testing
 - `GenerateTimer(cfg *TimerConfig) string` — Generate systemd timer unit content
 - `GenerateService(cfg *ServiceConfig) string` — Generate systemd service unit content
-- `Manager.Install(timer, service) / Remove(name) / Exists(name)` — Unit lifecycle
+- `Manager.Install(timer, service) / Remove(name) / Exists(name)` — Unit-file lifecycle
+- `Manager.Enable(unit) / Start(unit) / IsEnabled(unit) / IsActive(unit)` — Focused systemctl primitives delegated to the manager's runner
 - `SystemctlRunner` interface — `DaemonReload()`, `Enable(unit)`, `Disable(unit)`, `Start(unit)`, `Stop(unit)`, `IsActive(unit)`, `IsEnabled(unit)` methods executed via `DefaultSystemctlRunner` (real commands) or `MockSystemctlRunner` (tests)
