@@ -14,6 +14,8 @@ import (
 	"github.com/frostyard/updex/internal/retry"
 )
 
+const maxManifestSize = 4 << 20
+
 // Manifest represents a parsed SHA256SUMS manifest
 type Manifest struct {
 	URL   string            // Base URL where manifest was fetched from
@@ -86,9 +88,12 @@ func Fetch(ctx context.Context, httpClient *http.Client, baseURL string, verify 
 			return fmt.Errorf("manifest fetch failed with status: %s", resp.Status)
 		}
 
-		content, err = io.ReadAll(resp.Body)
+		content, err = io.ReadAll(io.LimitReader(resp.Body, maxManifestSize+1))
 		if err != nil {
 			return retry.TransientIfNetwork(fmt.Errorf("failed to read manifest: %w", err))
+		}
+		if len(content) > maxManifestSize {
+			return fmt.Errorf("manifest response exceeds maximum allowed size (%d bytes)", maxManifestSize)
 		}
 
 		return nil

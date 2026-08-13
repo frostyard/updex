@@ -24,7 +24,7 @@ Designed for systems like Debian Trixie that don't ship with `systemd-sysupdate`
 - systemd-sysupdate "component" discovery (`sysupdate.<name>.d/`, see sysupdate.d(5) "Components"), with the legacy default `sysupdate.d/` directory folded into the same domain
 - Catalog integration (`updex catalog list/search/add/remove`) for one-command installs from sysext catalogs like [fedora-sysexts](https://fedora-sysexts.github.io/)
 - Download sysext images from remote HTTP sources
-- SHA256 hash verification via `SHA256SUMS` manifests
+- SHA256 hash verification via size-bounded `SHA256SUMS` manifests
 - Bounded retry with exponential backoff for transient network failures and HTTP 5xx/429 responses
 - GPG signature verification by default, matching systemd-sysupdate (`Verify=no` opts out)
 - Automatic decompression (xz, gz, zstd)
