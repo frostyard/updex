@@ -80,6 +80,10 @@ func writeEnableDropIn(t *testing.T, dir, name string, enabled bool) {
 func newCatalogServer(t *testing.T, name, version, targetDir string) *httptest.Server {
 	t.Helper()
 
+	originalTargetPath := catalog.TargetPath
+	catalog.TargetPath = targetDir
+	t.Cleanup(func() { catalog.TargetPath = originalTargetPath })
+
 	rawName := fmt.Sprintf("%s-%s.raw", name, version)
 	rawContent := []byte("fake sysext image for " + name)
 
@@ -494,6 +498,9 @@ func TestCatalogAdd_FailedReAddRestoresPrevious(t *testing.T) {
 	roots := withComponentSearchRoots(t)
 	catalogRoot := withCatalogConfigRoots(t)
 	targetDir := t.TempDir()
+	originalTargetPath := catalog.TargetPath
+	catalog.TargetPath = targetDir
+	t.Cleanup(func() { catalog.TargetPath = originalTargetPath })
 
 	sysextDir := t.TempDir()
 	origSysextDir := sysext.SysextDir
