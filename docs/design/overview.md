@@ -280,16 +280,21 @@ Design decisions (verified with the user, 2026-08):
   `GITHUB_TOKEN` env honored as bearer token), `Component` (optional,
   default `catalog-<repo>`). Missing config → `catalog.ErrNoCatalogs`,
   surfaced by the SDK with setup guidance.
-- **`RenderTransfer` is a byte-preserving line transform**
+- **`RenderTransfer` is a security-constrained line transform**
   ([ADR-0006](../adr/0006-byte-preserving-render-transfer.md)), not an INI
   round-trip: it prepends the `GeneratedMarker` ownership header, injects
-  `Features=<name>` right after `[Transfer]`, and drops
-  `Target CurrentSymlink` (updex manages `/var/lib/extensions` links
-  itself and removes legacy symlinks), leaving everything else verbatim.
+  `Features=<name>` right after `[Transfer]`, requires `Source.Type=url-file`
+  and the configured `<SiteURL>/<name>/` source, and requires basename-only
+  source and target patterns. It rewrites the target to a regular `0644` file
+  under trusted `catalog.TargetPath` (default `/var/lib/extensions.d`), dropping catalog-provided `Path`,
+  `PathRelativeTo`, `Mode`, and `CurrentSymlink` values so remote metadata
+  cannot redirect a root-owned write. The complete `[Source]` and `[Target]`
+  bodies are reconstructed after validation so alternate valid INI syntax
+  cannot bypass field stripping; other sections stay verbatim.
   `%w`/`%a` specifiers deliberately stay **unexpanded** in the written
   `.transfer` — expansion happens at config load time — so the file keeps
-  tracking the running Fedora release across OS upgrades. `ini.Load` is
-  used only to validate `[Source]`/`[Target]` exist.
+  tracking the running Fedora release across OS upgrades. `ini.Load` validates
+  both sections and their security-sensitive fields before transformation.
 - **Ownership via repo-scoped `GeneratedMarker`**
   ([ADR-0003](../adr/0003-catalog-ownership-marker.md); PR #137 review, both
   rounds — first that name-in-component was too weak a signal, then that a
