@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -97,6 +98,11 @@ func ValidateSysextName(name string) error {
 // maxFetchSize bounds catalog HTTP response bodies; .conf files and
 // contents-API listings are a few KB.
 const maxFetchSize = 4 << 20
+
+// TargetPath is the trusted staging directory used for catalog transfers.
+// Catalog metadata cannot override it. It is a variable so embedding
+// applications and tests can redirect the managed staging root explicitly.
+var TargetPath = "/var/lib/extensions.d"
 
 // nonSysextDirs are top-level repo directories that never hold a sysext.
 var nonSysextDirs = []string{"docs", "LICENSES"}
@@ -205,25 +211,33 @@ func FetchConf(ctx context.Context, client *http.Client, repo Repo, name string)
 // RenderTransfer turns a catalog-published .conf into the .transfer content
 // updex writes to a component directory. It prepends the GeneratedMarker
 // ownership header, injects Features=<name> so the transfer is tied to its
-// generated feature, and drops Target CurrentSymlink: updex manages the
-// /var/lib/extensions link itself (see updex.installTransfer) and actively
-// removes legacy current symlinks. Everything else — including %w/%a
-// specifiers, which must stay unexpanded so the file remains valid across
-// Fedora release upgrades — is preserved byte-for-byte, so the result
-// diffs against the catalog original by exactly those three changes.
+// generated feature. Security-sensitive fields are validated and rewritten:
+// the source stays under the configured catalog, and the target is a regular
+// 0644 file under /var/lib/extensions.d. Other content, including %w/%a
+// specifiers, is preserved byte-for-byte.
 func RenderTransfer(conf []byte, repo Repo, name string) ([]byte, error) {
 	cfg, err := ini.Load(conf)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse catalog conf: %w", err)
 	}
-	if _, err := cfg.GetSection("Source"); err != nil {
+	source, err := cfg.GetSection("Source")
+	if err != nil {
 		return nil, fmt.Errorf("catalog conf has no [Source] section")
 	}
-	if _, err := cfg.GetSection("Target"); err != nil {
+	target, err := cfg.GetSection("Target")
+	if err != nil {
 		return nil, fmt.Errorf("catalog conf has no [Target] section")
+	}
+	if err := validateCatalogPatternEncoding(conf); err != nil {
+		return nil, err
+	}
+	if err := validateCatalogTransfer(source, target, repo, name); err != nil {
+		return nil, err
 	}
 
 	featuresLine := "Features=" + name
+	sourcePattern := source.Key("MatchPattern").String()
+	targetPattern := target.Key("MatchPattern").String()
 	var out bytes.Buffer
 	out.Grow(len(conf) + len(featuresLine) + 64)
 	out.WriteString(markerLine(repo))
@@ -232,25 +246,42 @@ func RenderTransfer(conf []byte, repo Repo, name string) ([]byte, error) {
 	inserted := false
 	for line := range strings.Lines(string(conf)) {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
-			section = trimmed[1 : len(trimmed)-1]
+		if parsedSection, ok, err := parseSectionHeader(trimmed); err != nil {
+			return nil, err
+		} else if ok {
+			section = parsedSection
 			out.WriteString(line)
-			if section == "Transfer" && !inserted {
+			switch section {
+			case "transfer":
 				if !strings.HasSuffix(line, "\n") {
 					out.WriteByte('\n')
 				}
-				out.WriteString(featuresLine + "\n")
-				inserted = true
+				if !inserted {
+					out.WriteString(featuresLine + "\n")
+					inserted = true
+				}
+			case "source":
+				if !strings.HasSuffix(line, "\n") {
+					out.WriteByte('\n')
+				}
+				fmt.Fprintf(&out, "Type=url-file\nPath=%s/%s/\nMatchPattern=%s\n",
+					strings.TrimRight(repo.SiteURL, "/"), name, sourcePattern)
+			case "target":
+				if !strings.HasSuffix(line, "\n") {
+					out.WriteByte('\n')
+				}
+				fmt.Fprintf(&out, "Type=regular-file\nPath=%s\nMatchPattern=%s\nMode=0644\n",
+					TargetPath, targetPattern)
 			}
 			continue
 		}
+		if section == "source" || section == "target" {
+			continue
+		}
+		key := strings.ToLower(iniKeyOf(trimmed))
 		switch section {
-		case "Target":
-			if iniKeyOf(trimmed) == "CurrentSymlink" {
-				continue
-			}
-		case "Transfer":
-			if iniKeyOf(trimmed) == "Features" {
+		case "transfer":
+			if key == "features" {
 				continue // replaced by the injected line
 			}
 		}
@@ -264,6 +295,105 @@ func RenderTransfer(conf []byte, repo Repo, name string) ([]byte, error) {
 	}
 
 	return out.Bytes(), nil
+}
+
+func validateCatalogPatternEncoding(conf []byte) error {
+	section := ""
+	for line := range strings.Lines(string(conf)) {
+		trimmed := strings.TrimSpace(line)
+		if parsedSection, ok, err := parseSectionHeader(trimmed); err != nil {
+			return err
+		} else if ok {
+			section = parsedSection
+			continue
+		}
+		if section != "source" && section != "target" {
+			continue
+		}
+		separator := strings.IndexAny(trimmed, "=:")
+		if separator < 0 || !strings.EqualFold(strings.TrimSpace(trimmed[:separator]), "MatchPattern") {
+			continue
+		}
+		if strings.ContainsAny(trimmed[separator+1:], "\"'\\") {
+			return fmt.Errorf("catalog conf %s.MatchPattern must use unquoted filenames", strings.ToUpper(section[:1])+section[1:])
+		}
+	}
+	return nil
+}
+
+func parseSectionHeader(line string) (name string, ok bool, err error) {
+	if !strings.HasPrefix(line, "[") {
+		return "", false, nil
+	}
+	end := strings.IndexByte(line, ']')
+	if end < 0 {
+		return "", false, fmt.Errorf("catalog conf contains an unsupported section header")
+	}
+	trailing := strings.TrimSpace(line[end+1:])
+	if trailing != "" && !strings.HasPrefix(trailing, "#") && !strings.HasPrefix(trailing, ";") {
+		return "", false, fmt.Errorf("catalog conf contains an unsupported section header")
+	}
+	name = strings.ToLower(strings.TrimSpace(line[1:end]))
+	if name == "" {
+		return "", false, fmt.Errorf("catalog conf contains an empty section header")
+	}
+	return name, true, nil
+}
+
+func validateCatalogTransfer(source, target *ini.Section, repo Repo, name string) error {
+	sourceType, err := source.GetKey("Type")
+	if err != nil || sourceType.String() != "url-file" {
+		return fmt.Errorf("catalog conf Source.Type must be url-file")
+	}
+
+	sourcePath, err := source.GetKey("Path")
+	if err != nil {
+		return fmt.Errorf("catalog conf Source.Path is required")
+	}
+	expectedSource := strings.TrimRight(repo.SiteURL, "/") + "/" + name
+	if strings.TrimRight(sourcePath.String(), "/") != expectedSource {
+		return fmt.Errorf("catalog conf Source.Path must be %s/", expectedSource)
+	}
+
+	if err := validateCatalogPatterns(source, "Source"); err != nil {
+		return err
+	}
+	if err := validateCatalogPatterns(target, "Target"); err != nil {
+		return err
+	}
+
+	if targetType, err := target.GetKey("Type"); err == nil && targetType.String() != "regular-file" {
+		return fmt.Errorf("catalog conf Target.Type must be regular-file")
+	}
+	if targetPath, err := target.GetKey("Path"); err == nil && filepath.Clean(targetPath.String()) != filepath.Clean(TargetPath) {
+		return fmt.Errorf("catalog conf Target.Path must be %s", TargetPath)
+	}
+	if relative, err := target.GetKey("PathRelativeTo"); err == nil && relative.String() != "" {
+		return fmt.Errorf("catalog conf Target.PathRelativeTo is not supported")
+	}
+
+	return nil
+}
+
+func validateCatalogPatterns(section *ini.Section, sectionName string) error {
+	key, err := section.GetKey("MatchPattern")
+	if err != nil {
+		return fmt.Errorf("catalog conf %s.MatchPattern is required", sectionName)
+	}
+	value := key.String()
+	if strings.ContainsAny(value, "\r\n\x00\"'") {
+		return fmt.Errorf("catalog conf %s.MatchPattern must contain filenames only", sectionName)
+	}
+	patterns := strings.Fields(value)
+	if len(patterns) == 0 {
+		return fmt.Errorf("catalog conf %s.MatchPattern is required", sectionName)
+	}
+	for _, pattern := range patterns {
+		if pattern == "." || pattern == ".." || filepath.Base(pattern) != pattern || strings.ContainsRune(pattern, '\\') {
+			return fmt.Errorf("catalog conf %s.MatchPattern must contain filenames only", sectionName)
+		}
+	}
+	return nil
 }
 
 // iniKeyOf returns the key name of an INI "Key=value" line (whitespace
