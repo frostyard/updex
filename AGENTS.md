@@ -29,6 +29,14 @@ overlapping runs delete and recreate the same release, then collide while
 uploading identically named assets. The newest successful test run supersedes
 older snapshot work.
 
+`.github/workflows/release.yml` runs only for tag pushes. After publishing the
+tagged release and packages, it must dispatch `event-type: build` to
+`frostyard/snosi` without a default-branch ref guard: a tag run's ref is
+`refs/tags/<tag>`, never `refs/heads/<default>`.
+`updex/release_workflow_contract_test.go` pins the tag-only trigger and
+unguarded snosi dispatch required by
+[frostyard/core ADR-0013](https://github.com/frostyard/core/blob/main/docs/adr/0013-release-fanout-via-repository-dispatch.md).
+
 ## Architecture
 
 updex is a Go SDK and CLI for managing systemd-sysext images. It replicates `systemd-sysupdate` functionality for `url-file` transfers.

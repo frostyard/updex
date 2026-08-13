@@ -509,6 +509,15 @@ Mutating commands enforce root before reading `--dry-run`, so examples that prev
 
 ## CI and Releases
 
+`.github/workflows/release.yml` publishes tagged GoReleaser Pro releases and
+packages, then dispatches `event-type: build` to `frostyard/snosi` so the
+component release promptly fans out into an image rebuild
+([frostyard/core ADR-0013](https://github.com/frostyard/core/blob/main/docs/adr/0013-release-fanout-via-repository-dispatch.md)).
+The tag-only trigger is the dispatch guard; the step must not check for a
+default-branch ref because tag runs use `refs/tags/<tag>`.
+`updex/release_workflow_contract_test.go` parses the workflow and pins that
+trigger-to-dispatch contract.
+
 `.github/workflows/snapshot.yml` runs after successful `Tests` workflows on
 `main` and publishes a GoReleaser Pro nightly under the singleton `dev` tag.
 GoReleaser's `nightly.keep_single_release` deletes and recreates that release,
