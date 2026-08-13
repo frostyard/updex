@@ -287,6 +287,21 @@ func TestFetchDoesNotRetryNotFound(t *testing.T) {
 	}
 }
 
+func TestFetchRejectsOversizedManifest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.CopyN(w, strings.NewReader(strings.Repeat("x", maxManifestSize+1)), maxManifestSize+1)
+	}))
+	defer server.Close()
+
+	_, err := Fetch(t.Context(), server.Client(), server.URL, false, WithRetryConfig(1, time.Millisecond))
+	if err == nil {
+		t.Fatal("Fetch() error = nil, want oversized manifest error")
+	}
+	if !strings.Contains(err.Error(), "manifest response exceeds maximum allowed size") {
+		t.Fatalf("Fetch() error = %q, want oversized manifest error", err)
+	}
+}
+
 func TestFetchRetriesTruncatedBodyThenSucceeds(t *testing.T) {
 	content := validManifestContent()
 	var requests atomic.Int32
