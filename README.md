@@ -624,7 +624,7 @@ i9j0k1l2...  myext_1.2.0.raw.xz
 
 For GPG verification, also provide `SHA256SUMS.gpg` (detached signature).
 
-Fetching `SHA256SUMS` retries transient network failures and HTTP 5xx/429 responses with exponential backoff. The detached signature fetch is verified after the manifest body is fetched.
+Fetching `SHA256SUMS` retries transient network failures and HTTP 5xx/429 responses with exponential backoff. Manifest responses are limited to 4 MiB and detached signature responses to 1 MiB; oversized responses are rejected before parsing or signature verification. The detached signature fetch is verified after the manifest body is fetched.
 
 ## JSON Output
 

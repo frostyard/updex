@@ -22,6 +22,10 @@ type Manifest struct {
 	Files map[string]string // filename -> SHA256 hash
 }
 
+// maxManifestSize bounds SHA256SUMS response bodies. Manifests are normally
+// small text files; 4 MiB leaves ample room for large catalogs.
+const maxManifestSize = 4 << 20
+
 type retrySettings struct {
 	cfg    retry.Config
 	notify retry.Notify

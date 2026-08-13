@@ -253,7 +253,7 @@ Enabled by default to match systemd-sysupdate. Set `Verify=no` explicitly to opt
 
 Uses `github.com/ProtonMail/go-crypto/openpgp` for signature verification. Supports both binary and armored keyring formats.
 
-Only the main `SHA256SUMS` fetch has bounded retry behavior. The detached `.gpg` signature fetch is a single request in the current implementation.
+Only the main `SHA256SUMS` fetch has bounded retry behavior. The detached `.gpg` signature fetch is a single request in the current implementation. Manifest response bodies are read through a 4 MiB-plus-one-byte limit and detached signatures through a 1 MiB-plus-one-byte limit; crossing either boundary fails before parsing, keyring loading, or signature verification.
 
 ### Systemd specifiers
 
