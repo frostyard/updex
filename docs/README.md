@@ -42,7 +42,11 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
   retries (3 attempts, 1s exponential; 5xx+429 transient); checksum mismatch
   is fatal, no resume
 - [ADR-0009](adr/0009-overridable-system-path-vars.md) — system path anchors
-  are exported package vars so tests override them with cleanup-restore
+  were exported package vars so tests could override them with cleanup-restore;
+  superseded by ADR-0010
+- [ADR-0010](adr/0010-instance-scoped-runtime-paths.md) — each SDK client
+  captures immutable runtime paths; package-level APIs remain compatibility
+  wrappers while SDK internals migrate away from mutable globals
 
 ### Design
 
