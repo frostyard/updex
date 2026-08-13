@@ -215,10 +215,23 @@ type ClientConfig struct {
     SysextRunner       sysext.SysextRunner   // Optional mock runner for testing
     OnDownloadProgress download.ProgressFunc // Optional download progress callback
     HTTPClient         *http.Client          // Optional shared HTTP client
+    Paths              RuntimePaths          // Optional instance-scoped filesystem paths (see below)
+}
+
+// RuntimePaths holds the filesystem paths an updex.Client consults at runtime.
+// Zero values resolve to current production defaults at NewClient time.
+// Use this to give two clients different filesystem trees in one process.
+type RuntimePaths struct {
+    DefinitionRoots    []string // Roots for sysupdate.d directories
+    OSReleasePaths     []string // os-release files for specifier expansion and image naming
+    CatalogConfigRoots []string // Dirs scanned for *.catalog repo definitions
+    CatalogCacheDir    string   // Cache dir for catalog listings; "" = default user cache; DisableCatalogCache = off
+    CatalogTargetPath  string   // Trusted staging dir for catalog transfer files
+    SysextLinkDir      string   // Dir where systemd-sysext looks for extension images
 }
 ```
 
-Manifest fetches and file downloads retry transient request/body-read failures and HTTP 5xx/429 responses up to three total attempts by default. HTTP 4xx responses other than 429 and checksum mismatches fail immediately. `OnDownloadProgress` may be called once per retry attempt; return a fresh writer each time to avoid double-counting progress.
+`NewClient` captures `Paths` once at construction: zero fields resolve to production defaults by reading each package-level compatibility variable at that moment. After construction the client is not affected by later mutations to those variables, so two clients with different `Paths` can safely coexist in one process.
 
 ### Option Structs
 
@@ -571,9 +584,11 @@ generated `.feature` into the catalog's component directory, enables the
 feature, and downloads the image. Catalog transfers must use a `url-file`
 source at the configured `<SiteURL>/<sysext>/` path and unquoted,
 basename-only match patterns. Their target is always a regular `0644` file under the trusted
-`catalog.TargetPath` (default `/var/lib/extensions.d`); catalog-provided target paths, modes,
+staging path (default `/var/lib/extensions.d`, configurable per client via
+`RuntimePaths.CatalogTargetPath`); catalog-provided target paths, modes,
 `PathRelativeTo`, and `CurrentSymlink` values cannot redirect root-owned
-writes. updex manages the `/var/lib/extensions` link itself. The `%w`/`%a`
+writes. updex manages the `/var/lib/extensions` link itself (configurable
+per client via `RuntimePaths.SysextLinkDir`). The `%w`/`%a`
 specifiers in the catalog's match patterns are kept unexpanded, so updates
 keep tracking the running Fedora release across OS upgrades.
 

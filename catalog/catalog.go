@@ -100,9 +100,12 @@ func ValidateSysextName(name string) error {
 const maxFetchSize = 4 << 20
 
 // TargetPath is the trusted staging directory used for catalog transfers.
-// Catalog metadata cannot override it. It is a variable so embedding
-// applications and tests can redirect the managed staging root explicitly.
-var TargetPath = "/var/lib/extensions.d"
+// Catalog metadata cannot override it. SDK callers should inject this value
+// via updex.RuntimePaths rather than mutating this variable; it remains for
+// compatibility wrappers and tests that have not yet migrated.
+const defaultTargetPath = "/var/lib/extensions.d"
+
+var TargetPath = defaultTargetPath
 
 // nonSysextDirs are top-level repo directories that never hold a sysext.
 var nonSysextDirs = []string{"docs", "LICENSES"}
@@ -208,14 +211,11 @@ func FetchConf(ctx context.Context, client *http.Client, repo Repo, name string)
 	return data, nil
 }
 
-// RenderTransfer turns a catalog-published .conf into the .transfer content
-// updex writes to a component directory. It prepends the GeneratedMarker
-// ownership header, injects Features=<name> so the transfer is tied to its
-// generated feature. Security-sensitive fields are validated and rewritten:
-// the source stays under the configured catalog, and the target is a regular
-// 0644 file under /var/lib/extensions.d. Other content, including %w/%a
-// specifiers, is preserved byte-for-byte.
-func RenderTransfer(conf []byte, repo Repo, name string) ([]byte, error) {
+// RenderTransferTo turns a catalog-published .conf into the .transfer content
+// updex writes to a component directory. It behaves like RenderTransfer but
+// uses the given targetPath instead of the package-global TargetPath.
+// This is the explicit-path variant used by SDK internals.
+func RenderTransferTo(conf []byte, repo Repo, name string, targetPath string) ([]byte, error) {
 	cfg, err := ini.Load(conf)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse catalog conf: %w", err)
@@ -231,7 +231,7 @@ func RenderTransfer(conf []byte, repo Repo, name string) ([]byte, error) {
 	if err := validateCatalogPatternEncoding(conf); err != nil {
 		return nil, err
 	}
-	if err := validateCatalogTransfer(source, target, repo, name); err != nil {
+	if err := validateCatalogTransferTo(source, target, repo, name, targetPath); err != nil {
 		return nil, err
 	}
 
@@ -271,7 +271,7 @@ func RenderTransfer(conf []byte, repo Repo, name string) ([]byte, error) {
 					out.WriteByte('\n')
 				}
 				fmt.Fprintf(&out, "Type=regular-file\nPath=%s\nMatchPattern=%s\nMode=0644\n",
-					TargetPath, targetPattern)
+					targetPath, targetPattern)
 			}
 			continue
 		}
@@ -295,6 +295,17 @@ func RenderTransfer(conf []byte, repo Repo, name string) ([]byte, error) {
 	}
 
 	return out.Bytes(), nil
+}
+
+// RenderTransfer turns a catalog-published .conf into the .transfer content
+// updex writes to a component directory. It prepends the GeneratedMarker
+// ownership header, injects Features=<name> so the transfer is tied to its
+// generated feature. Security-sensitive fields are validated and rewritten:
+// the source stays under the configured catalog, and the target is a regular
+// 0644 file under /var/lib/extensions.d. Other content, including %w/%a
+// specifiers, is preserved byte-for-byte.
+func RenderTransfer(conf []byte, repo Repo, name string) ([]byte, error) {
+	return RenderTransferTo(conf, repo, name, TargetPath)
 }
 
 func validateCatalogPatternEncoding(conf []byte) error {
@@ -340,7 +351,7 @@ func parseSectionHeader(line string) (name string, ok bool, err error) {
 	return name, true, nil
 }
 
-func validateCatalogTransfer(source, target *ini.Section, repo Repo, name string) error {
+func validateCatalogTransferTo(source, target *ini.Section, repo Repo, name string, targetPath string) error {
 	sourceType, err := source.GetKey("Type")
 	if err != nil || sourceType.String() != "url-file" {
 		return fmt.Errorf("catalog conf Source.Type must be url-file")
@@ -365,14 +376,21 @@ func validateCatalogTransfer(source, target *ini.Section, repo Repo, name string
 	if targetType, err := target.GetKey("Type"); err == nil && targetType.String() != "regular-file" {
 		return fmt.Errorf("catalog conf Target.Type must be regular-file")
 	}
-	if targetPath, err := target.GetKey("Path"); err == nil && filepath.Clean(targetPath.String()) != filepath.Clean(TargetPath) {
-		return fmt.Errorf("catalog conf Target.Path must be %s", TargetPath)
+	if tp, err := target.GetKey("Path"); err == nil {
+		got := filepath.Clean(tp.String())
+		if got != filepath.Clean(targetPath) && got != defaultTargetPath {
+			return fmt.Errorf("catalog conf Target.Path must be %s", defaultTargetPath)
+		}
 	}
 	if relative, err := target.GetKey("PathRelativeTo"); err == nil && relative.String() != "" {
 		return fmt.Errorf("catalog conf Target.PathRelativeTo is not supported")
 	}
 
 	return nil
+}
+
+func validateCatalogTransfer(source, target *ini.Section, repo Repo, name string) error {
+	return validateCatalogTransferTo(source, target, repo, name, TargetPath)
 }
 
 func validateCatalogPatterns(section *ini.Section, sectionName string) error {

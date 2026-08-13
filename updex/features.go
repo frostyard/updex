@@ -40,7 +40,7 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 	var featureInfos []FeatureInfo
 
 	// Resolved once: os-release does not change between features.
-	imageName := config.ImageName()
+	imageName := config.ImageNameFrom(c.paths.osReleasePaths)
 
 	for _, f := range features {
 		// Get transfers associated with this feature
@@ -50,7 +50,7 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 			transferNames = append(transferNames, t.Component)
 		}
 
-		origin, originName := featureOrigin(f.FilePath, imageName, c.config.Definitions != "")
+		origin, originName := featureOrigin(f.FilePath, imageName, c.paths.definitionRoots, c.config.Definitions != "")
 
 		info := FeatureInfo{
 			Name:          f.Name,
@@ -75,7 +75,8 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 // catalog-generated file names its catalog in the marker header (see
 // catalog.GeneratedFileRepo), and everything else is identified by the
 // search root it lives under. imageName is passed in rather than resolved
-// here so a listing reads os-release once.
+// here so a listing reads os-release once. definitionRoots are the roots
+// captured at client construction — never the package-level SearchRoots.
 //
 // definitionsOverride reports whether the whole domain came from a
 // -C/--definitions directory. That directory may itself sit under a
@@ -85,7 +86,7 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 // live under says nothing about its provenance. The marker still wins,
 // because it is a fact recorded in the file rather than an inference
 // from its location.
-func featureOrigin(path, imageName string, definitionsOverride bool) (origin, originName string) {
+func featureOrigin(path, imageName string, definitionRoots []string, definitionsOverride bool) (origin, originName string) {
 	if repo, ok := catalog.GeneratedFileRepo(path); ok {
 		return FeatureOriginCatalog, repo
 	}
@@ -93,9 +94,9 @@ func featureOrigin(path, imageName string, definitionsOverride bool) (origin, or
 		return FeatureOriginUnknown, ""
 	}
 
-	// Index order matches config.SearchRoots: /etc, /run, /usr/local/lib,
-	// /usr/lib.
-	switch idx, ok := config.SearchRootIndex(path); {
+	// Index order matches the definition roots order: /etc, /run,
+	// /usr/local/lib, /usr/lib.
+	switch idx, ok := config.SearchRootIndexIn(path, definitionRoots); {
 	case !ok:
 		return FeatureOriginUnknown, ""
 	case idx == 0:
@@ -141,7 +142,7 @@ func lookupFeature(features []*config.Feature, name, action string) (*config.Fea
 // anything.
 func (c *Client) writeFeatureDropIn(f *config.Feature, enabled bool, dryRun bool) (string, error) {
 	component, _ := config.ComponentOfPath(f.FilePath) // "" for the legacy default or a --definitions override
-	dropInDir := filepath.Join(config.EtcComponentDir(component), f.Name+".feature.d")
+	dropInDir := filepath.Join(config.EtcComponentDirIn(component, c.paths.definitionRoots), f.Name+".feature.d")
 	dropInFile := filepath.Join(dropInDir, updexDropInName)
 
 	if dryRun {
@@ -294,7 +295,7 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 	if willRemoveFiles && len(featureTransfers) > 0 {
 		var mergedExtensions []string
 		for _, t := range featureTransfers {
-			activeVersion, err := sysext.GetActiveVersion(t)
+			activeVersion, err := sysext.GetActiveVersionAt(t, c.paths.sysextLinkDir)
 			if err != nil {
 				c.warn("could not check merge state for %s: %v", t.Component, err)
 				continue
@@ -357,12 +358,12 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 				allRemoved = append(allRemoved, t.Component+" (would remove)")
 			} else {
 				// Remove the symlink from /var/lib/extensions
-				if err := sysext.UnlinkFromSysext(t); err != nil {
+				if err := sysext.UnlinkFromSysextAt(t, c.paths.sysextLinkDir); err != nil {
 					c.warn("failed to unlink %s: %v", t.Component, err)
 				}
 
 				// Remove all versions
-				removed, err := sysext.RemoveAllVersions(t)
+				removed, err := sysext.RemoveAllVersionsAt(t, c.paths.sysextLinkDir)
 				if err != nil {
 					err = fmt.Errorf("failed to remove files for %s: %w", t.Component, err)
 					result.Error = err.Error()
@@ -470,7 +471,7 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 				if opts.DryRun {
 					result.NextActionMessage = "Would download and install version " + v
 					if !opts.NoVacuum {
-						removed, _, err := sysext.PlanVacuumAfterInstall(transfer, v)
+						removed, _, err := sysext.PlanVacuumAfterInstallAt(transfer, v, c.paths.sysextLinkDir)
 						if err != nil {
 							c.warn("failed to plan vacuum for %s: %v", transfer.Component, err)
 						}
@@ -563,7 +564,7 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 			version.Sort(available)
 			newest := available[0]
 
-			installed, current, err := sysext.GetInstalledVersions(transfer)
+			installed, current, err := sysext.GetInstalledVersionsAt(transfer, c.paths.sysextLinkDir)
 			if err != nil {
 				c.warn("failed to get installed versions: %v", err)
 			}

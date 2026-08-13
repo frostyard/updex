@@ -16,6 +16,14 @@ type SysextRunner interface {
 	LinkToSysext(t *config.Transfer) error
 }
 
+// PathSysextRunner optionally lets a runner create links in an explicit
+// directory. Clients use this when available while retaining compatibility
+// with existing SysextRunner implementations.
+type PathSysextRunner interface {
+	SysextRunner
+	LinkToSysextAt(t *config.Transfer, sysextDir string) error
+}
+
 // DefaultRunner executes real systemd-sysext commands
 type DefaultRunner struct{}
 
@@ -33,6 +41,10 @@ func (r *DefaultRunner) Unmerge() error {
 
 func (r *DefaultRunner) LinkToSysext(t *config.Transfer) error {
 	return LinkToSysext(t)
+}
+
+func (r *DefaultRunner) LinkToSysextAt(t *config.Transfer, sysextDir string) error {
+	return LinkToSysextAt(t, sysextDir)
 }
 
 // runSysextCommand executes a systemd-sysext subcommand

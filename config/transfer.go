@@ -76,15 +76,28 @@ func (t TargetSection) Patterns() []string {
 	return nil
 }
 
+// LoadTransfersIn loads all .transfer files using explicit definition roots
+// and os-release paths.
+func LoadTransfersIn(customPath string, roots, osReleasePaths []string) ([]*Transfer, error) {
+	if customPath != "" {
+		return loadTransfersFromPaths([]string{customPath}, osReleasePaths)
+	}
+	return loadTransfersFromPaths(ComponentSearchPathsIn("", roots), osReleasePaths)
+}
+
 // LoadTransfers loads all .transfer files from the specified directory or
 // the legacy default search paths (/etc/sysupdate.d, /run/sysupdate.d, ...).
 // It does not discover named components or filter non-sysext transfers; see
 // LoadAllTransfers and LoadComponentTransfers for that.
 func LoadTransfers(customPath string) ([]*Transfer, error) {
-	if customPath != "" {
-		return loadTransfersFromPaths([]string{customPath})
-	}
-	return loadTransfersFromPaths(defaultSearchPaths())
+	return LoadTransfersIn(customPath, SearchRoots, OSReleasePaths)
+}
+
+// LoadComponentTransfersIn loads .transfer files for a single named component
+// using the given roots. This is the explicit-roots variant of
+// LoadComponentTransfers.
+func LoadComponentTransfersIn(name string, roots, osReleasePaths []string) ([]*Transfer, error) {
+	return loadTransfersFromPaths(ComponentSearchPathsIn(name, roots), osReleasePaths)
 }
 
 // LoadComponentTransfers loads .transfer files for a single named component,
@@ -92,37 +105,25 @@ func LoadTransfers(customPath string) ([]*Transfer, error) {
 // ComponentSearchPaths). Pass "" for the legacy default component. It does
 // not filter non-sysext transfers; see FilterSysextTransfers.
 func LoadComponentTransfers(name string) ([]*Transfer, error) {
-	return loadTransfersFromPaths(ComponentSearchPaths(name))
+	return LoadComponentTransfersIn(name, SearchRoots, OSReleasePaths)
 }
 
-// LoadAllTransfers loads the transfer domain updex operates on by default:
-// the union of the legacy default sysupdate.d directory and every
-// discovered named component (see DiscoverComponents), keeping only
-// sysext-shaped transfers (see FilterSysextTransfers). If customPath is
-// non-empty, component discovery is bypassed entirely and this behaves like
-// LoadTransfers(customPath) with the sysext filter applied, matching the
-// explicit single-directory override semantics of the --definitions flag.
-//
-// Transfer names are expected to be globally unique across the union, since
-// they're derived from distinct sysext names. When the same name is defined
-// by more than one source, the most specific source wins — a named
-// component beats the legacy default directory, and among colliding
-// components the alphabetically last one wins — and the collision is
-// reported as a warning string rather than an error.
-func LoadAllTransfers(customPath string) ([]*Transfer, []string, error) {
+// LoadAllTransfersIn loads the transfer domain updex operates on by default
+// using the given roots. This is the explicit-roots variant of LoadAllTransfers.
+func LoadAllTransfersIn(customPath string, roots, osReleasePaths []string) ([]*Transfer, []string, error) {
 	if customPath != "" {
-		t, err := LoadTransfers(customPath)
+		t, err := LoadTransfersIn(customPath, roots, osReleasePaths)
 		if err != nil {
 			return nil, nil, err
 		}
 		return FilterSysextTransfers(t), nil, nil
 	}
 
-	legacy, err := LoadTransfers("")
+	legacy, err := LoadTransfersIn("", roots, osReleasePaths)
 	if err != nil {
 		return nil, nil, err
 	}
-	components, err := DiscoverComponents()
+	components, err := DiscoverComponentsIn(roots)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -147,7 +148,7 @@ func LoadAllTransfers(customPath string) ([]*Transfer, []string, error) {
 		put(t, "the default directory")
 	}
 	for _, comp := range components {
-		ct, err := LoadComponentTransfers(comp.Name)
+		ct, err := LoadComponentTransfersIn(comp.Name, roots, osReleasePaths)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -167,9 +168,26 @@ func LoadAllTransfers(customPath string) ([]*Transfer, []string, error) {
 	return transfers, warnings, nil
 }
 
-// loadTransfersFromPaths loads all .transfer files found across
+// LoadAllTransfers loads the transfer domain updex operates on by default:
+// the union of the legacy default sysupdate.d directory and every
+// discovered named component (see DiscoverComponents), keeping only
+// sysext-shaped transfers (see FilterSysextTransfers). If customPath is
+// non-empty, component discovery is bypassed entirely and this behaves like
+// LoadTransfers(customPath) with the sysext filter applied, matching the
+// explicit single-directory override semantics of the --definitions flag.
+//
+// Transfer names are expected to be globally unique across the union, since
+// they're derived from distinct sysext names. When the same name is defined
+// by more than one source, the most specific source wins — a named
+// component beats the legacy default directory, and among colliding
+// components the alphabetically last one wins — and the collision is
+// reported as a warning string rather than an error.
+func LoadAllTransfers(customPath string) ([]*Transfer, []string, error) {
+	return LoadAllTransfersIn(customPath, SearchRoots, OSReleasePaths)
+}
+
 // searchPaths, with earlier paths taking priority for a given filename.
-func loadTransfersFromPaths(searchPaths []string) ([]*Transfer, error) {
+func loadTransfersFromPaths(searchPaths, osReleasePaths []string) ([]*Transfer, error) {
 	// Collect all .transfer files, with earlier paths taking priority
 	transferFiles, err := collectConfigFiles(searchPaths, transferSuffix)
 	if err != nil {
@@ -181,7 +199,7 @@ func loadTransfersFromPaths(searchPaths []string) ([]*Transfer, error) {
 	}
 
 	// Parse all transfer files
-	specCtx := newSpecifierContext()
+	specCtx := newSpecifierContextFrom(osReleasePaths)
 	var transfers []*Transfer
 	for component, filePath := range transferFiles {
 		t, err := parseTransferFile(filePath, component, specCtx)
@@ -365,7 +383,11 @@ type specifierContext struct {
 }
 
 func newSpecifierContext() *specifierContext {
-	osRelease := readOSRelease()
+	return newSpecifierContextFrom(OSReleasePaths)
+}
+
+func newSpecifierContextFrom(osReleasePaths []string) *specifierContext {
+	osRelease := readOSReleaseFrom(osReleasePaths)
 	hostname, _ := os.Hostname()
 	shortHostname := hostname
 	if dot := strings.IndexByte(shortHostname, '.'); dot >= 0 {
@@ -479,15 +501,16 @@ func readFileOneLine(path string) string {
 
 // OSReleasePaths are the os-release files consulted for %-specifier
 // expansion and ImageName, in order; the first readable one wins.
-// Overridable in tests, like SearchRoots.
+// SDK callers should inject paths via updex.RuntimePaths rather than
+// mutating this variable; it remains for compatibility wrappers and tests
+// that have not yet migrated.
 var OSReleasePaths = []string{"/etc/os-release", "/usr/lib/os-release"}
 
-// ImageName returns an identifier for the OS image this system runs,
-// preferring VARIANT_ID (set by ublue-os images and Fedora variants),
-// then IMAGE_ID (set by frostyard/snosi images), then ID as a last
-// resort. It returns "" when os-release provides none of them.
-func ImageName() string {
-	osRelease := readOSRelease()
+// ImageNameFrom returns an identifier for the OS image this system runs,
+// reading from the given os-release paths (first readable one wins).
+// This is the explicit-paths variant of ImageName.
+func ImageNameFrom(paths []string) string {
+	osRelease := readOSReleaseFrom(paths)
 	for _, key := range []string{"VARIANT_ID", "IMAGE_ID", "ID"} {
 		if v := osRelease[key]; v != "" {
 			return v
@@ -496,14 +519,22 @@ func ImageName() string {
 	return ""
 }
 
-// readOSRelease reads the first readable file in OSReleasePaths and
-// returns its key-value pairs.
-func readOSRelease() map[string]string {
+// ImageName returns an identifier for the OS image this system runs,
+// preferring VARIANT_ID (set by ublue-os images and Fedora variants),
+// then IMAGE_ID (set by frostyard/snosi images), then ID as a last
+// resort. It returns "" when os-release provides none of them.
+func ImageName() string {
+	return ImageNameFrom(OSReleasePaths)
+}
+
+// readOSReleaseFrom reads the first readable file in the given paths and
+// returns its key-value pairs. This is the explicit-paths variant of readOSRelease.
+func readOSReleaseFrom(paths []string) map[string]string {
 	result := make(map[string]string)
 
 	var data []byte
 	var err error
-	for _, path := range OSReleasePaths {
+	for _, path := range paths {
 		if data, err = os.ReadFile(path); err == nil {
 			break
 		}
@@ -529,6 +560,12 @@ func readOSRelease() map[string]string {
 	}
 
 	return result
+}
+
+// readOSRelease reads the first readable file in OSReleasePaths and
+// returns its key-value pairs.
+func readOSRelease() map[string]string {
+	return readOSReleaseFrom(OSReleasePaths)
 }
 
 // parsePatterns extracts all patterns from a space-separated list of alternatives

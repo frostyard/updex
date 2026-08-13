@@ -18,16 +18,129 @@ package updex
 
 import (
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/frostyard/std/reporter"
+	"github.com/frostyard/updex/catalog"
+	"github.com/frostyard/updex/config"
 	"github.com/frostyard/updex/download"
 	"github.com/frostyard/updex/sysext"
 )
 
+// RuntimePaths holds the filesystem paths an updex.Client consults at
+// runtime. Zero values resolve to the current production defaults so the
+// CLI and existing SDK callers require no change. Values are captured
+// immutably at NewClient: subsequent mutations to the compatibility package
+// variables (config.SearchRoots, catalog.ConfigRoots, etc.) cannot redirect
+// an already-constructed client.
+//
+// Set non-zero fields only to override specific paths; mixing zero and
+// non-zero fields within one RuntimePaths is valid.
+type RuntimePaths struct {
+	// DefinitionRoots are the systemd-style root directories searched for
+	// sysupdate.d and sysupdate.<name>.d directories (see
+	// config.ComponentSearchPaths). Zero value uses config.SearchRoots
+	// (/etc, /run, /usr/local/lib, /usr/lib).
+	DefinitionRoots []string
+
+	// OSReleasePaths are the os-release files consulted for
+	// %-specifier expansion and image-name identification. Zero value uses
+	// config.OSReleasePaths (/etc/os-release, /usr/lib/os-release).
+	OSReleasePaths []string
+
+	// CatalogConfigRoots are the directories scanned for *.catalog repo
+	// definition files (see catalog.LoadRepos). Zero value uses
+	// catalog.ConfigRoots.
+	CatalogConfigRoots []string
+
+	// CatalogCacheDir is the directory for catalog listing caches.
+	// Zero value captures catalog.CacheDir at construction.
+	//
+	// Use the sentinel value DisableCatalogCache to explicitly disable
+	// caching without affecting other clients.
+	CatalogCacheDir string
+
+	// CatalogTargetPath is the trusted staging directory for catalog
+	// transfers. Zero value uses catalog.TargetPath
+	// (/var/lib/extensions.d).
+	CatalogTargetPath string
+
+	// SysextLinkDir is the directory where systemd-sysext looks for
+	// extension images. Zero value uses sysext.SysextDir
+	// (/var/lib/extensions).
+	SysextLinkDir string
+}
+
+// DisableCatalogCache is a sentinel value for RuntimePaths.CatalogCacheDir
+// that explicitly disables catalog listing caching for a client without
+// affecting other clients or the package-level CacheDir variable.
+const DisableCatalogCache = "\x00"
+
+// runtimePaths holds the resolved (never-zero) path values captured at
+// client construction. The zero-value resolution happens once in NewClient.
+type runtimePaths struct {
+	definitionRoots    []string
+	osReleasePaths     []string
+	catalogConfigRoots []string
+	catalogCacheDir    string // "" means disabled
+	catalogTargetPath  string
+	sysextLinkDir      string
+}
+
+// resolveRuntimePaths converts a RuntimePaths (zero = default) to a fully
+// resolved runtimePaths, reading the package-level globals exactly once and
+// taking defensive copies of all slices so later global mutations cannot
+// affect the client.
+func resolveRuntimePaths(rp RuntimePaths) runtimePaths {
+	p := runtimePaths{}
+
+	if len(rp.DefinitionRoots) > 0 {
+		p.definitionRoots = slices.Clone(rp.DefinitionRoots)
+	} else {
+		p.definitionRoots = slices.Clone(config.SearchRoots)
+	}
+
+	if len(rp.OSReleasePaths) > 0 {
+		p.osReleasePaths = slices.Clone(rp.OSReleasePaths)
+	} else {
+		p.osReleasePaths = slices.Clone(config.OSReleasePaths)
+	}
+
+	if len(rp.CatalogConfigRoots) > 0 {
+		p.catalogConfigRoots = slices.Clone(rp.CatalogConfigRoots)
+	} else {
+		p.catalogConfigRoots = slices.Clone(catalog.ConfigRoots)
+	}
+
+	switch rp.CatalogCacheDir {
+	case DisableCatalogCache:
+		p.catalogCacheDir = ""
+	case "":
+		p.catalogCacheDir = catalog.CacheDir
+	default:
+		p.catalogCacheDir = rp.CatalogCacheDir
+	}
+
+	if rp.CatalogTargetPath != "" {
+		p.catalogTargetPath = rp.CatalogTargetPath
+	} else {
+		p.catalogTargetPath = catalog.TargetPath
+	}
+
+	if rp.SysextLinkDir != "" {
+		p.sysextLinkDir = rp.SysextLinkDir
+	} else {
+		p.sysextLinkDir = sysext.SysextDir
+	}
+
+	return p
+}
+
 // Client provides programmatic access to updex operations.
 type Client struct {
 	config     ClientConfig
+	paths      runtimePaths
 	httpClient *http.Client
 	reporter   reporter.Reporter
 	runner     sysext.SysextRunner
@@ -71,9 +184,18 @@ type ClientConfig struct {
 	// Providing a shared client enables HTTP keep-alive connection reuse across
 	// multiple downloads from the same host.
 	HTTPClient *http.Client
+
+	// Paths holds the filesystem paths this client consults at runtime.
+	// Zero values resolve to current production defaults at NewClient time.
+	// See RuntimePaths for field-by-field documentation.
+	Paths RuntimePaths
 }
 
 // NewClient creates a new updex API client with the given configuration.
+// Filesystem paths in cfg.Paths are resolved once at construction: the
+// client captures immutable copies of all path configuration, so subsequent
+// mutations to package-level globals (config.SearchRoots, catalog.ConfigRoots,
+// etc.) cannot redirect this client.
 func NewClient(cfg ClientConfig) *Client {
 	r := cfg.Progress
 	if r == nil {
@@ -91,6 +213,7 @@ func NewClient(cfg ClientConfig) *Client {
 	}
 	return &Client{
 		config:     cfg,
+		paths:      resolveRuntimePaths(cfg.Paths),
 		httpClient: hc,
 		reporter:   r,
 		runner:     sr,

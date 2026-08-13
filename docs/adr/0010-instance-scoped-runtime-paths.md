@@ -1,6 +1,6 @@
 # 0010 — Scope runtime paths to each SDK client
 
-- **Status:** Accepted
+- **Status:** Implemented
 - **Date:** 2026-08-12
 
 ## Context
@@ -11,10 +11,11 @@ constructor plumbing, but it also made those paths mutable process-wide state.
 
 `updex.Client` otherwise owns its runtime dependencies: HTTP transport,
 reporting, download progress, and the systemd-sysext runner. Path-dependent
-behavior is the exception. Definition discovery, catalog discovery, catalog
-caching, os-release reads, and sysext link writes still consult package globals
-at call time. Two clients in one process therefore cannot use different roots,
-and changing a path while another goroutine reads it is a data race.
+behavior was the exception. Before this ADR was implemented, definition
+discovery, catalog discovery, catalog caching, os-release reads, and sysext
+link writes still consulted package globals at call time. Two clients in one
+process therefore could not use different roots, and changing a path while
+another goroutine reads it was a data race.
 
 The SDK is intended for embedding in long-running Go programs, not only for the
 single-client CLI. Client isolation and safe concurrent use are therefore part
@@ -30,7 +31,8 @@ The path configuration covers:
 
 - systemd-sysupdate definition search roots;
 - os-release lookup paths;
-- catalog configuration roots and listing cache directory; and
+- catalog configuration roots, listing cache directory, and transfer target
+  directory; and
 - the systemd-sysext link directory.
 
 SDK methods pass that configuration to path-dependent collaborators in
@@ -55,6 +57,36 @@ The migration proceeds from read-only discovery to writes:
 No path may fall back to a package global after client construction. Tests must
 prove that mutating a compatibility variable cannot redirect an existing
 client.
+
+## Implementation
+
+`ClientConfig.Paths` (type `RuntimePaths`) holds six fields: `DefinitionRoots`,
+`OSReleasePaths`, `CatalogConfigRoots`, `CatalogCacheDir`,
+`CatalogTargetPath`, and `SysextLinkDir`. Zero values resolve to production
+defaults at `NewClient` time by reading each package global exactly once and
+taking a defensive copy of every slice. The sentinel `DisableCatalogCache`
+explicitly disables caching without affecting other clients.
+
+Parameterized entry points added to each package (original functions remain as
+compatibility wrappers that forward to the parameterized variant using current
+package globals):
+
+- `config`: `ComponentSearchPathsIn`, `EtcComponentDirIn`,
+  `SearchRootIndexIn`, `DiscoverComponentsIn`, `LoadFeaturesIn`,
+  `LoadComponentFeaturesIn`, `LoadAllFeaturesIn`, `LoadTransfersIn`,
+  `LoadComponentTransfersIn`, `LoadAllTransfersIn`, `ImageNameFrom`.
+- `catalog`: `LoadReposFrom`, `CachedListIn`, `RenderTransferTo`.
+- `sysext`: `LinkToSysextAt`, `UnlinkFromSysextAt`.
+
+The sysext package also provides explicit-fallback variants for installed,
+active, vacuum, legacy-link, and removal operations. `DefaultRunner` implements
+the optional `PathSysextRunner` extension so `installTransfer` supplies the
+client's captured link directory. Existing injected `SysextRunner`
+implementations retain their original `LinkToSysext` behavior.
+
+Concurrent two-client isolation tests in `updex/isolation_test.go` prove the
+invariants: independent trees, mutation-proof construction, and race-free
+parallel execution.
 
 ## Consequences
 
