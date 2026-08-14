@@ -27,11 +27,6 @@ func parseTargetPatterns(t *config.Transfer) ([]*version.Pattern, error) {
 	return patterns, nil
 }
 
-// targetDir returns the target directory for a transfer, defaulting to SysextDir.
-func targetDir(t *config.Transfer) string {
-	return targetDirAt(t, SysextDir)
-}
-
 func targetDirAt(t *config.Transfer, defaultDir string) string {
 	if t.Target.Path != "" {
 		return t.Target.Path
@@ -339,10 +334,6 @@ func stripCompressionSuffix(name string) string {
 		}
 	}
 	return name
-}
-
-func installedVersionFiles(t *config.Transfer) ([]versionFile, error) {
-	return installedVersionFilesAt(t, SysextDir)
 }
 
 func installedVersionFilesAt(t *config.Transfer, defaultDir string) ([]versionFile, error) {

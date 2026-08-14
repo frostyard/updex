@@ -53,11 +53,6 @@ func ComponentSearchPaths(name string) []string {
 	return ComponentSearchPathsIn(name, SearchRoots)
 }
 
-// defaultSearchPaths are the search paths for the legacy default component.
-func defaultSearchPaths() []string {
-	return ComponentSearchPaths("")
-}
-
 // EtcComponentDirIn returns the /etc override directory for a component's
 // definitions using the given roots (the highest-priority root is used).
 // This is the explicit-roots variant of EtcComponentDir.

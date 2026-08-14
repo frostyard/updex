@@ -146,13 +146,6 @@ func listCachePathIn(repo Repo, cacheDir string) string {
 	return filepath.Join(cacheDir, "list-"+repo.Name+".json")
 }
 
-// listCachePath returns the cache file path for a repo's listing, or ""
-// when caching is disabled. Repo names are charset-validated at load time,
-// so they are safe as filename components.
-func listCachePath(repo Repo) string {
-	return listCachePathIn(repo, CacheDir)
-}
-
 // loadListCache reads and validates a cache entry, returning nil for any
 // miss: missing or unreadable file, unparseable JSON, or a ListURL that no
 // longer matches the repo's configuration.

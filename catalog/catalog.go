@@ -389,10 +389,6 @@ func validateCatalogTransferTo(source, target *ini.Section, repo Repo, name stri
 	return nil
 }
 
-func validateCatalogTransfer(source, target *ini.Section, repo Repo, name string) error {
-	return validateCatalogTransferTo(source, target, repo, name, TargetPath)
-}
-
 func validateCatalogPatterns(section *ini.Section, sectionName string) error {
 	key, err := section.GetKey("MatchPattern")
 	if err != nil {

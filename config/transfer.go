@@ -562,12 +562,6 @@ func readOSReleaseFrom(paths []string) map[string]string {
 	return result
 }
 
-// readOSRelease reads the first readable file in OSReleasePaths and
-// returns its key-value pairs.
-func readOSRelease() map[string]string {
-	return readOSReleaseFrom(OSReleasePaths)
-}
-
 // parsePatterns extracts all patterns from a space-separated list of alternatives
 // e.g., "foo_@v.raw.xz foo_@v.raw" -> ["foo_@v.raw.xz", "foo_@v.raw"]
 func parsePatterns(patterns string) []string {
