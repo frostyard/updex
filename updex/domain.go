@@ -23,28 +23,26 @@ type FeaturesOptions struct {
 //     single directory is used verbatim, exactly as before component
 //     support existed. component must be empty in this case.
 //   - Else if component is non-empty, only that named component's own
-//     search paths are used (see config.ComponentSearchPaths).
+//     search paths are used (see config.ComponentSearchPathsIn).
 //   - Else (the default), the domain is the union of the legacy default
 //     sysupdate.d directory and every discovered component (see
-//     config.LoadAllFeatures / config.LoadAllTransfers). Any name
+//     config.LoadAllFeaturesIn / config.LoadAllTransfersIn). Any name
 //     collisions encountered while building the union are logged as
 //     warnings through the client's reporter.
 //
-// Transfers are always filtered to sysext-shaped url-file-to-regular-file
-// transfers (see config.FilterSysextTransfers), so OS transfers such as A/B
-// partition updates or the UKI that share the legacy default directory on
-// native images are never surfaced.
+// The client's immutable paths (captured at NewClient) are used throughout;
+// mutable package variables are never consulted after construction.
 func (c *Client) loadDomain(component string) ([]*config.Feature, []*config.Transfer, error) {
 	if c.config.Definitions != "" {
 		if component != "" {
 			return nil, nil, fmt.Errorf("cannot combine --definitions with --component")
 		}
 
-		features, err := config.LoadFeatures(c.config.Definitions)
+		features, err := config.LoadFeaturesIn(c.config.Definitions, c.paths.definitionRoots)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to load features: %w", err)
 		}
-		transfers, err := config.LoadTransfers(c.config.Definitions)
+		transfers, err := config.LoadTransfersIn(c.config.Definitions, c.paths.definitionRoots, c.paths.osReleasePaths)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to load transfers: %w", err)
 		}
@@ -52,22 +50,22 @@ func (c *Client) loadDomain(component string) ([]*config.Feature, []*config.Tran
 	}
 
 	if component != "" {
-		features, err := config.LoadComponentFeatures(component)
+		features, err := config.LoadComponentFeaturesIn(component, c.paths.definitionRoots)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to load features for component %q: %w", component, err)
 		}
-		transfers, err := config.LoadComponentTransfers(component)
+		transfers, err := config.LoadComponentTransfersIn(component, c.paths.definitionRoots, c.paths.osReleasePaths)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to load transfers for component %q: %w", component, err)
 		}
 		return features, config.FilterSysextTransfers(transfers), nil
 	}
 
-	features, featureWarnings, err := config.LoadAllFeatures("")
+	features, featureWarnings, err := config.LoadAllFeaturesIn("", c.paths.definitionRoots)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to load features: %w", err)
 	}
-	transfers, transferWarnings, err := config.LoadAllTransfers("")
+	transfers, transferWarnings, err := config.LoadAllTransfersIn("", c.paths.definitionRoots, c.paths.osReleasePaths)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to load transfers: %w", err)
 	}
@@ -102,14 +100,14 @@ type ComponentInfo struct {
 func (c *Client) Components(ctx context.Context) ([]ComponentInfo, error) {
 	c.msg("Discovering components")
 
-	components, err := config.DiscoverComponents()
+	components, err := config.DiscoverComponentsIn(c.paths.definitionRoots)
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover components: %w", err)
 	}
 
 	infos := make([]ComponentInfo, 0, len(components))
 	for _, comp := range components {
-		features, err := config.LoadComponentFeatures(comp.Name)
+		features, err := config.LoadComponentFeaturesIn(comp.Name, c.paths.definitionRoots)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load features for component %q: %w", comp.Name, err)
 		}

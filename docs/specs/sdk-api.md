@@ -15,12 +15,37 @@ type ClientConfig struct {
     SysextRunner       sysext.SysextRunner   // Mock runner for tests (optional)
     OnDownloadProgress download.ProgressFunc // Download progress callback (optional)
     HTTPClient         *http.Client          // Shared HTTP client (optional)
+    Paths              RuntimePaths          // Instance-scoped filesystem paths (optional)
 }
+
+// RuntimePaths holds the filesystem paths an updex.Client consults at runtime.
+// Zero values resolve to current production defaults at NewClient time.
+type RuntimePaths struct {
+    DefinitionRoots    []string // Roots for sysupdate.d directories; default: config.SearchRoots
+    OSReleasePaths     []string // os-release files for specifier expansion; default: config.OSReleasePaths
+    CatalogConfigRoots []string // Dirs for *.catalog files; default: catalog.ConfigRoots
+    CatalogCacheDir    string   // Cache dir for catalog listings; default: catalog.CacheDir
+    CatalogTargetPath  string   // Staging dir for catalog transfers; default: catalog.TargetPath
+    SysextLinkDir      string   // Dir for systemd-sysext image links; default: sysext.SysextDir
+}
+
+// DisableCatalogCache is a RuntimePaths.CatalogCacheDir sentinel that
+// explicitly disables catalog listing caching for one client.
+const DisableCatalogCache = "\x00"
 
 func NewClient(cfg ClientConfig) *Client
 ```
 
-`NewClient` stores the provided `SysextRunner` directly on the `Client` struct. If `SysextRunner` is nil, it defaults to `&sysext.DefaultRunner{}`. If `Progress` is nil, it defaults to `reporter.NoopReporter{}`. `OnDownloadProgress` is passed through to `download.Download` calls — when non-nil, it is called with the HTTP response content length (-1 if unknown) and should return an `io.Writer` that receives downloaded bytes for progress tracking (return nil to skip progress for that download). Retries call this callback once per attempt, so implementations must return a fresh independent writer each time to avoid double-counting progress. If `HTTPClient` is nil, a default `http.Client` with a 10-minute timeout is created and reused for all manifest fetches and file downloads, enabling HTTP keep-alive connection reuse. The client stores the original config and does not mutate global package state.
+`NewClient` resolves `cfg.Paths` once at construction: each zero field reads its corresponding package-level compatibility variable exactly once and takes a defensive copy of slices. After construction the client never consults those package variables again, so mutating `config.SearchRoots`, `catalog.ConfigRoots`, `catalog.CacheDir`, or `sysext.SysextDir` cannot redirect the client. This is the ADR-0010 invariant: all runtime dependencies are captured immutably at construction.
+
+Path-dependent supporting-package APIs have explicit variants for SDK use:
+`config.Load*In` receives definition roots and, for transfers, os-release
+paths; `catalog.LoadReposFrom`, `CachedListIn`, and `RenderTransferTo` receive
+their paths directly; and sysext `*At` operations receive the captured sysext
+directory. The original package functions remain compatibility wrappers over
+their package variables.
+
+Other fields: if `SysextRunner` is nil it defaults to `&sysext.DefaultRunner{}`; if `Progress` is nil it defaults to `reporter.NoopReporter{}`; if `HTTPClient` is nil a default `http.Client` with a 10-minute timeout is created. `OnDownloadProgress` is called with the HTTP response content length (-1 if unknown) and must return a fresh `io.Writer` per attempt to avoid double-counting retried downloads.
 
 ## Methods
 

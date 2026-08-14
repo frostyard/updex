@@ -20,9 +20,13 @@ func (c *Client) catalogRepos() ([]catalog.Repo, error) {
 	if c.config.Definitions != "" {
 		return nil, fmt.Errorf("catalog operations cannot be combined with a definitions override (--definitions)")
 	}
-	repos, err := catalog.LoadRepos()
+	repos, err := catalog.LoadReposFrom(c.paths.catalogConfigRoots)
 	if errors.Is(err, catalog.ErrNoCatalogs) {
-		return nil, fmt.Errorf("no catalogs configured: create a <name>.catalog file under %s (see the Catalog section of the README)", catalog.ConfigRoots[0])
+		firstRoot := ""
+		if len(c.paths.catalogConfigRoots) > 0 {
+			firstRoot = c.paths.catalogConfigRoots[0]
+		}
+		return nil, fmt.Errorf("no catalogs configured: create a <name>.catalog file under %s (see the Catalog section of the README)", firstRoot)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to load catalogs: %w", err)
@@ -74,9 +78,9 @@ func (c *Client) CatalogList(ctx context.Context, opts CatalogListOptions) ([]Ca
 		}
 
 		c.msg("Listing catalog %q", repo.Name)
-		names, cacheRes, err := catalog.CachedList(ctx, c.httpClient, repo, catalog.CachedListOptions{
+		names, cacheRes, err := catalog.CachedListIn(ctx, c.httpClient, repo, catalog.CachedListOptions{
 			NoCache: opts.NoCache,
-		})
+		}, c.paths.catalogCacheDir)
 		if err != nil {
 			return nil, err
 		}
@@ -89,7 +93,7 @@ func (c *Client) CatalogList(ctx context.Context, opts CatalogListOptions) ([]Ca
 				repo.Name, cacheRes.Age.Round(time.Minute))
 		}
 
-		features, err := config.LoadComponentFeatures(repo.Component)
+		features, err := config.LoadComponentFeaturesIn(repo.Component, c.paths.definitionRoots)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load features for component %q: %w", repo.Component, err)
 		}
@@ -179,13 +183,13 @@ func (c *Client) CatalogAdd(ctx context.Context, name string, opts CatalogAddOpt
 
 	repo, conf := hits[0].repo, hits[0].conf
 
-	transferData, err := catalog.RenderTransfer(conf, repo, name)
+	transferData, err := catalog.RenderTransferTo(conf, repo, name, c.paths.catalogTargetPath)
 	if err != nil {
 		return nil, err
 	}
 	featureData := catalog.RenderFeature(repo, name)
 
-	dir := config.EtcComponentDir(repo.Component)
+	dir := config.EtcComponentDirIn(repo.Component, c.paths.definitionRoots)
 	result := &CatalogAddResult{
 		Name:         name,
 		Repo:         repo.Name,
@@ -402,7 +406,7 @@ func (c *Client) CatalogRemove(ctx context.Context, name string, opts CatalogRem
 	// disabled or deleted here.
 	var owners []catalog.Repo
 	for _, repo := range repos {
-		featureFile := filepath.Join(config.EtcComponentDir(repo.Component), name+".feature")
+		featureFile := filepath.Join(config.EtcComponentDirIn(repo.Component, c.paths.definitionRoots), name+".feature")
 		if owner, ok := catalog.GeneratedFileRepo(featureFile); ok && owner == repo.Name {
 			owners = append(owners, repo)
 		}
@@ -420,7 +424,7 @@ func (c *Client) CatalogRemove(ctx context.Context, name string, opts CatalogRem
 	}
 	repo := owners[0]
 
-	dir := config.EtcComponentDir(repo.Component)
+	dir := config.EtcComponentDirIn(repo.Component, c.paths.definitionRoots)
 	transferFile := filepath.Join(dir, name+".transfer")
 	dropInDir := filepath.Join(dir, name+".feature.d")
 
