@@ -187,6 +187,9 @@ Key design points:
   (`CatalogListOptions.NoCache`) bypasses and rewrites the cache. The
   cache entry stores the repo's ListURL and is invalidated when it
   changes. `add`/`remove`/`FetchConf` never use the cache.
+- Catalog listing sends `GITHUB_TOKEN` only to the trusted
+  `https://api.github.com` origin and strips authorization from redirects to
+  any other origin; custom `ListURL` hosts never receive GitHub credentials.
 - Provenance: `FeatureInfo.Origin`/`OriginName` (set by
   `updex.featureOrigin` from the `.feature` path alone) drive the CATALOG
   column of `features list` — a catalog name for marker-bearing files,

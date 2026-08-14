@@ -104,7 +104,7 @@ func TestCLIIntegration_DefaultConfigurationDiscovery(t *testing.T) {
 	}
 }
 
-func TestCLIIntegration_CatalogUsesGitHubToken(t *testing.T) {
+func TestCLIIntegration_CatalogDoesNotSendGitHubTokenToCustomOrigin(t *testing.T) {
 	authHeader := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader <- r.Header.Get("Authorization")
@@ -145,7 +145,7 @@ func TestCLIIntegration_CatalogUsesGitHubToken(t *testing.T) {
 	if len(entries) != 1 || entries[0].Repo != "test" || entries[0].Name != "zoxide" {
 		t.Errorf("unexpected catalog entries: %+v", entries)
 	}
-	if got := <-authHeader; got != "Bearer cli-integration-token" {
-		t.Errorf("Authorization header = %q, want bearer token", got)
+	if got := <-authHeader; got != "" {
+		t.Error("custom catalog origin received authorization")
 	}
 }

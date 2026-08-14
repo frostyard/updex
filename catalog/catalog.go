@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -119,11 +120,37 @@ type contentsEntry struct {
 // List enumerates the sysexts available in repo via its ListURL (a GitHub
 // contents API endpoint): top-level directories minus dotted names and
 // known non-sysext directories, sorted. When the GITHUB_TOKEN environment
-// variable is set it is sent as a bearer token to raise the API rate limit.
+// variable is set it is sent as a bearer token to the public GitHub API
+// origin to raise the API rate limit.
 // List always fetches live; see CachedList for the TTL+ETag cached variant.
 func List(ctx context.Context, client *http.Client, repo Repo) ([]string, error) {
 	names, _, _, err := fetchList(ctx, client, repo, "")
 	return names, err
+}
+
+func isTrustedGitHubAPIURL(requestURL *url.URL) bool {
+	return strings.EqualFold(requestURL.Scheme, "https") &&
+		strings.EqualFold(requestURL.Hostname(), "api.github.com") &&
+		(requestURL.Port() == "" || requestURL.Port() == "443")
+}
+
+func doListRequest(client *http.Client, req *http.Request) (*http.Response, error) {
+	redirectSafeClient := *client
+	previousCheckRedirect := client.CheckRedirect
+	redirectSafeClient.CheckRedirect = func(redirectReq *http.Request, via []*http.Request) error {
+		if previousCheckRedirect != nil {
+			if err := previousCheckRedirect(redirectReq, via); err != nil {
+				return err
+			}
+		} else if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		if !isTrustedGitHubAPIURL(redirectReq.URL) {
+			redirectReq.Header.Del("Authorization")
+		}
+		return nil
+	}
+	return redirectSafeClient.Do(req)
 }
 
 // fetchList performs the ListURL request. When etag is non-empty it is sent
@@ -140,14 +167,14 @@ func fetchList(ctx context.Context, client *http.Client, repo Repo, etag string)
 		return nil, "", false, fmt.Errorf("failed to create list request: %w", err)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" && isTrustedGitHubAPIURL(req.URL) {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	if etag != "" {
 		req.Header.Set("If-None-Match", etag)
 	}
 
-	resp, err := client.Do(req)
+	resp, err := doListRequest(client, req)
 	if err != nil {
 		return nil, "", false, fmt.Errorf("failed to list catalog %q: %w", repo.Name, err)
 	}
