@@ -52,6 +52,10 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
 
 - [updex design overview](design/overview.md) — purpose, architecture,
   key patterns, configuration, and data flow (formerly `yeti/OVERVIEW.md`)
+- [packaging & maintainer guide](design/packaging-and-maintainers.md) —
+  runtime prerequisites (sysext state dirs, `systemd-sysext.service`,
+  catalog config) and recommended package post-install steps for shipping
+  updex in an OS image or package
 
 ### Specs
 
