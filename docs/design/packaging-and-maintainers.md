@@ -28,7 +28,9 @@ On SELinux-enforcing systems (Fedora and derivatives), relabel them so
 `systemd-sysext` can read them:
 
 ```bash
-if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
+if command -v selinuxenabled >/dev/null 2>&1 \
+    && command -v restorecon >/dev/null 2>&1 \
+    && selinuxenabled; then
     restorecon -RFv /var/lib/extensions /var/lib/extensions.d
 fi
 ```
@@ -98,7 +100,9 @@ the prerequisites above so the tool works immediately:
 install -d -m 0755 -o 0 -g 0 /var/lib/extensions /var/lib/extensions.d
 
 # Relabel for SELinux where applicable.
-if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
+if command -v selinuxenabled >/dev/null 2>&1 \
+    && command -v restorecon >/dev/null 2>&1 \
+    && selinuxenabled; then
     restorecon -RFv /var/lib/extensions /var/lib/extensions.d
 fi
 
