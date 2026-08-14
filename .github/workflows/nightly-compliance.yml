@@ -2,7 +2,7 @@ name: Nightly compliance
 
 on:
   schedule:
-    - cron: '27 3 * * *'
+    - cron: "27 3 * * *"
   workflow_dispatch:
 
 permissions:
@@ -26,7 +26,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6.0.0
         with:
-          go-version: '1.26.5'
+          go-version: "1.26.6"
           cache: true
 
       - name: Verify dependency content

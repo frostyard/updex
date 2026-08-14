@@ -13,7 +13,9 @@ import (
 // SearchRoots are the systemd-style root directories scanned for the legacy
 // default component (SearchRoots[i]+"/sysupdate.d") and for named components
 // (SearchRoots[i]+"/sysupdate.<name>.d"), in priority order (earlier roots
-// win). Overridable in tests.
+// win). SDK callers should inject roots via updex.RuntimePaths rather than
+// mutating this variable; it remains for compatibility wrappers and tests that
+// have not yet migrated.
 var SearchRoots = []string{
 	"/etc",
 	"/run",
@@ -32,21 +34,30 @@ func componentDirName(name string) string {
 	return "sysupdate." + name + ".d"
 }
 
-// ComponentSearchPaths returns the systemd-style search-path directories for
-// a component, in priority order (earlier entries win). Pass "" for the
-// legacy default component (/etc/sysupdate.d, /run/sysupdate.d, ...).
-func ComponentSearchPaths(name string) []string {
+// ComponentSearchPathsIn returns the systemd-style search-path directories for
+// a component from the given roots, in priority order. Pass "" for the legacy
+// default component. This is the explicit-roots variant of ComponentSearchPaths.
+func ComponentSearchPathsIn(name string, roots []string) []string {
 	dirName := componentDirName(name)
-	paths := make([]string, len(SearchRoots))
-	for i, root := range SearchRoots {
+	paths := make([]string, len(roots))
+	for i, root := range roots {
 		paths[i] = filepath.Join(root, dirName)
 	}
 	return paths
 }
 
-// defaultSearchPaths are the search paths for the legacy default component.
-func defaultSearchPaths() []string {
-	return ComponentSearchPaths("")
+// ComponentSearchPaths returns the systemd-style search-path directories for
+// a component, in priority order (earlier entries win). Pass "" for the
+// legacy default component (/etc/sysupdate.d, /run/sysupdate.d, ...).
+func ComponentSearchPaths(name string) []string {
+	return ComponentSearchPathsIn(name, SearchRoots)
+}
+
+// EtcComponentDirIn returns the /etc override directory for a component's
+// definitions using the given roots (the highest-priority root is used).
+// This is the explicit-roots variant of EtcComponentDir.
+func EtcComponentDirIn(name string, roots []string) string {
+	return filepath.Join(roots[0], componentDirName(name))
 }
 
 // EtcComponentDir returns the /etc override directory for a component's
@@ -56,7 +67,7 @@ func defaultSearchPaths() []string {
 // search root is used so tests that override SearchRoots exercise real
 // writes; in production that root is /etc.
 func EtcComponentDir(name string) string {
-	return filepath.Join(SearchRoots[0], componentDirName(name))
+	return EtcComponentDirIn(name, SearchRoots)
 }
 
 // componentNamePattern matches systemd-sysupdate component names (see
@@ -89,17 +100,14 @@ func ComponentOfPath(path string) (string, bool) {
 	return parseComponentDirName(filepath.Base(filepath.Dir(path)))
 }
 
-// SearchRootIndex returns the index into SearchRoots of the root that
-// contains path, or (-1, false) when path lies outside every root (e.g. a
-// --definitions override directory). The most specific root wins, so a
-// nested root is preferred over one that merely shares a prefix. Callers
-// use the index rather than the directory string because SearchRoots is
-// overridden with temporary directories in tests.
-func SearchRootIndex(path string) (int, bool) {
+// SearchRootIndexIn returns the index into roots of the root that contains
+// path, or (-1, false) when path lies outside every root. This is the
+// explicit-roots variant of SearchRootIndex.
+func SearchRootIndexIn(path string, roots []string) (int, bool) {
 	path = filepath.Clean(path)
 
 	best, bestLen := -1, 0
-	for i, root := range SearchRoots {
+	for i, root := range roots {
 		root = filepath.Clean(root)
 		if path != root && !strings.HasPrefix(path, root+string(filepath.Separator)) {
 			continue
@@ -112,6 +120,16 @@ func SearchRootIndex(path string) (int, bool) {
 		return -1, false
 	}
 	return best, true
+}
+
+// SearchRootIndex returns the index into SearchRoots of the root that
+// contains path, or (-1, false) when path lies outside every root (e.g. a
+// --definitions override directory). The most specific root wins, so a
+// nested root is preferred over one that merely shares a prefix. Callers
+// use the index rather than the directory string because SearchRoots is
+// overridden with temporary directories in tests.
+func SearchRootIndex(path string) (int, bool) {
+	return SearchRootIndexIn(path, SearchRoots)
 }
 
 // Component describes a discovered systemd-sysupdate component: a named
@@ -127,15 +145,14 @@ type Component struct {
 	SearchPaths []string
 }
 
-// DiscoverComponents scans SearchRoots for sysupdate.<name>.d directories
-// and returns the named components found, sorted by name. It does not
-// include the legacy default component (plain sysupdate.d); use
-// ComponentSearchPaths("") for that. Directory names that don't match the
-// component charset (see parseComponentDirName) are ignored.
-func DiscoverComponents() ([]Component, error) {
+// DiscoverComponentsIn scans the given roots for sysupdate.<name>.d directories
+// and returns the named components found, sorted by name. It does not include
+// the legacy default component. This is the explicit-roots variant of
+// DiscoverComponents.
+func DiscoverComponentsIn(roots []string) ([]Component, error) {
 	found := make(map[string]bool)
 
-	for _, root := range SearchRoots {
+	for _, root := range roots {
 		entries, err := os.ReadDir(root)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -160,7 +177,7 @@ func DiscoverComponents() ([]Component, error) {
 	for name := range found {
 		components = append(components, Component{
 			Name:        name,
-			SearchPaths: existingDirs(ComponentSearchPaths(name)),
+			SearchPaths: existingDirs(ComponentSearchPathsIn(name, roots)),
 		})
 	}
 
@@ -169,6 +186,15 @@ func DiscoverComponents() ([]Component, error) {
 	})
 
 	return components, nil
+}
+
+// DiscoverComponents scans SearchRoots for sysupdate.<name>.d directories
+// and returns the named components found, sorted by name. It does not
+// include the legacy default component (plain sysupdate.d); use
+// ComponentSearchPaths("") for that. Directory names that don't match the
+// component charset (see parseComponentDirName) are ignored.
+func DiscoverComponents() ([]Component, error) {
+	return DiscoverComponentsIn(SearchRoots)
 }
 
 // existingDirs filters paths to those that exist as directories on disk,

@@ -20,7 +20,9 @@ var DefaultListCacheTTL = 60 * time.Minute
 // CacheDir is the directory listing caches are stored in, defaulting to
 // <user cache dir>/updex (~/.cache/updex). Empty — including when the
 // user cache dir cannot be resolved — disables caching, making every
-// CachedList call fetch live. Overridable in tests.
+// CachedList call fetch live. SDK callers should inject a cache dir via
+// updex.RuntimePaths rather than mutating this variable; it remains for
+// compatibility wrappers and tests that have not yet migrated.
 var CacheDir = defaultCacheDir()
 
 func defaultCacheDir() string {
@@ -64,17 +66,11 @@ type CacheResult struct {
 	Age time.Duration
 }
 
-// CachedList is List with a local TTL+ETag cache. Within the TTL the
-// cached listing is served with zero network traffic. After expiry the
-// listing is revalidated with If-None-Match: GitHub's 304 response costs
-// no API rate limit and only bumps the cache timestamp. When a live fetch
-// fails but an expired entry exists, the stale listing is served with
-// Stale set so callers can warn. Cache reads and writes are best-effort:
-// corrupt entries are treated as misses and write failures are ignored.
-func CachedList(ctx context.Context, client *http.Client, repo Repo, opts CachedListOptions) ([]string, CacheResult, error) {
-	// The repo name becomes a cache filename. LoadRepos validates it, but
-	// CachedList is public API and can be handed a hand-built Repo, so
-	// re-check here rather than trusting the caller.
+// CachedListIn is List with a local TTL+ETag cache, using an explicit
+// cacheDir instead of the package-global CacheDir. An empty cacheDir
+// disables caching (every call fetches live). This is the explicit-dir
+// variant of CachedList and is what SDK internals use.
+func CachedListIn(ctx context.Context, client *http.Client, repo Repo, opts CachedListOptions, cacheDir string) ([]string, CacheResult, error) {
 	if !repoNamePattern.MatchString(repo.Name) {
 		return nil, CacheResult{}, fmt.Errorf("invalid catalog name %q (allowed: [a-zA-Z0-9_-]+)", repo.Name)
 	}
@@ -84,7 +80,7 @@ func CachedList(ctx context.Context, client *http.Client, repo Repo, opts Cached
 		ttl = DefaultListCacheTTL
 	}
 
-	path := listCachePath(repo)
+	path := listCachePathIn(repo, cacheDir)
 	var entry *listCacheEntry
 	if !opts.NoCache && path != "" {
 		entry = loadListCache(path, repo)
@@ -103,9 +99,6 @@ func CachedList(ctx context.Context, client *http.Client, repo Repo, opts Cached
 
 	names, newETag, notModified, err := fetchList(ctx, client, repo, etag)
 	if err != nil {
-		// A cancelled or timed-out context is the caller aborting, not a
-		// catalog being unreachable: propagate it instead of reporting
-		// success with stale data.
 		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, CacheResult{}, err
 		}
@@ -116,8 +109,6 @@ func CachedList(ctx context.Context, client *http.Client, repo Repo, opts Cached
 	}
 
 	if notModified {
-		// A 304 can only happen when we sent an ETag, i.e. entry != nil;
-		// the guard protects against a server 304ing unconditionally.
 		if entry == nil {
 			return nil, CacheResult{}, fmt.Errorf("catalog %q returned 304 to an unconditional request", repo.Name)
 		}
@@ -135,14 +126,24 @@ func CachedList(ctx context.Context, client *http.Client, repo Repo, opts Cached
 	return names, CacheResult{}, nil
 }
 
-// listCachePath returns the cache file path for a repo's listing, or ""
-// when caching is disabled. Repo names are charset-validated at load time,
-// so they are safe as filename components.
-func listCachePath(repo Repo) string {
-	if CacheDir == "" {
+// CachedList is List with a local TTL+ETag cache. Within the TTL the
+// cached listing is served with zero network traffic. After expiry the
+// listing is revalidated with If-None-Match: GitHub's 304 response costs
+// no API rate limit and only bumps the cache timestamp. When a live fetch
+// fails but an expired entry exists, the stale listing is served with
+// Stale set so callers can warn. Cache reads and writes are best-effort:
+// corrupt entries are treated as misses and write failures are ignored.
+func CachedList(ctx context.Context, client *http.Client, repo Repo, opts CachedListOptions) ([]string, CacheResult, error) {
+	return CachedListIn(ctx, client, repo, opts, CacheDir)
+}
+
+// listCachePathIn returns the cache file path for a repo's listing using the
+// given cacheDir, or "" when cacheDir is empty (caching disabled).
+func listCachePathIn(repo Repo, cacheDir string) string {
+	if cacheDir == "" {
 		return ""
 	}
-	return filepath.Join(CacheDir, "list-"+repo.Name+".json")
+	return filepath.Join(cacheDir, "list-"+repo.Name+".json")
 }
 
 // loadListCache reads and validates a cache entry, returning nil for any

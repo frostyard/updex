@@ -32,9 +32,9 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 	c.debug("selected version %s (from %d available)", versionToInstall, len(available))
 
 	// Check if already installed and current
-	installed, current, _ := sysext.GetInstalledVersions(transfer)
+	installed, current, _ := sysext.GetInstalledVersionsAt(transfer, c.paths.sysextLinkDir)
 	if !opts.DryRun && transfer.Target.CurrentSymlink != "" {
-		if err := sysext.RemoveLegacyCurrentSymlink(transfer); err != nil {
+		if err := sysext.RemoveLegacyCurrentSymlinkAt(transfer, c.paths.sysextLinkDir); err != nil {
 			c.warn("failed to remove legacy symlink for %s: %v", transfer.Component, err)
 		}
 	}
@@ -78,11 +78,16 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 		return "", nil, false, fmt.Errorf("download failed: %w", err)
 	}
 
-	// Link to /var/lib/extensions for systemd-sysext — without this the
-	// extension is invisible to `systemd-sysext refresh`, so treat failure
-	// as a hard error even though the download succeeded.
-	if err := c.runner.LinkToSysext(transfer); err != nil {
-		return "", nil, false, fmt.Errorf("failed to link to sysext: %w", err)
+	var linkErr error
+	if runner, ok := c.runner.(sysext.PathSysextRunner); ok {
+		linkErr = runner.LinkToSysextAt(transfer, c.paths.sysextLinkDir)
+	} else {
+		// Preserve compatibility with injected runners that implement the
+		// original SysextRunner interface.
+		linkErr = c.runner.LinkToSysext(transfer)
+	}
+	if linkErr != nil {
+		return "", nil, false, fmt.Errorf("failed to link to sysext: %w", linkErr)
 	}
 
 	// Refresh systemd-sysext
@@ -94,7 +99,7 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 
 	// Run vacuum
 	if !opts.NoVacuum {
-		if err := sysext.Vacuum(transfer); err != nil {
+		if err := sysext.VacuumAt(transfer, c.paths.sysextLinkDir); err != nil {
 			c.warn("vacuum failed: %v", err)
 		}
 	}

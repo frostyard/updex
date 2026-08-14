@@ -166,6 +166,16 @@ func TestRenderTransfer(t *testing.T) {
 	}
 }
 
+func TestRenderTransferToRewritesProductionTarget(t *testing.T) {
+	out, err := RenderTransferTo([]byte(zoxideConf), testRepo, "zoxide", "/isolated/extensions.d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "Path=/isolated/extensions.d\n") {
+		t.Fatalf("custom target not rendered:\n%s", out)
+	}
+}
+
 func TestRenderTransferNoTransferSection(t *testing.T) {
 	conf := `[Source]
 Type=url-file

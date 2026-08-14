@@ -26,48 +26,51 @@ type Feature struct {
 	Transfers     []string // Names of transfers belonging to this feature
 }
 
+// LoadFeaturesIn loads all .feature files from customPath (if non-empty) or
+// from the given roots using their legacy default search paths. This is the
+// explicit-roots variant of LoadFeatures.
+func LoadFeaturesIn(customPath string, roots []string) ([]*Feature, error) {
+	if customPath != "" {
+		return loadFeaturesFromPaths([]string{customPath})
+	}
+	return loadFeaturesFromPaths(ComponentSearchPathsIn("", roots))
+}
+
 // LoadFeatures loads all .feature files from the specified directory or the
 // legacy default search paths (/etc/sysupdate.d, /run/sysupdate.d, ...). It
 // does not discover named components; see LoadAllFeatures and
 // LoadComponentFeatures for that.
 func LoadFeatures(customPath string) ([]*Feature, error) {
-	if customPath != "" {
-		return loadFeaturesFromPaths([]string{customPath})
-	}
-	return loadFeaturesFromPaths(defaultSearchPaths())
+	return LoadFeaturesIn(customPath, SearchRoots)
+}
+
+// LoadComponentFeaturesIn loads .feature files for a single named component
+// using the given roots. This is the explicit-roots variant of
+// LoadComponentFeatures.
+func LoadComponentFeaturesIn(name string, roots []string) ([]*Feature, error) {
+	return loadFeaturesFromPaths(ComponentSearchPathsIn(name, roots))
 }
 
 // LoadComponentFeatures loads .feature files for a single named component,
 // following its own /etc > /run > /usr/local/lib > /usr/lib precedence (see
 // ComponentSearchPaths). Pass "" for the legacy default component.
 func LoadComponentFeatures(name string) ([]*Feature, error) {
-	return loadFeaturesFromPaths(ComponentSearchPaths(name))
+	return LoadComponentFeaturesIn(name, SearchRoots)
 }
 
-// LoadAllFeatures loads the feature domain updex operates on by default:
-// the union of the legacy default sysupdate.d directory and every
-// discovered named component (see DiscoverComponents). If customPath is
-// non-empty, component discovery is bypassed entirely and this behaves like
-// LoadFeatures(customPath), matching the explicit single-directory override
-// semantics of the --definitions flag.
-//
-// Feature names are expected to be globally unique across the union, since
-// they're derived from distinct sysext names. When the same name is defined
-// by more than one source, the most specific source wins — a named
-// component beats the legacy default directory, and among colliding
-// components the alphabetically last one wins — and the collision is
-// reported as a warning string rather than an error.
-func LoadAllFeatures(customPath string) ([]*Feature, []string, error) {
+// LoadAllFeaturesIn loads the feature domain updex operates on by default
+// using the given roots. This is the explicit-roots variant of LoadAllFeatures.
+func LoadAllFeaturesIn(customPath string, roots []string) ([]*Feature, []string, error) {
 	if customPath != "" {
-		f, err := LoadFeatures(customPath)
+		f, err := LoadFeaturesIn(customPath, roots)
 		return f, nil, err
 	}
 
-	legacy, err := LoadFeatures("")
+	legacy, err := LoadFeaturesIn("", roots)
 	if err != nil {
 		return nil, nil, err
 	}
-	components, err := DiscoverComponents()
+	components, err := DiscoverComponentsIn(roots)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -92,7 +95,7 @@ func LoadAllFeatures(customPath string) ([]*Feature, []string, error) {
 		put(f, "the default directory")
 	}
 	for _, comp := range components {
-		cf, err := LoadComponentFeatures(comp.Name)
+		cf, err := LoadComponentFeaturesIn(comp.Name, roots)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -112,7 +115,23 @@ func LoadAllFeatures(customPath string) ([]*Feature, []string, error) {
 	return features, warnings, nil
 }
 
-// loadFeaturesFromPaths loads all .feature files found across searchPaths,
+// LoadAllFeatures loads the feature domain updex operates on by default:
+// the union of the legacy default sysupdate.d directory and every
+// discovered named component (see DiscoverComponents). If customPath is
+// non-empty, component discovery is bypassed entirely and this behaves like
+// LoadFeatures(customPath), matching the explicit single-directory override
+// semantics of the --definitions flag.
+//
+// Feature names are expected to be globally unique across the union, since
+// they're derived from distinct sysext names. When the same name is defined
+// by more than one source, the most specific source wins — a named
+// component beats the legacy default directory, and among colliding
+// components the alphabetically last one wins — and the collision is
+// reported as a warning string rather than an error.
+func LoadAllFeatures(customPath string) ([]*Feature, []string, error) {
+	return LoadAllFeaturesIn(customPath, SearchRoots)
+}
+
 // with earlier paths taking priority for a given filename.
 func loadFeaturesFromPaths(searchPaths []string) ([]*Feature, error) {
 	// Collect all .feature files, with earlier paths taking priority

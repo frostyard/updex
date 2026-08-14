@@ -27,23 +27,28 @@ func parseTargetPatterns(t *config.Transfer) ([]*version.Pattern, error) {
 	return patterns, nil
 }
 
-// targetDir returns the target directory for a transfer, defaulting to SysextDir.
-func targetDir(t *config.Transfer) string {
+func targetDirAt(t *config.Transfer, defaultDir string) string {
 	if t.Target.Path != "" {
 		return t.Target.Path
 	}
-	return SysextDir
+	return defaultDir
 }
 
 // GetInstalledVersions returns the list of installed versions for a transfer config
 // Also returns the current version (pointed to by symlink or newest)
 func GetInstalledVersions(t *config.Transfer) ([]string, string, error) {
+	return GetInstalledVersionsAt(t, SysextDir)
+}
+
+// GetInstalledVersionsAt is GetInstalledVersions with an explicit fallback
+// directory for transfers that omit Target.Path.
+func GetInstalledVersionsAt(t *config.Transfer, defaultDir string) ([]string, string, error) {
 	patterns, err := parseTargetPatterns(t)
 	if err != nil {
 		return nil, "", err
 	}
 
-	targetDir := targetDir(t)
+	targetDir := targetDirAt(t, defaultDir)
 
 	entries, err := os.ReadDir(targetDir)
 	if err != nil {
@@ -92,6 +97,12 @@ func GetInstalledVersions(t *config.Transfer) ([]string, string, error) {
 // GetActiveVersion returns the version currently active in systemd-sysext
 // This checks if the extension is currently merged
 func GetActiveVersion(t *config.Transfer) (string, error) {
+	return GetActiveVersionAt(t, SysextDir)
+}
+
+// GetActiveVersionAt is GetActiveVersion with an explicit fallback directory
+// for transfers that omit Target.Path.
+func GetActiveVersionAt(t *config.Transfer, defaultDir string) (string, error) {
 	patterns, err := parseTargetPatterns(t)
 	if err != nil {
 		return "", err
@@ -99,7 +110,7 @@ func GetActiveVersion(t *config.Transfer) (string, error) {
 
 	// First try the current symlink in the target directory
 	if t.Target.CurrentSymlink != "" {
-		symlinkPath := filepath.Join(t.Target.Path, t.Target.CurrentSymlink)
+		symlinkPath := filepath.Join(targetDirAt(t, defaultDir), t.Target.CurrentSymlink)
 		if target, err := os.Readlink(symlinkPath); err == nil {
 			if v, _, ok := version.ExtractVersionParsed(filepath.Base(target), patterns); ok {
 				return v, nil
@@ -134,27 +145,43 @@ type versionFile struct {
 // PlanVacuumAfterInstall returns the versions that vacuum would remove/keep
 // after installing activeVersion, without deleting files.
 func PlanVacuumAfterInstall(t *config.Transfer, activeVersion string) (removed []string, kept []string, err error) {
-	return planVacuum(t, activeVersion, nil, false)
+	return PlanVacuumAfterInstallAt(t, activeVersion, SysextDir)
+}
+
+// PlanVacuumAfterInstallAt is PlanVacuumAfterInstall with an explicit
+// fallback directory for transfers that omit Target.Path.
+func PlanVacuumAfterInstallAt(t *config.Transfer, activeVersion, defaultDir string) (removed []string, kept []string, err error) {
+	return planVacuum(t, activeVersion, nil, false, defaultDir)
 }
 
 // Vacuum removes old versions according to InstancesMax
 func Vacuum(t *config.Transfer) error {
-	_, _, err := VacuumWithDetails(t)
+	return VacuumAt(t, SysextDir)
+}
+
+// VacuumAt is Vacuum with an explicit fallback directory for transfers that
+// omit Target.Path.
+func VacuumAt(t *config.Transfer, defaultDir string) error {
+	_, _, err := vacuumWithDetailsAt(t, defaultDir)
 	return err
 }
 
 // VacuumWithDetails removes old versions and returns what was removed/kept
 func VacuumWithDetails(t *config.Transfer) (removed []string, kept []string, err error) {
-	return planVacuum(t, "", nil, true)
+	return vacuumWithDetailsAt(t, SysextDir)
 }
 
-func planVacuum(t *config.Transfer, activeVersionOverride string, extraVersions []string, remove bool) (removed []string, kept []string, err error) {
+func vacuumWithDetailsAt(t *config.Transfer, defaultDir string) (removed []string, kept []string, err error) {
+	return planVacuum(t, "", nil, true, defaultDir)
+}
+
+func planVacuum(t *config.Transfer, activeVersionOverride string, extraVersions []string, remove bool, defaultDir string) (removed []string, kept []string, err error) {
 	patterns, err := parseTargetPatterns(t)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	targetDir := targetDir(t)
+	targetDir := targetDirAt(t, defaultDir)
 
 	entries, err := os.ReadDir(targetDir)
 	if err != nil {
@@ -277,6 +304,9 @@ func GetExtensionName(filename string) string {
 }
 
 // SysextDir is the directory where systemd-sysext looks for extensions.
+// Deprecated: inject a SysextLinkDir via updex.RuntimePaths instead of
+// mutating this variable. It remains for compatibility wrappers and tests
+// that have not yet migrated.
 var SysextDir = "/var/lib/extensions"
 
 // SysextLinkName returns the /var/lib/extensions link name for a transfer.
@@ -306,13 +336,13 @@ func stripCompressionSuffix(name string) string {
 	return name
 }
 
-func installedVersionFiles(t *config.Transfer) ([]versionFile, error) {
+func installedVersionFilesAt(t *config.Transfer, defaultDir string) ([]versionFile, error) {
 	patterns, err := parseTargetPatterns(t)
 	if err != nil {
 		return nil, err
 	}
 
-	dir := targetDir(t)
+	dir := targetDirAt(t, defaultDir)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -339,11 +369,17 @@ func installedVersionFiles(t *config.Transfer) ([]versionFile, error) {
 
 // RemoveLegacyCurrentSymlink removes the staging CurrentSymlink if one is configured.
 func RemoveLegacyCurrentSymlink(t *config.Transfer) error {
+	return RemoveLegacyCurrentSymlinkAt(t, SysextDir)
+}
+
+// RemoveLegacyCurrentSymlinkAt is RemoveLegacyCurrentSymlink with an explicit
+// fallback directory for transfers that omit Target.Path.
+func RemoveLegacyCurrentSymlinkAt(t *config.Transfer, defaultDir string) error {
 	if t.Target.CurrentSymlink == "" {
 		return nil
 	}
 
-	symlinkPath := filepath.Join(targetDir(t), t.Target.CurrentSymlink)
+	symlinkPath := filepath.Join(targetDirAt(t, defaultDir), t.Target.CurrentSymlink)
 	info, err := os.Lstat(symlinkPath)
 	if os.IsNotExist(err) {
 		return nil
@@ -360,15 +396,17 @@ func RemoveLegacyCurrentSymlink(t *config.Transfer) error {
 	return nil
 }
 
-// LinkToSysext creates a symlink in /var/lib/extensions pointing to the newest
+// LinkToSysextAt creates a symlink in sysextDir pointing to the newest
 // installed extension file in the staging directory (e.g., /var/lib/extensions.d/).
-func LinkToSysext(t *config.Transfer) error {
+// The explicit sysextDir allows multiple clients to target independent link
+// directories without touching the package-global SysextDir.
+func LinkToSysextAt(t *config.Transfer, sysextDir string) error {
 	linkName := SysextLinkName(t)
 	if linkName == "" {
 		return fmt.Errorf("cannot determine sysext link name")
 	}
 
-	files, err := installedVersionFiles(t)
+	files, err := installedVersionFilesAt(t, sysextDir)
 	if err != nil {
 		return err
 	}
@@ -376,11 +414,11 @@ func LinkToSysext(t *config.Transfer) error {
 		return fmt.Errorf("no installed versions found for %s", t.Component)
 	}
 
-	actualTargetPath := filepath.Join(targetDir(t), files[0].filename)
-	destSymlink := filepath.Join(SysextDir, linkName)
+	actualTargetPath := filepath.Join(targetDirAt(t, sysextDir), files[0].filename)
+	destSymlink := filepath.Join(sysextDir, linkName)
 
 	// Ensure the sysext directory exists
-	if err := os.MkdirAll(SysextDir, 0755); err != nil {
+	if err := os.MkdirAll(sysextDir, 0755); err != nil {
 		return fmt.Errorf("failed to create sysext directory: %w", err)
 	}
 
@@ -401,14 +439,26 @@ func LinkToSysext(t *config.Transfer) error {
 	return nil
 }
 
-// UnlinkFromSysext removes the extension symlink from /var/lib/extensions
-func UnlinkFromSysext(t *config.Transfer) error {
+// LinkToSysext creates a symlink in /var/lib/extensions pointing to the newest
+// installed extension file in the staging directory (e.g., /var/lib/extensions.d/).
+//
+// Deprecated: SDK callers should pass a SysextLinkDir via updex.RuntimePaths
+// so that links are written to an instance-owned directory rather than the
+// process-wide default. This wrapper exists for compatibility.
+func LinkToSysext(t *config.Transfer) error {
+	return LinkToSysextAt(t, SysextDir)
+}
+
+// UnlinkFromSysextAt removes the extension symlink from sysextDir.
+// The explicit sysextDir allows multiple clients to target independent link
+// directories without touching the package-global SysextDir.
+func UnlinkFromSysextAt(t *config.Transfer, sysextDir string) error {
 	linkName := SysextLinkName(t)
 	if linkName == "" {
 		return fmt.Errorf("cannot determine sysext link name")
 	}
 
-	destSymlink := filepath.Join(SysextDir, linkName)
+	destSymlink := filepath.Join(sysextDir, linkName)
 
 	if _, err := os.Lstat(destSymlink); os.IsNotExist(err) {
 		return nil // Already removed
@@ -421,15 +471,30 @@ func UnlinkFromSysext(t *config.Transfer) error {
 	return nil
 }
 
+// UnlinkFromSysext removes the extension symlink from /var/lib/extensions.
+//
+// Deprecated: SDK callers should pass a SysextLinkDir via updex.RuntimePaths
+// so that links are removed from an instance-owned directory rather than the
+// process-wide default. This wrapper exists for compatibility.
+func UnlinkFromSysext(t *config.Transfer) error {
+	return UnlinkFromSysextAt(t, SysextDir)
+}
+
 // RemoveAllVersions removes all versions of a component from the target directory
 // and removes the current symlink if it exists. Returns the list of removed files.
 func RemoveAllVersions(t *config.Transfer) ([]string, error) {
+	return RemoveAllVersionsAt(t, SysextDir)
+}
+
+// RemoveAllVersionsAt is RemoveAllVersions with an explicit fallback
+// directory for transfers that omit Target.Path.
+func RemoveAllVersionsAt(t *config.Transfer, defaultDir string) ([]string, error) {
 	patterns, err := parseTargetPatterns(t)
 	if err != nil {
 		return nil, err
 	}
 
-	targetDir := targetDir(t)
+	targetDir := targetDirAt(t, defaultDir)
 
 	entries, err := os.ReadDir(targetDir)
 	if err != nil {
