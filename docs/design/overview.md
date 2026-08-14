@@ -91,6 +91,11 @@ CLI (cmd/daemon.go) → systemd (direct, bypasses SDK)
 
 - Mock interfaces for system commands: `sysext.SysextRunner`, `systemd.SystemctlRunner`
 - `ClientConfig.SysextRunner` field for injecting mocks into the SDK client — `NewClient` stores the runner directly on the `Client` struct (does not mutate global state)
+- `ClientConfig.Paths` (`RuntimePaths`) for supplying temp filesystem trees to a client at construction — the preferred approach for path isolation since ADR-0010; use `t.TempDir()` paths for `DefinitionRoots`, `SysextLinkDir`, `CatalogConfigRoots`, etc. Independently configured clients can run in parallel without save/mutate/restore discipline.
+- Package-level compatibility variables (`config.SearchRoots`, `catalog.ConfigRoots`, `catalog.CacheDir`, `sysext.SysextDir`) remain settable for tests that have not yet migrated; mutation before client construction still works because `NewClient` reads each global once at that point.
+- Transfer parsing receives the client's captured os-release paths as well as
+  definition roots, so `%w`/related specifier expansion cannot cross client
+  boundaries.
 - `internal/testutil.NewTestServer()` creates `httptest.Server` with configurable manifests and file content
 - `t.TempDir()` for filesystem operations, `t.Context()` for context
 - `tests/e2e/` builds and runs the real CLI subprocess for argument, exit-code, output, custom-config, and read-only HTTP checks. `cmd/updex/integration_test.go` runs the full Cobra/clix command in-process so package search roots can point at temporary default component and catalog trees; keep mutating subprocess paths behind parser failures so CI does not require root.
@@ -135,9 +140,10 @@ Only the first occurrence of a given filename is used. The `-C` flag overrides a
 
 A systemd-sysupdate "component" (sysupdate.d(5) "Components") is a named
 grouping of `.transfer`/`.feature` files under `sysupdate.<name>.d/`,
-searched across the same four roots (`config.SearchRoots`, a package var —
-overridable in tests the same way `sysext.SysextDir` is, see
-[ADR-0009](../adr/0009-overridable-system-path-vars.md)) with the same
+searched across the same four roots (`config.SearchRoots` — a package var
+whose value is captured immutably by each client at `NewClient` via
+`ClientConfig.Paths.DefinitionRoots`; see
+[ADR-0010](../adr/0010-instance-scoped-runtime-paths.md)) with the same
 priority order as the legacy default `sysupdate.d/` directory. This exists
 because native OS images now put A/B partition and UKI transfers in the
 default directory (see "Non-sysext transfers" below), and package-versioned
@@ -253,7 +259,7 @@ Enabled by default to match systemd-sysupdate. Set `Verify=no` explicitly to opt
 
 Uses `github.com/ProtonMail/go-crypto/openpgp` for signature verification. Supports both binary and armored keyring formats.
 
-Only the main `SHA256SUMS` fetch has bounded retry behavior. The detached `.gpg` signature fetch is a single request in the current implementation.
+Only the main `SHA256SUMS` fetch has bounded retry behavior. The detached `.gpg` signature fetch is a single request in the current implementation. Manifest response bodies are read through a 4 MiB-plus-one-byte limit and detached signatures through a 1 MiB-plus-one-byte limit; crossing either boundary fails before parsing, keyring loading, or signature verification.
 
 ### Systemd specifiers
 
@@ -280,16 +286,21 @@ Design decisions (verified with the user, 2026-08):
   `GITHUB_TOKEN` env honored as bearer token), `Component` (optional,
   default `catalog-<repo>`). Missing config → `catalog.ErrNoCatalogs`,
   surfaced by the SDK with setup guidance.
-- **`RenderTransfer` is a byte-preserving line transform**
+- **`RenderTransfer` is a security-constrained line transform**
   ([ADR-0006](../adr/0006-byte-preserving-render-transfer.md)), not an INI
   round-trip: it prepends the `GeneratedMarker` ownership header, injects
-  `Features=<name>` right after `[Transfer]`, and drops
-  `Target CurrentSymlink` (updex manages `/var/lib/extensions` links
-  itself and removes legacy symlinks), leaving everything else verbatim.
+  `Features=<name>` right after `[Transfer]`, requires `Source.Type=url-file`
+  and the configured `<SiteURL>/<name>/` source, and requires basename-only
+  source and target patterns. It rewrites the target to a regular `0644` file
+  under trusted `catalog.TargetPath` (default `/var/lib/extensions.d`), dropping catalog-provided `Path`,
+  `PathRelativeTo`, `Mode`, and `CurrentSymlink` values so remote metadata
+  cannot redirect a root-owned write. The complete `[Source]` and `[Target]`
+  bodies are reconstructed after validation so alternate valid INI syntax
+  cannot bypass field stripping; other sections stay verbatim.
   `%w`/`%a` specifiers deliberately stay **unexpanded** in the written
   `.transfer` — expansion happens at config load time — so the file keeps
-  tracking the running Fedora release across OS upgrades. `ini.Load` is
-  used only to validate `[Source]`/`[Target]` exist.
+  tracking the running Fedora release across OS upgrades. `ini.Load` validates
+  both sections and their security-sensitive fields before transformation.
 - **Ownership via repo-scoped `GeneratedMarker`**
   ([ADR-0003](../adr/0003-catalog-ownership-marker.md); PR #137 review, both
   rounds — first that name-in-component was too weak a signal, then that a
@@ -508,6 +519,15 @@ Mutating commands enforce root before reading `--dry-run`, so examples that prev
 | `github.com/ProtonMail/go-crypto` | GPG signature verification (openpgp) |
 
 ## CI and Releases
+
+`.github/workflows/release.yml` publishes tagged GoReleaser Pro releases and
+packages, then dispatches `event-type: build` to `frostyard/snosi` so the
+component release promptly fans out into an image rebuild
+([frostyard/core ADR-0013](https://github.com/frostyard/core/blob/main/docs/adr/0013-release-fanout-via-repository-dispatch.md)).
+The tag-only trigger is the dispatch guard; the step must not check for a
+default-branch ref because tag runs use `refs/tags/<tag>`.
+`updex/release_workflow_contract_test.go` parses the workflow and pins that
+trigger-to-dispatch contract.
 
 `.github/workflows/snapshot.yml` runs after successful `Tests` workflows on
 `main` and publishes a GoReleaser Pro nightly under the singleton `dev` tag.

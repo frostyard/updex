@@ -159,17 +159,27 @@ func TestRenderTransfer(t *testing.T) {
 		t.Errorf("specifiers not preserved:\n%s", got)
 	}
 	if !strings.Contains(got, "Path=https://extensions.example.com/fedora/zoxide/") {
-		t.Errorf("source path not preserved:\n%s", got)
+		t.Errorf("source path not canonicalized:\n%s", got)
 	}
-	if !strings.Contains(got, "InstancesMax=2") {
-		t.Errorf("target keys not preserved:\n%s", got)
+	if !strings.Contains(got, "Path=/var/lib/extensions.d\nMatchPattern=zoxide-@v-%w-%a.raw\nMode=0644\n") {
+		t.Errorf("target path and mode not canonicalized:\n%s", got)
+	}
+}
+
+func TestRenderTransferToRewritesProductionTarget(t *testing.T) {
+	out, err := RenderTransferTo([]byte(zoxideConf), testRepo, "zoxide", "/isolated/extensions.d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "Path=/isolated/extensions.d\n") {
+		t.Fatalf("custom target not rendered:\n%s", out)
 	}
 }
 
 func TestRenderTransferNoTransferSection(t *testing.T) {
 	conf := `[Source]
 Type=url-file
-Path=https://example.com/
+Path=https://extensions.example.com/fedora/foo/
 MatchPattern=foo-@v.raw
 
 [Target]
@@ -208,6 +218,63 @@ func TestRenderTransferInvalid(t *testing.T) {
 	}
 }
 
+func TestRenderTransferRejectsUnsafeCatalogMetadata(t *testing.T) {
+	tests := []struct {
+		name string
+		old  string
+		new  string
+	}{
+		{name: "alternate source", old: "Path=https://extensions.example.com/fedora/zoxide/", new: "Path=https://attacker.example/zoxide/"},
+		{name: "source traversal pattern", old: "MatchPattern=zoxide-@v-%w-%a.raw", new: "MatchPattern=../zoxide-@v.raw"},
+		{name: "target traversal pattern", old: "MatchPattern=zoxide-@v-%w-%a.raw\nCurrentSymlink", new: "MatchPattern=../authorized_keys-@v\nCurrentSymlink"},
+		{name: "quoted pattern", old: "MatchPattern=zoxide-@v-%w-%a.raw", new: `MatchPattern="zoxide @v.raw"`},
+		{name: "arbitrary target", old: "Path=/var/lib/extensions.d/", new: "Path=/root/.ssh"},
+		{name: "relative target", old: "Path=/var/lib/extensions.d/", new: "Path=/var/lib/extensions.d/\nPathRelativeTo=boot"},
+		{name: "non-file source", old: "Type=url-file", new: "Type=url-tar"},
+		{name: "non-file target", old: "Type=regular-file", new: "Type=directory"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conf := strings.Replace(zoxideConf, tt.old, tt.new, 1)
+			if _, err := RenderTransfer([]byte(conf), testRepo, "zoxide"); err == nil {
+				t.Fatal("expected unsafe catalog metadata to be rejected")
+			}
+		})
+	}
+}
+
+func TestRenderTransferNormalizesSensitiveTargetKeys(t *testing.T) {
+	conf := strings.Replace(zoxideConf, "CurrentSymlink=/var/lib/extensions/zoxide.raw", "CurrentSymlink=/var/lib/extensions/zoxide.raw\nMode=0777", 1)
+	out, err := RenderTransfer([]byte(conf), testRepo, "zoxide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(out)
+	if strings.Contains(got, "0777") {
+		t.Errorf("catalog-controlled mode preserved:\n%s", got)
+	}
+	if strings.Count(got, "Mode=0644") != 1 {
+		t.Errorf("expected one canonical mode:\n%s", got)
+	}
+}
+
+func TestRenderTransferCanonicalizesCommentedSections(t *testing.T) {
+	conf := strings.Replace(zoxideConf, "[Target]", "[Target] # upstream comment", 1)
+	conf = strings.Replace(conf, "CurrentSymlink=/var/lib/extensions/zoxide.raw", "CurrentSymlink=../../../etc/localtime\nMode=0777", 1)
+	out, err := RenderTransfer([]byte(conf), testRepo, "zoxide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(out)
+	if strings.Contains(got, "CurrentSymlink") || strings.Contains(got, "0777") {
+		t.Errorf("commented target section retained sensitive metadata:\n%s", got)
+	}
+	if !strings.Contains(got, "Path=/var/lib/extensions.d\nMatchPattern=zoxide-@v-%w-%a.raw\nMode=0644") {
+		t.Errorf("commented target section was not canonicalized:\n%s", got)
+	}
+}
+
 func TestRenderFeature(t *testing.T) {
 	got := string(RenderFeature(testRepo, "zoxide"))
 
@@ -231,7 +298,8 @@ func TestGeneratedRepo(t *testing.T) {
 		t.Errorf("GeneratedRepo = (%q, %v), want (fedora, true)", repo, ok)
 	}
 
-	out, err := RenderTransfer([]byte(zoxideConf), Repo{Name: "community", SiteURL: "https://x"}, "zoxide")
+	conf := strings.Replace(zoxideConf, testRepo.SiteURL, "https://x", 1)
+	out, err := RenderTransfer([]byte(conf), Repo{Name: "community", SiteURL: "https://x"}, "zoxide")
 	if err != nil {
 		t.Fatal(err)
 	}

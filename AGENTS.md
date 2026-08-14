@@ -29,6 +29,14 @@ overlapping runs delete and recreate the same release, then collide while
 uploading identically named assets. The newest successful test run supersedes
 older snapshot work.
 
+`.github/workflows/release.yml` runs only for tag pushes. After publishing the
+tagged release and packages, it must dispatch `event-type: build` to
+`frostyard/snosi` without a default-branch ref guard: a tag run's ref is
+`refs/tags/<tag>`, never `refs/heads/<default>`.
+`updex/release_workflow_contract_test.go` pins the tag-only trigger and
+unguarded snosi dispatch required by
+[frostyard/core ADR-0013](https://github.com/frostyard/core/blob/main/docs/adr/0013-release-fanout-via-repository-dispatch.md).
+
 ## Architecture
 
 updex is a Go SDK and CLI for managing systemd-sysext images. It replicates `systemd-sysupdate` functionality for `url-file` transfers.
@@ -41,7 +49,7 @@ Key packages:
 - `config/` — Parses `.transfer` and `.feature` INI files from systemd-style search paths, including systemd-sysupdate "component" discovery (see below)
 - `catalog/` — Sysext catalog primitives (see below): `*.catalog` repo config loading, sysext enumeration via a GitHub contents API endpoint, fetching the catalog's published `.conf`, and rendering it into updex `.transfer`/`.feature` files
 - `download/` — HTTP downloads with bounded retry for transient failures, SHA256 verification, and decompression (xz, gz, zstd)
-- `manifest/` — Fetches/parses SHA256SUMS manifests with bounded retry for transient failures and GPG verification (enabled by default per systemd-sysupdate)
+- `manifest/` — Fetches/parses SHA256SUMS manifests with bounded retry for transient failures and GPG verification (enabled by default per systemd-sysupdate); response bodies are capped at 4 MiB for manifests and 1 MiB for detached signatures
 - `version/` — Pattern matching (`@v` placeholder) and semantic version comparison
 - `sysext/` — systemd-sysext integration with mockable `Runner` interface, `/var/lib/extensions` link management, and read-only vacuum planning helpers
 - `systemd/` — Generates/installs systemd timer+service units, mockable `Runner` interface
@@ -52,9 +60,10 @@ Entry point: `cmd/updex-cli/main.go` → `cmd/updex/root.go`
 
 systemd-sysupdate "components" (sysupdate.d(5) "Components") are named
 groupings of `.transfer`/`.feature` files under a `sysupdate.<name>.d/`
-directory, searched across `config.SearchRoots` (`/etc`, `/run`,
-`/usr/local/lib`, `/usr/lib`, in priority order — a package var, overridable
-in tests like `sysext.SysextDir`) — same precedence as the legacy default
+directory, searched across the client's immutable definition roots (production
+defaults: `/etc`, `/run`, `/usr/local/lib`, `/usr/lib`, in priority order).
+`config.SearchRoots` remains a compatibility default for package APIs — same
+precedence as the legacy default
 `sysupdate.d/` directory (`ComponentSearchPaths("")`). This exists so a
 sysext's transfer/feature files can move out of the shared default directory
 into their own versioning scope (native images now put OS A/B partition and
@@ -102,10 +111,10 @@ package-versioned sysext transfers) without updex losing track of them.
 fedora-sysexts (https://fedora-sysexts.github.io/, served at
 extensions.fcos.fr). There are deliberately **no built-in repos** — such
 catalogs only apply to specific systems (ucore/Fedora atomic) — so repos
-come from `<name>.catalog` INI files searched across
-`catalog.ConfigRoots` (`/etc/updex/catalogs.d`, `/run/...`,
-`/usr/local/lib/...`, `/usr/lib/...`; earlier root wins per filename,
-test-overridable like `config.SearchRoots`). Each file defines `SiteURL`
+come from `<name>.catalog` INI files searched across each client's captured
+catalog roots (production defaults: `/etc/updex/catalogs.d`, `/run/...`,
+`/usr/local/lib/...`, `/usr/lib/...`; earlier root wins per filename).
+`catalog.ConfigRoots` remains the package-API compatibility default. Each file defines `SiteURL`
 (required; artifacts resolve under `<SiteURL>/<sysext>/`), optional
 `ListURL` (GitHub contents API endpoint, only used by list/search;
 `GITHUB_TOKEN` honored), and optional `Component` (default
@@ -119,9 +128,13 @@ Key design points:
   a line-based transform that prepends the `catalog.GeneratedMarker`
   ownership header, injects `Features=<name>`, drops `CurrentSymlink`
   (updex manages `/var/lib/extensions` links itself), and preserves
-  everything else byte-for-byte — critically `%w`/`%a` specifiers stay
+  non-sensitive content byte-for-byte — critically `%w`/`%a` specifiers stay
   **unexpanded** so the file survives Fedora release upgrades (expansion
-  happens at load time in `config`).
+  happens at load time in `config`). Security-sensitive fields are canonical:
+  the source must be `url-file` at this repo's `<SiteURL>/<name>/`, patterns
+  must be basename-only, and the target is always a regular `0644` file under
+  trusted `catalog.TargetPath` (default `/var/lib/extensions.d`); alternate
+  paths and target shapes are rejected.
 - **Ownership and safety** (added after PR #137 review): the marker
   header names its generating repo, and that pair is the ownership
   signal — `catalog.GeneratedFileRepo(path)` must return *this* repo.
@@ -165,8 +178,9 @@ Key design points:
   accepts `REPO/NAME` or `--repo`.
 - Listing cache: `CatalogList` goes through `catalog.CachedList` — a
   per-repo TTL (default 60 min, `catalog.DefaultListCacheTTL`) + ETag
-  cache in `catalog.CacheDir` (user cache dir /updex; empty disables;
-  test-overridable). Within the TTL no network; after expiry a
+  cache in the client's captured catalog cache directory (the
+  `catalog.CacheDir` compatibility default is user cache dir /updex; empty
+  disables). Within the TTL no network; after expiry a
   conditional GET revalidates (GitHub 304s are rate-limit-free); on live
   fetch failure a stale entry is served with a warning, except for
   context cancellation/deadline errors, which propagate. `--no-cache`
@@ -201,7 +215,7 @@ Key design points:
 - Error messages: lowercase, no trailing punctuation, wrap with `fmt.Errorf("context: %w", err)`
 - SDK functions accept a `context.Context` and an options struct, return result structs + error
 - CLI output: `common.OutputJSON()` for `--json` flag, text tables otherwise
-- Tests use `t.TempDir()` for filesystem operations and mock runners for systemd commands
+- Tests use `t.TempDir()` for filesystem operations and mock runners for systemd commands; use `ClientConfig.Paths` (`RuntimePaths`) to give a client its own temp trees rather than mutating package globals — independently configured clients can run in parallel without save/mutate/restore discipline (see ADR-0010)
 - Configuration uses INI format with systemd-style priority paths: `/etc/sysupdate.d/`, `/run/sysupdate.d/`, `/usr/local/lib/sysupdate.d/`, `/usr/lib/sysupdate.d/` (plus the same four roots per discovered component, see above)
 - Transfer targets default to staging in `/var/lib/extensions.d`; `CurrentSymlink` is optional legacy state and must not be required for `/var/lib/extensions` sysext links
 

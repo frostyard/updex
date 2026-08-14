@@ -24,8 +24,9 @@ import (
 const catalogSuffix = ".catalog"
 
 // ConfigRoots are the directories scanned for *.catalog repo definitions,
-// in priority order (earlier roots win per filename). Overridable in tests,
-// like config.SearchRoots.
+// in priority order (earlier roots win per filename). SDK callers should
+// inject roots via updex.RuntimePaths rather than mutating this variable;
+// it remains for compatibility wrappers and tests that have not yet migrated.
 var ConfigRoots = []string{
 	"/etc/updex/catalogs.d",
 	"/run/updex/catalogs.d",
@@ -37,42 +38,14 @@ var ConfigRoots = []string{
 // any ConfigRoots directory, so callers can print setup guidance.
 var ErrNoCatalogs = errors.New("no catalogs configured")
 
-// Repo describes one configured catalog repo, loaded from a
-// <name>.catalog INI file:
-//
-//	[Catalog]
-//	SiteURL=https://extensions.fcos.fr/fedora
-//	ListURL=https://api.github.com/repos/fedora-sysexts/fedora/contents/
-//	# Component=catalog-fedora   (optional; default catalog-<name>)
-type Repo struct {
-	// Name is the repo name, derived from the .catalog filename stem.
-	Name string
-	// SiteURL is the base URL sysext artifacts are served from; the
-	// catalog's <name>.conf, SHA256SUMS, and .raw files all resolve
-	// beneath <SiteURL>/<sysext>/. Required, stored without trailing slash.
-	SiteURL string
-	// ListURL is a GitHub contents API endpoint (or compatible) used to
-	// enumerate available sysexts. Optional: without it list/search skip
-	// this repo; add/remove only need SiteURL.
-	ListURL string
-	// Component is the systemd-sysupdate component that added sysexts'
-	// .transfer/.feature files are written under (sysupdate.<Component>.d).
-	// Defaults to "catalog-<name>".
-	Component string
-}
-
-// repoNamePattern matches valid repo and component names, mirroring the
-// systemd-sysupdate component charset (see sysupdate.d(5)) since both repo
-// names and Component values become component directory names.
-var repoNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
-
-// LoadRepos loads all configured catalog repos from ConfigRoots, earlier
-// roots winning per filename, sorted by name. It returns ErrNoCatalogs when
-// no .catalog file exists anywhere.
-func LoadRepos() ([]Repo, error) {
+// LoadReposFrom loads all configured catalog repos from the given configRoots,
+// earlier roots winning per filename, sorted by name. It returns ErrNoCatalogs
+// when no .catalog file exists anywhere. This is the explicit-roots variant of
+// LoadRepos.
+func LoadReposFrom(configRoots []string) ([]Repo, error) {
 	files := make(map[string]string) // name -> path, first root wins
 
-	for _, dir := range ConfigRoots {
+	for _, dir := range configRoots {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -110,6 +83,42 @@ func LoadRepos() ([]Repo, error) {
 
 	return repos, nil
 }
+
+// LoadRepos loads all configured catalog repos from ConfigRoots, earlier
+// roots winning per filename, sorted by name. It returns ErrNoCatalogs when
+// no .catalog file exists anywhere.
+func LoadRepos() ([]Repo, error) {
+	return LoadReposFrom(ConfigRoots)
+}
+
+// Repo describes one configured catalog repo, loaded from a
+// <name>.catalog INI file:
+//
+//	[Catalog]
+//	SiteURL=https://extensions.fcos.fr/fedora
+//	ListURL=https://api.github.com/repos/fedora-sysexts/fedora/contents/
+//	# Component=catalog-fedora   (optional; default catalog-<name>)
+type Repo struct {
+	// Name is the repo name, derived from the .catalog filename stem.
+	Name string
+	// SiteURL is the base URL sysext artifacts are served from; the
+	// catalog's <name>.conf, SHA256SUMS, and .raw files all resolve
+	// beneath <SiteURL>/<sysext>/. Required, stored without trailing slash.
+	SiteURL string
+	// ListURL is a GitHub contents API endpoint (or compatible) used to
+	// enumerate available sysexts. Optional: without it list/search skip
+	// this repo; add/remove only need SiteURL.
+	ListURL string
+	// Component is the systemd-sysupdate component that added sysexts'
+	// .transfer/.feature files are written under (sysupdate.<Component>.d).
+	// Defaults to "catalog-<name>".
+	Component string
+}
+
+// repoNamePattern matches valid repo and component names, mirroring the
+// systemd-sysupdate component charset (see sysupdate.d(5)) since both repo
+// names and Component values become component directory names.
+var repoNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // RepoByName returns the repo with the given name from repos.
 func RepoByName(repos []Repo, name string) (Repo, bool) {

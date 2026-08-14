@@ -1,6 +1,6 @@
 # 0009 — System paths are exported package vars, overridable in tests
 
-- **Status:** Accepted
+- **Status:** Superseded by [0010](0010-instance-scoped-runtime-paths.md)
 - **Date:** 2026-08-12
 
 ## Context

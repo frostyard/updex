@@ -8,7 +8,7 @@ codebase follows, testing conventions, and what CI expects.
 
 ### Prerequisites
 
-- **Go 1.26.5 or newer** (the module targets `go 1.26.5`)
+- **Go 1.26.6 or newer** (the module targets `go 1.26.6`)
 - `make`
 - Optional: [`golangci-lint`](https://golangci-lint.run/) for linting,
   [`svu`](https://github.com/caarlos0/svu) for release tagging
