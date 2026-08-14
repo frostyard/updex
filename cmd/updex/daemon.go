@@ -10,6 +10,14 @@ import (
 
 const unitName = "updex-update"
 
+// newDaemonManager and newSystemctlRunner are injectable constructors so the
+// daemon command tests can substitute an in-memory manager and a mock
+// systemctl runner instead of touching real unit files or invoking systemctl.
+var (
+	newDaemonManager   = func() *systemd.Manager { return systemd.NewManager() }
+	newSystemctlRunner = func() systemd.SystemctlRunner { return &systemd.DefaultSystemctlRunner{} }
+)
+
 type daemonStatus struct {
 	Installed bool   `json:"installed"`
 	Enabled   bool   `json:"enabled"`
@@ -78,7 +86,7 @@ func runDaemonEnable(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	mgr := systemd.NewManager()
+	mgr := newDaemonManager()
 
 	if mgr.Exists(unitName) {
 		return fmt.Errorf("timer already installed; run 'updex daemon disable' first to reinstall")
@@ -102,7 +110,7 @@ func runDaemonEnable(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to install timer: %w", err)
 	}
 
-	runner := &systemd.DefaultSystemctlRunner{}
+	runner := newSystemctlRunner()
 	if err := runner.Enable(unitName + ".timer"); err != nil {
 		return fmt.Errorf("failed to enable timer: %w", err)
 	}
@@ -151,7 +159,7 @@ func runDaemonDisable(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	mgr := systemd.NewManager()
+	mgr := newDaemonManager()
 
 	if !mgr.Exists(unitName) {
 		return fmt.Errorf("timer not installed; nothing to disable")
@@ -199,8 +207,8 @@ OUTPUT:
 }
 
 func runDaemonStatus(cmd *cobra.Command, args []string) error {
-	mgr := systemd.NewManager()
-	runner := &systemd.DefaultSystemctlRunner{}
+	mgr := newDaemonManager()
+	runner := newSystemctlRunner()
 
 	status := daemonStatus{
 		Installed: mgr.Exists(unitName),
