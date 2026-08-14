@@ -331,6 +331,67 @@ func TestFetchRetriesTruncatedBodyThenSucceeds(t *testing.T) {
 	}
 }
 
+func TestFetchManifestResponseSizeLimit(t *testing.T) {
+	tests := []struct {
+		name    string
+		size    int
+		unit    string
+		verify  bool
+		wantErr bool
+	}{
+		{name: "exact limit accepted", size: maxManifestSize, unit: "#\n"},
+		{name: "one byte over rejected", size: maxManifestSize + 1, unit: "x", verify: true, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var requests atomic.Int32
+			var signatureRequests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/SHA256SUMS.gpg" {
+					signatureRequests.Add(1)
+					http.Error(w, "signature should not be fetched", http.StatusInternalServerError)
+					return
+				}
+				if r.URL.Path != "/SHA256SUMS" {
+					http.NotFound(w, r)
+					return
+				}
+				requests.Add(1)
+				remaining := tt.size
+				chunk := strings.Repeat(tt.unit, 4096)
+				for remaining > 0 {
+					if len(chunk) > remaining {
+						chunk = chunk[:remaining]
+					}
+					_, _ = io.WriteString(w, chunk)
+					remaining -= len(chunk)
+				}
+			}))
+			defer server.Close()
+
+			_, err := Fetch(t.Context(), server.Client(), server.URL, tt.verify, WithRetryConfig(3, time.Millisecond))
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("Fetch() error = nil, want oversized response error")
+				}
+				want := fmt.Sprintf("manifest response exceeds maximum allowed size (%d bytes)", maxManifestSize)
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("Fetch() error = %q, want containing %q", err, want)
+				}
+			} else if err != nil {
+				t.Fatalf("Fetch() error = %v", err)
+			}
+			if requests.Load() != 1 {
+				t.Fatalf("requests = %d, want 1", requests.Load())
+			}
+			if signatureRequests.Load() != 0 {
+				t.Fatalf("signature requests = %d, want 0", signatureRequests.Load())
+			}
+		})
+	}
+}
+
 func validManifestContent() string {
 	return testManifestHash() + "  file.raw\n"
 }
