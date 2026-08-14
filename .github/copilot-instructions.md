@@ -29,7 +29,7 @@ Apply the machine-readable controls in
 
 ### Tech Stack
 
-- **Language**: Go 1.26.5
+- **Language**: Go 1.26.6
 - **CLI Framework**: Cobra (github.com/spf13/cobra) with clix for unified CLI functionality
 - **Configuration**: INI files (gopkg.in/ini.v1)
 - **Compression**: XZ, gzip, zstd support
@@ -50,16 +50,16 @@ This formats all Go source files with `gofmt`.
 
 ### Common Make Targets
 
-| Target            | Purpose                               |
-| ----------------- | ------------------------------------- |
-| `make build`      | Build binary to `build/updex`         |
-| `make fmt`        | Format Go code (run after edits)      |
-| `make lint`       | Run golangci-lint                     |
-| `make test`       | Run tests                             |
-| `make test-cover` | Run tests with HTML coverage report   |
-| `make check`      | Run fmt, lint, and test together      |
-| `make clean`      | Remove build artifacts                |
-| `make tidy`       | Run go mod tidy                       |
+| Target            | Purpose                             |
+| ----------------- | ----------------------------------- |
+| `make build`      | Build binary to `build/updex`       |
+| `make fmt`        | Format Go code (run after edits)    |
+| `make lint`       | Run golangci-lint                   |
+| `make test`       | Run tests                           |
+| `make test-cover` | Run tests with HTML coverage report |
+| `make check`      | Run fmt, lint, and test together    |
+| `make clean`      | Remove build artifacts              |
+| `make tidy`       | Run go mod tidy                     |
 
 ### Build Workflow
 
@@ -198,6 +198,7 @@ SDK operations return structured data. CLI commands handle formatting using `cli
 ### Transfer Configuration
 
 Configuration is read from `.transfer` and `.feature` INI files from systemd-style search paths:
+
 - `/etc/sysupdate.d/`
 - `/run/sysupdate.d/`
 - `/usr/local/lib/sysupdate.d/`
@@ -242,17 +243,17 @@ func main() {
 
 ## Dependencies
 
-| Package                              | Purpose                        |
-| ------------------------------------ | ------------------------------ |
-| `github.com/spf13/cobra`             | CLI framework                  |
-| `github.com/frostyard/clix`          | Unified CLI functionality      |
-| `github.com/frostyard/std`           | Standard library extensions    |
-| `gopkg.in/ini.v1`                    | INI file parsing               |
-| `github.com/hashicorp/go-version`    | Version comparison             |
-| `github.com/schollz/progressbar/v3`  | Download progress display      |
-| `github.com/ulikunitz/xz`            | XZ decompression               |
-| `github.com/klauspost/compress/zstd` | Zstd decompression             |
-| `github.com/ProtonMail/go-crypto/openpgp` | GPG verification          |
+| Package                                   | Purpose                     |
+| ----------------------------------------- | --------------------------- |
+| `github.com/spf13/cobra`                  | CLI framework               |
+| `github.com/frostyard/clix`               | Unified CLI functionality   |
+| `github.com/frostyard/std`                | Standard library extensions |
+| `gopkg.in/ini.v1`                         | INI file parsing            |
+| `github.com/hashicorp/go-version`         | Version comparison          |
+| `github.com/schollz/progressbar/v3`       | Download progress display   |
+| `github.com/ulikunitz/xz`                 | XZ decompression            |
+| `github.com/klauspost/compress/zstd`      | Zstd decompression          |
+| `github.com/ProtonMail/go-crypto/openpgp` | GPG verification            |
 
 ## Testing
 
@@ -360,7 +361,7 @@ Browses and manages sysexts from configured catalogs:
 
 ### Build Issues
 
-- If `make build` fails, ensure Go 1.26.5 is installed: `go version`
+- If `make build` fails, ensure Go 1.26.6 is installed: `go version`
 - If dependencies fail to download, try: `make tidy` or `go mod tidy`
 - If golangci-lint is not found, it's optional; the build will continue
 
