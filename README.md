@@ -40,12 +40,12 @@ Designed for systems like Debian Trixie that don't ship with `systemd-sysupdate`
 Download the latest CLI package for your system from the
 [GitHub releases page](https://github.com/frostyard/updex/releases/latest):
 
-| System | Release artifact |
-| --- | --- |
-| Debian/Ubuntu | `frostyard-updex_<version>_amd64.deb` or `frostyard-updex_<version>_arm64.deb` |
-| Fedora/RHEL | `frostyard-updex-<version>-1.x86_64.rpm` or `frostyard-updex-<version>-1.aarch64.rpm` |
-| Alpine | `frostyard-updex_<version>_x86_64.apk` or `frostyard-updex_<version>_aarch64.apk` |
-| Other Linux distributions | `updex_<version>_linux_amd64.tar.gz` or `updex_<version>_linux_arm64.tar.gz` |
+| System                    | Release artifact                                                                      |
+| ------------------------- | ------------------------------------------------------------------------------------- |
+| Debian/Ubuntu             | `frostyard-updex_<version>_amd64.deb` or `frostyard-updex_<version>_arm64.deb`        |
+| Fedora/RHEL               | `frostyard-updex-<version>-1.x86_64.rpm` or `frostyard-updex-<version>-1.aarch64.rpm` |
+| Alpine                    | `frostyard-updex_<version>_x86_64.apk` or `frostyard-updex_<version>_aarch64.apk`     |
+| Other Linux distributions | `updex_<version>_linux_amd64.tar.gz` or `updex_<version>_linux_arm64.tar.gz`          |
 
 Download `checksums.txt` from the same release and verify the package before
 installing it:
@@ -61,7 +61,7 @@ state also require root privileges.
 ### Build from source
 
 Building the CLI or library and running unit tests requires
-[Go 1.26.5 or newer](https://go.dev/doc/install) (the version required by
+[Go 1.26.6 or newer](https://go.dev/doc/install) (the version required by
 `go.mod`) and `make` for the Makefile commands below. Building and testing do
 not require systemd.
 
@@ -74,7 +74,7 @@ make install
 
 ### As a Library
 
-Using updex as a Go library requires Go 1.26.5 or newer:
+Using updex as a Go library requires Go 1.26.6 or newer:
 
 ```bash
 go get github.com/frostyard/updex/updex
@@ -190,17 +190,17 @@ extensions.
 
 ### Client Methods
 
-| Method | Signature | Description |
-| --- | --- | --- |
-| `Features` | `Features(ctx, opts ...FeaturesOptions) ([]FeatureInfo, error)` | List all features with status and associated transfers |
-| `EnableFeature` | `EnableFeature(ctx, name, EnableFeatureOptions) (*FeatureActionResult, error)` | Enable a feature via drop-in config |
-| `DisableFeature` | `DisableFeature(ctx, name, DisableFeatureOptions) (*FeatureActionResult, error)` | Disable a feature via drop-in config |
-| `UpdateFeatures` | `UpdateFeatures(ctx, UpdateFeaturesOptions) ([]UpdateFeaturesResult, error)` | Download and install newest versions for all enabled features |
-| `CheckFeatures` | `CheckFeatures(ctx, CheckFeaturesOptions) ([]CheckFeaturesResult, error)` | Check if newer versions are available |
-| `Components` | `Components(ctx) ([]ComponentInfo, error)` | List discovered systemd-sysupdate components (name, source directory, feature count) |
-| `CatalogList` | `CatalogList(ctx, CatalogListOptions) ([]CatalogEntry, error)` | Enumerate sysexts available from configured catalogs |
-| `CatalogAdd` | `CatalogAdd(ctx, name, CatalogAddOptions) (*CatalogAddResult, error)` | Install a sysext from a catalog (write definitions, enable, download) |
-| `CatalogRemove` | `CatalogRemove(ctx, name, CatalogRemoveOptions) (*CatalogRemoveResult, error)` | Remove a catalog-added sysext and its generated definitions |
+| Method           | Signature                                                                        | Description                                                                          |
+| ---------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `Features`       | `Features(ctx, opts ...FeaturesOptions) ([]FeatureInfo, error)`                  | List all features with status and associated transfers                               |
+| `EnableFeature`  | `EnableFeature(ctx, name, EnableFeatureOptions) (*FeatureActionResult, error)`   | Enable a feature via drop-in config                                                  |
+| `DisableFeature` | `DisableFeature(ctx, name, DisableFeatureOptions) (*FeatureActionResult, error)` | Disable a feature via drop-in config                                                 |
+| `UpdateFeatures` | `UpdateFeatures(ctx, UpdateFeaturesOptions) ([]UpdateFeaturesResult, error)`     | Download and install newest versions for all enabled features                        |
+| `CheckFeatures`  | `CheckFeatures(ctx, CheckFeaturesOptions) ([]CheckFeaturesResult, error)`        | Check if newer versions are available                                                |
+| `Components`     | `Components(ctx) ([]ComponentInfo, error)`                                       | List discovered systemd-sysupdate components (name, source directory, feature count) |
+| `CatalogList`    | `CatalogList(ctx, CatalogListOptions) ([]CatalogEntry, error)`                   | Enumerate sysexts available from configured catalogs                                 |
+| `CatalogAdd`     | `CatalogAdd(ctx, name, CatalogAddOptions) (*CatalogAddResult, error)`            | Install a sysext from a catalog (write definitions, enable, download)                |
+| `CatalogRemove`  | `CatalogRemove(ctx, name, CatalogRemoveOptions) (*CatalogRemoveResult, error)`   | Remove a catalog-added sysext and its generated definitions                          |
 
 `FeaturesOptions`, `EnableFeatureOptions`, `DisableFeatureOptions`, `UpdateFeaturesOptions`, and `CheckFeaturesOptions` all carry a `Component string` field that scopes the operation to a single named systemd-sysupdate component instead of the default union domain (see "systemd-sysupdate Components" below). It cannot be combined with a `Definitions` override on `ClientConfig`.
 
@@ -320,19 +320,19 @@ sudo updex daemon disable
 
 ### Global Flags
 
-| Flag | Description |
-| --- | --- |
+| Flag                | Description                                               |
+| ------------------- | --------------------------------------------------------- |
 | `-C, --definitions` | Path to directory containing .transfer and .feature files |
-| `--verify` | Verify GPG signatures on SHA256SUMS |
-| `--no-refresh` | Skip running systemd-sysext refresh after install/update |
-| `--json` | Output in JSON format (jq-compatible) |
-| `--dry-run` | Preview changes without modifying filesystem |
-| `--verbose` | Enable verbose output |
+| `--verify`          | Verify GPG signatures on SHA256SUMS                       |
+| `--no-refresh`      | Skip running systemd-sysext refresh after install/update  |
+| `--json`            | Output in JSON format (jq-compatible)                     |
+| `--dry-run`         | Preview changes without modifying filesystem              |
+| `--verbose`         | Enable verbose output                                     |
 
 ### `features` Flags
 
-| Flag | Description |
-| --- | --- |
+| Flag          | Description                                                                                                                                                                                                 |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--component` | Scope the operation to a single named systemd-sysupdate component instead of the default union of the legacy default directory and every discovered component. Cannot be combined with `-C, --definitions`. |
 
 ## Configuration
@@ -380,34 +380,34 @@ Mode=0644
 
 #### [Transfer] Section
 
-| Option | Description | Default |
-| --- | --- | --- |
-| `MinVersion` | Minimum version to consider | (none) |
-| `ProtectVersion` | Version to never remove (supports `%A` specifiers) | (none) |
-| `Verify` | Verify GPG signatures | `yes` |
-| `InstancesMax` | Maximum versions to keep | `2` |
-| `Features` | Space-separated feature names (OR logic) | (none) |
-| `RequisiteFeatures` | Space-separated feature names (AND logic) | (none) |
+| Option              | Description                                        | Default |
+| ------------------- | -------------------------------------------------- | ------- |
+| `MinVersion`        | Minimum version to consider                        | (none)  |
+| `ProtectVersion`    | Version to never remove (supports `%A` specifiers) | (none)  |
+| `Verify`            | Verify GPG signatures                              | `yes`   |
+| `InstancesMax`      | Maximum versions to keep                           | `2`     |
+| `Features`          | Space-separated feature names (OR logic)           | (none)  |
+| `RequisiteFeatures` | Space-separated feature names (AND logic)          | (none)  |
 
 Omitting `Verify=` enables signature verification, matching systemd-sysupdate. Set `Verify=no` explicitly to disable it; the global `--verify` flag forces verification even for transfers that opt out.
 
 #### [Source] Section
 
-| Option | Description |
-| --- | --- |
-| `Type` | Must be `url-file` |
-| `Path` | Base URL containing SHA256SUMS and image files |
+| Option         | Description                                    |
+| -------------- | ---------------------------------------------- |
+| `Type`         | Must be `url-file`                             |
+| `Path`         | Base URL containing SHA256SUMS and image files |
 | `MatchPattern` | Filename pattern with `@v` version placeholder |
 
 #### [Target] Section
 
-| Option | Description | Default |
-| --- | --- | --- |
-| `Type` | Must be `regular-file` | - |
-| `Path` | Target staging directory for downloaded versions | `/var/lib/extensions.d` |
-| `MatchPattern` | Output filename pattern with `@v` | - |
-| `CurrentSymlink` | Optional legacy staging symlink name; if present, updex removes it during update | (none) |
-| `Mode` | File permissions (octal) | `0644` |
+| Option           | Description                                                                      | Default                 |
+| ---------------- | -------------------------------------------------------------------------------- | ----------------------- |
+| `Type`           | Must be `regular-file`                                                           | -                       |
+| `Path`           | Target staging directory for downloaded versions                                 | `/var/lib/extensions.d` |
+| `MatchPattern`   | Output filename pattern with `@v`                                                | -                       |
+| `CurrentSymlink` | Optional legacy staging symlink name; if present, updex removes it during update | (none)                  |
+| `Mode`           | File permissions (octal)                                                         | `0644`                  |
 
 ### Version Patterns
 
@@ -477,12 +477,12 @@ echo -e "[Feature]\nEnabled=true" > /etc/sysupdate.d/devel.feature.d/enable.conf
 
 ### Feature Configuration Options
 
-| Option | Description | Default |
-| --- | --- | --- |
-| `Description` | Human-readable feature description | (none) |
-| `Documentation` | URL to feature documentation | (none) |
-| `AppStream` | URL to AppStream catalog XML | (none) |
-| `Enabled` | Whether the feature is enabled | `false` |
+| Option          | Description                        | Default |
+| --------------- | ---------------------------------- | ------- |
+| `Description`   | Human-readable feature description | (none)  |
+| `Documentation` | URL to feature documentation       | (none)  |
+| `AppStream`     | URL to AppStream catalog XML       | (none)  |
+| `Enabled`       | Whether the feature is enabled     | `false` |
 
 ### Masking Features
 
@@ -648,6 +648,7 @@ updex follows an **SDK-first** architecture:
 - **CLI Layer** (`cmd/` package): Thin Cobra wrappers that parse flags, call SDK methods, and format output
 
 SDK conventions:
+
 - All methods take `context.Context` as first parameter
 - Operations use dedicated option structs (e.g., `EnableFeatureOptions`) for future extensibility
 - Return dedicated result structs with status fields + error
