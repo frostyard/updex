@@ -93,7 +93,7 @@ func Fetch(ctx context.Context, httpClient *http.Client, baseURL string, verify 
 			return retry.TransientIfNetwork(fmt.Errorf("failed to read manifest: %w", err))
 		}
 		if len(content) > maxManifestSize {
-			return fmt.Errorf("manifest response exceeds maximum allowed size (%d bytes)", maxManifestSize)
+			return fmt.Errorf("manifest response exceeds maximum allowed size (%d bytes): read %d", maxManifestSize, len(content))
 		}
 
 		return nil
