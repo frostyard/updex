@@ -134,7 +134,8 @@ func TestDownloadFailurePreservesExistingTarget(t *testing.T) {
 		expectedHash  string
 		expectedError string
 		status        int
-		attempts      int
+		maxAttempts   int
+		wantRequests  int
 	}{
 		{
 			name:          "checksum mismatch",
@@ -143,7 +144,8 @@ func TestDownloadFailurePreservesExistingTarget(t *testing.T) {
 			expectedHash:  hashString([]byte("expected replacement")),
 			expectedError: "hash mismatch",
 			status:        http.StatusOK,
-			attempts:      1,
+			maxAttempts:   3,
+			wantRequests:  1,
 		},
 		{
 			name:          "decompression failure",
@@ -152,7 +154,8 @@ func TestDownloadFailurePreservesExistingTarget(t *testing.T) {
 			expectedHash:  hashString([]byte("not gzip data")),
 			expectedError: "decompression failed",
 			status:        http.StatusOK,
-			attempts:      1,
+			maxAttempts:   3,
+			wantRequests:  1,
 		},
 		{
 			name:          "retry exhaustion",
@@ -160,7 +163,8 @@ func TestDownloadFailurePreservesExistingTarget(t *testing.T) {
 			content:       []byte("temporary failure"),
 			expectedError: "download failed with status",
 			status:        http.StatusInternalServerError,
-			attempts:      2,
+			maxAttempts:   2,
+			wantRequests:  2,
 		},
 	}
 
@@ -181,15 +185,15 @@ func TestDownloadFailurePreservesExistingTarget(t *testing.T) {
 				t.Fatalf("WriteFile() error = %v", err)
 			}
 
-			err := Download(t.Context(), server.Client(), server.URL+tt.urlSuffix, targetPath, tt.expectedHash, 0644, nil, WithRetryConfig(tt.attempts, time.Millisecond))
+			err := Download(t.Context(), server.Client(), server.URL+tt.urlSuffix, targetPath, tt.expectedHash, 0644, nil, WithRetryConfig(tt.maxAttempts, time.Millisecond))
 			if err == nil {
 				t.Fatal("Download() error = nil, want error")
 			}
 			if !strings.Contains(err.Error(), tt.expectedError) {
 				t.Errorf("Download() error = %q, want error containing %q", err, tt.expectedError)
 			}
-			if requests.Load() != int32(tt.attempts) {
-				t.Fatalf("requests = %d, want %d", requests.Load(), tt.attempts)
+			if requests.Load() != int32(tt.wantRequests) {
+				t.Fatalf("requests = %d, want %d", requests.Load(), tt.wantRequests)
 			}
 
 			got, err := os.ReadFile(targetPath)
