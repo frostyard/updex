@@ -521,6 +521,16 @@ Mutating commands enforce root before reading `--dry-run`, so examples that prev
 
 ## CI and Releases
 
+`.github/workflows/pr-title.yml` (`amannn/action-semantic-pull-request`,
+SHA-pinned, `pull_request` `opened|edited|synchronize|reopened`, read-only
+permissions, no checkout) fails a pull request whose title is not a
+Conventional Commit, and — because the repository squash-merges with the
+"commit or PR title" default, under which a single-commit PR lands under its
+commit's subject — also validates the lone commit's subject
+(`validateSingleCommit: true`). The accepted types mirror `CONTRIBUTING.md`
+and the `.goreleaser.yaml` changelog groups. It is a plain status, not a
+required check: `main` has no branch protection or ruleset today.
+
 `.github/workflows/release.yml` publishes tagged GoReleaser Pro releases and
 packages, then dispatches `event-type: build` to `frostyard/snosi` so the
 component release promptly fans out into an image rebuild
