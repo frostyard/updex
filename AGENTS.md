@@ -20,6 +20,20 @@ Run a single test: `go test -v -run TestName ./updex/`
 
 End-to-end tests live in `tests/e2e/`: black-box tests that build the real `updex` binary and run it as a subprocess against fake files and HTTP sources. Successful operations are read-only (no root required); mutating command variants are covered at the argument-validation boundary. CLI integration tests in `cmd/updex/` additionally override package search roots to exercise default component discovery and fake catalogs safely. Run both with `go test -v ./cmd/updex ./tests/e2e/...`.
 
+## Commits & Pull Requests
+
+Commit messages **and pull request titles** use
+[Conventional Commits](https://www.conventionalcommits.org/):
+`type(scope): summary`, e.g. `test(cli): cover catalog mutation handlers`,
+`fix(catalog): refuse symlinked definitions`, `docs(agents): …`. The
+repository squash-merges and its squash title default is "commit or PR
+title", so the PR title — or, for a single-commit PR, that commit's subject —
+becomes the `main` commit that svu versions and the changelog groups by. Make
+the first commit conventional too; do not carry an issue's `[quality] …` /
+`[scanner] …` title into the commit or PR. `.github/workflows/pr-title.yml`
+fails a PR whose title (or lone commit subject) is not conventional. See
+[CONTRIBUTING.md](CONTRIBUTING.md#pull-requests) for the type list.
+
 ## Release Automation
 
 `.github/workflows/snapshot.yml` publishes the singleton GoReleaser nightly
