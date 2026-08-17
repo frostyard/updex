@@ -6,9 +6,16 @@ import (
 	"time"
 
 	"github.com/frostyard/clix"
+	"github.com/frostyard/updex/sysext"
 	"github.com/frostyard/updex/updex"
 	"github.com/schollz/progressbar/v3"
 )
+
+// sysextRunner is the systemd-sysext runner handed to every CLI-constructed
+// client. It stays nil in production so the SDK picks its default runner;
+// tests set it to a *sysext.MockRunner to observe refresh/unmerge calls
+// without executing systemd-sysext (the same seam pattern as getEUID).
+var sysextRunner sysext.SysextRunner
 
 // newClient creates a new updex client with the appropriate progress reporter.
 func newClient() *updex.Client {
@@ -17,6 +24,7 @@ func newClient() *updex.Client {
 		Verify:             verify,
 		Verbose:            clix.Verbose,
 		Progress:           clix.NewReporter(),
+		SysextRunner:       sysextRunner,
 		OnDownloadProgress: newProgressBar,
 	})
 }
