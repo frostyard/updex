@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "default_decision": "deny",
+  "actions": {
+    "read": "allow",
+    "write": "allow",
+    "run-tests": "allow",
+    "open-issue": "review-required",
+    "open-pr": "review-required",
+    "create-followup": "review-required"
+  },
+  "protected_boundaries": [
+    {
+      "id": "workflow-and-permissions",
+      "decision": "review-required",
+      "minimum_risk_tier": "high",
+      "paths": [
+        ".github/workflows/**"
+      ],
+      "detectors": []
+    },
+    {
+      "id": "release-and-publication",
+      "decision": "review-required",
+      "minimum_risk_tier": "high",
+      "paths": [
+        ".goreleaser.yaml",
+        ".svu.yaml"
+      ],
+      "detectors": []
+    },
+    {
+      "id": "installation-and-update",
+      "decision": "review-required",
+      "minimum_risk_tier": "high",
+      "paths": [
+        "sysext/**",
+        "systemd/**",
+        "download/**"
+      ],
+      "detectors": []
+    }
+  ],
+  "change_controls": {
+    "pull_requests_required": true,
+    "human_review_before_merge": true,
+    "highest_applicable_risk": true,
+    "validation_evidence_required": true,
+    "least_privilege": true,
+    "untrusted_content_is_data": true,
+    "never_relax": [
+      "required-checks",
+      "security-checks",
+      "review-requirements",
+      "coverage-checks",
+      "provenance-verification"
+    ]
+  },
+  "exception_controls": {
+    "independent_authorized_approver": true,
+    "self_approval": false,
+    "required_fields": [
+      "rationale",
+      "target",
+      "compensating-controls",
+      "expires-at",
+      "restoration-or-closure-plan"
+    ]
+  },
+  "risk_classification": {
+    "tiers": [
+      "low",
+      "moderate",
+      "high",
+      "critical"
+    ],
+    "classification_rule": "highest-applicable",
+    "uncertainty_rule": "higher-plausible"
+  }
+}
