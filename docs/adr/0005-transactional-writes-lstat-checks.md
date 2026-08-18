@@ -72,7 +72,14 @@ code that writes to managed definition paths.
 
 - Implements: [`updex/catalog.go`](../../updex/catalog.go)
   (`fileSnapshot`, `snapshotFile`, `restore`, `managedFileExists`,
-  `CatalogAdd` rollback closure)
+  `CatalogAdd` rollback closure);
+  [`systemd/manager.go`](../../systemd/manager.go) (`unitFileState`,
+  `writeUnitFile`, `Install`, `Exists` — the Lstat-only existence rule
+  applied to the root-written `updex-update.timer`/`.service` unit files:
+  a symlink, directory, or other non-regular entry at a unit path is
+  refused rather than written through, and units are written via
+  temp-file-plus-rename so the write itself never follows a link)
 - Shapes: [design/overview.md — Catalogs](../design/overview.md#catalogs-catalog-updexcataloggo),
+  [design/overview.md — Auto-update daemon](../design/overview.md#auto-update-daemon),
   [CONTRIBUTING.md — Security](../../CONTRIBUTING.md#security)
 - Builds on: [ADR-0003](0003-catalog-ownership-marker.md)
