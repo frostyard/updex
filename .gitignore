@@ -3,3 +3,8 @@ dist/
 completions/
 manpages/
 coverage.out
+
+# Local agent/tooling state (never committed)
+.worktrees/
+.mcp.json
+.codex/

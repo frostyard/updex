@@ -168,3 +168,15 @@ jobs:
         run: |
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} make build
           ls -lh build/
+
+  docs-gate:
+    name: Docs integrity
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check docs index, links, and conformance aliases
+        run: node scripts/check-docs.mjs

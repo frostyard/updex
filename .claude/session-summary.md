@@ -1,32 +1,31 @@
 # Session summary
 
-Use this artifact for concise handoff context that a future agent needs to
-continue unfinished work without reconstructing the previous session.
+Ephemeral session state — agents replace the block below at session end
+(session state lives in `.claude/`). Durable learnings go to
+[.memory/](../.memory/README.md), never here; ongoing work is tracked in
+GitHub issues (`gh --repo frostyard/updex`). Never include credentials,
+tokens, private user data, or raw command output; link issues, PRs, and
+commits instead of copying logs.
 
-## How to use it
+## Current state
 
-- Add the newest entry first under **Summaries**.
-- Record the objective, outcome, changed paths, verification, decisions, and
-  concrete follow-up work.
-- Link issues, pull requests, and commits instead of copying long logs or diffs.
-- Never include credentials, tokens, private user data, or raw command output.
-- Fold durable architecture decisions and non-obvious lessons into the right
-  `docs/` page (or the `.memory/` inbox); this file is for session continuity.
-- Remove the placeholder once the first summary is recorded, and prune entries
-  after their follow-up work is complete or captured in permanent docs.
+- ACMM conformance realigned with the fleet (2026-08-18):
+  [ADR-0012](../docs/adr/0012-acmm-conformance-via-canonical-aliases.md)'s
+  alias lattice (`AGENTS.md` canonical; `docs/specs/pr-review-rubric.md`,
+  `docs/specs/pr-acceptance-metric.md`, `docs/design/quality-loop.md`
+  canonical with `docs/review-rubric.md`, `docs/metrics.md`,
+  `docs/quality.md` aliases), the docs-integrity gate
+  (`scripts/check-docs.mjs`, `docs-gate` CI job), and `.claude/settings.json`
+  tool-layer limits.
 
-## Entry template
+## Last landed
 
-<!--
-### YYYY-MM-DD — short objective
+- #313 propagate golangci-lint failures; #322/#319 catalog GitHub-token
+  origin restriction; #316 scanner JSON output fix.
 
-- **Outcome:** completed, blocked, or in progress
-- **Changed:** paths or commit/PR links
-- **Verified:** commands run and relevant results
-- **Decisions:** choices future work must preserve
-- **Follow-up:** specific next actions, or "none"
--->
+## Next
 
-## Summaries
-
-_No session handoffs recorded._
+- #323 (catalog HTTPS-only URLs / redirect downgrade refusal) — separate
+  security work item.
+- #274 (daemon lifecycle orchestration behind the SDK boundary) — separate
+  architecture work item.

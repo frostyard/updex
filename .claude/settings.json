@@ -10,5 +10,22 @@
   "enabledPlugins": {
     "frostyard-dev@frostyard-ai": true,
     "frostyard-os@frostyard-ai": true
+  },
+  "permissions": {
+    "deny": [
+      "Bash(gh pr merge:*)",
+      "Bash(gh pr review:* --approve*)",
+      "Bash(gh release:*)",
+      "Bash(git push origin main)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)"
+    ],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(gh workflow run:*)"
+    ]
   }
 }

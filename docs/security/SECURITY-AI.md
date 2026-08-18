@@ -9,7 +9,7 @@ automated checks as any other contribution.
 The machine-readable [AI governance policy](../../.github/policies/ai-governance.json)
 exposes these controls to repository automation and agents. This document,
 the [risk tiers](../risk-tiers.md), and the
-[review rubric](../review-rubric.md) remain authoritative for their detailed
+[review rubric](../specs/pr-review-rubric.md) remain authoritative for their detailed
 requirements.
 
 ## Core principles
@@ -73,8 +73,8 @@ from untrusted content must be inspected rather than executed blindly.
 ## Secure contribution requirements
 
 AI-assisted changes must follow the repository's
-[contribution guide](../../CONTRIBUTING.md), pass the required CI checks, and
-be evaluated with the [pull request review rubric](../review-rubric.md).
+[contribution guide](../../AGENTS.md), pass the required CI checks, and
+be evaluated with the [pull request review rubric](../specs/pr-review-rubric.md).
 Security-sensitive changes must include focused tests for relevant failure and
 abuse cases. Generated dependencies, code, and configuration require the same
 provenance and license review as manually authored material.
@@ -96,7 +96,7 @@ the maintainers privately.
 
 Do not disclose suspected vulnerabilities in public issues, pull requests, or
 AI transcripts. Follow the private reporting guidance in the
-[contribution guide](../../CONTRIBUTING.md).
+[contribution guide](../../AGENTS.md).
 
 Exceptions to this policy require documented, time-bounded maintainer approval.
 They must not permit disclosure of secrets or bypass private vulnerability

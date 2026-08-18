@@ -51,6 +51,10 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
 - [ADR-0011](adr/0011-capture-merged-sysext-state-per-client.md) — extends
   client-scoped runtime paths to the merged sysext state directory and defines
   the active signals used by `DisableFeature`
+- [ADR-0012](adr/0012-acmm-conformance-via-canonical-aliases.md) — Hive ACMM
+  criteria are satisfied by committed relative symlinks to canonical content
+  (`AGENTS.md`, `specs/`, `design/`) plus real trees for directory criteria;
+  the alias table lives in the ADR and `scripts/check-docs.mjs` guards it
 
 ### Design
 
@@ -60,6 +64,9 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
   runtime prerequisites (sysext state dirs, `systemd-sysext.service`,
   catalog config) and recommended package post-install steps for shipping
   updex in an OS image or package
+- [quality loop](design/quality-loop.md) — how change quality is declared,
+  reviewed, gated (CI + docs-gate), learned from, and observed; also the
+  quality dashboard (`docs/quality.md` resolves here)
 
 ### Specs
 
@@ -67,6 +74,12 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
   `yeti/sdk-api.md`)
 - [Configuration reference](specs/config-reference.md) — `.transfer` /
   `.feature` / `.catalog` file formats (formerly `yeti/config-reference.md`)
+- [PR review rubric](specs/pr-review-rubric.md) — the checks every pull
+  request review verifies and how findings are labelled
+  (`docs/review-rubric.md` resolves here)
+- [PR acceptance metric](specs/pr-acceptance-metric.md) — the monthly
+  acceptance-rate definition, reporting command, and Auto-QA guardrails
+  (`docs/metrics.md` resolves here)
 
 ### Plans
 
@@ -74,14 +87,14 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
 
 ### Process docs (uncategorized)
 
-Pre-existing repo process docs, kept at their original paths:
+Pre-existing repo process docs kept at their original paths — the ACMM
+criteria and the other fleet repos name these exact paths (ADR-0012):
 
 - [org-adrs.md](org-adrs.md) — the frostyard/core ADRs that bind this repo
 - [patterns.md](patterns.md) — transfer file pattern guide
 - [risk-tiers.md](risk-tiers.md) — change risk tiers for pull requests
-- [review-rubric.md](review-rubric.md) — pull request review rubric
-- [AI-QUALITY-ASSURANCE.md](AI-QUALITY-ASSURANCE.md) — AI quality assurance
-- [metrics/](metrics/README.md) — public metrics index
+- [metrics/](metrics/README.md) — public metrics index (real tree; the
+  acceptance-metric definition is [specs/pr-acceptance-metric.md](specs/pr-acceptance-metric.md))
 - [security/SECURITY-AI.md](security/SECURITY-AI.md) — AI security policy
 
 ## Conventions
@@ -91,4 +104,11 @@ Pre-existing repo process docs, kept at their original paths:
   the old one `Superseded by NNNN` rather than editing it.
 - Design docs are updated in place to always reflect reality.
 - Specs change only alongside the code that implements them.
-- Adding a doc means adding it to the index above.
+- Adding a doc means adding it to the index above; `node scripts/check-docs.mjs`
+  fails CI when a doc in the four categories is unindexed or a relative link
+  is dead.
+- Conformance alias symlinks (`docs/quality.md`, `docs/metrics.md`,
+  `docs/review-rubric.md`, and the root-level `CLAUDE.md`/`GEMINI.md`/
+  `CONTRIBUTING.md`/`.cursorrules`) are not docs: they are not indexed here
+  and are edited only through their canonical targets
+  ([ADR-0012](adr/0012-acmm-conformance-via-canonical-aliases.md)).

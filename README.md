@@ -5,8 +5,8 @@ A Go library (SDK) and CLI tool for managing systemd-sysext images, replicating 
 [![Tests](https://github.com/frostyard/updex/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/frostyard/updex/actions/workflows/test.yml?query=branch%3Amain)
 [![codecov](https://codecov.io/gh/frostyard/updex/graph/badge.svg?branch=main)](https://codecov.io/gh/frostyard/updex)
 
-See the [quality dashboard](docs/AI-QUALITY-ASSURANCE.md) and
-[public metrics index](docs/metrics/) for the project's live quality,
+See the [quality loop](docs/design/quality-loop.md) (quality dashboard) and
+[public metrics index](docs/metrics/README.md) for the project's live quality,
 review, and automation signals.
 
 ## What is updex?
@@ -721,7 +721,8 @@ and a fake catalog server to cover default component discovery and
 
 ### Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. In short:
+See [AGENTS.md](AGENTS.md) (`CONTRIBUTING.md` resolves to it) for the full
+guide. In short:
 
 - Keep the SDK layer free of CLI dependencies (no Cobra, pflag, etc.)
 - SDK functions should return structured data, not formatted output

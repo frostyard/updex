@@ -13,7 +13,8 @@ Use this prompt when triaging a new GitHub issue or bug report for updex.
    - **Docs gap** — missing or stale guidance in `AGENTS.md`, `README.md`, or
      `docs/`.
    - **ACMM/process gap** — repository hygiene or agent-maturity criterion
-     (see `.github/copilot-instructions.md`).
+     (see `AGENTS.md` and
+     [ADR-0012](../../docs/adr/0012-acmm-conformance-via-canonical-aliases.md)).
 3. For a reproducible bug, write a minimal failing test first (table-driven,
    using `t.TempDir()` and mock `Runner`s where systemd/sysext commands are
    involved), confirm it fails, then implement the smallest fix that makes it
