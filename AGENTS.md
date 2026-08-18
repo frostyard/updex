@@ -464,7 +464,7 @@ Key design points:
   `Client.loadDomain`. Avoid side effects where possible; use callbacks for
   progress reporting.
 - Error messages: lowercase, no trailing punctuation, wrap with `fmt.Errorf("context: %w", err)`; never leak credentials or credential-bearing URLs into error messages
-- CLI output: `common.OutputJSON()` for `--json` flag, text tables otherwise; download progress bars are disabled for JSON/silent modes and write to stderr in interactive mode so stdout remains a data-only stream
+- CLI output: `clix.OutputJSON()` when `clix.JSONOutput` is set (`--json`), text tables otherwise; download progress bars are disabled for JSON/silent modes and write to stderr in interactive mode so stdout remains a data-only stream
 - Formatting is plain `gofmt` (`make fmt`); CI fails on unformatted files.
   Follow Go naming conventions, use descriptive names (single letters only
   in very short scopes), and add doc comments on exported identifiers.
