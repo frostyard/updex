@@ -252,15 +252,25 @@ func runFeaturesCheck(cmd *cobra.Command, args []string) error {
 	_, _ = fmt.Fprintln(w, "FEATURE\tCOMPONENT\tCURRENT\tNEWEST\tUPDATE")
 	for _, fr := range results {
 		for _, r := range fr.Results {
-			update := "no"
-			if r.UpdateAvailable {
-				update = "yes"
-			}
 			current := r.CurrentVersion
 			if current == "" {
 				current = "-"
 			}
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", fr.Feature, r.Component, current, r.NewestVersion, update)
+			newest := r.NewestVersion
+			if newest == "" {
+				newest = "-"
+			}
+			// A component that could not be checked is marked "error" so the table
+			// never reads as "no update" for it. Details are available in r.Error and
+			// may be reported on stderr by the SDK reporter (suppressed under --silent).
+			update := "no"
+			switch {
+			case r.Error != "":
+				update = "error"
+			case r.UpdateAvailable:
+				update = "yes"
+			}
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", fr.Feature, r.Component, current, newest, update)
 		}
 	}
 	_ = w.Flush()

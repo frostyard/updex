@@ -6,6 +6,11 @@ type CheckResult struct {
 	CurrentVersion  string `json:"current_version,omitempty"`
 	NewestVersion   string `json:"newest_version"`
 	UpdateAvailable bool   `json:"update_available"`
+	// Error is set when the component could not be checked (manifest fetch,
+	// signature verification, pattern failure, or installed-version listing).
+	// UpdateAvailable is always false in that case; other fields may be empty,
+	// except NewestVersion may be set if the failure happens after reading the manifest.
+	Error string `json:"error,omitempty"`
 }
 
 // UpdateResult represents the result of an update operation for a single component.
