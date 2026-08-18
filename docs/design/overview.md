@@ -91,7 +91,7 @@ CLI (cmd/daemon.go) → systemd (direct, bypasses SDK)
 
 - Mock interfaces for system commands: `sysext.SysextRunner`, `systemd.SystemctlRunner`
 - `ClientConfig.SysextRunner` field for injecting mocks into the SDK client — `NewClient` stores the runner directly on the `Client` struct (does not mutate global state)
-- `ClientConfig.Paths` (`RuntimePaths`) for supplying temp filesystem trees to a client at construction — the preferred approach for path isolation since ADR-0010; use `t.TempDir()` paths for `DefinitionRoots`, `SysextLinkDir`, `CatalogConfigRoots`, etc. Independently configured clients can run in parallel without save/mutate/restore discipline.
+- `ClientConfig.Paths` (`RuntimePaths`) for supplying temp filesystem trees to a client at construction — the preferred approach for path isolation since ADR-0010; use `t.TempDir()` paths for `DefinitionRoots`, `SysextLinkDir`, `RunExtensionsDir`, `CatalogConfigRoots`, etc. Independently configured clients can run in parallel without save/mutate/restore discipline.
 - Package-level compatibility variables (`config.SearchRoots`, `catalog.ConfigRoots`, `catalog.CacheDir`, `sysext.SysextDir`) remain settable for tests that have not yet migrated; mutation before client construction still works because `NewClient` reads each global once at that point.
 - Transfer parsing receives the client's captured os-release paths as well as
   definition roots, so `%w`/related specifier expansion cannot cross client
@@ -446,7 +446,7 @@ always override and always survive (decision recorded in
 [ADR-0004](../adr/0004-single-updex-drop-in.md)).
 
 - **Enable**: Creates drop-in at `/etc/sysupdate.d/<name>.feature.d/00-updex.conf` (or `/etc/sysupdate.<component>.d/<name>.feature.d/00-updex.conf` for a component-scoped feature — see "Components" above) setting `Enabled=true`. With `--now`, also downloads extensions immediately.
-- **Disable**: Creates drop-in setting `Enabled=false` at the same scoped path. With `--now`, calls `Unmerge()`, removes symlinks from `/var/lib/extensions/`, and deletes all versioned files. `--force` required if extensions are currently active/merged (changes take effect after reboot).
+- **Disable**: Creates drop-in setting `Enabled=false` at the same scoped path. With `--now`, calls `Unmerge()`, removes symlinks from `/var/lib/extensions/`, and deletes all versioned files. Before removal, `DisableFeature` treats an image as active when its version matches either a legacy transfer `CurrentSymlink` or an entry in the client's captured `RuntimePaths.RunExtensionsDir` (production default `/run/extensions`, systemd-sysext's merged-image snapshot). The `/var/lib/extensions` link is not an active signal: it makes an image available for a future merge but does not prove the image is currently merged. `--force` is required when either active signal matches; forced removal reports that a reboot is required.
 
 ### Auto-update daemon
 

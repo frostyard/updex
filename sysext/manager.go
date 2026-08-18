@@ -94,15 +94,22 @@ func GetInstalledVersionsAt(t *config.Transfer, defaultDir string) ([]string, st
 	return versions, current, nil
 }
 
-// GetActiveVersion returns the version currently active in systemd-sysext
-// This checks if the extension is currently merged
+// GetActiveVersion returns the version currently active in systemd-sysext.
+// It checks the legacy current symlink and the production merged-image
+// directory.
 func GetActiveVersion(t *config.Transfer) (string, error) {
-	return GetActiveVersionAt(t, SysextDir)
+	return GetActiveVersionIn(t, SysextDir, RunExtensionsDir)
 }
 
 // GetActiveVersionAt is GetActiveVersion with an explicit fallback directory
 // for transfers that omit Target.Path.
 func GetActiveVersionAt(t *config.Transfer, defaultDir string) (string, error) {
+	return GetActiveVersionIn(t, defaultDir, RunExtensionsDir)
+}
+
+// GetActiveVersionIn is GetActiveVersion with explicit target fallback and
+// merged-image directories.
+func GetActiveVersionIn(t *config.Transfer, defaultDir, runExtensionsDir string) (string, error) {
 	patterns, err := parseTargetPatterns(t)
 	if err != nil {
 		return "", err
@@ -118,9 +125,7 @@ func GetActiveVersionAt(t *config.Transfer, defaultDir string) (string, error) {
 		}
 	}
 
-	// Check /run/extensions for active sysext images
-	runExtensions := "/run/extensions"
-	entries, err := os.ReadDir(runExtensions)
+	entries, err := os.ReadDir(runExtensionsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
@@ -308,6 +313,9 @@ func GetExtensionName(filename string) string {
 // mutating this variable. It remains for compatibility wrappers and tests
 // that have not yet migrated.
 var SysextDir = "/var/lib/extensions"
+
+// RunExtensionsDir is systemd-sysext's merged-image state directory.
+const RunExtensionsDir = "/run/extensions"
 
 // SysextLinkName returns the /var/lib/extensions link name for a transfer.
 func SysextLinkName(t *config.Transfer) string {
