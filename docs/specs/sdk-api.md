@@ -37,7 +37,7 @@ const DisableCatalogCache = "\x00"
 func NewClient(cfg ClientConfig) *Client
 ```
 
-`NewClient` resolves `cfg.Paths` once at construction: each zero field reads its corresponding package-level compatibility variable exactly once and takes a defensive copy of slices. After construction the client never consults those package variables again, so mutating `config.SearchRoots`, `catalog.ConfigRoots`, `catalog.CacheDir`, or `sysext.SysextDir` cannot redirect the client. This is the ADR-0010 invariant: all runtime dependencies are captured immutably at construction.
+`NewClient` resolves `cfg.Paths` once at construction: each zero field reads its corresponding package-level compatibility variable or production constant exactly once and takes a defensive copy of slices. After construction the client never consults those package variables again, so mutating `config.SearchRoots`, `catalog.ConfigRoots`, `catalog.CacheDir`, or `sysext.SysextDir` cannot redirect the client. This is the ADR-0011 invariant: all runtime dependencies, including merged sysext state, are captured immutably at construction.
 
 Path-dependent supporting-package APIs have explicit variants for SDK use:
 `config.Load*In` receives definition roots and, for transfers, os-release

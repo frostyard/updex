@@ -229,7 +229,7 @@ Key design points:
 - Error messages: lowercase, no trailing punctuation, wrap with `fmt.Errorf("context: %w", err)`
 - SDK functions accept a `context.Context` and an options struct, return result structs + error
 - CLI output: `common.OutputJSON()` for `--json` flag, text tables otherwise
-- Tests use `t.TempDir()` for filesystem operations and mock runners for systemd commands; use `ClientConfig.Paths` (`RuntimePaths`) to give a client its own temp trees rather than mutating package globals — independently configured clients can run in parallel without save/mutate/restore discipline (see ADR-0010)
+- Tests use `t.TempDir()` for filesystem operations and mock runners for systemd commands; use `ClientConfig.Paths` (`RuntimePaths`) to give a client its own temp trees rather than mutating package globals — independently configured clients can run in parallel without save/mutate/restore discipline (see ADR-0011)
 - Configuration uses INI format with systemd-style priority paths: `/etc/sysupdate.d/`, `/run/sysupdate.d/`, `/usr/local/lib/sysupdate.d/`, `/usr/lib/sysupdate.d/` (plus the same four roots per discovered component, see above)
 - Transfer targets default to staging in `/var/lib/extensions.d`; `CurrentSymlink` is optional legacy state and must not be required for `/var/lib/extensions` sysext links
 

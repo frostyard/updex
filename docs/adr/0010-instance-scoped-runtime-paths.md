@@ -1,6 +1,6 @@
 # 0010 — Scope runtime paths to each SDK client
 
-- **Status:** Implemented
+- **Status:** Superseded by [0011](0011-capture-merged-sysext-state-per-client.md)
 - **Date:** 2026-08-12
 
 ## Context
@@ -33,7 +33,7 @@ The path configuration covers:
 - os-release lookup paths;
 - catalog configuration roots, listing cache directory, and transfer target
   directory; and
-- the systemd-sysext link directory and merged-image state directory.
+- the systemd-sysext link directory.
 
 SDK methods pass that configuration to path-dependent collaborators in
 `config`, `catalog`, and `sysext`. Those packages expose explicit,
@@ -60,13 +60,12 @@ client.
 
 ## Implementation
 
-`ClientConfig.Paths` (type `RuntimePaths`) holds seven fields: `DefinitionRoots`,
+`ClientConfig.Paths` (type `RuntimePaths`) holds six fields: `DefinitionRoots`,
 `OSReleasePaths`, `CatalogConfigRoots`, `CatalogCacheDir`,
-`CatalogTargetPath`, `SysextLinkDir`, and `RunExtensionsDir`. Zero values
-resolve to production defaults at `NewClient` time by reading each package
-global or constant exactly once and taking a defensive copy of every slice.
-The sentinel `DisableCatalogCache` explicitly disables caching without
-affecting other clients.
+`CatalogTargetPath`, and `SysextLinkDir`. Zero values resolve to production
+defaults at `NewClient` time by reading each package global exactly once and
+taking a defensive copy of every slice. The sentinel `DisableCatalogCache`
+explicitly disables caching without affecting other clients.
 
 Parameterized entry points added to each package (original functions remain as
 compatibility wrappers that forward to the parameterized variant using current
@@ -80,12 +79,10 @@ package globals):
 - `sysext`: `LinkToSysextAt`, `UnlinkFromSysextAt`.
 
 The sysext package also provides explicit-fallback variants for installed,
-active, vacuum, legacy-link, and removal operations. `GetActiveVersionIn`
-receives both the target fallback and merged-image state directories.
-`DefaultRunner` implements the optional `PathSysextRunner` extension so
-`installTransfer` supplies the client's captured link directory. Existing
-injected `SysextRunner` implementations retain their original
-`LinkToSysext` behavior.
+active, vacuum, legacy-link, and removal operations. `DefaultRunner` implements
+the optional `PathSysextRunner` extension so `installTransfer` supplies the
+client's captured link directory. Existing injected `SysextRunner`
+implementations retain their original `LinkToSysext` behavior.
 
 Concurrent two-client isolation tests in `updex/isolation_test.go` prove the
 invariants: independent trees, mutation-proof construction, and race-free

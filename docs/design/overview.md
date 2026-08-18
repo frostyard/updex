@@ -91,7 +91,7 @@ CLI (cmd/daemon.go) → systemd (direct, bypasses SDK)
 
 - Mock interfaces for system commands: `sysext.SysextRunner`, `systemd.SystemctlRunner`
 - `ClientConfig.SysextRunner` field for injecting mocks into the SDK client — `NewClient` stores the runner directly on the `Client` struct (does not mutate global state)
-- `ClientConfig.Paths` (`RuntimePaths`) for supplying temp filesystem trees to a client at construction — the preferred approach for path isolation since ADR-0010; use `t.TempDir()` paths for `DefinitionRoots`, `SysextLinkDir`, `RunExtensionsDir`, `CatalogConfigRoots`, etc. Independently configured clients can run in parallel without save/mutate/restore discipline.
+- `ClientConfig.Paths` (`RuntimePaths`) for supplying temp filesystem trees to a client at construction — the preferred approach for path isolation since ADR-0011; use `t.TempDir()` paths for `DefinitionRoots`, `SysextLinkDir`, `RunExtensionsDir`, `CatalogConfigRoots`, etc. Independently configured clients can run in parallel without save/mutate/restore discipline.
 - Package-level compatibility variables (`config.SearchRoots`, `catalog.ConfigRoots`, `catalog.CacheDir`, `sysext.SysextDir`) remain settable for tests that have not yet migrated; mutation before client construction still works because `NewClient` reads each global once at that point.
 - Transfer parsing receives the client's captured os-release paths as well as
   definition roots, so `%w`/related specifier expansion cannot cross client
@@ -145,7 +145,7 @@ grouping of `.transfer`/`.feature` files under `sysupdate.<name>.d/`,
 searched across the same four roots (`config.SearchRoots` — a package var
 whose value is captured immutably by each client at `NewClient` via
 `ClientConfig.Paths.DefinitionRoots`; see
-[ADR-0010](../adr/0010-instance-scoped-runtime-paths.md)) with the same
+[ADR-0011](../adr/0011-capture-merged-sysext-state-per-client.md)) with the same
 priority order as the legacy default `sysupdate.d/` directory. This exists
 because native OS images now put A/B partition and UKI transfers in the
 default directory (see "Non-sysext transfers" below), and package-versioned
