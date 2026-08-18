@@ -34,7 +34,7 @@ repository squash-merges and its squash title default is "commit or PR
 title", so the PR title — or, for a single-commit PR, that commit's subject —
 becomes the `main` commit that svu versions and the changelog groups by. Make
 the first commit conventional too; do not carry an issue's `[quality] …` /
-`[scanner] …` title into the commit or PR. `.github/workflows/pr-title.yml`
+`[scanner] …` / `[sec-check] …` title into the commit or PR. `.github/workflows/pr-title.yml`
 fails a PR whose title (or lone commit subject) is not conventional. See
 [CONTRIBUTING.md](CONTRIBUTING.md#pull-requests) for the type list.
 
@@ -205,6 +205,9 @@ Key design points:
   (`CatalogListOptions.NoCache`) bypasses and rewrites the cache. The
   cache entry stores the repo's ListURL and is invalidated when it
   changes. `add`/`remove`/`FetchConf` never use the cache.
+- Catalog listing sends `GITHUB_TOKEN` only to the trusted
+  `https://api.github.com` origin and strips authorization from redirects to
+  any other origin; custom `ListURL` hosts never receive GitHub credentials.
 - Provenance: `FeatureInfo.Origin`/`OriginName` (set by
   `updex.featureOrigin` from the `.feature` path alone) drive the CATALOG
   column of `features list` — a catalog name for marker-bearing files,

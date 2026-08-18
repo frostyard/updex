@@ -285,7 +285,9 @@ Design decisions (verified with the user, 2026-08):
   `/usr/local/lib/...` > `/usr/lib/...`; earlier root wins per filename;
   package var, test-overridable). Keys: `SiteURL` (required), `ListURL`
   (optional GitHub contents API endpoint for list/search only;
-  `GITHUB_TOKEN` env honored as bearer token), `Component` (optional,
+  `GITHUB_TOKEN` env honored as bearer token only for the trusted
+  `https://api.github.com` origin and stripped on cross-origin redirects),
+  `Component` (optional,
   default `catalog-<repo>`). Missing config → `catalog.ErrNoCatalogs`,
   surfaced by the SDK with setup guidance.
 - **`RenderTransfer` is a security-constrained line transform**

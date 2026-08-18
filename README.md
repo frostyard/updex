@@ -572,7 +572,8 @@ ListURL=https://api.github.com/repos/fedora-sysexts/community/contents/
 - `ListURL` (optional) — GitHub contents API endpoint used by
   `catalog list`/`search` to enumerate available sysexts. `add`/`remove`
   never use it. Set the `GITHUB_TOKEN` environment variable to raise the
-  API rate limit.
+  API rate limit for `https://api.github.com`; credentials are not sent to
+  custom catalog origins or forwarded by cross-origin redirects.
 - `Component` (optional) — systemd-sysupdate component the generated files
   are written under; defaults to `catalog-<name>`
   (e.g. `/etc/sysupdate.catalog-fedora.d/`).

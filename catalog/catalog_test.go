@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +10,12 @@ import (
 	"strings"
 	"testing"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 // zoxideConf mirrors a real fedora-sysexts catalog .conf.
 const zoxideConf = `[Transfer]
@@ -54,7 +61,7 @@ func TestList(t *testing.T) {
 	}
 }
 
-func TestListGitHubToken(t *testing.T) {
+func TestListGitHubTokenNotSentToUntrustedOrigin(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "test-token")
 
 	var gotAuth string
@@ -68,8 +75,73 @@ func TestListGitHubToken(t *testing.T) {
 	if _, err := List(t.Context(), server.Client(), repo); err != nil {
 		t.Fatal(err)
 	}
-	if gotAuth != "Bearer test-token" {
-		t.Errorf("Authorization = %q, want Bearer test-token", gotAuth)
+	if gotAuth != "" {
+		t.Error("untrusted catalog origin received authorization")
+	}
+}
+
+func TestListGitHubTokenSentToTrustedOrigin(t *testing.T) {
+	const token = "test-token"
+	t.Setenv("GITHUB_TOKEN", token)
+
+	var gotAuthorization string
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		gotAuthorization = req.Header.Get("Authorization")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`[]`)),
+			Request:    req,
+		}, nil
+	})}
+
+	repo := Repo{
+		Name:      "fedora",
+		SiteURL:   "https://extensions.example.com",
+		ListURL:   "https://api.github.com/repos/example/catalog/contents/",
+		Component: "catalog-fedora",
+	}
+	if _, err := List(t.Context(), client, repo); err != nil {
+		t.Fatal(err)
+	}
+	if gotAuthorization != "Bearer "+token {
+		t.Error("trusted GitHub API request did not receive authorization")
+	}
+}
+
+func TestListGitHubTokenStrippedOnCrossOriginRedirect(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "test-token")
+
+	var redirectedAuthorization string
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Hostname() == "api.github.com" {
+			return &http.Response{
+				StatusCode: http.StatusFound,
+				Header:     http.Header{"Location": []string{"https://catalog.example.com/list"}},
+				Body:       io.NopCloser(strings.NewReader("")),
+				Request:    req,
+			}, nil
+		}
+		redirectedAuthorization = req.Header.Get("Authorization")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`[]`)),
+			Request:    req,
+		}, nil
+	})}
+
+	repo := Repo{
+		Name:      "fedora",
+		SiteURL:   "https://extensions.example.com",
+		ListURL:   "https://api.github.com/repos/example/catalog/contents/",
+		Component: "catalog-fedora",
+	}
+	if _, err := List(t.Context(), client, repo); err != nil {
+		t.Fatal(err)
+	}
+	if redirectedAuthorization != "" {
+		t.Error("cross-origin redirect received authorization")
 	}
 }
 
