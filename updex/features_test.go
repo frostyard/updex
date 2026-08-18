@@ -1148,6 +1148,172 @@ func TestCheckFeatures_FindsUpdates(t *testing.T) {
 	}
 }
 
+// writeCheckTransfer writes a transfer file for CheckFeatures failure-path
+// tests. verify controls Verify= so a test can force the detached-signature
+// fetch against a server that has no SHA256SUMS.gpg.
+func writeCheckTransfer(t *testing.T, configDir, component, featureName, baseURL, targetDir string, verify bool) {
+	t.Helper()
+	verifyStr := "false"
+	if verify {
+		verifyStr = "true"
+	}
+	content := `[Transfer]
+Features=` + featureName + `
+Verify=` + verifyStr + `
+
+[Source]
+Type=url-file
+Path=` + baseURL + `
+MatchPattern=` + component + `_@v.raw
+
+[Target]
+Path=` + targetDir + `
+MatchPattern=` + component + `_@v.raw
+`
+	if err := os.WriteFile(filepath.Join(configDir, component+".transfer"), []byte(content), 0644); err != nil {
+		t.Fatalf("failed to create transfer file: %v", err)
+	}
+}
+
+// TestCheckFeatures_ManifestFetchFailure_ReportsError verifies that a
+// component whose manifest cannot be fetched is reported with Error set
+// (rather than silently dropped) and that CheckFeatures returns an
+// aggregate error, mirroring UpdateFeatures. A 404 is used because it is
+// non-transient: a 5xx would exercise the same path after bounded retries.
+func TestCheckFeatures_ManifestFetchFailure_ReportsError(t *testing.T) {
+	configDir := t.TempDir()
+	targetDir := t.TempDir()
+
+	server := testutil.NewErrorServer(t, 404)
+	defer server.Close()
+
+	createFeatureFile(t, configDir, "testfeature", true)
+	writeCheckTransfer(t, configDir, "testext", "testfeature", server.URL, targetDir, false)
+
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: &sysext.MockRunner{}})
+	results, err := client.CheckFeatures(t.Context(), CheckFeaturesOptions{})
+
+	if err == nil {
+		t.Fatal("expected CheckFeatures to return an error when a manifest fetch fails")
+	}
+	if !strings.Contains(err.Error(), "failed to check") {
+		t.Errorf("unexpected aggregate error: %v", err)
+	}
+	if len(results) != 1 || len(results[0].Results) != 1 {
+		t.Fatalf("expected 1 feature with 1 component result, got %+v", results)
+	}
+	r := results[0].Results[0]
+	if r.Component != "testext" {
+		t.Errorf("expected component testext, got %q", r.Component)
+	}
+	if r.Error == "" {
+		t.Fatal("expected CheckResult.Error to be set")
+	}
+	if !strings.Contains(r.Error, "failed to get available versions") {
+		t.Errorf("unexpected CheckResult.Error: %q", r.Error)
+	}
+	if r.UpdateAvailable || r.NewestVersion != "" {
+		t.Errorf("failed check must not claim an update: %+v", r)
+	}
+
+	// The JSON contract: the component is present with an error field.
+	data, jsonErr := json.Marshal(results)
+	if jsonErr != nil {
+		t.Fatalf("marshal: %v", jsonErr)
+	}
+	if !strings.Contains(string(data), `"error":"`) {
+		t.Errorf("expected error field in JSON, got %s", data)
+	}
+}
+
+// TestCheckFeatures_SignatureFailure_ReportsError verifies that a transfer
+// with Verify=true whose source has no detached signature is reported as a
+// check failure rather than dropped.
+func TestCheckFeatures_SignatureFailure_ReportsError(t *testing.T) {
+	configDir := t.TempDir()
+	targetDir := t.TempDir()
+
+	// Serves SHA256SUMS but no SHA256SUMS.gpg.
+	server := testutil.NewTestServer(t, testutil.TestServerFiles{
+		Files: map[string]string{
+			"testext_1.0.0.raw": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+		},
+	})
+	defer server.Close()
+
+	createFeatureFile(t, configDir, "testfeature", true)
+	writeCheckTransfer(t, configDir, "testext", "testfeature", server.URL, targetDir, true)
+
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: &sysext.MockRunner{}})
+	results, err := client.CheckFeatures(t.Context(), CheckFeaturesOptions{})
+
+	if err == nil {
+		t.Fatal("expected CheckFeatures to return an error when signature verification fails")
+	}
+	if len(results) != 1 || len(results[0].Results) != 1 {
+		t.Fatalf("expected 1 feature with 1 component result, got %+v", results)
+	}
+	r := results[0].Results[0]
+	if r.Error == "" || !strings.Contains(r.Error, "signature") {
+		t.Errorf("expected a signature-related CheckResult.Error, got %q", r.Error)
+	}
+	if r.UpdateAvailable {
+		t.Error("failed check must not claim an update")
+	}
+}
+
+// TestCheckFeatures_PartialFailure_KeepsHealthyResults verifies that one
+// failing transfer does not hide the check result of a healthy one in the
+// same feature, and that the aggregate error is still returned.
+func TestCheckFeatures_PartialFailure_KeepsHealthyResults(t *testing.T) {
+	configDir := t.TempDir()
+	targetDir := t.TempDir()
+
+	good := testutil.NewTestServer(t, testutil.TestServerFiles{
+		Files: map[string]string{
+			"goodext_1.0.0.raw": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+			"goodext_2.0.0.raw": "b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3",
+		},
+	})
+	defer good.Close()
+	bad := testutil.NewErrorServer(t, 404)
+	defer bad.Close()
+
+	createFeatureFile(t, configDir, "testfeature", true)
+	writeCheckTransfer(t, configDir, "badext", "testfeature", bad.URL, targetDir, false)
+	writeCheckTransfer(t, configDir, "goodext", "testfeature", good.URL, targetDir, false)
+	if err := os.WriteFile(filepath.Join(targetDir, "goodext_1.0.0.raw"), []byte("test"), 0644); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: &sysext.MockRunner{}})
+	results, err := client.CheckFeatures(t.Context(), CheckFeaturesOptions{})
+
+	if err == nil {
+		t.Fatal("expected an aggregate error when one component fails")
+	}
+	if len(results) != 1 || len(results[0].Results) != 2 {
+		t.Fatalf("expected 1 feature with 2 component results, got %+v", results)
+	}
+	byComponent := map[string]CheckResult{}
+	for _, r := range results[0].Results {
+		byComponent[r.Component] = r
+	}
+	if r := byComponent["badext"]; r.Error == "" {
+		t.Errorf("expected badext to carry an error, got %+v", r)
+	}
+	r, ok := byComponent["goodext"]
+	if !ok {
+		t.Fatal("healthy component missing from results")
+	}
+	if r.Error != "" {
+		t.Errorf("healthy component must not carry an error, got %q", r.Error)
+	}
+	if !r.UpdateAvailable || r.CurrentVersion != "1.0.0" || r.NewestVersion != "2.0.0" {
+		t.Errorf("unexpected healthy result: %+v", r)
+	}
+}
+
 // TestUpdateFeatures_MinVersion_FiltersVersions verifies MinVersion is applied during UpdateFeatures
 func TestUpdateFeatures_MinVersion_FiltersVersions(t *testing.T) {
 	configDir := t.TempDir()

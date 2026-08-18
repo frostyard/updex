@@ -38,7 +38,10 @@ them rather than improvising, whichever agent you are:
 
 - **Go 1.26.6 or newer** (the module targets `go 1.26.6`)
 - `make`
-- Optional: [`golangci-lint`](https://golangci-lint.run/) for linting,
+- Optional: [`golangci-lint`](https://golangci-lint.run/) for linting —
+  `make ci` requires the exact release pinned as `GOLANGCI_LINT_VERSION` in
+  the `Makefile` (install with the exact `go install …@v<version>` command
+  printed by `make lint-version-check` when it fails),
   [`svu`](https://github.com/caarlos0/svu) for release tagging, Node ≥ 20 for
   the docs-integrity gate
 
@@ -70,7 +73,12 @@ Build workflow: make code changes → `make fmt` → `make build` → smoke-test
 with `./build/updex --help`. Use `make check` for the quick development loop.
 Run `make ci` before opening a pull request. It checks module tidiness, vet,
 formatting, lint, non-E2E unit and race tests, and Linux amd64/arm64 builds,
-and requires `golangci-lint`. The unit-test step writes `coverage.out`, and
+and requires `golangci-lint`. The lint step first runs
+`make lint-version-check`, which fails unless the installed `golangci-lint`
+matches `GOLANGCI_LINT_VERSION` in the `Makefile` (currently 2.12.2) — the
+CI Lint job reads the same variable to install that release, so the Makefile
+is the single place to bump it and local and CI lint results cannot drift
+(`make lint` only warns on a mismatch). The unit-test step writes `coverage.out`, and
 `make ci` (and the Unit Tests CI job) then enforces a total statement-coverage
 floor of 80.0% over the non-E2E packages via `make coverage-check`
 (`scripts/check-coverage.sh`); a coverage regression below the floor fails the
@@ -528,7 +536,10 @@ issue. Report it privately by emailing the maintainer at
 - **Build issues:** `make build` failing → check `go version` is 1.26.6+;
   dependency download failures → `make tidy`; a missing `golangci-lint` is
   optional locally (`make lint` skips with a message) but required for
-  `make ci`.
+  `make ci`, which also fails with
+  `expected golangci-lint <pinned>, found <installed>` when the installed
+  release differs from `GOLANGCI_LINT_VERSION` in the `Makefile` — install
+  the pinned release with the `go install` command it prints.
 - **Runtime issues:** "configuration not found" → ensure `.transfer` files
   exist under the standard search paths; "permission denied" → most mutating
   operations require root; download failures → check network connectivity

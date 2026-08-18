@@ -134,39 +134,182 @@ func TestInstall(t *testing.T) {
 	}
 }
 
+func testUnitConfigs(name string) (*TimerConfig, *ServiceConfig) {
+	return &TimerConfig{
+			Name:        name,
+			Description: "Test timer",
+			OnCalendar:  "daily",
+		}, &ServiceConfig{
+			Name:        name,
+			Description: "Test service",
+			Type:        "oneshot",
+			ExecStart:   "/usr/bin/updex update",
+		}
+}
+
 func TestInstall_CleanupOnPartialFailure(t *testing.T) {
-	// Test that timer file is removed if service write fails
+	// Test that the timer file is removed if the service write fails after
+	// the timer was written. Both unit paths pass the pre-write check (they
+	// do not exist), but the service path's parent directory is missing, so
+	// its write fails after the timer is already on disk.
 	tmpDir := t.TempDir()
 	mockRunner := &MockSystemctlRunner{}
 	mgr := NewTestManager(tmpDir, mockRunner)
 
-	// Create a directory with service name to cause write failure
-	servicePath := filepath.Join(tmpDir, "updex-update.service")
-	if err := os.Mkdir(servicePath, 0755); err != nil {
-		t.Fatalf("failed to create blocking directory: %v", err)
-	}
-
-	timer := &TimerConfig{
-		Name:        "updex-update",
-		Description: "Test timer",
-		OnCalendar:  "daily",
-	}
-	service := &ServiceConfig{
-		Name:        "updex-update",
-		Description: "Test service",
-		Type:        "oneshot",
-		ExecStart:   "/usr/bin/updex update",
-	}
+	timer, _ := testUnitConfigs("updex-update")
+	_, service := testUnitConfigs("missing-dir/updex-update")
 
 	err := mgr.Install(timer, service)
 	if err == nil {
 		t.Fatal("expected error for service write failure")
 	}
+	if !strings.Contains(err.Error(), "failed to write service") {
+		t.Errorf("unexpected error: %v", err)
+	}
 
 	// Verify timer file was cleaned up
 	timerPath := filepath.Join(tmpDir, "updex-update.timer")
-	if _, err := os.Stat(timerPath); !os.IsNotExist(err) {
+	if _, err := os.Lstat(timerPath); !os.IsNotExist(err) {
 		t.Error("timer file should have been removed after service write failure")
+	}
+	if mockRunner.DaemonReloadCalled {
+		t.Error("daemon-reload must not run after a failed install")
+	}
+}
+
+// TestInstall_RefusesNonRegularUnitPaths pins the ADR-0005 rule for the
+// unit installer: a dangling symlink, a directory, or a live symlink at
+// either unit path is refused before anything is written, the symlink
+// target is never created, and no partial state is left behind.
+func TestInstall_RefusesNonRegularUnitPaths(t *testing.T) {
+	tests := []struct {
+		name  string
+		plant func(t *testing.T, timerPath, servicePath, target string)
+	}{
+		{
+			name: "dangling symlink at timer path",
+			plant: func(t *testing.T, timerPath, _, target string) {
+				if err := os.Symlink(target, timerPath); err != nil {
+					t.Fatalf("symlink: %v", err)
+				}
+			},
+		},
+		{
+			name: "dangling symlink at service path",
+			plant: func(t *testing.T, _, servicePath, target string) {
+				if err := os.Symlink(target, servicePath); err != nil {
+					t.Fatalf("symlink: %v", err)
+				}
+			},
+		},
+		{
+			name: "directory at timer path",
+			plant: func(t *testing.T, timerPath, _, _ string) {
+				if err := os.Mkdir(timerPath, 0755); err != nil {
+					t.Fatalf("mkdir: %v", err)
+				}
+			},
+		},
+		{
+			name: "directory at service path",
+			plant: func(t *testing.T, _, servicePath, _ string) {
+				if err := os.Mkdir(servicePath, 0755); err != nil {
+					t.Fatalf("mkdir: %v", err)
+				}
+			},
+		},
+		{
+			name: "live symlink at timer path",
+			plant: func(t *testing.T, timerPath, _, target string) {
+				if err := os.WriteFile(target, []byte("real"), 0644); err != nil {
+					t.Fatalf("write target: %v", err)
+				}
+				if err := os.Symlink(target, timerPath); err != nil {
+					t.Fatalf("symlink: %v", err)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			unitDir := t.TempDir()
+			outside := t.TempDir()
+			target := filepath.Join(outside, "escaped")
+			timerPath := filepath.Join(unitDir, "updex-update.timer")
+			servicePath := filepath.Join(unitDir, "updex-update.service")
+			tt.plant(t, timerPath, servicePath, target)
+			targetBefore, targetExisted := "", false
+			if data, err := os.ReadFile(target); err == nil {
+				targetBefore, targetExisted = string(data), true
+			}
+
+			mockRunner := &MockSystemctlRunner{}
+			mgr := NewTestManager(unitDir, mockRunner)
+			timer, service := testUnitConfigs("updex-update")
+
+			err := mgr.Install(timer, service)
+			if err == nil {
+				t.Fatal("expected Install to refuse a non-regular unit path")
+			}
+			if !strings.Contains(err.Error(), "not a regular file") {
+				t.Errorf("expected a not-a-regular-file error, got: %v", err)
+			}
+
+			// The symlink target must be untouched: not created for a
+			// dangling link, not rewritten for a live one.
+			data, readErr := os.ReadFile(target)
+			switch {
+			case targetExisted && (readErr != nil || string(data) != targetBefore):
+				t.Errorf("symlink target was modified: %q, %v", data, readErr)
+			case !targetExisted && !os.IsNotExist(readErr):
+				t.Errorf("symlink target must not be created, got err=%v", readErr)
+			}
+
+			// No unit content written anywhere and no temp files left.
+			entries, _ := os.ReadDir(unitDir)
+			for _, e := range entries {
+				if strings.Contains(e.Name(), ".tmp-") {
+					t.Errorf("temp file left behind: %s", e.Name())
+				}
+				if e.Type().IsRegular() && (e.Name() == "updex-update.timer" || e.Name() == "updex-update.service") {
+					t.Errorf("unit file %s must not be written", e.Name())
+				}
+			}
+			if mockRunner.DaemonReloadCalled {
+				t.Error("daemon-reload must not run after a refused install")
+			}
+		})
+	}
+}
+
+// TestInstall_WritesRegularFiles verifies the temp+rename write leaves
+// exactly the two 0644 regular unit files and no temp files.
+func TestInstall_WritesRegularFiles(t *testing.T) {
+	unitDir := t.TempDir()
+	mgr := NewTestManager(unitDir, &MockSystemctlRunner{})
+	timer, service := testUnitConfigs("updex-update")
+	if err := mgr.Install(timer, service); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	entries, err := os.ReadDir(unitDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected exactly 2 entries, got %d", len(entries))
+	}
+	for _, e := range entries {
+		info, err := os.Lstat(filepath.Join(unitDir, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.Mode().IsRegular() {
+			t.Errorf("%s is not a regular file: %v", e.Name(), info.Mode())
+		}
+		if info.Mode().Perm() != 0644 {
+			t.Errorf("%s has mode %o, want 0644", e.Name(), info.Mode().Perm())
+		}
 	}
 }
 
@@ -303,10 +446,12 @@ func TestRemove(t *testing.T) {
 
 func TestExists(t *testing.T) {
 	tests := []struct {
-		name          string
-		timerExists   bool
-		serviceExists bool
-		want          bool
+		name            string
+		timerExists     bool
+		serviceExists   bool
+		timerDangling   bool
+		serviceDangling bool
+		want            bool
 	}{
 		{
 			name:          "timer exists",
@@ -332,6 +477,19 @@ func TestExists(t *testing.T) {
 			serviceExists: false,
 			want:          false,
 		},
+		{
+			// A dangling symlink occupies the unit path: Install would
+			// refuse to write through it, so Exists reports it as present
+			// (os.Stat would have reported it absent).
+			name:          "dangling symlink at timer path counts as present",
+			timerDangling: true,
+			want:          true,
+		},
+		{
+			name:            "dangling symlink at service path counts as present",
+			serviceDangling: true,
+			want:            true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -339,6 +497,16 @@ func TestExists(t *testing.T) {
 			tmpDir := t.TempDir()
 			mgr := NewTestManager(tmpDir, &MockSystemctlRunner{})
 
+			if tt.timerDangling {
+				if err := os.Symlink(filepath.Join(tmpDir, "nope"), filepath.Join(tmpDir, "updex-update.timer")); err != nil {
+					t.Fatalf("symlink: %v", err)
+				}
+			}
+			if tt.serviceDangling {
+				if err := os.Symlink(filepath.Join(tmpDir, "nope"), filepath.Join(tmpDir, "updex-update.service")); err != nil {
+					t.Fatalf("symlink: %v", err)
+				}
+			}
 			if tt.timerExists {
 				_ = os.WriteFile(filepath.Join(tmpDir, "updex-update.timer"), []byte("timer"), 0644)
 			}

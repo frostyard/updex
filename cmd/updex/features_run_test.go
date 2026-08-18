@@ -168,6 +168,52 @@ func TestRunFeaturesCheck_JSONErrorPathEmitsArray(t *testing.T) {
 	}
 }
 
+// TestRunFeaturesCheck_TextMarksFailedComponent verifies that a component
+// whose manifest cannot be fetched is rendered as UPDATE=error in the text
+// table (never as "no") and that the command returns the SDK's aggregate
+// error so the process exits non-zero.
+func TestRunFeaturesCheck_TextMarksFailedComponent(t *testing.T) {
+	oldDefinitions, oldComponent, oldJSONOutput := definitions, featureComponent, clix.JSONOutput
+	t.Cleanup(func() {
+		definitions = oldDefinitions
+		featureComponent = oldComponent
+		clix.JSONOutput = oldJSONOutput
+	})
+
+	configDir := t.TempDir()
+	targetDir := t.TempDir()
+	server := testutil.NewErrorServer(t, 404)
+	defer server.Close()
+	writeFeatureFile(t, configDir, "testfeature", true)
+	writeFeatureTransferFile(t, configDir, targetDir, "testext", "testfeature", server.URL)
+
+	definitions = configDir
+	featureComponent = ""
+	clix.JSONOutput = false
+
+	output, err := captureStdout(t, func() error {
+		cmd := &cobra.Command{}
+		cmd.SetContext(t.Context())
+		return runFeaturesCheck(cmd, nil)
+	})
+	if err == nil {
+		t.Fatal("expected a non-nil error when a component cannot be checked")
+	}
+	if !strings.Contains(output, "testext") {
+		t.Fatalf("expected the failed component in the table, got %q", output)
+	}
+	var row string
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, "testext") {
+			row = line
+		}
+	}
+	fields := strings.Fields(row)
+	if len(fields) != 5 || fields[4] != "error" {
+		t.Errorf("expected UPDATE column 'error' for the failed component, got row %q", row)
+	}
+}
+
 // TestRunFeaturesUpdate_JSONErrorPathEmitsArray is the update analog. It also
 // sets getEUID to root so the requireRoot() guard is not what fails.
 func TestRunFeaturesUpdate_JSONErrorPathEmitsArray(t *testing.T) {

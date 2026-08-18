@@ -143,13 +143,19 @@ func main() {
     }
     fmt.Println(result.NextActionMessage)
 
-    // Check for available updates
+    // Check for available updates. A non-nil error means at least one
+    // component could not be checked; the returned results are still
+    // populated, with CheckResult.Error set on the failed components.
     checks, err := client.CheckFeatures(ctx, updex.CheckFeaturesOptions{})
     if err != nil {
-        log.Fatal(err)
+        log.Printf("check incomplete: %v", err)
     }
     for _, fc := range checks {
         for _, c := range fc.Results {
+            if c.Error != "" {
+                fmt.Printf("%s: could not check: %s\n", c.Component, c.Error)
+                continue
+            }
             if c.UpdateAvailable {
                 fmt.Printf("%s: %s → %s\n", c.Component, c.CurrentVersion, c.NewestVersion)
             }
@@ -301,7 +307,9 @@ sudo updex features update --no-vacuum
 # Preview downloads, installs, refreshes, and vacuum removals
 sudo updex --dry-run features update
 
-# Check for available updates (read-only)
+# Check for available updates (read-only). A component whose manifest cannot be
+# fetched or verified is listed with UPDATE=error (JSON: "error" set) and the
+# command exits non-zero; healthy components in the same run are still reported.
 updex features check
 
 # Scope any of the above to a single named component
@@ -665,6 +673,11 @@ Use `--json` for machine-readable output:
 ```bash
 updex features list --json | jq '.[] | select(.enabled)'
 updex features check --json
+
+# Components that could not be checked carry an "error" field (and the
+# command exits non-zero); do not read their absence of update_available as
+# "up to date"
+updex features check --json | jq '.[].results[] | select(.error != null)'
 
 # Everything added from the fedora catalog
 updex features list --json | jq '.[] | select(.origin=="catalog" and .origin_name=="fedora")'

@@ -23,10 +23,21 @@ jobs:
         with:
           go-version: "1.26.6"
 
+      # The Makefile is the single source of truth for the pinned
+      # golangci-lint release (GOLANGCI_LINT_VERSION); `make ci` enforces the
+      # same pin locally, so lint results are reproducible between the two.
+      - name: Read pinned golangci-lint version
+        id: lint-version
+        run: |
+          version="$(sed -nE 's/^GOLANGCI_LINT_VERSION[[:space:]]*:?=[[:space:]]*//p' Makefile | head -n 1 | tr -d '\r')"
+          version="${version%%[[:space:]]*}"
+          test -n "$version"
+          printf 'version=v%s\n' "$version" >> "$GITHUB_OUTPUT"
+
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: latest
+          version: ${{ steps.lint-version.outputs.version }}
 
   security:
     name: Security Scan

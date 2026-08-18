@@ -31,9 +31,68 @@ func NewTestManager(unitPath string, runner SystemctlRunner) *Manager {
 	}
 }
 
+// unitFileState reports whether a unit path is occupied. It follows the
+// ADR-0005 rule for privileged writes to managed paths: os.Lstat, never
+// os.Stat, so a dangling symlink is seen as itself rather than reported
+// absent, and anything present that is not a regular file is an error the
+// operator must resolve — Install never writes through it. Stat failures
+// other than not-exist are returned too, so an unreadable path can never be
+// misread as absent and skip the guard.
+func unitFileState(path string) (exists bool, err error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to inspect unit path %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return true, fmt.Errorf("unit path %s exists and is not a regular file; remove it manually", path)
+	}
+	return true, nil
+}
+
+// writeUnitFile writes content to path as a fresh regular file, mode 0644,
+// via a temporary file in the same directory plus rename. The write itself
+// therefore never follows a symlink that appeared at path between the
+// unitFileState check and the write: rename replaces the directory entry
+// rather than opening whatever it points at.
+func writeUnitFile(path, content string) (err error) {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer func() {
+		if err != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, err = tmp.WriteString(content); err != nil {
+		return err
+	}
+	if err = tmp.Chmod(0644); err != nil {
+		return err
+	}
+	if err = tmp.Sync(); err != nil {
+		return err
+	}
+	if err = tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
 // Install installs timer and service unit files atomically.
 // It generates both files from the configs, writes them to UnitPath,
 // and calls daemon-reload after installation.
+//
+// Both unit paths are checked with unitFileState before anything is
+// written: an existing regular file is an "already exists" error (reinstall
+// requires an explicit Remove first, see ADR-0007), and a symlink,
+// directory, or other non-regular entry is refused outright rather than
+// written through (ADR-0005).
 func (m *Manager) Install(timer *TimerConfig, service *ServiceConfig) error {
 	// Generate content
 	timerContent := GenerateTimer(timer)
@@ -43,20 +102,24 @@ func (m *Manager) Install(timer *TimerConfig, service *ServiceConfig) error {
 	servicePath := filepath.Join(m.UnitPath, service.Name+".service")
 
 	// Check if files already exist - require explicit removal first
-	if _, err := os.Stat(timerPath); err == nil {
+	if exists, err := unitFileState(timerPath); err != nil {
+		return err
+	} else if exists {
 		return fmt.Errorf("timer file already exists: %s", timerPath)
 	}
-	if _, err := os.Stat(servicePath); err == nil {
+	if exists, err := unitFileState(servicePath); err != nil {
+		return err
+	} else if exists {
 		return fmt.Errorf("service file already exists: %s", servicePath)
 	}
 
 	// Write timer file
-	if err := os.WriteFile(timerPath, []byte(timerContent), 0644); err != nil {
+	if err := writeUnitFile(timerPath, timerContent); err != nil {
 		return fmt.Errorf("failed to write timer: %w", err)
 	}
 
 	// Write service file
-	if err := os.WriteFile(servicePath, []byte(serviceContent), 0644); err != nil {
+	if err := writeUnitFile(servicePath, serviceContent); err != nil {
 		// Clean up timer file on partial failure
 		_ = os.Remove(timerPath)
 		return fmt.Errorf("failed to write service: %w", err)
@@ -103,16 +166,23 @@ func (m *Manager) Remove(name string) error {
 	return errors.Join(errs...)
 }
 
-// Exists checks if either timer or service file exists at UnitPath
+// Exists checks if either timer or service file exists at UnitPath.
+//
+// It uses os.Lstat, so a dangling symlink or any other non-regular entry at
+// a unit path counts as present: the path is occupied by something Install
+// would refuse to write through, so callers such as `daemon enable` report
+// "already installed, remove first" instead of attempting an install that
+// unitFileState will reject, and `daemon status` does not report a planted
+// entry as absent. Only a not-exist result means absent; any other Lstat
+// error is treated as present for the same conservative reason.
 func (m *Manager) Exists(name string) bool {
 	timerPath := filepath.Join(m.UnitPath, name+".timer")
 	servicePath := filepath.Join(m.UnitPath, name+".service")
 
-	if _, err := os.Stat(timerPath); err == nil {
-		return true
-	}
-	if _, err := os.Stat(servicePath); err == nil {
-		return true
+	for _, path := range []string{timerPath, servicePath} {
+		if _, err := os.Lstat(path); err == nil || !os.IsNotExist(err) {
+			return true
+		}
 	}
 	return false
 }
