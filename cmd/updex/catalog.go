@@ -36,6 +36,7 @@ For example, for the fedora-sysexts "fedora" repo:
   [Catalog]
   SiteURL=https://extensions.fcos.fr/fedora
   ListURL=https://api.github.com/repos/fedora-sysexts/fedora/contents/
+  # AllowInsecure=no
 
 'catalog add' fetches the catalog's published transfer definition and
 writes standard .transfer/.feature files into the catalog's own

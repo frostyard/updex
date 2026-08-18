@@ -557,6 +557,7 @@ files:
 [Catalog]
 SiteURL=https://extensions.fcos.fr/fedora
 ListURL=https://api.github.com/repos/fedora-sysexts/fedora/contents/
+# AllowInsecure=no
 ```
 
 ```ini
@@ -564,19 +565,34 @@ ListURL=https://api.github.com/repos/fedora-sysexts/fedora/contents/
 [Catalog]
 SiteURL=https://extensions.fcos.fr/community
 ListURL=https://api.github.com/repos/fedora-sysexts/community/contents/
+# AllowInsecure=no
 ```
 
 - `SiteURL` (required) — base URL the catalog serves artifacts from; the
   published `<sysext>.conf`, `SHA256SUMS`, and `.raw` images all resolve
-  beneath `<SiteURL>/<sysext>/`.
+  beneath `<SiteURL>/<sysext>/`. Must use HTTPS unless `AllowInsecure=yes`.
 - `ListURL` (optional) — GitHub contents API endpoint used by
   `catalog list`/`search` to enumerate available sysexts. `add`/`remove`
   never use it. Set the `GITHUB_TOKEN` environment variable to raise the
   API rate limit for `https://api.github.com`; credentials are not sent to
-  custom catalog origins or forwarded by cross-origin redirects.
+  custom catalog origins, cleartext URLs, or cross-origin redirects. Must
+  use HTTPS unless `AllowInsecure=yes`.
 - `Component` (optional) — systemd-sysupdate component the generated files
   are written under; defaults to `catalog-<name>`
   (e.g. `/etc/sysupdate.catalog-fedora.d/`).
+- `AllowInsecure` (optional, default `no`) — permits non-HTTPS `SiteURL` and
+  `ListURL` values only for explicitly trusted development and test
+  endpoints. It does not permit `GITHUB_TOKEN` transmission to cleartext or
+  custom origins.
+
+Existing catalog files with `http://` URLs are a breaking configuration
+change: they now fail to load until `AllowInsecure=yes` is added. Production
+catalogs should migrate to HTTPS instead of enabling the escape hatch.
+
+The SDK's default HTTP client also refuses redirects from HTTPS to HTTP, so a
+catalog cannot pass initial URL validation and then downgrade `.conf`,
+`SHA256SUMS`, image, or listing requests to cleartext. A caller-supplied
+`ClientConfig.HTTPClient` retains its own redirect policy.
 
 `sudo updex catalog add fedora/zoxide` fetches the catalog's published
 transfer definition, writes a standard `.transfer` (with `Features=zoxide`

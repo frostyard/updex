@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -132,6 +133,72 @@ func TestLoadReposValidation(t *testing.T) {
 
 			if _, err := LoadRepos(); err == nil {
 				t.Fatal("expected error, got nil")
+			}
+		})
+	}
+}
+
+func TestParseRepoHTTPSPolicy(t *testing.T) {
+	tests := []struct {
+		name         string
+		content      string
+		wantInsecure bool
+		wantErr      string
+	}{
+		{
+			name:    "https accepted",
+			content: "[Catalog]\nSiteURL=https://extensions.example.com\n",
+		},
+		{
+			name:    "http rejected",
+			content: "[Catalog]\nSiteURL=http://extensions.example.com\n",
+			wantErr: "AllowInsecure",
+		},
+		{
+			name:         "http explicitly allowed",
+			content:      "[Catalog]\nSiteURL=http://extensions.example.com\nAllowInsecure=yes\n",
+			wantInsecure: true,
+		},
+		{
+			name:    "insecure list rejected",
+			content: "[Catalog]\nSiteURL=https://extensions.example.com\nListURL=http://api.example.com\n",
+			wantErr: "AllowInsecure",
+		},
+		{
+			name:         "insecure list explicitly allowed",
+			content:      "[Catalog]\nSiteURL=https://extensions.example.com\nListURL=http://api.example.com\nAllowInsecure=yes\n",
+			wantInsecure: true,
+		},
+		{
+			name:    "relative site rejected",
+			content: "[Catalog]\nSiteURL=extensions.example.com\n",
+			wantErr: "absolute URL",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "test.catalog")
+			if err := os.WriteFile(path, []byte(tt.content), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			repo, err := parseRepoFile("test", path)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatal("parseRepoFile() error = nil")
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("parseRepoFile() error = %q, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseRepoFile() error = %v", err)
+			}
+			if repo.AllowInsecure != tt.wantInsecure {
+				t.Errorf("AllowInsecure = %v, want %v", repo.AllowInsecure, tt.wantInsecure)
 			}
 		})
 	}
