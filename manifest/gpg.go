@@ -9,6 +9,8 @@ import (
 	"os"
 
 	"github.com/ProtonMail/go-crypto/openpgp"
+
+	"github.com/frostyard/updex/internal/retry"
 )
 
 // Default keyring paths (matching systemd-sysupdate)
@@ -17,33 +19,22 @@ var keyringPaths = []string{
 	"/usr/lib/systemd/import-pubring.gpg",
 }
 
-// verifySignature verifies the GPG signature of the manifest content
-func verifySignature(ctx context.Context, client *http.Client, sigURL string, content []byte) error {
-	// Download signature
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sigURL, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create signature request: %w", err)
-	}
+// maxSigSize bounds detached-signature reads at 1 MiB to prevent memory
+// exhaustion from a malicious or misbehaving server returning an unbounded
+// response.
+const maxSigSize = 1 << 20
 
-	resp, err := client.Do(req)
+// verifySignature verifies the GPG signature of the manifest content.
+//
+// The detached-signature GET and body read run inside the same bounded retry
+// policy as the SHA256SUMS fetch (ADR-0008): transient network errors and
+// 429/5xx responses are retried with rs; other failures return immediately.
+// Keyring loading and signature checking happen after the fetch and are never
+// retried.
+func verifySignature(ctx context.Context, client *http.Client, sigURL string, content []byte, rs retrySettings) error {
+	sigData, err := fetchSignature(ctx, client, sigURL, rs)
 	if err != nil {
-		return fmt.Errorf("failed to fetch signature: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("signature fetch failed with status: %s", resp.Status)
-	}
-
-	// Limit signature reads to 1 MiB to prevent memory exhaustion from
-	// a malicious or misbehaving server returning an unbounded response.
-	const maxSigSize = 1 << 20 // 1 MiB
-	sigData, err := io.ReadAll(io.LimitReader(resp.Body, maxSigSize+1))
-	if err != nil {
-		return fmt.Errorf("failed to read signature: %w", err)
-	}
-	if len(sigData) > maxSigSize {
-		return fmt.Errorf("signature response exceeds maximum allowed size (%d bytes)", maxSigSize)
+		return err
 	}
 
 	// Load keyring
@@ -64,6 +55,45 @@ func verifySignature(ctx context.Context, client *http.Client, sigURL string, co
 	}
 
 	return nil
+}
+
+// fetchSignature downloads the detached signature at sigURL under the bounded
+// retry policy rs, classifying failures exactly as Fetch does for SHA256SUMS.
+func fetchSignature(ctx context.Context, client *http.Client, sigURL string, rs retrySettings) ([]byte, error) {
+	var sigData []byte
+	err := retry.Do(ctx, rs.cfg, rs.notify, func() error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, sigURL, nil)
+		if err != nil {
+			return fmt.Errorf("failed to create signature request: %w", err)
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return retry.TransientIfNetwork(fmt.Errorf("failed to fetch signature: %w", err))
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError {
+			return retry.Transient(fmt.Errorf("signature fetch failed with status: %s", resp.Status))
+		}
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("signature fetch failed with status: %s", resp.Status)
+		}
+
+		sigData, err = io.ReadAll(io.LimitReader(resp.Body, maxSigSize+1))
+		if err != nil {
+			return retry.TransientIfNetwork(fmt.Errorf("failed to read signature: %w", err))
+		}
+		if len(sigData) > maxSigSize {
+			return fmt.Errorf("signature response exceeds maximum allowed size (%d bytes)", maxSigSize)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return sigData, nil
 }
 
 // loadKeyring loads the GPG keyring from default paths

@@ -263,7 +263,7 @@ Enabled by default to match systemd-sysupdate. Set `Verify=no` explicitly to opt
 
 Uses `github.com/ProtonMail/go-crypto/openpgp` for signature verification. Supports both binary and armored keyring formats.
 
-Only the main `SHA256SUMS` fetch has bounded retry behavior. The detached `.gpg` signature fetch is a single request in the current implementation. Manifest response bodies are read through a 4 MiB-plus-one-byte limit and detached signatures through a 1 MiB-plus-one-byte limit; crossing either boundary fails before parsing, keyring loading, or signature verification.
+The main `SHA256SUMS` fetch and the detached `.gpg` signature fetch share the same bounded retry policy (ADR-0008): each GET and body read retries transient network failures and HTTP 5xx/429 under the retry settings resolved by `manifest.Fetch`, while keyring loading and signature checking run once after the fetch and are never retried. Manifest response bodies are read through a 4 MiB-plus-one-byte limit and detached signatures through a 1 MiB-plus-one-byte limit; crossing either boundary fails before parsing, keyring loading, or signature verification.
 
 When a transfer explicitly sets `Verify=false`, checksum authenticity depends
 on the transport that supplied both the transfer definition and
