@@ -57,6 +57,8 @@ make lint         # Run golangci-lint (.golangci.yml; skipped with a message if 
 make check        # fmt + lint + test
 make ci           # Credential-free gate matching CI's fail-fast order
 make test-cover   # Tests with HTML coverage report
+make coverage-check        # Enforce the 80.0% total statement-coverage floor on coverage.out
+make test-coverage-check   # Self-test scripts/check-coverage.sh with fixture profiles
 make tidy         # go mod tidy
 make clean        # Remove build artifacts
 node scripts/check-docs.mjs   # Docs-integrity gate (index, links, aliases)
@@ -68,7 +70,11 @@ Build workflow: make code changes → `make fmt` → `make build` → smoke-test
 with `./build/updex --help`. Use `make check` for the quick development loop.
 Run `make ci` before opening a pull request. It checks module tidiness, vet,
 formatting, lint, non-E2E unit and race tests, and Linux amd64/arm64 builds,
-and requires `golangci-lint`.
+and requires `golangci-lint`. The unit-test step writes `coverage.out`, and
+`make ci` (and the Unit Tests CI job) then enforces a total statement-coverage
+floor of 80.0% over the non-E2E packages via `make coverage-check`
+(`scripts/check-coverage.sh`); a coverage regression below the floor fails the
+gate.
 
 End-to-end tests live in `tests/e2e/` (entry point:
 [tests/e2e/README.md](tests/e2e/README.md)): black-box tests that build the real `updex` binary and run it as a subprocess against fake files and HTTP sources. Successful operations are read-only (no root required); mutating command variants are covered at the argument-validation boundary. CLI integration tests in `cmd/updex/` additionally override package search roots to exercise default component discovery and fake catalogs safely. Run both with `go test -v ./cmd/updex ./tests/e2e/...`.

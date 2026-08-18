@@ -1,4 +1,4 @@
-.PHONY: all build clean fmt lint test test-cover tidy check ci install help
+.PHONY: all build clean fmt lint test test-cover coverage-check test-coverage-check tidy check ci install help
 
 # Build variables
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -47,6 +47,14 @@ test-cover:
 	$(GO) test -coverprofile=coverage.out ./...
 	$(GO) tool cover -html=coverage.out -o coverage.html
 
+## coverage-check: Enforce the 80.0% total statement-coverage floor on coverage.out
+coverage-check:
+	./scripts/check-coverage.sh coverage.out
+
+## test-coverage-check: Exercise scripts/check-coverage.sh against fixture profiles
+test-coverage-check:
+	./scripts/test-coverage-check.sh
+
 ## tidy: Tidy go modules
 tidy:
 	$(GO) mod tidy
@@ -67,6 +75,9 @@ ci:
 	golangci-lint run
 	@echo "==> unit tests"
 	$(GO) test -v $$($(GO) list ./... | grep -v '/tests/e2e$$') -coverprofile=coverage.out -covermode=atomic
+	@echo "==> coverage floor"
+	$(MAKE) test-coverage-check
+	$(MAKE) coverage-check
 	@echo "==> race detector"
 	$(GO) test -race -short -v $$($(GO) list ./... | grep -v '/tests/e2e$$')
 	@echo "==> cross-architecture build"
