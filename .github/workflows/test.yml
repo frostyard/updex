@@ -70,6 +70,12 @@ jobs:
       - name: Run unit tests with coverage
         run: go test -v $(go list ./... | grep -v '/tests/e2e$') -coverprofile=coverage.out -covermode=atomic
 
+      - name: Self-test the coverage floor script
+        run: make test-coverage-check
+
+      - name: Enforce coverage floor
+        run: make coverage-check
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:

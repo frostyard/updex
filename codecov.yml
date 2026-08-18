@@ -1,7 +1,10 @@
 # Codecov configuration for updex.
 #
 # Coverage is uploaded by the "Unit Tests" job in .github/workflows/test.yml.
-# The gates below run as status checks on pull requests.
+# The gates below run as status checks on pull requests only once the
+# repository is onboarded on codecov.io; the enforced 80.0% total
+# statement-coverage floor lives in scripts/check-coverage.sh and runs in the
+# same job (`make coverage-check`) and in `make ci`.
 
 coverage:
   precision: 2
