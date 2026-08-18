@@ -3,6 +3,7 @@ package updex
 import (
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"github.com/frostyard/clix"
@@ -30,15 +31,25 @@ func newClient() *updex.Client {
 }
 
 // newProgressBar creates a terminal progress bar for download tracking.
+//
+// In JSON or silent mode stdout must carry only machine-readable data, so the
+// bar is suppressed entirely by returning nil (download.Download treats a nil
+// writer as "no progress"). In text mode the bar and its completion newline are
+// written to stderr — matching clix.NewReporter(), which keeps stdout clean for
+// data — so a real download under --json no longer corrupts the JSON result.
 func newProgressBar(contentLength int64) io.Writer {
+	if clix.JSONOutput || clix.Silent {
+		return nil
+	}
 	return progressbar.NewOptions64(
 		contentLength,
+		progressbar.OptionSetWriter(os.Stderr),
 		progressbar.OptionSetDescription("Downloading"),
 		progressbar.OptionShowBytes(true),
 		progressbar.OptionSetWidth(40),
 		progressbar.OptionThrottle(100*time.Millisecond),
 		progressbar.OptionShowCount(),
-		progressbar.OptionOnCompletion(func() { fmt.Println() }),
+		progressbar.OptionOnCompletion(func() { fmt.Fprintln(os.Stderr) }),
 		progressbar.OptionSetPredictTime(true),
 		progressbar.OptionFullWidth(),
 		progressbar.OptionSetTheme(progressbar.Theme{
