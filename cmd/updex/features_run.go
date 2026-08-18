@@ -260,10 +260,9 @@ func runFeaturesCheck(cmd *cobra.Command, args []string) error {
 			if newest == "" {
 				newest = "-"
 			}
-			// A component that could not be checked is marked "error" so
-			// the table never reads as "no update" for it; the reason has
-			// already been reported on stderr, and the command exits
-			// non-zero.
+			// A component that could not be checked is marked "error" so the table
+			// never reads as "no update" for it. Details are available in r.Error and
+			// may be reported on stderr by the SDK reporter (suppressed under --silent).
 			update := "no"
 			switch {
 			case r.Error != "":
