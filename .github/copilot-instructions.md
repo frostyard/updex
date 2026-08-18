@@ -27,6 +27,12 @@ checks, or claim verification passed without evidence from the pull request.
 Apply the machine-readable controls in
 [`policies/ai-governance.json`](policies/ai-governance.json) to all agent work.
 
+## Commits and Pull Requests
+
+Use [Conventional Commits](https://www.conventionalcommits.org/) for every
+commit message and pull request title (`type(scope): summary`). See
+[`CONTRIBUTING.md`](../CONTRIBUTING.md#pull-requests) for the allowed types.
+
 ### Tech Stack
 
 - **Language**: Go 1.26.6
