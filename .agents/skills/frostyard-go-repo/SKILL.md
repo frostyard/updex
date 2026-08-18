@@ -66,11 +66,9 @@ Rules:
      emit `completions/<name>.{bash,zsh,fish}` and `manpages/<name>.1.gz`
      (clix/fang provides the `completion` and `man` subcommands).
 3. **Copy the workflows** from `updex/.github/workflows/`:
-   - `test.yml` — jobs: golangci-lint (release read from the Makefile's
-     `GOLANGCI_LINT_VERSION`, never `latest`), govulncheck, unit tests with
-     Codecov OIDC upload, e2e tests, `-race`, verify (`go mod tidy` diff,
-     `go vet`, `gofmt -l`), and a linux amd64/arm64 build matrix. Pin
-     actions by SHA.
+   - `test.yml` — jobs: golangci-lint, govulncheck, unit tests with Codecov
+     OIDC upload, e2e tests, `-race`, verify (`go mod tidy` diff, `go vet`,
+     `gofmt -l`), and a linux amd64/arm64 build matrix. Pin actions by SHA.
    - `release.yml` — on tag push: GoReleaser Pro (`distribution:
      goreleaser-pro`, needs `secrets.GORELEASER_KEY`) then publish packages
      to the org apt/rpm repo via `frostyard/repogen`'s `publish-to-r2`
@@ -110,7 +108,4 @@ Rules:
   prefix so org packages sort together in the apt/rpm repo.
 - `make lint` silently skips if golangci-lint isn't installed — CI is the
   backstop, so don't treat a quiet local `make check` as proof lint ran.
-  `make ci` is strict: it requires the release pinned as
-  `GOLANGCI_LINT_VERSION` in the Makefile, which the CI Lint job also reads,
-  so bump the pin there and nowhere else.
 - Don't disable the snapshot workflow's `cancel-in-progress` — see step 3.

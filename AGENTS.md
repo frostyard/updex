@@ -22,7 +22,11 @@ Edit only the canonical paths; keep content tool-agnostic.
 ## Skills (follow these for common tasks)
 
 Step-by-step procedures live in [.agents/skills/](.agents/skills/); follow
-them rather than improvising, whichever agent you are:
+them rather than improvising, whichever agent you are. The three
+`frostyard-*` skills below are synced from frostyard/core (each directory
+carries a `.synced-from-core` marker) — edit them in core, never locally,
+per [core ADR-0026](https://github.com/frostyard/core/blob/main/docs/adr/0026-distribute-core-skills-via-sync-prs.md);
+repo-specific guidance belongs in this file or `docs/`:
 
 - **Structuring, building, testing, or releasing this repo the frostyard Go
   way** → [.agents/skills/frostyard-go-repo/SKILL.md](.agents/skills/frostyard-go-repo/SKILL.md)
