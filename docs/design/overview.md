@@ -500,7 +500,9 @@ updex features disable <name>           Disable a feature
 updex features update                   Download and install new versions
   --no-vacuum                           Skip removing old versions
   --dry-run                             Preview update work without filesystem/sysext changes
-updex features check                    Check for available updates
+updex features check                    Check for available updates; a component that
+                                         cannot be checked is reported with UPDATE=error
+                                         (JSON `error`) and the command exits non-zero
   --component <name>                    Scope any features subcommand above to one
                                          named component (default: default-dir + every
                                          discovered component); persistent flag on
