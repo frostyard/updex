@@ -225,3 +225,79 @@ func TestGenerateServiceSectionOrder(t *testing.T) {
 			unitIdx, serviceIdx, result)
 	}
 }
+
+// TestGenerateServiceDaemonSandbox renders the service unit exactly as
+// `updex daemon enable` does (Sandbox: true) and checks that every hardening
+// directive the daemon unit relies on is present in the [Service] section.
+func TestGenerateServiceDaemonSandbox(t *testing.T) {
+	config := &ServiceConfig{
+		Name:        "updex-update",
+		Description: "Automatic sysext update service",
+		ExecStart:   "/usr/bin/updex features update --no-refresh",
+		Type:        "oneshot",
+		Sandbox:     true,
+	}
+
+	result := GenerateService(config)
+
+	directives := []string{
+		"NoNewPrivileges=yes",
+		"ProtectSystem=full",
+		"ProtectHome=yes",
+		"PrivateTmp=yes",
+		"ProtectKernelTunables=yes",
+		"ProtectKernelModules=yes",
+		"ProtectKernelLogs=yes",
+		"ProtectControlGroups=yes",
+		"ProtectClock=yes",
+		"ProtectHostname=yes",
+		"RestrictRealtime=yes",
+		"RestrictSUIDSGID=yes",
+		"RestrictNamespaces=yes",
+		"LockPersonality=yes",
+		"MemoryDenyWriteExecute=yes",
+		"SystemCallArchitectures=native",
+		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+		"SystemCallFilter=@system-service",
+	}
+	for _, directive := range directives {
+		if !strings.Contains(result, directive+"\n") {
+			t.Errorf("GenerateService() sandboxed output missing directive %q\nGot:\n%s", directive, result)
+		}
+	}
+
+	// The daemon unit keeps its ADR-0007 shape.
+	for _, expected := range []string{"Type=oneshot", "ExecStart=/usr/bin/updex features update --no-refresh"} {
+		if !strings.Contains(result, expected) {
+			t.Errorf("GenerateService() sandboxed output missing %q\nGot:\n%s", expected, result)
+		}
+	}
+
+	// Sandboxing directives belong to [Service], which is the last section.
+	serviceIdx := strings.Index(result, "[Service]")
+	if idx := strings.Index(result, "NoNewPrivileges=yes"); idx < serviceIdx {
+		t.Errorf("sandbox directives must appear inside [Service]\nGot:\n%s", result)
+	}
+	if strings.Contains(result, "[Install]") {
+		t.Errorf("GenerateService() should not contain [Install] section\nGot:\n%s", result)
+	}
+}
+
+// TestGenerateServiceWithoutSandbox pins the default: callers that do not opt in
+// get the same minimal unit as before, with no hardening directives.
+func TestGenerateServiceWithoutSandbox(t *testing.T) {
+	config := &ServiceConfig{
+		Name:        "plain-service",
+		Description: "Plain service",
+		ExecStart:   "/usr/bin/test",
+		Type:        "simple",
+	}
+
+	result := GenerateService(config)
+
+	for _, directive := range []string{"NoNewPrivileges=", "ProtectSystem=", "SystemCallFilter="} {
+		if strings.Contains(result, directive) {
+			t.Errorf("GenerateService() without Sandbox should not contain %q\nGot:\n%s", directive, result)
+		}
+	}
+}

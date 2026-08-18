@@ -98,6 +98,20 @@ func TestRunDaemonEnable_Success(t *testing.T) {
 	if !mock.DaemonReloadCalled {
 		t.Error("expected daemon-reload after install")
 	}
+	serviceContent, readErr := os.ReadFile(filepath.Join(dir, unitName+".service"))
+	if readErr != nil {
+		t.Fatalf("read written service unit: %v", readErr)
+	}
+	for _, expected := range []string{
+		"Type=oneshot",
+		"ExecStart=/usr/bin/updex features update --no-refresh",
+		"NoNewPrivileges=yes",
+		"ProtectSystem=full",
+	} {
+		if !strings.Contains(string(serviceContent), expected+"\n") {
+			t.Errorf("written service unit missing %q\nGot:\n%s", expected, serviceContent)
+		}
+	}
 	if mock.EnableUnit != unitName+".timer" || !mock.EnableCalled {
 		t.Errorf("expected timer to be enabled, got called=%v unit=%q", mock.EnableCalled, mock.EnableUnit)
 	}

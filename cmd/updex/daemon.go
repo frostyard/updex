@@ -104,6 +104,10 @@ func runDaemonEnable(cmd *cobra.Command, args []string) error {
 		Description: "Automatic sysext update service",
 		ExecStart:   "/usr/bin/updex features update --no-refresh",
 		Type:        "oneshot",
+		// Sandbox the root oneshot: read-only /usr and /etc, no new
+		// privileges, restricted syscalls/address families. See
+		// systemd.SandboxDirectives.
+		Sandbox: true,
 	}
 
 	if err := mgr.Install(timer, service); err != nil {

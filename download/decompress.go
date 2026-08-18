@@ -39,6 +39,12 @@ func decompressFile(srcPath, dstPath, compressionType string) (retErr error) {
 		return fmt.Errorf("failed to decompress: %w", err)
 	}
 
+	// Persist the decompressed output before the caller renames it into
+	// place, so a crash after install cannot leave a partial image behind.
+	if err := syncFile(dst); err != nil {
+		return fmt.Errorf("failed to sync destination file: %w", err)
+	}
+
 	return nil
 }
 
