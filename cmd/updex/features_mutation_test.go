@@ -220,12 +220,13 @@ func TestRunFeaturesEnable(t *testing.T) {
 		// scope selects where the definitions live: "definitions" writes them
 		// into a directory passed as -C; "component" writes them into
 		// roots[0]/sysupdate.demo.d and scopes the command with --component.
-		scope     string
-		flags     featureCLIFlags
-		wantErr   string
-		wantOut   []string
-		wantNoOut []string
-		check     func(t *testing.T, fx *featureCLIFixture, out string, runner *sysext.MockRunner)
+		scope      string
+		flags      featureCLIFlags
+		refreshErr error
+		wantErr    string
+		wantOut    []string
+		wantNoOut  []string
+		check      func(t *testing.T, fx *featureCLIFixture, out string, runner *sysext.MockRunner)
 	}
 	tests := []tc{
 		{
@@ -447,6 +448,37 @@ func TestRunFeaturesEnable(t *testing.T) {
 				assertNotExists(t, fx.dropInPath(""), "legacy drop-in")
 			},
 		},
+		{
+			// A failed refresh after a successful download must not read as
+			// success: the command exits non-zero and the text shows what was
+			// done, the failure, and how to activate.
+			name:       "--now with a failing refresh reports the download and the error",
+			scope:      "definitions",
+			flags:      featureCLIFlags{now: true},
+			refreshErr: errors.New("systemd-sysext refresh: exit status 1"),
+			wantErr:    "sysext refresh failed",
+			wantOut:    []string{"Feature 'testfeature' enabled.\n", "Downloaded 1 extension(s):\n", "Error: sysext refresh failed: systemd-sysext refresh: exit status 1\n", "run 'systemd-sysext refresh' (or reboot)"},
+			check: func(t *testing.T, fx *featureCLIFixture, _ string, _ *sysext.MockRunner) {
+				assertExists(t, fx.dropInPath(""), "drop-in")
+				assertExists(t, fx.stagedImage(), "downloaded image")
+			},
+		},
+		{
+			name:       "--now json with a failing refresh still emits the result",
+			scope:      "definitions",
+			flags:      featureCLIFlags{now: true, jsonOutput: true},
+			refreshErr: errors.New("systemd-sysext refresh: exit status 1"),
+			wantErr:    "sysext refresh failed",
+			check: func(t *testing.T, fx *featureCLIFixture, out string, _ *sysext.MockRunner) {
+				r := decodeActionResult(t, out)
+				if r.Success || r.RefreshError == "" || r.Error != r.RefreshError {
+					t.Errorf("expected a refresh-failed result, got %+v", r)
+				}
+				if len(r.DownloadedFiles) != 1 || r.DropIn == "" {
+					t.Errorf("download and drop-in must still be reported: %+v", r)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -463,7 +495,7 @@ func TestRunFeaturesEnable(t *testing.T) {
 			default:
 				t.Fatalf("unknown scope %q", tt.scope)
 			}
-			runner := &sysext.MockRunner{}
+			runner := &sysext.MockRunner{RefreshErr: tt.refreshErr}
 			flags.runner = runner
 			setFeatureCLIFlags(t, flags)
 
@@ -496,6 +528,7 @@ func TestRunFeaturesDisable(t *testing.T) {
 		// points the CurrentSymlink at it so the SDK treats it as merged.
 		staged, active bool
 		flags          featureCLIFlags
+		refreshErr     error
 		wantErr        string
 		wantOut        []string
 		wantNoOut      []string
@@ -747,6 +780,44 @@ func TestRunFeaturesDisable(t *testing.T) {
 				assertNotExists(t, fx.dropInPath(""), "legacy drop-in")
 			},
 		},
+		{
+			// Unmerge already ran and the files are gone; a failed re-merge
+			// refresh leaves every extension unmerged, so the command must say
+			// so and exit non-zero instead of printing the reboot hint.
+			name:       "--now --force with a failing refresh reports the unmerged state",
+			scope:      "definitions",
+			staged:     true,
+			active:     true,
+			flags:      featureCLIFlags{now: true, force: true},
+			refreshErr: errors.New("systemd-sysext refresh: exit status 1"),
+			wantErr:    "sysext refresh failed",
+			wantOut:    []string{"Feature 'testfeature' disabled.\n", "Extensions unmerged.\n", "Removed 2 file(s):\n", "Error: sysext refresh failed: systemd-sysext refresh: exit status 1\n", "all extensions are currently unmerged"},
+			wantNoOut:  []string{"Warning: Reboot required"},
+			check: func(t *testing.T, fx *featureCLIFixture, _ string, runner *sysext.MockRunner) {
+				assertNotExists(t, fx.stagedImage(), "staged image")
+				if !runner.UnmergeCalled || !runner.RefreshCalled {
+					t.Error("expected unmerge and refresh")
+				}
+			},
+		},
+		{
+			name:       "--now --force json with a failing refresh still emits the result",
+			scope:      "definitions",
+			staged:     true,
+			active:     true,
+			flags:      featureCLIFlags{now: true, force: true, jsonOutput: true},
+			refreshErr: errors.New("systemd-sysext refresh: exit status 1"),
+			wantErr:    "sysext refresh failed",
+			check: func(t *testing.T, _ *featureCLIFixture, out string, _ *sysext.MockRunner) {
+				r := decodeActionResult(t, out)
+				if r.Success || !r.Unmerged || r.RefreshError == "" || r.Error != r.RefreshError {
+					t.Errorf("expected a refresh-failed result with unmerged=true, got %+v", r)
+				}
+				if len(r.RemovedFiles) != 2 {
+					t.Errorf("removed files must still be reported, got %v", r.RemovedFiles)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -766,7 +837,7 @@ func TestRunFeaturesDisable(t *testing.T) {
 			if tt.staged {
 				fx.stageInstalled(t, tt.active)
 			}
-			runner := &sysext.MockRunner{}
+			runner := &sysext.MockRunner{RefreshErr: tt.refreshErr}
 			flags.runner = runner
 			setFeatureCLIFlags(t, flags)
 

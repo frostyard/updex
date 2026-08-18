@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1311,6 +1312,159 @@ func TestCheckFeatures_PartialFailure_KeepsHealthyResults(t *testing.T) {
 	}
 	if !r.UpdateAvailable || r.CurrentVersion != "1.0.0" || r.NewestVersion != "2.0.0" {
 		t.Errorf("unexpected healthy result: %+v", r)
+	}
+}
+
+// refreshFailureFixture stages one enabled feature with one downloadable
+// transfer and returns a client whose sysext runner fails on Refresh, with
+// every writable path redirected into temp dirs. enabled controls the
+// feature's Enabled= so the same fixture serves enable and update/disable.
+func refreshFailureFixture(t *testing.T, enabled bool) (*Client, *sysext.MockRunner, string) {
+	t.Helper()
+	configDir := t.TempDir()
+	definitionRoot := t.TempDir()
+	targetDir := t.TempDir()
+	sysextLinkDir := t.TempDir()
+	runExtensionsDir := t.TempDir()
+
+	extContent := []byte("fake extension content")
+	server := testutil.NewTestServer(t, testutil.TestServerFiles{
+		Files:   map[string]string{"testext_1.0.0.raw": hashContent(extContent)},
+		Content: map[string][]byte{"testext_1.0.0.raw": extContent},
+	})
+	t.Cleanup(server.Close)
+
+	createFeatureFile(t, configDir, "testfeature", enabled)
+	createFeatureTransferFileWithoutCurrentSymlink(t, configDir, "testext", "testfeature", server.URL, targetDir)
+
+	mockRunner := &sysext.MockRunner{RefreshErr: errors.New("systemd-sysext refresh: exit status 1")}
+	client := NewClient(ClientConfig{
+		Definitions:  configDir,
+		SysextRunner: mockRunner,
+		Paths: RuntimePaths{
+			DefinitionRoots:  []string{definitionRoot},
+			SysextLinkDir:    sysextLinkDir,
+			RunExtensionsDir: runExtensionsDir,
+		},
+	})
+	return client, mockRunner, targetDir
+}
+
+// TestUpdateFeatures_RefreshFailure_ReturnsError verifies that a successful
+// install followed by a failed `systemd-sysext refresh` is reported as an
+// error (activation did not happen) while the per-component results still
+// record the install that did happen.
+func TestUpdateFeatures_RefreshFailure_ReturnsError(t *testing.T) {
+	client, mockRunner, targetDir := refreshFailureFixture(t, true)
+
+	results, err := client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoVacuum: true})
+
+	if err == nil {
+		t.Fatal("expected UpdateFeatures to return an error when refresh fails")
+	}
+	if !strings.Contains(err.Error(), "sysext refresh failed") {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if !mockRunner.RefreshCalled {
+		t.Error("expected Refresh to be called")
+	}
+	if len(results) != 1 || len(results[0].Results) != 1 {
+		t.Fatalf("expected populated results despite refresh failure, got %+v", results)
+	}
+	r := results[0].Results[0]
+	if !r.Installed || !r.Downloaded || r.Error != "" {
+		t.Errorf("install must still be reported: %+v", r)
+	}
+	if _, statErr := os.Stat(filepath.Join(targetDir, "testext_1.0.0.raw")); statErr != nil {
+		t.Errorf("installed image missing: %v", statErr)
+	}
+}
+
+// TestUpdateFeatures_NoRefresh_IgnoresRefreshFailure pins that NoRefresh
+// never calls Refresh, so a broken runner cannot fail a --no-refresh run
+// (the daemon path).
+func TestUpdateFeatures_NoRefresh_IgnoresRefreshFailure(t *testing.T) {
+	client, mockRunner, _ := refreshFailureFixture(t, true)
+
+	if _, err := client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true, NoVacuum: true}); err != nil {
+		t.Fatalf("UpdateFeatures with NoRefresh: %v", err)
+	}
+	if mockRunner.RefreshCalled {
+		t.Error("Refresh must not be called with NoRefresh")
+	}
+}
+
+// TestEnableFeature_Now_RefreshFailure_ReportsError verifies that
+// EnableFeature{Now} whose downloads succeed but whose refresh fails
+// returns an error with Success=false and RefreshError set, while still
+// reporting the drop-in and downloaded files.
+func TestEnableFeature_Now_RefreshFailure_ReportsError(t *testing.T) {
+	client, mockRunner, _ := refreshFailureFixture(t, false)
+
+	result, err := client.EnableFeature(t.Context(), "testfeature", EnableFeatureOptions{Now: true})
+
+	if err == nil {
+		t.Fatal("expected EnableFeature to return an error when refresh fails")
+	}
+	if !mockRunner.RefreshCalled {
+		t.Error("expected Refresh to be called")
+	}
+	if result.Success {
+		t.Error("Success must be false when refresh failed")
+	}
+	if result.RefreshError == "" || !strings.Contains(result.RefreshError, "sysext refresh failed") {
+		t.Errorf("RefreshError = %q", result.RefreshError)
+	}
+	if result.Error != result.RefreshError {
+		t.Errorf("Error %q should mirror RefreshError %q", result.Error, result.RefreshError)
+	}
+	if result.DropIn == "" {
+		t.Error("drop-in was written and must be reported")
+	}
+	if len(result.DownloadedFiles) != 1 {
+		t.Errorf("expected 1 downloaded file, got %v", result.DownloadedFiles)
+	}
+	if !strings.Contains(result.NextActionMessage, "systemd-sysext refresh") {
+		t.Errorf("NextActionMessage should tell the operator how to activate, got %q", result.NextActionMessage)
+	}
+}
+
+// TestDisableFeature_Now_RefreshFailure_ReportsError verifies that
+// DisableFeature{Now, Force} whose unmerge and removal succeed but whose
+// re-merge refresh fails returns an error and says the host is left with
+// its extensions unmerged.
+func TestDisableFeature_Now_RefreshFailure_ReportsError(t *testing.T) {
+	client, mockRunner, targetDir := refreshFailureFixture(t, true)
+	extPath := filepath.Join(targetDir, "testext_1.0.0.raw")
+	if err := os.WriteFile(extPath, []byte("installed"), 0644); err != nil {
+		t.Fatalf("write installed image: %v", err)
+	}
+
+	result, err := client.DisableFeature(t.Context(), "testfeature", DisableFeatureOptions{Now: true, Force: true})
+
+	if err == nil {
+		t.Fatal("expected DisableFeature to return an error when refresh fails")
+	}
+	if !mockRunner.UnmergeCalled || !mockRunner.RefreshCalled {
+		t.Errorf("expected unmerge then refresh; unmerge=%v refresh=%v", mockRunner.UnmergeCalled, mockRunner.RefreshCalled)
+	}
+	if result.Success {
+		t.Error("Success must be false when refresh failed")
+	}
+	if !result.Unmerged {
+		t.Error("Unmerged must still be reported: the unmerge did happen")
+	}
+	if len(result.RemovedFiles) != 1 {
+		t.Errorf("expected 1 removed file, got %v", result.RemovedFiles)
+	}
+	if _, statErr := os.Stat(extPath); !os.IsNotExist(statErr) {
+		t.Errorf("image should have been removed: %v", statErr)
+	}
+	if result.RefreshError == "" || result.Error != result.RefreshError {
+		t.Errorf("RefreshError=%q Error=%q", result.RefreshError, result.Error)
+	}
+	if !strings.Contains(result.NextActionMessage, "unmerged") || !strings.Contains(result.NextActionMessage, "systemd-sysext refresh") {
+		t.Errorf("NextActionMessage should say extensions are unmerged and how to re-merge, got %q", result.NextActionMessage)
 	}
 }
 

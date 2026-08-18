@@ -96,18 +96,22 @@ func runFeaturesEnable(cmd *cobra.Command, args []string) error {
 	if clix.JSONOutput {
 		_, _ = clix.OutputJSON(result)
 	} else if result != nil {
-		if result.Error != "" {
+		switch {
+		case result.RefreshError != "":
+			// Everything but activation succeeded: show what was done, then
+			// the failure and how to finish. The command still exits non-zero.
+			fmt.Printf("Feature '%s' enabled.\n", result.Feature)
+			printDownloadedFiles(result.DownloadedFiles)
+			fmt.Printf("Error: %s\n%s\n", result.RefreshError, result.NextActionMessage)
+		case result.Error != "":
 			fmt.Printf("Error: %s\n", result.Error)
-		} else if result.Success {
+		case result.Success:
 			if result.DryRun {
 				fmt.Printf("[DRY RUN] %s\n", result.NextActionMessage)
 			} else {
 				fmt.Printf("Feature '%s' enabled.\n", result.Feature)
 				if len(result.DownloadedFiles) > 0 {
-					fmt.Printf("Downloaded %d extension(s):\n", len(result.DownloadedFiles))
-					for _, f := range result.DownloadedFiles {
-						fmt.Printf("  - %s\n", f)
-					}
+					printDownloadedFiles(result.DownloadedFiles)
 				} else if !featureEnableNow {
 					fmt.Printf("Run 'updex features update' to download extensions.\n")
 				}
@@ -116,6 +120,26 @@ func runFeaturesEnable(cmd *cobra.Command, args []string) error {
 	}
 
 	return err
+}
+
+func printDownloadedFiles(files []string) {
+	if len(files) == 0 {
+		return
+	}
+	fmt.Printf("Downloaded %d extension(s):\n", len(files))
+	for _, f := range files {
+		fmt.Printf("  - %s\n", f)
+	}
+}
+
+func printRemovedFiles(files []string) {
+	if len(files) == 0 {
+		return
+	}
+	fmt.Printf("Removed %d file(s):\n", len(files))
+	for _, f := range files {
+		fmt.Printf("  - %s\n", f)
+	}
 }
 
 func runFeaturesDisable(cmd *cobra.Command, args []string) error {
@@ -138,9 +162,19 @@ func runFeaturesDisable(cmd *cobra.Command, args []string) error {
 	if clix.JSONOutput {
 		_, _ = clix.OutputJSON(result)
 	} else if result != nil {
-		if result.Error != "" {
+		switch {
+		case result.RefreshError != "":
+			// Unmerge and removal happened; only the re-merge refresh failed.
+			// Show the state the host is in, then the failure and next step.
+			fmt.Printf("Feature '%s' disabled.\n", result.Feature)
+			if result.Unmerged {
+				fmt.Printf("Extensions unmerged.\n")
+			}
+			printRemovedFiles(result.RemovedFiles)
+			fmt.Printf("Error: %s\n%s\n", result.RefreshError, result.NextActionMessage)
+		case result.Error != "":
 			fmt.Printf("Error: %s\n", result.Error)
-		} else if result.Success {
+		case result.Success:
 			if result.DryRun {
 				fmt.Printf("[DRY RUN] %s\n", result.NextActionMessage)
 			} else {
@@ -148,12 +182,7 @@ func runFeaturesDisable(cmd *cobra.Command, args []string) error {
 				if result.Unmerged {
 					fmt.Printf("Extensions unmerged.\n")
 				}
-				if len(result.RemovedFiles) > 0 {
-					fmt.Printf("Removed %d file(s):\n", len(result.RemovedFiles))
-					for _, f := range result.RemovedFiles {
-						fmt.Printf("  - %s\n", f)
-					}
-				}
+				printRemovedFiles(result.RemovedFiles)
 				if featureDisableForce {
 					fmt.Printf("Warning: Reboot required for changes to take effect.\n")
 				} else if !featureDisableNow {

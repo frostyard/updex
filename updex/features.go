@@ -238,7 +238,15 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 			if !opts.NoRefresh && !opts.DryRun {
 				c.msg("Refreshing sysext")
 				if err := c.runner.Refresh(); err != nil {
-					c.warn("sysext refresh failed: %v", err)
+					// The drop-in is written and the images are staged and
+					// linked; only activation failed. Report it rather than
+					// claiming success (see FeatureActionResult.RefreshError).
+					err = fmt.Errorf("sysext refresh failed: %w", err)
+					c.warn("%s", err)
+					result.RefreshError = err.Error()
+					result.Error = err.Error()
+					result.NextActionMessage = fmt.Sprintf("Feature '%s' enabled and %d extension(s) downloaded, but systemd-sysext refresh failed; run 'systemd-sysext refresh' (or reboot) to activate them", name, len(result.DownloadedFiles))
+					return result, err
 				}
 			}
 		}
@@ -386,7 +394,15 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 		if opts.Now && !opts.NoRefresh && !opts.DryRun {
 			c.msg("Refreshing sysext")
 			if err := c.runner.Refresh(); err != nil {
-				c.warn("sysext refresh failed: %v", err)
+				// Unmerge already detached every extension on the host and
+				// the files are gone; a failed refresh leaves the remaining
+				// extensions unmerged. That must never read as success.
+				err = fmt.Errorf("sysext refresh failed: %w", err)
+				c.warn("%s", err)
+				result.RefreshError = err.Error()
+				result.Error = err.Error()
+				result.NextActionMessage = fmt.Sprintf("Feature '%s' disabled and %d extension file(s) removed, but systemd-sysext refresh failed after unmerge: all extensions are currently unmerged; run 'systemd-sysext refresh' (or reboot) to re-merge the remaining extensions", name, len(result.RemovedFiles))
+				return result, err
 			}
 		}
 	}
@@ -501,20 +517,25 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 		allResults = append(allResults, featureResult)
 	}
 
+	var refreshErr error
 	if opts.DryRun {
 		c.msg("Dry run: skipping sysext refresh")
 	} else if !opts.NoRefresh {
 		if err := c.runner.Refresh(); err != nil {
-			c.warn("sysext refresh failed: %v", err)
+			// Installs and links are on disk but not activated. Results stay
+			// populated (Installed=true is accurate); the error tells the
+			// caller activation did not happen and the CLI exits non-zero.
+			refreshErr = fmt.Errorf("sysext refresh failed: %w", err)
+			c.warn("%s", refreshErr)
 		}
 	} else {
 		c.msg("Skipping sysext refresh (--no-refresh)")
 	}
 
 	if hasErrors {
-		return allResults, fmt.Errorf("one or more components failed to update")
+		return allResults, errors.Join(fmt.Errorf("one or more components failed to update"), refreshErr)
 	}
-	return allResults, nil
+	return allResults, refreshErr
 }
 
 // CheckFeatures checks if newer versions are available for all enabled features.

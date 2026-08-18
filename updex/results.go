@@ -109,4 +109,11 @@ type FeatureActionResult struct {
 	DownloadedFiles   []string `json:"downloaded_files,omitzero"`
 	DryRun            bool     `json:"dry_run,omitempty"`
 	Unmerged          bool     `json:"unmerged,omitempty"`
+	// RefreshError is set when every requested filesystem change succeeded
+	// but the final `systemd-sysext refresh` failed. Success is false and
+	// Error carries the same message; NextActionMessage says how to finish
+	// activation (a manual refresh or a reboot). For a disable with Now the
+	// preceding unmerge already ran, so until that refresh happens every
+	// extension on the host stays unmerged.
+	RefreshError string `json:"refresh_error,omitempty"`
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/frostyard/updex/internal/testutil"
@@ -202,5 +203,36 @@ func TestUpdateFeatures_TargetFilename_CompressedSource(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(targetDir, "testext_1.0.0.raw.zst")); !os.IsNotExist(err) {
 		t.Error("expected testext_1.0.0.raw.zst to NOT exist (stored decompressed)")
+	}
+}
+
+// TestInstallTransfer_RefreshFailure_ReturnsErrorAfterInstall pins the
+// direct-caller contract of installTransfer's own refresh path (both SDK
+// callers batch with NoRefresh: true): the image is installed and linked,
+// the version and downloaded=true are still reported, and the refresh
+// failure comes back as the error instead of being swallowed.
+func TestInstallTransfer_RefreshFailure_ReturnsErrorAfterInstall(t *testing.T) {
+	client, mockRunner, targetDir := refreshFailureFixture(t, true)
+	_, transfers, err := client.loadDomain("")
+	if err != nil {
+		t.Fatalf("loadDomain: %v", err)
+	}
+	if len(transfers) != 1 {
+		t.Fatalf("expected 1 transfer, got %d", len(transfers))
+	}
+
+	version, _, downloaded, err := client.installTransfer(t.Context(), transfers[0], installTransferOptions{NoVacuum: true})
+
+	if err == nil || !strings.Contains(err.Error(), "sysext refresh failed") {
+		t.Fatalf("expected refresh error, got %v", err)
+	}
+	if version != "1.0.0" || !downloaded {
+		t.Errorf("install outcome must still be reported: version=%q downloaded=%v", version, downloaded)
+	}
+	if !mockRunner.RefreshCalled {
+		t.Error("expected Refresh to be called")
+	}
+	if _, statErr := os.Stat(filepath.Join(targetDir, "testext_1.0.0.raw")); statErr != nil {
+		t.Errorf("installed image missing: %v", statErr)
 	}
 }
