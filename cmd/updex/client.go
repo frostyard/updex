@@ -20,14 +20,17 @@ var sysextRunner sysext.SysextRunner
 
 // newClient creates a new updex client with the appropriate progress reporter.
 func newClient() *updex.Client {
-	return updex.NewClient(updex.ClientConfig{
-		Definitions:        definitions,
-		Verify:             verify,
-		Verbose:            clix.Verbose,
-		Progress:           clix.NewReporter(),
-		SysextRunner:       sysextRunner,
-		OnDownloadProgress: newProgressBar,
-	})
+	clientConfig := updex.ClientConfig{
+		Definitions:  definitions,
+		Verify:       verify,
+		Verbose:      clix.Verbose,
+		Progress:     clix.NewReporter(),
+		SysextRunner: sysextRunner,
+	}
+	if !clix.JSONOutput && !clix.Silent {
+		clientConfig.OnDownloadProgress = newProgressBar
+	}
+	return updex.NewClient(clientConfig)
 }
 
 // newProgressBar creates a terminal progress bar for download tracking.
@@ -49,6 +52,7 @@ func newProgressBar(contentLength int64) io.Writer {
 		progressbar.OptionSetWidth(40),
 		progressbar.OptionThrottle(100*time.Millisecond),
 		progressbar.OptionShowCount(),
+		progressbar.OptionSetWriter(os.Stderr),
 		progressbar.OptionOnCompletion(func() { fmt.Fprintln(os.Stderr) }),
 		progressbar.OptionSetPredictTime(true),
 		progressbar.OptionFullWidth(),

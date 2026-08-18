@@ -31,9 +31,10 @@ debugging session would want to know.
 
 ## References
 
-<!-- Required. Every design doc links: the ADRs that justify it, the specs
-that pin its contracts, and the roadmap phase that builds it. -->
+<!-- Required. Every design doc links the ADRs that justify it and the specs
+that pin its contracts. Link an implementation plan only when one applies. -->
 
 - Rationale: [ADR-NNNN](../adr/NNNN-….md)
 - Contracts: [specs/…](../specs/….md)
-- Built in: [roadmap — Phase N](../plans/roadmap.md)
+- Built in: [applicable plan — Phase N](../plans/<plan>.md) *(omit when no
+  implementation plan applies)*

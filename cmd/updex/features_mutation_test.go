@@ -2,6 +2,8 @@ package updex
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,15 +22,16 @@ import (
 // it through setFeatureCLIFlags so every field is restored on cleanup and no
 // value leaks between table cases.
 type featureCLIFlags struct {
-	definitions string
-	component   string
-	now         bool
-	force       bool
-	noRefresh   bool
-	dryRun      bool
-	jsonOutput  bool
-	euid        int
-	runner      sysext.SysextRunner
+	definitions    string
+	component      string
+	now            bool
+	force          bool
+	noRefresh      bool
+	dryRun         bool
+	jsonOutput     bool
+	reportProgress bool
+	euid           int
+	runner         sysext.SysextRunner
 }
 
 func setFeatureCLIFlags(t *testing.T, f featureCLIFlags) {
@@ -52,10 +55,9 @@ func setFeatureCLIFlags(t *testing.T, f featureCLIFlags) {
 	featureDisableForce = f.force
 	clix.DryRun = f.dryRun
 	clix.JSONOutput = f.jsonOutput
-	// Silence the progress reporter: in JSON mode it would otherwise
-	// interleave progress objects with the result on stdout, exactly as
-	// `updex --silent --json` keeps them apart in production.
-	clix.Silent = true
+	// Keep handler tests focused on final command output. Download bars ignored
+	// clix.Silent before #299, so a real JSON-mode download still guards it.
+	clix.Silent = !f.reportProgress
 	getEUID = func() int { return f.euid }
 	sysextRunner = f.runner
 }
@@ -173,6 +175,32 @@ func decodeActionResult(t *testing.T, output string) updex.FeatureActionResult {
 	var result updex.FeatureActionResult
 	if err := json.Unmarshal([]byte(output), &result); err != nil {
 		t.Fatalf("expected a single JSON FeatureActionResult on stdout, got %v:\n%s", err, output)
+	}
+	return result
+}
+
+func decodeLastActionResult(t *testing.T, output string) updex.FeatureActionResult {
+	t.Helper()
+	decoder := json.NewDecoder(strings.NewReader(output))
+	var records []json.RawMessage
+	for {
+		var record json.RawMessage
+		err := decoder.Decode(&record)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("expected a valid JSON stream on stdout, got %v:\n%s", err, output)
+		}
+		records = append(records, record)
+	}
+	if len(records) == 0 {
+		t.Fatal("expected at least one JSON record on stdout")
+	}
+
+	var result updex.FeatureActionResult
+	if err := json.Unmarshal(records[len(records)-1], &result); err != nil {
+		t.Fatalf("expected the last JSON record to be a FeatureActionResult: %v", err)
 	}
 	return result
 }
@@ -354,9 +382,42 @@ func TestRunFeaturesEnable(t *testing.T) {
 			},
 		},
 		{
-			// JSON shape for a real (non-dry-run) enable is asserted without
-			// --now: a live download also renders the terminal progress bar,
-			// which is a separate concern from the handler's result output.
+			name:  "--now json and silent emit only the result on stdout",
+			scope: "definitions",
+			flags: featureCLIFlags{now: true, jsonOutput: true},
+			check: func(t *testing.T, fx *featureCLIFixture, out string, runner *sysext.MockRunner) {
+				r := decodeActionResult(t, out)
+				if !r.Success || r.DryRun || r.Error != "" || r.Action != "enable" {
+					t.Errorf("unexpected result: %+v", r)
+				}
+				if len(r.DownloadedFiles) != 1 || r.DownloadedFiles[0] != "testext@1.0.0" {
+					t.Errorf("unexpected downloaded_files: %v", r.DownloadedFiles)
+				}
+				assertExists(t, fx.stagedImage(), "downloaded image")
+				if !runner.RefreshCalled {
+					t.Error("expected sysext refresh after --now download")
+				}
+			},
+		},
+		{
+			name:  "--now json progress remains a valid JSON stream",
+			scope: "definitions",
+			flags: featureCLIFlags{now: true, jsonOutput: true, reportProgress: true},
+			check: func(t *testing.T, fx *featureCLIFixture, out string, runner *sysext.MockRunner) {
+				r := decodeLastActionResult(t, out)
+				if !r.Success || r.DryRun || r.Error != "" || r.Action != "enable" {
+					t.Errorf("unexpected result: %+v", r)
+				}
+				if len(r.DownloadedFiles) != 1 || r.DownloadedFiles[0] != "testext@1.0.0" {
+					t.Errorf("unexpected downloaded_files: %v", r.DownloadedFiles)
+				}
+				assertExists(t, fx.stagedImage(), "downloaded image")
+				if !runner.RefreshCalled {
+					t.Error("expected sysext refresh after --now download")
+				}
+			},
+		},
+		{
 			name:  "json without --now reports the written drop-in",
 			scope: "definitions",
 			flags: featureCLIFlags{jsonOutput: true},
