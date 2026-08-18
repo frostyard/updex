@@ -130,8 +130,7 @@ go test -v ./cmd/updex ./tests/e2e/...   # for CLI / e2e changes
 Failure modes: a broken alias or missing index line fails docs-gate (fix the
 canonical target or the index, never the alias); a lint finding after
 pinning `.golangci.yml` means the gate was already red — fix the finding,
-never loosen the config; a coverage-floor failure (`check-coverage: FAIL:
-total coverage X% is below the required floor of 80.0%`) means the change
+never loosen the config; a coverage-floor failure (`check-coverage: FAIL: total coverage X% is below the required floor of 80.0%`) means the change
 lowered total statement coverage below the floor — add tests, never lower
 `COVERAGE_MIN` in `scripts/check-coverage.sh`.
 
