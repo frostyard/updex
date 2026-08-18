@@ -62,9 +62,9 @@ ci:
 	@echo "==> lint"
 	golangci-lint run
 	@echo "==> unit tests"
-	$(GO) test -v $$(go list ./... | grep -v '/tests/e2e$$') -coverprofile=coverage.out -covermode=atomic
+	$(GO) test -v $$($(GO) list ./... | grep -v '/tests/e2e$$') -coverprofile=coverage.out -covermode=atomic
 	@echo "==> race detector"
-	$(GO) test -race -short -v $$(go list ./... | grep -v '/tests/e2e$$')
+	$(GO) test -race -short -v $$($(GO) list ./... | grep -v '/tests/e2e$$')
 	@echo "==> cross-architecture build"
 	GOOS=linux GOARCH=amd64 $(MAKE) build
 	GOOS=linux GOARCH=arm64 $(MAKE) build
