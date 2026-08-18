@@ -198,7 +198,12 @@ func validateRepoURL(field, value string, allowInsecure bool) error {
 	if parsed.Scheme == "" || parsed.Host == "" {
 		return fmt.Errorf("%s must be an absolute URL", field)
 	}
-	if !strings.EqualFold(parsed.Scheme, "https") && !allowInsecure {
+
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "https" && scheme != "http" {
+		return fmt.Errorf("%s must use http or https", field)
+	}
+	if scheme != "https" && !allowInsecure {
 		return fmt.Errorf("%s must use https unless AllowInsecure=yes", field)
 	}
 	return nil
