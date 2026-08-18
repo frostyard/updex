@@ -45,9 +45,19 @@ esac
 
 echo "check-coverage: observed total statement coverage ${OBSERVED}% (required >= ${MIN}%)"
 
-if awk -v observed="$OBSERVED" -v required="$MIN" 'BEGIN { exit !(observed + 0 < required + 0) }'; then
-    echo "check-coverage: FAIL: total coverage ${OBSERVED}% is below the required floor of ${MIN}%" >&2
-    exit 1
-fi
+# Compute the comparison through command substitution so an awk failure aborts
+# under `set -e` instead of falling through to OK.
+BELOW="$(awk -v observed="$OBSERVED" -v required="$MIN" 'BEGIN { print (observed + 0 < required + 0) ? "yes" : "no" }')"
+case "$BELOW" in
+    yes)
+        echo "check-coverage: FAIL: total coverage ${OBSERVED}% is below the required floor of ${MIN}%" >&2
+        exit 1
+        ;;
+    no) ;;
+    *)
+        echo "check-coverage: could not compare ${OBSERVED} with ${MIN}" >&2
+        exit 2
+        ;;
+esac
 
 echo "check-coverage: OK"
