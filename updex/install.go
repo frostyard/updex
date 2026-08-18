@@ -90,10 +90,15 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 		return "", nil, false, fmt.Errorf("failed to link to sysext: %w", linkErr)
 	}
 
-	// Refresh systemd-sysext
+	// Refresh systemd-sysext. Both SDK callers batch this with NoRefresh:
+	// true; when a caller does ask for it, a failure is returned (the image
+	// is installed and linked, so versionToInstall is still reported) rather
+	// than swallowed, matching the batched refresh in UpdateFeatures.
+	var refreshErr error
 	if !opts.NoRefresh {
 		if err := c.runner.Refresh(); err != nil {
-			c.warn("sysext refresh failed: %v", err)
+			refreshErr = fmt.Errorf("sysext refresh failed: %w", err)
+			c.warn("%s", refreshErr)
 		}
 	}
 
@@ -104,7 +109,7 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 		}
 	}
 
-	return versionToInstall, m, true, nil
+	return versionToInstall, m, true, refreshErr
 }
 
 // buildTargetFilename derives the installed filename for a version from the

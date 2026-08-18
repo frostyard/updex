@@ -101,6 +101,8 @@ Enable creates a drop-in file setting `Enabled=true`. With `Now: true`, it downl
 
 In dry-run mode, enable/disable skip writing drop-ins and skip sysext/filesystem mutations. `EnableFeature` with `Now: true` records associated transfer components as would-download entries without fetching manifests or resolving exact versions. `DisableFeature` with `Now: true` still checks active versions for force-safety, then records component-level would-remove entries instead of deleting files.
 
+**Refresh failures are reported, not swallowed.** When `Now: true` (and not `NoRefresh`/`DryRun`), both methods finish with `systemd-sysext refresh`. If that refresh fails after every filesystem change succeeded, the result still records what was done (`DropIn`, `DownloadedFiles`, or `Unmerged`/`RemovedFiles`), but `Success` is `false`, `RefreshError` and `Error` both carry `sysext refresh failed: …`, `NextActionMessage` says how to finish activation (`systemd-sysext refresh` or a reboot), and the method returns that error. For `DisableFeature` this matters most: `Unmerge()` has already detached every extension on the host, so until the operator refreshes (or reboots) all extensions stay unmerged — the message says so explicitly. The CLI prints the completed steps, then `Error: …` and the next action, and exits non-zero.
+
 Both methods reject missing or masked features before writing drop-ins. The drop-in target directory depends on where the feature file was discovered (`config.ComponentOfPath(f.FilePath)`): a feature found under a `sysupdate.<name>.d/` component writes to `/etc/sysupdate.<name>.d/<feature>.feature.d/00-updex.conf` (via `config.EtcComponentDir(name)`); a feature from the legacy default directory or a `ClientConfig.Definitions` override keeps the original `/etc/sysupdate.d/<feature>.feature.d/00-updex.conf` path. Dry-run returns that would-be path but leaves `FeatureActionResult.DropIn` empty because no file was written.
 
 **EnableFeatureOptions:**
@@ -126,7 +128,7 @@ Both methods reject missing or masked features before writing drop-ins. The drop
 func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions) ([]UpdateFeaturesResult, error)
 ```
 
-Downloads and installs the newest available version for each enabled feature's transfers. Delegates per-component work to the internal `installTransfer` pipeline (which handles download, legacy staging-symlink cleanup, sysext linking, and vacuum). Manifests are cached by source URL — transfers sharing the same source avoid redundant HTTP requests. Parsed source patterns are returned from version listing and reused by the install pipeline to avoid redundant pattern compilation. Refresh is batched — a single `systemd-sysext refresh` runs after all components are processed. With `DryRun: true`, manifests are fetched and versions are selected, but download, legacy cleanup, sysext linking, refresh, and vacuum deletion are skipped. Returns per-feature results with per-component status.
+Downloads and installs the newest available version for each enabled feature's transfers. Delegates per-component work to the internal `installTransfer` pipeline (which handles download, legacy staging-symlink cleanup, sysext linking, and vacuum). Manifests are cached by source URL — transfers sharing the same source avoid redundant HTTP requests. Parsed source patterns are returned from version listing and reused by the install pipeline to avoid redundant pattern compilation. Refresh is batched — a single `systemd-sysext refresh` runs after all components are processed. If that final refresh fails, the per-feature results are still returned as recorded (a component that was downloaded and linked keeps `Installed=true`; it is staged but not activated) and the method returns `sysext refresh failed: …` — joined with `one or more components failed to update` when a component also failed — so callers and the CLI (non-zero exit, `--json` still emits the array) never mistake an unactivated update for a completed one. With `NoRefresh: true` (the daemon path) no refresh is attempted. With `DryRun: true`, manifests are fetched and versions are selected, but download, legacy cleanup, sysext linking, refresh, and vacuum deletion are skipped. Returns per-feature results with per-component status.
 
 The manifest cache key is `Transfer.Source.Path` only. The first transfer to fetch a source determines whether that cached manifest was GPG-verified, so changes that require different verification/auth behavior per transfer must change the cache key or bypass caching.
 
@@ -267,8 +269,11 @@ type FeatureActionResult struct {
     DownloadedFiles   []string `json:"downloaded_files,omitzero"`
     DryRun            bool     `json:"dry_run,omitempty"`
     Unmerged          bool     `json:"unmerged,omitempty"`
+    RefreshError      string   `json:"refresh_error,omitempty"` // set when only the final systemd-sysext refresh failed
 }
 ```
+
+`RefreshError` is non-empty only when every requested change succeeded and the closing `systemd-sysext refresh` did not; `Success` is then `false`, `Error` mirrors `RefreshError`, and `NextActionMessage` tells the operator how to activate (see EnableFeature / DisableFeature above).
 
 > **Note:** Slice fields use `omitzero` (Go 1.24+) — they are omitted from JSON when nil/empty. Scalar fields use `omitempty` for the same effect on zero values.
 

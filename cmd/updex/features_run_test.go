@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/frostyard/clix"
 	"github.com/frostyard/updex/internal/testutil"
+	"github.com/frostyard/updex/sysext"
 	"github.com/frostyard/updex/updex"
 	"github.com/spf13/cobra"
 )
@@ -211,6 +214,64 @@ func TestRunFeaturesCheck_TextMarksFailedComponent(t *testing.T) {
 	fields := strings.Fields(row)
 	if len(fields) != 5 || fields[4] != "error" {
 		t.Errorf("expected UPDATE column 'error' for the failed component, got row %q", row)
+	}
+}
+
+// TestRunFeaturesUpdate_RefreshFailure_JSONEmitsResultsAndErrors verifies
+// that when the batched sysext refresh fails after a successful install,
+// --json still emits the populated results array (Installed=true is
+// accurate) and the handler returns the refresh error so the process exits
+// non-zero.
+func TestRunFeaturesUpdate_RefreshFailure_JSONEmitsResultsAndErrors(t *testing.T) {
+	configDir := t.TempDir()
+	targetDir := t.TempDir()
+	sysextDir := t.TempDir()
+
+	extContent := []byte("fake extension content")
+	server := testutil.NewTestServer(t, testutil.TestServerFiles{
+		Files:   map[string]string{"testext_1.0.0.raw": sha256Hex(extContent)},
+		Content: map[string][]byte{"testext_1.0.0.raw": extContent},
+	})
+	defer server.Close()
+	writeFeatureFile(t, configDir, "testfeature", true)
+	writeFeatureTransferFile(t, configDir, targetDir, "testext", "testfeature", server.URL)
+
+	oldDefinitions, oldNoRefresh, oldNoVac := definitions, noRefresh, featureUpdateNoVac
+	oldDryRun, oldJSONOutput, oldSilent := clix.DryRun, clix.JSONOutput, clix.Silent
+	oldGetEUID, oldRunner, oldSysextDir := getEUID, sysextRunner, sysext.SysextDir
+	t.Cleanup(func() {
+		definitions, noRefresh, featureUpdateNoVac = oldDefinitions, oldNoRefresh, oldNoVac
+		clix.DryRun, clix.JSONOutput, clix.Silent = oldDryRun, oldJSONOutput, oldSilent
+		getEUID, sysextRunner, sysext.SysextDir = oldGetEUID, oldRunner, oldSysextDir
+	})
+	definitions = configDir
+	noRefresh = false
+	featureUpdateNoVac = true
+	clix.DryRun = false
+	clix.JSONOutput = true
+	clix.Silent = true
+	getEUID = func() int { return 0 }
+	runner := &sysext.MockRunner{RefreshErr: errors.New("systemd-sysext refresh: exit status 1")}
+	sysextRunner = runner
+	sysext.SysextDir = sysextDir
+
+	output, err := captureStdout(t, func() error {
+		cmd := &cobra.Command{}
+		cmd.SetContext(t.Context())
+		return runFeaturesUpdate(cmd, nil)
+	})
+	if err == nil || !strings.Contains(err.Error(), "sysext refresh failed") {
+		t.Fatalf("expected the refresh error to be returned, got %v", err)
+	}
+	if !runner.RefreshCalled {
+		t.Error("expected refresh to be attempted")
+	}
+	var results []updex.UpdateFeaturesResult
+	if jsonErr := json.Unmarshal([]byte(output), &results); jsonErr != nil {
+		t.Fatalf("stdout is not a JSON array: %v\n%s", jsonErr, output)
+	}
+	if len(results) != 1 || len(results[0].Results) != 1 || !results[0].Results[0].Installed || results[0].Results[0].Error != "" {
+		t.Errorf("expected the successful install to be reported, got %+v", results)
 	}
 }
 

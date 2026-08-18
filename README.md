@@ -307,6 +307,12 @@ sudo updex features update --no-vacuum
 # Preview downloads, installs, refreshes, and vacuum removals
 sudo updex --dry-run features update
 
+# If the closing `systemd-sysext refresh` fails after enable --now, disable --now,
+# or update, the command reports what it did, prints "Error: sysext refresh
+# failed: ..." with the next step (a manual `systemd-sysext refresh` or a reboot),
+# and exits non-zero; JSON results carry "refresh_error". After disable --now the
+# host's extensions stay unmerged until that refresh happens.
+
 # Check for available updates (read-only). A component whose manifest cannot be
 # fetched or verified is listed with UPDATE=error (JSON: "error" set) and the
 # command exits non-zero; healthy components in the same run are still reported.
