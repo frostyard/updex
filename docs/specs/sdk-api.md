@@ -403,6 +403,6 @@ recorded in [ADR-0008](../adr/0008-bounded-retry-no-resume.md).
 - `NewManager() *Manager` — Create manager with default paths (`/etc/systemd/system`)
 - `NewTestManager(unitPath string, runner SystemctlRunner) *Manager` — Create manager with custom paths and runner for testing
 - `GenerateTimer(cfg *TimerConfig) string` — Generate systemd timer unit content
-- `GenerateService(cfg *ServiceConfig) string` — Generate systemd service unit content
+- `GenerateService(cfg *ServiceConfig) string` — Generate systemd service unit content; `ServiceConfig.Sandbox` appends the `SandboxDirectives` hardening block to `[Service]` (the daemon unit sets it; other callers keep the minimal unit)
 - `Manager.Install(timer, service) / Remove(name) / Exists(name)` — Unit lifecycle
 - `SystemctlRunner` interface — `DaemonReload()`, `Enable(unit)`, `Disable(unit)`, `Start(unit)`, `Stop(unit)`, `IsActive(unit)`, `IsEnabled(unit)` methods executed via `DefaultSystemctlRunner` (real commands) or `MockSystemctlRunner` (tests)
