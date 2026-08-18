@@ -46,8 +46,12 @@ PR template ──► review rubric ──► CI gates ──► corrections ─
     `GOLANGCI_LINT_VERSION` in the `Makefile`, which the Lint job reads
     and `make ci` asserts via `make lint-version-check`, configured by
     `.golangci.yml`), *Security Scan* (pinned
-    `govulncheck`), *Unit Tests* with coverage uploaded to Codecov, *E2E
-    Tests* ([tests/e2e/README.md](../../tests/e2e/README.md)), *Race
+    `govulncheck`), *Unit Tests* with coverage — the job (and `make ci`)
+    enforces the 80.0% total statement-coverage floor over the non-E2E
+    packages via [scripts/check-coverage.sh](../../scripts/check-coverage.sh)
+    (`make coverage-check`, self-tested first by `make test-coverage-check`
+    against fixture profiles); a regression below the floor fails the gate —
+    *E2E Tests* ([tests/e2e/README.md](../../tests/e2e/README.md)), *Race
     Detection*, *Verify* (tidy, `go vet`, gofmt), and *Build* for linux
     amd64/arm64 — `make ci` reproduces the credential-free subset locally in
     the same fail-fast order.
@@ -55,8 +59,15 @@ PR template ──► review rubric ──► CI gates ──► corrections ─
     docs-index coverage, relative-link integrity, and symlink resolution
     against [.coverage-thresholds.json](../../.coverage-thresholds.json) —
     all 1.0, `never_relax: true` (the loop may tighten, never loosen).
-  - Codecov (`codecov.yml`) gates project coverage (no more than a 1% drop
-    against the base commit) and patch coverage (70% of changed lines).
+  - Codecov is best-effort, not a gate today: the Unit Tests job uploads
+    `coverage.out` with `continue-on-error: true` /
+    `fail_ci_if_error: false`, and the upload currently fails because the
+    repository is not onboarded on codecov.io, so no `codecov/*` status is
+    attached to pull requests. `codecov.yml` records the *intended* statuses
+    — project coverage no more than 1% below the base commit, patch coverage
+    at least 70% of changed lines — which take effect only once the
+    repository is onboarded; until then the in-repo 80.0% floor above is the
+    only enforced coverage signal.
   - `Nightly compliance` (`.github/workflows/nightly-compliance.yml`, 03:27
     UTC and on dispatch) re-verifies downloaded module content, requires a
     clean `go mod tidy`, queries the current Go vulnerability database with
@@ -122,8 +133,9 @@ go test -v ./cmd/updex ./tests/e2e/...   # for CLI / e2e changes
 Failure modes: a broken alias or missing index line fails docs-gate (fix the
 canonical target or the index, never the alias); a lint finding after
 pinning `.golangci.yml` means the gate was already red — fix the finding,
-never loosen the config; a Codecov patch failure means changed lines lack
-tests.
+never loosen the config; a coverage-floor failure (`check-coverage: FAIL: total coverage X% is below the required floor of 80.0%`) means the change
+lowered total statement coverage below the floor — add tests, never lower
+`COVERAGE_MIN` in `scripts/check-coverage.sh`.
 
 ## References
 

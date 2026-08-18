@@ -613,10 +613,14 @@ CI runs on every pull request (`.github/workflows/test.yml`) and must pass:
 lint (golangci-lint), security scan (`govulncheck`), unit tests with coverage,
 end-to-end tests, race-detector tests, verification (`go mod tidy`
 cleanliness, `go vet`, `gofmt`), docs integrity (`scripts/check-docs.mjs`),
-and cross-compiled builds for linux/amd64 and linux/arm64. Coverage from the
-unit test job is uploaded to Codecov; `codecov.yml` requires that project
-coverage not drop more than 1% against the base commit and that changed
-lines be at least 70% covered. The whole loop — declare, review, gate,
+and cross-compiled builds for linux/amd64 and linux/arm64. The unit test job
+enforces the 80.0% total statement-coverage floor (`make coverage-check`,
+`scripts/check-coverage.sh`); that floor is the enforced coverage gate. It
+also uploads `coverage.out` to Codecov on a best-effort basis
+(`continue-on-error`) — the upload currently fails because the repository is
+not onboarded on codecov.io, so the project (−1% max) and patch (70%)
+statuses `codecov.yml` describes are pending onboarding and not required
+checks. The whole loop — declare, review, gate,
 learn, observe — is described in
 [docs/design/quality-loop.md](docs/design/quality-loop.md).
 
