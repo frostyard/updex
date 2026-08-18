@@ -522,6 +522,13 @@ Mutating commands enforce root before reading `--dry-run`, so examples that prev
 
 ## CI and Releases
 
+`make ci` is the canonical credential-free local gate. It mirrors the
+host-independent pull-request checks in fail-fast order: module tidiness, vet,
+formatting, golangci-lint, all non-E2E package tests, the same tests under the
+race detector, then Linux amd64 and arm64 builds. The unit and race stages do
+not filter by test name, so every hermetic test runs; black-box tests under
+`tests/e2e/` remain in their dedicated workflow job.
+
 `.github/workflows/pr-title.yml` (`amannn/action-semantic-pull-request`,
 SHA-pinned, `pull_request` `opened|edited|synchronize|reopened`, read-only
 permissions, no checkout) fails a pull request whose title is not a
