@@ -1,7 +1,10 @@
 package download
 
 import (
+	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -217,6 +220,171 @@ func TestDownloadFailurePreservesExistingTarget(t *testing.T) {
 			}
 			if len(entries) != 1 || entries[0].Name() != filepath.Base(targetPath) {
 				t.Errorf("target directory entries = %v, want only %q", entries, filepath.Base(targetPath))
+			}
+		})
+	}
+}
+
+// recordSyncs replaces the package sync seam for the duration of the test and
+// returns the identities of every file it was asked to sync, captured at sync
+// time so they can be compared with os.SameFile after a later rename.
+func recordSyncs(t *testing.T) *[]os.FileInfo {
+	t.Helper()
+	original := syncFile
+	t.Cleanup(func() { syncFile = original })
+
+	var synced []os.FileInfo
+	syncFile = func(f *os.File) error {
+		info, err := f.Stat()
+		if err != nil {
+			t.Fatalf("Stat() at sync error = %v", err)
+		}
+		synced = append(synced, info)
+		return original(f)
+	}
+	return &synced
+}
+
+func gzipBytes(t *testing.T, content []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write(content); err != nil {
+		t.Fatalf("gzip Write() error = %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("gzip Close() error = %v", err)
+	}
+	return buf.Bytes()
+}
+
+func TestDownloadSyncsFileBeforeRename(t *testing.T) {
+	content := []byte("feature image contents")
+	tests := []struct {
+		name       string
+		urlSuffix  string
+		body       []byte
+		wantSuffix string
+	}{
+		{name: "uncompressed", urlSuffix: "/feature.raw", body: content, wantSuffix: ""},
+		{name: "gzip", urlSuffix: "/feature.raw.gz", body: gzipBytes(t, content), wantSuffix: ".decompressed"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			synced := recordSyncs(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write(tt.body)
+			}))
+			defer server.Close()
+
+			targetDir := t.TempDir()
+			targetPath := filepath.Join(targetDir, "feature.raw")
+			if err := Download(t.Context(), server.Client(), server.URL+tt.urlSuffix, targetPath, hashString(tt.body), 0644, nil); err != nil {
+				t.Fatalf("Download() error = %v", err)
+			}
+
+			got, err := os.ReadFile(targetPath)
+			if err != nil {
+				t.Fatalf("ReadFile() error = %v", err)
+			}
+			if string(got) != string(content) {
+				t.Fatalf("target content = %q, want %q", got, content)
+			}
+
+			target, err := os.Stat(targetPath)
+			if err != nil {
+				t.Fatalf("Stat() error = %v", err)
+			}
+			found := false
+			for _, info := range *synced {
+				if !os.SameFile(info, target) {
+					continue
+				}
+				found = true
+				if !strings.HasPrefix(info.Name(), ".updex-download-") || !strings.HasSuffix(info.Name(), tt.wantSuffix) {
+					t.Errorf("synced file name = %q, want temp file %q*%q", info.Name(), ".updex-download-", tt.wantSuffix)
+				}
+				if info.Size() != int64(len(content)) {
+					t.Errorf("synced file size = %d, want %d", info.Size(), len(content))
+				}
+			}
+			if !found {
+				t.Errorf("no synced file is the file installed at %s (synced %d file(s))", targetPath, len(*synced))
+			}
+		})
+	}
+}
+
+func TestDownloadSyncFailureLeavesNoTarget(t *testing.T) {
+	content := []byte("feature image contents")
+	tests := []struct {
+		name           string
+		urlSuffix      string
+		body           []byte
+		existingTarget bool
+	}{
+		{name: "uncompressed without target", urlSuffix: "/feature.raw", body: content},
+		{name: "uncompressed preserves target", urlSuffix: "/feature.raw", body: content, existingTarget: true},
+		{name: "gzip without target", urlSuffix: "/feature.raw.gz", body: gzipBytes(t, content)},
+		{name: "gzip preserves target", urlSuffix: "/feature.raw.gz", body: gzipBytes(t, content), existingTarget: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			syncErr := errors.New("injected sync failure")
+			realSync := syncFile
+			t.Cleanup(func() { syncFile = realSync })
+			syncFile = func(*os.File) error { return syncErr }
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write(tt.body)
+			}))
+			defer server.Close()
+
+			targetDir := t.TempDir()
+			targetPath := filepath.Join(targetDir, "feature.raw")
+			original := []byte("installed image")
+			if tt.existingTarget {
+				if err := os.WriteFile(targetPath, original, 0600); err != nil {
+					t.Fatalf("WriteFile() error = %v", err)
+				}
+			}
+
+			err := Download(t.Context(), server.Client(), server.URL+tt.urlSuffix, targetPath, hashString(tt.body), 0644, nil, WithRetryConfig(3, time.Millisecond))
+			if err == nil {
+				t.Fatal("Download() error = nil, want error")
+			}
+			if !errors.Is(err, syncErr) {
+				t.Errorf("Download() error = %v, want it to wrap %v", err, syncErr)
+			}
+
+			entries, err := os.ReadDir(targetDir)
+			if err != nil {
+				t.Fatalf("ReadDir() error = %v", err)
+			}
+			if !tt.existingTarget {
+				if len(entries) != 0 {
+					t.Fatalf("target directory entries = %v, want none", entries)
+				}
+				return
+			}
+			if len(entries) != 1 || entries[0].Name() != filepath.Base(targetPath) {
+				t.Errorf("target directory entries = %v, want only %q", entries, filepath.Base(targetPath))
+			}
+			got, err := os.ReadFile(targetPath)
+			if err != nil {
+				t.Fatalf("ReadFile() error = %v", err)
+			}
+			if string(got) != string(original) {
+				t.Errorf("target content = %q, want %q", got, original)
+			}
+			info, err := os.Stat(targetPath)
+			if err != nil {
+				t.Fatalf("Stat() error = %v", err)
+			}
+			if gotMode := info.Mode().Perm(); gotMode != 0600 {
+				t.Errorf("target mode = %o, want 600", gotMode)
 			}
 		})
 	}
