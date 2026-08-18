@@ -50,7 +50,12 @@ func TestList(t *testing.T) {
 	}))
 	defer server.Close()
 
-	repo := Repo{Name: "fedora", SiteURL: server.URL, ListURL: server.URL}
+	repo := Repo{
+		Name:          "fedora",
+		SiteURL:       server.URL,
+		ListURL:       server.URL,
+		AllowInsecure: true,
+	}
 	names, err := List(t.Context(), server.Client(), repo)
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +76,12 @@ func TestListGitHubTokenNotSentToUntrustedOrigin(t *testing.T) {
 	}))
 	defer server.Close()
 
-	repo := Repo{Name: "fedora", SiteURL: server.URL, ListURL: server.URL}
+	repo := Repo{
+		Name:          "fedora",
+		SiteURL:       server.URL,
+		ListURL:       server.URL,
+		AllowInsecure: true,
+	}
 	if _, err := List(t.Context(), server.Client(), repo); err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +168,12 @@ func TestListHTTPError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	repo := Repo{Name: "fedora", SiteURL: server.URL, ListURL: server.URL}
+	repo := Repo{
+		Name:          "fedora",
+		SiteURL:       server.URL,
+		ListURL:       server.URL,
+		AllowInsecure: true,
+	}
 	if _, err := List(t.Context(), server.Client(), repo); err == nil {
 		t.Fatal("expected error for HTTP 403")
 	}
@@ -174,7 +189,7 @@ func TestFetchConf(t *testing.T) {
 	}))
 	defer server.Close()
 
-	repo := Repo{Name: "fedora", SiteURL: server.URL}
+	repo := Repo{Name: "fedora", SiteURL: server.URL, AllowInsecure: true}
 
 	data, err := FetchConf(t.Context(), server.Client(), repo, "zoxide")
 	if err != nil {

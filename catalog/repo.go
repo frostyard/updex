@@ -12,6 +12,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -98,21 +99,27 @@ func LoadRepos() ([]Repo, error) {
 //	SiteURL=https://extensions.fcos.fr/fedora
 //	ListURL=https://api.github.com/repos/fedora-sysexts/fedora/contents/
 //	# Component=catalog-fedora   (optional; default catalog-<name>)
+//	# AllowInsecure=no           (optional; permits non-HTTPS URLs when yes)
 type Repo struct {
 	// Name is the repo name, derived from the .catalog filename stem.
 	Name string
 	// SiteURL is the base URL sysext artifacts are served from; the
 	// catalog's <name>.conf, SHA256SUMS, and .raw files all resolve
-	// beneath <SiteURL>/<sysext>/. Required, stored without trailing slash.
+	// beneath <SiteURL>/<sysext>/. Required, stored without trailing slash,
+	// and HTTPS unless AllowInsecure is true.
 	SiteURL string
 	// ListURL is a GitHub contents API endpoint (or compatible) used to
 	// enumerate available sysexts. Optional: without it list/search skip
-	// this repo; add/remove only need SiteURL.
+	// this repo; add/remove only need SiteURL. HTTPS unless AllowInsecure
+	// is true.
 	ListURL string
 	// Component is the systemd-sysupdate component that added sysexts'
 	// .transfer/.feature files are written under (sysupdate.<Component>.d).
 	// Defaults to "catalog-<name>".
 	Component string
+	// AllowInsecure permits non-HTTPS SiteURL and ListURL values. It is
+	// intended only for explicitly trusted development and test endpoints.
+	AllowInsecure bool
 }
 
 // repoNamePattern matches valid repo and component names, mirroring the
@@ -158,13 +165,46 @@ func parseRepoFile(name, path string) (Repo, error) {
 	if key, err := sec.GetKey("Component"); err == nil && key.String() != "" {
 		repo.Component = key.String()
 	}
+	if key, err := sec.GetKey("AllowInsecure"); err == nil {
+		repo.AllowInsecure, err = key.Bool()
+		if err != nil {
+			return Repo{}, fmt.Errorf("invalid AllowInsecure value: %w", err)
+		}
+	}
 
 	if repo.SiteURL == "" {
 		return Repo{}, fmt.Errorf("SiteURL is required")
+	}
+	if err := validateRepoURL("SiteURL", repo.SiteURL, repo.AllowInsecure); err != nil {
+		return Repo{}, err
+	}
+	if repo.ListURL != "" {
+		if err := validateRepoURL("ListURL", repo.ListURL, repo.AllowInsecure); err != nil {
+			return Repo{}, err
+		}
 	}
 	if !repoNamePattern.MatchString(repo.Component) {
 		return Repo{}, fmt.Errorf("invalid Component %q (allowed: [a-zA-Z0-9_-]+)", repo.Component)
 	}
 
 	return repo, nil
+}
+
+func validateRepoURL(field, value string, allowInsecure bool) error {
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return fmt.Errorf("invalid %s: %w", field, err)
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("%s must be an absolute URL", field)
+	}
+
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "https" && scheme != "http" {
+		return fmt.Errorf("%s must use http or https", field)
+	}
+	if scheme != "https" && !allowInsecure {
+		return fmt.Errorf("%s must use https unless AllowInsecure=yes", field)
+	}
+	return nil
 }

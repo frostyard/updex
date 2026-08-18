@@ -47,7 +47,7 @@ directory. `sysext.GetActiveVersionIn` additionally receives the captured
 merged-image directory. The original package functions remain compatibility
 wrappers over their package variables or production constants.
 
-Other fields: if `SysextRunner` is nil it defaults to `&sysext.DefaultRunner{}`; if `Progress` is nil it defaults to `reporter.NoopReporter{}`; if `HTTPClient` is nil a default `http.Client` with a 10-minute timeout is created. `OnDownloadProgress` is called with the HTTP response content length (-1 if unknown) and must return a fresh `io.Writer` per attempt to avoid double-counting retried downloads.
+Other fields: if `SysextRunner` is nil it defaults to `&sysext.DefaultRunner{}`; if `Progress` is nil it defaults to `reporter.NoopReporter{}`; if `HTTPClient` is nil a default `http.Client` with a 10-minute timeout, the standard 10-redirect limit, and an HTTPS-to-HTTP downgrade refusal is created. HTTP-to-HTTP and HTTPS-to-HTTPS redirects remain allowed. A caller-supplied `HTTPClient` is stored unchanged, including its redirect policy. `OnDownloadProgress` is called with the HTTP response content length (-1 if unknown) and must return a fresh `io.Writer` per attempt to avoid double-counting retried downloads.
 
 ## Methods
 
@@ -342,7 +342,7 @@ Sysext catalog primitives; no built-in repos (see `docs/design/overview.md` "Cat
 - `ConfigRoots` — Package variable: the four `*/updex/catalogs.d` directories scanned for `<name>.catalog` files, earlier roots winning per filename. Overridable in tests.
 - `LoadRepos() ([]Repo, error)` — Load configured repos, sorted by name; returns `ErrNoCatalogs` when none exist.
 - `RepoByName(repos []Repo, name string) (Repo, bool)`
-- `type Repo struct { Name, SiteURL, ListURL, Component string }` — `Component` defaults to `catalog-<name>`; both names validated against `[a-zA-Z0-9_-]+`.
+- `type Repo struct { Name, SiteURL, ListURL, Component string; AllowInsecure bool }` — `Component` defaults to `catalog-<name>`; both names validated against `[a-zA-Z0-9_-]+`. Parsed `.catalog` files require absolute HTTPS `SiteURL`/`ListURL` values unless `AllowInsecure=yes`; the opt-in is intended only for trusted development and test endpoints.
 - `List(ctx, *http.Client, Repo) ([]string, error)` — Enumerate sysexts via the repo's `ListURL` (GitHub contents API shape): top-level `dir` entries minus dotted names and `docs`/`LICENSES`. Sends `GITHUB_TOKEN` as a bearer token only to the `https://api.github.com` origin and strips authorization from redirects to other origins. Always live; no cache.
 - `CachedList(ctx, *http.Client, Repo, CachedListOptions) ([]string, CacheResult, error)` — `List` behind a per-repo TTL+ETag cache in `CacheDir` (default `os.UserCacheDir()/updex`, empty disables). `CachedListOptions{TTL /* 0 → DefaultListCacheTTL (60 min) */, NoCache}`; `CacheResult{FromCache, Stale, Age}`. Validates `Repo.Name` (public API: the name becomes a cache filename). Within TTL: cache, zero network. Expired: conditional GET (`If-None-Match`; 304 bumps the timestamp, rate-limit-free on GitHub). Fetch failure with an entry present: stale served, `Stale: true` — except `context.Canceled`/`DeadlineExceeded`, which propagate. Entries are invalidated when the repo's `ListURL` changes; corrupt files are misses; writes are best-effort.
 - `FetchConf(ctx, *http.Client, Repo, name) ([]byte, error)` — GET `<SiteURL>/<name>/<name>.conf`; 404 wraps `ErrNotFound`. Validates `name` first.
