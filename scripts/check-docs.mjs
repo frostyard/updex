@@ -32,11 +32,20 @@ for (const cat of categories) {
 }
 
 // ---- 2. Link integrity: relative md links resolve. ----
-const mdFiles = [join(root, "AGENTS.md"), join(root, "README.md"), join(root, "docs/README.md")];
+const mdFiles = [
+  join(root, "AGENTS.md"),
+  join(root, "README.md"),
+  join(root, "docs/README.md"),
+  join(root, ".memory/README.md"),
+  join(root, "tests/e2e/README.md"),
+];
 for (const cat of categories) {
   for (const name of readdirSync(join(root, "docs", cat))) {
     if (name.endsWith(".md") && name !== "TEMPLATE.md") mdFiles.push(join(root, "docs", cat, name));
   }
+}
+for (const name of readdirSync(join(root, ".github", "prompts"))) {
+  if (name.endsWith(".md")) mdFiles.push(join(root, ".github", "prompts", name));
 }
 let linksTotal = 0;
 let linksOk = 0;
