@@ -150,6 +150,8 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 
 Checks for available updates without downloading. Manifests are cached by source URL, same as `UpdateFeatures`.
 
+Per-transfer failures are reported, never dropped: when a component's manifest cannot be fetched or verified (network/HTTP error, GPG signature failure, invalid source pattern), or its installed versions cannot be listed, `CheckFeatures` appends a `CheckResult` for that component with `Error` set (and `UpdateAvailable=false`), keeps checking the remaining transfers, and after the loop returns the collected results together with the aggregate error `one or more components failed to check` — the same shape as `UpdateFeatures`. Consumers must therefore treat a non-nil error as "the results are partial", not "no results", and use `CheckResult.Error` to tell "could not check" from "no update". A source that lists no matching versions is not an error: that component is simply absent from `Results`.
+
 **CheckFeaturesOptions:**
 | Field | Type | Description |
 |-------|------|-------------|
@@ -305,8 +307,11 @@ type CheckResult struct {
     CurrentVersion  string `json:"current_version,omitempty"`
     NewestVersion   string `json:"newest_version"`
     UpdateAvailable bool   `json:"update_available"`
+    Error           string `json:"error,omitempty"` // set when the component could not be checked
 }
 ```
+
+`Error` is non-empty only for a component whose check failed (see `CheckFeatures` above); `UpdateAvailable` is always `false` in that case, and `NewestVersion`/`CurrentVersion` are empty unless the failure happened after the manifest was read (an installed-versions listing failure keeps `NewestVersion`). The CLI renders such a row with `UPDATE=error` and exits non-zero.
 
 ## Supporting Packages
 

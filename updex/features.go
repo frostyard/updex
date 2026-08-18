@@ -531,6 +531,7 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 	// Cache manifests by source URL to avoid redundant HTTP requests
 	// when multiple transfers share the same source.
 	manifestCache := make(map[string]*manifest.Manifest)
+	var hasErrors bool
 
 	for _, f := range features {
 		if !f.Enabled || f.Masked {
@@ -557,7 +558,16 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 				manifestCache[transfer.Source.Path] = m
 			}
 			if err != nil {
-				c.warn("failed to get available versions: %v", err)
+				// A component that cannot be checked is reported as such
+				// rather than dropped: consumers must be able to tell
+				// "could not check" from "no update" (mirrors UpdateFeatures).
+				err = fmt.Errorf("failed to get available versions: %w", err)
+				c.warn("%s", err)
+				featureResult.Results = append(featureResult.Results, CheckResult{
+					Component: transfer.Component,
+					Error:     err.Error(),
+				})
+				hasErrors = true
 				continue
 			}
 
@@ -570,7 +580,17 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 
 			installed, current, err := sysext.GetInstalledVersionsAt(transfer, c.paths.sysextLinkDir)
 			if err != nil {
-				c.warn("failed to get installed versions: %v", err)
+				// Without the installed set the comparison would report a
+				// spurious "update available"; report the failure instead.
+				err = fmt.Errorf("failed to get installed versions: %w", err)
+				c.warn("%s", err)
+				featureResult.Results = append(featureResult.Results, CheckResult{
+					Component:     transfer.Component,
+					NewestVersion: newest,
+					Error:         err.Error(),
+				})
+				hasErrors = true
+				continue
 			}
 
 			result := CheckResult{
@@ -595,5 +615,8 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 		allResults = append(allResults, featureResult)
 	}
 
+	if hasErrors {
+		return allResults, fmt.Errorf("one or more components failed to check")
+	}
 	return allResults, nil
 }
