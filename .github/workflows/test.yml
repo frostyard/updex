@@ -117,7 +117,7 @@ jobs:
         run: go mod download
 
       - name: Run tests with race detector
-        run: go test -race -short $(go list ./... | grep -v '/tests/e2e$')
+        run: go test -race -short -v $(go list ./... | grep -v '/tests/e2e$')
 
   verify:
     name: Verify
