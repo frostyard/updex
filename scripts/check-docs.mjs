@@ -5,8 +5,9 @@
 // Node >= 20. Ported from frostyard/core (its ADR-0029).
 import { readFileSync, readdirSync, lstatSync, existsSync, realpathSync } from "node:fs";
 import { join, dirname, resolve, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = resolve(dirname(new URL(import.meta.url).pathname), "..");
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const thresholds = JSON.parse(readFileSync(join(root, ".coverage-thresholds.json"), "utf8"));
 
 if (thresholds.never_relax !== true) {
