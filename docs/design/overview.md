@@ -60,6 +60,8 @@ version/                        Pattern matching (@v placeholder) + version comp
 sysext/                         systemd-sysext runner, extension symlinks,
                                 installed/active version discovery, vacuum planning
 systemd/                        systemd timer/service generation + systemctl management
+internal/retry/                 bounded retry policy shared by download/ and manifest/
+                                (module-internal, ADR-0008)
 internal/testutil/              HTTP test server helpers (module-internal)
 ```
 
@@ -118,7 +120,7 @@ CLI (cmd/daemon.go) → systemd (direct, bypasses SDK)
 
 ### Public API (Issue #13)
 
-All core packages (`config`, `version`, `download`, `manifest`, `sysext`, `systemd`) are exported as public API at `github.com/frostyard/updex/<package>`. Only `internal/testutil` remains internal. This was an intentional decision: the types in these packages (e.g., `Transfer`, `Feature`, `Pattern`, `Manifest`) were designed with exported fields and are suitable for external consumption.
+All core packages (`config`, `version`, `download`, `manifest`, `sysext`, `systemd`) are exported as public API at `github.com/frostyard/updex/<package>`. This was an intentional decision: the types in these packages (e.g., `Transfer`, `Feature`, `Pattern`, `Manifest`) were designed with exported fields and are suitable for external consumption. Two packages stay module-internal: `internal/retry`, the bounded retry policy shared by `download` and `manifest` ([ADR-0008](../adr/0008-bounded-retry-no-resume.md)), and `internal/testutil`, the HTTP test server helpers.
 
 ### Version and pattern conventions
 
