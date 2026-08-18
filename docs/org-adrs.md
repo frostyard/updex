@@ -19,6 +19,7 @@ The ones that bind updex:
 - [ADR-0019 — Repository governance as machine-readable policy with risk tiers](https://github.com/frostyard/core/blob/main/docs/adr/0019-governance-as-code-and-risk-tiers.md) — .github/policies/ai-governance.json, risk tiers
 - [ADR-0020 — Trust boundaries for AI automation in CI](https://github.com/frostyard/core/blob/main/docs/adr/0020-ai-automation-trust-boundaries.md) — ai-fix workflows, pull_request_target safety rules
 - [ADR-0021 — SHA-pinned actions and least-privilege CI workflows](https://github.com/frostyard/core/blob/main/docs/adr/0021-sha-pinned-actions-and-least-privilege-ci.md) — pinned actions, permissions: {}
+- [ADR-0033 — Permit link-only maintenance in immutable ADRs](https://github.com/frostyard/core/blob/main/docs/adr/0033-link-maintenance-in-immutable-adrs.md) — Accepted/Superseded ADRs in docs/adr/ may receive link-only repairs (moved target, or a commit permalink labeled historical) but no change to the decision text; `scripts/check-docs.mjs` checks relative links in Superseded ADRs under the same 1.0 link-integrity requirement as every other doc (no exemption)
 - [ADR-0038 — make ci stays canonical; the test-name filter is chairlift-only](https://github.com/frostyard/core/blob/main/docs/adr/0038-scope-the-test-name-filter-to-chairlift.md) — `make ci` mirrors updex's credential-free CI jobs while all hermetic tests run without name filtering
 
 When changing behavior covered by one of these, update or supersede the ADR

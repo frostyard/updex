@@ -53,9 +53,6 @@ let linksOk = 0;
 for (const file of mdFiles) {
   // Strip fenced code blocks so example links aren't checked.
   const text = readFileSync(file, "utf8").replace(/```[\s\S]*?```/g, "");
-  // Superseded ADRs are immutable historical records; their targets may
-  // legitimately no longer exist.
-  if (file.includes(`${sep}adr${sep}`) && /^- \*\*Status:\*\* Superseded/m.test(text)) continue;
   for (const m of text.matchAll(/\[[^\]]*\]\(([^)\s]+)\)/g)) {
     const target = m[1];
     if (/^[a-z][a-z+.-]*:/i.test(target) || target.startsWith("#")) continue; // external or anchor
