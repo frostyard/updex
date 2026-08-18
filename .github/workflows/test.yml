@@ -12,6 +12,7 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -42,6 +43,7 @@ jobs:
   security:
     name: Security Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -62,6 +64,7 @@ jobs:
   unit-test:
     name: Unit Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       # Codecov's tokenless OIDC upload needs this job-scoped permission.
@@ -99,6 +102,7 @@ jobs:
   e2e-test:
     name: E2E Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -119,6 +123,7 @@ jobs:
   race-test:
     name: Race Detection
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -139,6 +144,7 @@ jobs:
   verify:
     name: Verify
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -166,6 +172,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     strategy:
@@ -189,6 +196,7 @@ jobs:
   docs-gate:
     name: Docs integrity
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:

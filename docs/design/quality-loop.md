@@ -41,7 +41,9 @@ PR template ──► review rubric ──► CI gates ──► corrections ─
   for each non-draft PR; maintainers audit its findings and CI history
   before merge and remain accountable for the decision.
 - **Gate** — [.github/workflows/test.yml](../../.github/workflows/test.yml)
-  runs on every PR and push to `main`:
+  runs on every PR and push to `main`; each job is capped at 15 minutes
+  (`timeout-minutes: 15`) so a hung step fails the gate within minutes
+  instead of pending for GitHub's 360-minute default:
   - *Lint* (pinned golangci-lint — the release named by
     `GOLANGCI_LINT_VERSION` in the `Makefile`, which the Lint job reads
     and `make ci` asserts via `make lint-version-check`, configured by
