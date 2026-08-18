@@ -410,6 +410,90 @@ Path=` + targetDir + `
 	}
 }
 
+func TestDisableFeature_MergedImageWithoutCurrentSymlinkRequiresForce(t *testing.T) {
+	configDir := t.TempDir()
+	definitionRoot := t.TempDir()
+	targetDir := t.TempDir()
+	sysextLinkDir := t.TempDir()
+	runExtensionsDir := t.TempDir()
+	mockRunner := &sysext.MockRunner{}
+
+	createFeatureFile(t, configDir, "testfeature", true)
+	content := `[Transfer]
+Features=testfeature
+
+[Source]
+Type=url-file
+Path=http://localhost
+MatchPattern=testext_@v.raw
+
+[Target]
+MatchPattern=testext_@v.raw
+Path=` + targetDir + `
+`
+	if err := os.WriteFile(filepath.Join(configDir, "testext.transfer"), []byte(content), 0644); err != nil {
+		t.Fatalf("write transfer: %v", err)
+	}
+
+	extPath := filepath.Join(targetDir, "testext_1.0.0.raw")
+	if err := os.WriteFile(extPath, []byte("extension content"), 0644); err != nil {
+		t.Fatalf("write installed image: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(runExtensionsDir, "testext_1.0.0.raw"),
+		[]byte("merged image"),
+		0644,
+	); err != nil {
+		t.Fatalf("write merged image: %v", err)
+	}
+
+	client := NewClient(ClientConfig{
+		Definitions:  configDir,
+		SysextRunner: mockRunner,
+		Paths: RuntimePaths{
+			DefinitionRoots:  []string{definitionRoot},
+			SysextLinkDir:    sysextLinkDir,
+			RunExtensionsDir: runExtensionsDir,
+		},
+	})
+
+	blocked, err := client.DisableFeature(t.Context(), "testfeature", DisableFeatureOptions{
+		Now: true,
+	})
+	if err == nil {
+		t.Fatal("expected merged image removal without force to fail")
+	}
+	if !strings.Contains(blocked.Error, "--force") {
+		t.Errorf("blocked error = %q, want --force guidance", blocked.Error)
+	}
+	if _, err := os.Stat(extPath); err != nil {
+		t.Fatalf("installed image changed after refusal: %v", err)
+	}
+	if mockRunner.UnmergeCalled {
+		t.Error("unmerge ran before force approval")
+	}
+
+	result, err := client.DisableFeature(t.Context(), "testfeature", DisableFeatureOptions{
+		Now:   true,
+		Force: true,
+	})
+	if err != nil {
+		t.Fatalf("DisableFeature with force: %v", err)
+	}
+	if !result.Success {
+		t.Errorf("result.Success = false, error = %q", result.Error)
+	}
+	if !strings.Contains(result.NextActionMessage, "Reboot required") {
+		t.Errorf("NextActionMessage = %q, want reboot requirement", result.NextActionMessage)
+	}
+	if !mockRunner.UnmergeCalled {
+		t.Error("expected forced disable to unmerge")
+	}
+	if _, err := os.Stat(extPath); !os.IsNotExist(err) {
+		t.Errorf("installed image still exists after forced disable: %v", err)
+	}
+}
+
 // TestDisableFeature_Force_DryRun_WithMerged verifies --force with --dry-run shows what would be removed
 func TestDisableFeature_Force_DryRun_WithMerged(t *testing.T) {
 	configDir := t.TempDir()
