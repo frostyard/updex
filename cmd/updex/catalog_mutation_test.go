@@ -134,7 +134,7 @@ CurrentSymlink=/var/lib/extensions/%s.raw
 // addRepo configures a <name>.catalog pointing at the fake site.
 func (fx *catalogCLIFixture) addRepo(t *testing.T, name string) {
 	t.Helper()
-	content := "[Catalog]\nSiteURL=" + fx.siteURL + "\n"
+	content := "[Catalog]\nSiteURL=" + fx.siteURL + "\nAllowInsecure=yes\n"
 	if err := os.WriteFile(filepath.Join(fx.catalogRoot, name+".catalog"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}

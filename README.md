@@ -568,14 +568,24 @@ ListURL=https://api.github.com/repos/fedora-sysexts/community/contents/
 
 - `SiteURL` (required) — base URL the catalog serves artifacts from; the
   published `<sysext>.conf`, `SHA256SUMS`, and `.raw` images all resolve
-  beneath `<SiteURL>/<sysext>/`.
+  beneath `<SiteURL>/<sysext>/`. Must use HTTPS unless `AllowInsecure=yes`.
 - `ListURL` (optional) — GitHub contents API endpoint used by
   `catalog list`/`search` to enumerate available sysexts. `add`/`remove`
   never use it. Set the `GITHUB_TOKEN` environment variable to raise the
-  API rate limit.
+  API rate limit. Must use HTTPS unless `AllowInsecure=yes`; updex never
+  attaches the token to a cleartext URL without that explicit opt-in.
 - `Component` (optional) — systemd-sysupdate component the generated files
   are written under; defaults to `catalog-<name>`
   (e.g. `/etc/sysupdate.catalog-fedora.d/`).
+- `AllowInsecure` (optional, default `no`) — permits non-HTTPS `SiteURL` and
+  `ListURL` values for explicitly trusted development endpoints. This also
+  permits `GITHUB_TOKEN` transmission to a cleartext `ListURL`; do not enable
+  it for production catalogs.
+
+The SDK's default HTTP client also refuses redirects from HTTPS to HTTP, so a
+catalog cannot pass initial URL validation and then downgrade `.conf`,
+`SHA256SUMS`, image, or listing requests to cleartext. A caller-supplied
+`ClientConfig.HTTPClient` retains its own redirect policy.
 
 `sudo updex catalog add fedora/zoxide` fetches the catalog's published
 transfer definition, writes a standard `.transfer` (with `Features=zoxide`

@@ -263,6 +263,12 @@ Uses `github.com/ProtonMail/go-crypto/openpgp` for signature verification. Suppo
 
 Only the main `SHA256SUMS` fetch has bounded retry behavior. The detached `.gpg` signature fetch is a single request in the current implementation. Manifest response bodies are read through a 4 MiB-plus-one-byte limit and detached signatures through a 1 MiB-plus-one-byte limit; crossing either boundary fails before parsing, keyring loading, or signature verification.
 
+When a transfer explicitly sets `Verify=false`, checksum authenticity depends
+on the transport that supplied both the transfer definition and
+`SHA256SUMS`. Catalog URL validation and the default client's redirect
+downgrade guard prevent that transport from silently changing from HTTPS to
+cleartext.
+
 ### Systemd specifiers
 
 Transfer file values support systemd-style `%` specifiers. See [Configuration Reference](../specs/config-reference.md#systemd-specifiers) for the full list.
@@ -286,8 +292,22 @@ Design decisions (verified with the user, 2026-08):
   package var, test-overridable). Keys: `SiteURL` (required), `ListURL`
   (optional GitHub contents API endpoint for list/search only;
   `GITHUB_TOKEN` env honored as bearer token), `Component` (optional,
-  default `catalog-<repo>`). Missing config → `catalog.ErrNoCatalogs`,
-  surfaced by the SDK with setup guidance.
+  default `catalog-<repo>`), and `AllowInsecure` (optional, default `no`).
+  `SiteURL` and `ListURL` must be absolute HTTPS URLs unless the definition
+  explicitly sets `AllowInsecure=yes`. A bearer token is attached only to an
+  HTTPS `ListURL` or one carrying that explicit opt-in. Missing config →
+  `catalog.ErrNoCatalogs`, surfaced by the SDK with setup guidance.
+- **Catalog transport is an integrity boundary.** A catalog-published
+  `.conf` may set `Verify=false`; in that case the HTTPS transport protecting
+  the `.conf`, `SHA256SUMS`, and image is the only remote integrity boundary.
+  The SDK-created HTTP client therefore rejects redirects from HTTPS to HTTP
+  for every catalog, manifest, and image request while retaining the standard
+  10-redirect limit. HTTP-to-HTTP and HTTPS-to-HTTPS redirects remain allowed.
+  Caller-supplied `ClientConfig.HTTPClient` values are not modified. The
+  `AllowInsecure=yes` configuration escape hatch is for explicitly trusted
+  development endpoints and deliberately opts out of the URL-level cleartext
+  prohibition; the default redirect client still refuses a downgrade that
+  begins on HTTPS.
 - **`RenderTransfer` is a security-constrained line transform**
   ([ADR-0006](../adr/0006-byte-preserving-render-transfer.md)), not an INI
   round-trip: it prepends the `GeneratedMarker` ownership header, injects

@@ -53,7 +53,13 @@ func newListServer(t *testing.T) *listServer {
 }
 
 func (s *listServer) repo() Repo {
-	return Repo{Name: "fedora", SiteURL: s.URL, ListURL: s.URL, Component: "catalog-fedora"}
+	return Repo{
+		Name:          "fedora",
+		SiteURL:       s.URL,
+		ListURL:       s.URL,
+		Component:     "catalog-fedora",
+		AllowInsecure: true,
+	}
 }
 
 func TestCachedList_ServesFromCacheWithinTTL(t *testing.T) {

@@ -131,8 +131,14 @@ catalog roots (production defaults: `/etc/updex/catalogs.d`, `/run/...`,
 `catalog.ConfigRoots` remains the package-API compatibility default. Each file defines `SiteURL`
 (required; artifacts resolve under `<SiteURL>/<sysext>/`), optional
 `ListURL` (GitHub contents API endpoint, only used by list/search;
-`GITHUB_TOKEN` honored), and optional `Component` (default
-`catalog-<name>`), the component the generated files land in.
+`GITHUB_TOKEN` honored), optional `Component` (default `catalog-<name>`), the
+component the generated files land in, and optional `AllowInsecure=yes`.
+`SiteURL` and `ListURL` require HTTPS by default. `AllowInsecure=yes` is an
+explicit development/test escape hatch that also permits sending
+`GITHUB_TOKEN` to a cleartext `ListURL`; production catalog definitions must
+not enable it. The SDK's default HTTP client refuses HTTPS-to-HTTP redirects,
+while a caller-supplied `ClientConfig.HTTPClient` keeps its own redirect
+policy.
 
 Key design points:
 

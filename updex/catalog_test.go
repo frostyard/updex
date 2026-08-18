@@ -38,6 +38,9 @@ func writeCatalogRepo(t *testing.T, dir, name, siteURL, listURL string) {
 	if listURL != "" {
 		content += "ListURL=" + listURL + "\n"
 	}
+	if strings.HasPrefix(siteURL, "http://") || strings.HasPrefix(listURL, "http://") {
+		content += "AllowInsecure=yes\n"
+	}
 	writeCatalogFileContent(t, dir, name, content)
 }
 
@@ -460,8 +463,10 @@ func TestCatalogAdd_RefusesOtherRepoFiles(t *testing.T) {
 	serverA := newCatalogServer(t, "zoxide", "1.0.0", targetDir)
 	serverB := newCatalogServer(t, "zoxide", "2.0.0", targetDir)
 	// Both repos deliberately share one component.
-	writeCatalogFileContent(t, catalogRoot, "alpha", "[Catalog]\nSiteURL="+serverA.URL+"\nComponent=shared\n")
-	writeCatalogFileContent(t, catalogRoot, "beta", "[Catalog]\nSiteURL="+serverB.URL+"\nComponent=shared\n")
+	writeCatalogFileContent(t, catalogRoot, "alpha",
+		"[Catalog]\nSiteURL="+serverA.URL+"\nComponent=shared\nAllowInsecure=yes\n")
+	writeCatalogFileContent(t, catalogRoot, "beta",
+		"[Catalog]\nSiteURL="+serverB.URL+"\nComponent=shared\nAllowInsecure=yes\n")
 
 	client := NewClient(ClientConfig{SysextRunner: &sysext.MockRunner{}})
 
@@ -934,9 +939,11 @@ func TestCatalogList_SharedComponentStatus(t *testing.T) {
 	defer apiServer.Close()
 
 	writeCatalogFileContent(t, catalogRoot, "alpha",
-		"[Catalog]\nSiteURL=https://example.com/alpha\nListURL="+apiServer.URL+"\nComponent=shared\n")
+		"[Catalog]\nSiteURL=https://example.com/alpha\nListURL="+apiServer.URL+
+			"\nComponent=shared\nAllowInsecure=yes\n")
 	writeCatalogFileContent(t, catalogRoot, "beta",
-		"[Catalog]\nSiteURL=https://example.com/beta\nListURL="+apiServer.URL+"\nComponent=shared\n")
+		"[Catalog]\nSiteURL=https://example.com/beta\nListURL="+apiServer.URL+
+			"\nComponent=shared\nAllowInsecure=yes\n")
 
 	// Only alpha added zoxide, into the component both repos share.
 	componentDir := filepath.Join(roots[0], "sysupdate.shared.d")

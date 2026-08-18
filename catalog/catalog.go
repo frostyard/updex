@@ -119,7 +119,8 @@ type contentsEntry struct {
 // List enumerates the sysexts available in repo via its ListURL (a GitHub
 // contents API endpoint): top-level directories minus dotted names and
 // known non-sysext directories, sorted. When the GITHUB_TOKEN environment
-// variable is set it is sent as a bearer token to raise the API rate limit.
+// variable is set it is sent as a bearer token only over HTTPS or when the
+// repo explicitly allows insecure transport.
 // List always fetches live; see CachedList for the TTL+ETag cached variant.
 func List(ctx context.Context, client *http.Client, repo Repo) ([]string, error) {
 	names, _, _, err := fetchList(ctx, client, repo, "")
@@ -141,6 +142,12 @@ func fetchList(ctx context.Context, client *http.Client, repo Repo, etag string)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		if !strings.EqualFold(req.URL.Scheme, "https") && !repo.AllowInsecure {
+			return nil, "", false, fmt.Errorf(
+				"catalog %q ListURL must use https to send GITHUB_TOKEN unless AllowInsecure=yes",
+				repo.Name,
+			)
+		}
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	if etag != "" {

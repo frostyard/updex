@@ -114,7 +114,11 @@ func TestCLIIntegration_CatalogUsesGitHubToken(t *testing.T) {
 	defer server.Close()
 
 	catalogRoot := t.TempDir()
-	repoConfig := fmt.Sprintf("[Catalog]\nSiteURL=%s\nListURL=%s\n", server.URL, server.URL)
+	repoConfig := fmt.Sprintf(
+		"[Catalog]\nSiteURL=%s\nListURL=%s\nAllowInsecure=yes\n",
+		server.URL,
+		server.URL,
+	)
 	if err := os.WriteFile(filepath.Join(catalogRoot, "test.catalog"), []byte(repoConfig), 0644); err != nil {
 		t.Fatal(err)
 	}

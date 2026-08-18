@@ -43,7 +43,12 @@ func TestList(t *testing.T) {
 	}))
 	defer server.Close()
 
-	repo := Repo{Name: "fedora", SiteURL: server.URL, ListURL: server.URL}
+	repo := Repo{
+		Name:          "fedora",
+		SiteURL:       server.URL,
+		ListURL:       server.URL,
+		AllowInsecure: true,
+	}
 	names, err := List(t.Context(), server.Client(), repo)
 	if err != nil {
 		t.Fatal(err)
@@ -64,12 +69,57 @@ func TestListGitHubToken(t *testing.T) {
 	}))
 	defer server.Close()
 
-	repo := Repo{Name: "fedora", SiteURL: server.URL, ListURL: server.URL}
+	repo := Repo{
+		Name:          "fedora",
+		SiteURL:       server.URL,
+		ListURL:       server.URL,
+		AllowInsecure: true,
+	}
 	if _, err := List(t.Context(), server.Client(), repo); err != nil {
 		t.Fatal(err)
 	}
 	if gotAuth != "Bearer test-token" {
 		t.Errorf("Authorization = %q, want Bearer test-token", gotAuth)
+	}
+}
+
+func TestListGitHubTokenHTTPS(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "test-token")
+
+	var gotAuth string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+
+	repo := Repo{Name: "fedora", SiteURL: server.URL, ListURL: server.URL}
+	if _, err := List(t.Context(), server.Client(), repo); err != nil {
+		t.Fatal(err)
+	}
+	if gotAuth != "Bearer test-token" {
+		t.Errorf("Authorization = %q, want bearer token", gotAuth)
+	}
+}
+
+func TestListGitHubTokenRejectsInsecureURL(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "test-token")
+
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+
+	repo := Repo{Name: "fedora", SiteURL: server.URL, ListURL: server.URL}
+	if _, err := List(t.Context(), server.Client(), repo); err == nil {
+		t.Fatal("List() error = nil")
+	} else if !strings.Contains(err.Error(), "AllowInsecure") {
+		t.Errorf("List() error = %q, want AllowInsecure guidance", err)
+	}
+	if gotAuth != "" {
+		t.Errorf("Authorization sent over insecure transport: %q", gotAuth)
 	}
 }
 
@@ -86,7 +136,12 @@ func TestListHTTPError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	repo := Repo{Name: "fedora", SiteURL: server.URL, ListURL: server.URL}
+	repo := Repo{
+		Name:          "fedora",
+		SiteURL:       server.URL,
+		ListURL:       server.URL,
+		AllowInsecure: true,
+	}
 	if _, err := List(t.Context(), server.Client(), repo); err == nil {
 		t.Fatal("expected error for HTTP 403")
 	}
@@ -102,7 +157,7 @@ func TestFetchConf(t *testing.T) {
 	}))
 	defer server.Close()
 
-	repo := Repo{Name: "fedora", SiteURL: server.URL}
+	repo := Repo{Name: "fedora", SiteURL: server.URL, AllowInsecure: true}
 
 	data, err := FetchConf(t.Context(), server.Client(), repo, "zoxide")
 	if err != nil {
