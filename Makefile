@@ -1,4 +1,4 @@
-.PHONY: all build clean fmt lint test test-cover coverage-check test-coverage-check tidy check ci install help
+.PHONY: all build clean fmt lint lint-version-check test test-cover coverage-check test-coverage-check tidy check ci install help
 
 # Build variables
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -9,6 +9,13 @@ LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main
 # Go commands
 GO := go
 GOFMT := gofmt
+
+# Pinned golangci-lint release. This is the single source of truth: the CI
+# Lint job reads it from this file (see .github/workflows/test.yml) and
+# `make ci` refuses to run with any other version, so the lint signal is
+# reproducible and bumped deliberately. Bump here only. Compared against
+# `golangci-lint version --short`, which prints the bare "MAJOR.MINOR.PATCH".
+GOLANGCI_LINT_VERSION := 2.12.2
 GOFILES := $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 
 all: fmt build
@@ -33,9 +40,23 @@ fmt:
 lint: ## Run linter
 	@echo "Running linter..."
 	@if command -v golangci-lint >/dev/null 2>&1; then \
+		installed="$$(golangci-lint version --short 2>/dev/null)"; \
+		if [ "$$installed" != "$(GOLANGCI_LINT_VERSION)" ]; then \
+			echo "warning: golangci-lint $$installed installed, CI pins $(GOLANGCI_LINT_VERSION); results may differ (make ci enforces the pin)"; \
+		fi; \
 		golangci-lint run; \
 	else \
 		echo "golangci-lint not installed, skipping"; \
+	fi
+
+## lint-version-check: Fail unless the installed golangci-lint matches GOLANGCI_LINT_VERSION
+lint-version-check:
+	@installed="$$(golangci-lint version --short 2>/dev/null)" || { \
+		echo "golangci-lint $(GOLANGCI_LINT_VERSION) is required for make ci (not installed)"; exit 1; }; \
+	if [ "$$installed" != "$(GOLANGCI_LINT_VERSION)" ]; then \
+		echo "expected golangci-lint $(GOLANGCI_LINT_VERSION), found $$installed"; \
+		echo "install with: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v$(GOLANGCI_LINT_VERSION)"; \
+		exit 1; \
 	fi
 
 ## test: Run tests
@@ -71,7 +92,8 @@ ci:
 	$(GO) vet ./...
 	@echo "==> verify: gofmt"
 	test -z "$$($(GOFMT) -l $$(git ls-files '*.go'))"
-	@echo "==> lint"
+	@echo "==> lint (golangci-lint $(GOLANGCI_LINT_VERSION))"
+	$(MAKE) lint-version-check
 	golangci-lint run
 	@echo "==> unit tests"
 	$(GO) test -v $$($(GO) list ./... | grep -v '/tests/e2e$$') -coverprofile=coverage.out -covermode=atomic
