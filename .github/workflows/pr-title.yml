@@ -1,0 +1,53 @@
+name: PR Title
+
+# The repository squash-merges. GitHub's default squash title here is "commit
+# or PR title": a single-commit PR merges under its commit's subject, a
+# multi-commit PR under the PR title, and either becomes the `main` commit
+# that svu versions and the GoReleaser changelog groups by. So the PR title
+# must be a Conventional Commit, and when there is exactly one commit that
+# commit's subject must be too (see AGENTS.md "Commits & Pull Requests").
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions: {}
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Conventional PR title
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    steps:
+      # Reads the title and commit list only; never checks out or executes
+      # pull-request-controlled code.
+      - name: Validate title (and single-commit subject)
+        uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Types the changelog and CONTRIBUTING.md recognize. `feat` and
+          # `fix` drive svu version bumps; `test`/`chore` are excluded from
+          # the changelog by .goreleaser.yaml.
+          types: |
+            feat
+            fix
+            docs
+            refactor
+            test
+            chore
+            ci
+            build
+            perf
+            style
+            revert
+          requireScope: false
+          # With one commit the squash title is that commit's subject, not
+          # the PR title, so validate it against the same rules.
+          validateSingleCommit: true
+          validateSingleCommitMatchesPrTitle: false

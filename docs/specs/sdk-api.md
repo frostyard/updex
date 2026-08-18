@@ -27,6 +27,7 @@ type RuntimePaths struct {
     CatalogCacheDir    string   // Cache dir for catalog listings; default: catalog.CacheDir
     CatalogTargetPath  string   // Staging dir for catalog transfers; default: catalog.TargetPath
     SysextLinkDir      string   // Dir for systemd-sysext image links; default: sysext.SysextDir
+    RunExtensionsDir   string   // Dir for merged sysext images; default: sysext.RunExtensionsDir
 }
 
 // DisableCatalogCache is a RuntimePaths.CatalogCacheDir sentinel that
@@ -36,14 +37,15 @@ const DisableCatalogCache = "\x00"
 func NewClient(cfg ClientConfig) *Client
 ```
 
-`NewClient` resolves `cfg.Paths` once at construction: each zero field reads its corresponding package-level compatibility variable exactly once and takes a defensive copy of slices. After construction the client never consults those package variables again, so mutating `config.SearchRoots`, `catalog.ConfigRoots`, `catalog.CacheDir`, or `sysext.SysextDir` cannot redirect the client. This is the ADR-0010 invariant: all runtime dependencies are captured immutably at construction.
+`NewClient` resolves `cfg.Paths` once at construction: each zero field reads its corresponding package-level compatibility variable or production constant exactly once and takes a defensive copy of slices. After construction the client never consults those package variables again, so mutating `config.SearchRoots`, `catalog.ConfigRoots`, `catalog.CacheDir`, or `sysext.SysextDir` cannot redirect the client. This is the ADR-0011 invariant: all runtime dependencies, including merged sysext state, are captured immutably at construction.
 
 Path-dependent supporting-package APIs have explicit variants for SDK use:
 `config.Load*In` receives definition roots and, for transfers, os-release
 paths; `catalog.LoadReposFrom`, `CachedListIn`, and `RenderTransferTo` receive
 their paths directly; and sysext `*At` operations receive the captured sysext
-directory. The original package functions remain compatibility wrappers over
-their package variables.
+directory. `sysext.GetActiveVersionIn` additionally receives the captured
+merged-image directory. The original package functions remain compatibility
+wrappers over their package variables or production constants.
 
 Other fields: if `SysextRunner` is nil it defaults to `&sysext.DefaultRunner{}`; if `Progress` is nil it defaults to `reporter.NoopReporter{}`; if `HTTPClient` is nil a default `http.Client` with a 10-minute timeout is created. `OnDownloadProgress` is called with the HTTP response content length (-1 if unknown) and must return a fresh `io.Writer` per attempt to avoid double-counting retried downloads.
 
@@ -384,7 +386,8 @@ recorded in [ADR-0008](../adr/0008-bounded-retry-no-resume.md).
 
 - `SysextRunner` interface — `Refresh()`, `Merge()`, `Unmerge()`, `LinkToSysext(*config.Transfer)` methods executed via `DefaultRunner` (real commands) or `MockRunner` (tests)
 - `GetInstalledVersions(t *config.Transfer) ([]string, string, error)` — List installed + current version
-- `GetActiveVersion(t *config.Transfer) (string, error)` — Get version currently active in systemd-sysext (checks current symlink and `/run/extensions`)
+- `GetActiveVersion(t *config.Transfer) (string, error)` — Get the version considered active by updex: first a legacy `CurrentSymlink`, then an image name in `RunExtensionsDir` (`/run/extensions`)
+- `GetActiveVersionIn(t *config.Transfer, defaultDir, runExtensionsDir string) (string, error)` — Explicit-directory variant used by `updex.Client`; the sysext link directory (`/var/lib/extensions`) is only the fallback for locating a legacy `CurrentSymlink`, not evidence that an image is merged
 - `SysextLinkName(t *config.Transfer) string` — Derive the sysext-visible link name from `Transfer.Component` plus the target pattern extension after stripping compression suffixes, e.g. `foo.transfer` and `foo_@v.raw.xz` produce `foo.raw`
 - `RemoveLegacyCurrentSymlink(t *config.Transfer) error` — Remove a staging `CurrentSymlink` only when the transfer defines one; absent directives and missing symlink files are no-ops
 - `LinkToSysext(t *config.Transfer) / UnlinkFromSysext(t *config.Transfer)` — Manage `/var/lib/extensions/<component>.<ext>` symlinks without requiring `CurrentSymlink`. `LinkToSysext` scans staged versioned files, selects the newest by `version.Compare`, and points the sysext-visible link at that file
@@ -393,6 +396,7 @@ recorded in [ADR-0008](../adr/0008-bounded-retry-no-resume.md).
 - `RemoveAllVersions(t *config.Transfer) ([]string, error)` — Remove all versions and current symlink for a component
 - `GetExtensionName(filename string) string` — Extract extension name from filename (strips version and compression suffixes)
 - `SysextDir` — Package variable: `/var/lib/extensions`
+- `RunExtensionsDir` — Production merged-image state directory constant: `/run/extensions`
 
 ### `systemd`
 

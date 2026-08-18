@@ -621,6 +621,109 @@ func TestGetActiveVersionUsesCurrentSymlink(t *testing.T) {
 	if active != "1.0.0" {
 		t.Errorf("GetActiveVersion() = %q, want 1.0.0", active)
 	}
+
+	active, err = GetActiveVersionAt(transfer, t.TempDir())
+	if err != nil {
+		t.Fatalf("GetActiveVersionAt() error = %v", err)
+	}
+	if active != "1.0.0" {
+		t.Errorf("GetActiveVersionAt() = %q, want 1.0.0", active)
+	}
+}
+
+func TestGetActiveVersionInRunExtensions(t *testing.T) {
+	transfer := &config.Transfer{
+		Target: config.TargetSection{
+			MatchPattern: "myext_@v.raw",
+		},
+	}
+
+	tests := []struct {
+		name    string
+		setup   func(t *testing.T) string
+		want    string
+		wantErr bool
+	}{
+		{
+			name: "match",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				dir := t.TempDir()
+				if err := os.WriteFile(filepath.Join(dir, "myext_2.0.0.raw"), []byte("test"), 0644); err != nil {
+					t.Fatalf("write merged image: %v", err)
+				}
+				return dir
+			},
+			want: "2.0.0",
+		},
+		{
+			name: "no match",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				dir := t.TempDir()
+				if err := os.WriteFile(filepath.Join(dir, "other_2.0.0.raw"), []byte("test"), 0644); err != nil {
+					t.Fatalf("write unrelated merged image: %v", err)
+				}
+				return dir
+			},
+		},
+		{
+			name: "directory absent",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				return filepath.Join(t.TempDir(), "missing")
+			},
+		},
+		{
+			name: "read error",
+			setup: func(t *testing.T) string {
+				t.Helper()
+				path := filepath.Join(t.TempDir(), "not-a-directory")
+				if err := os.WriteFile(path, []byte("test"), 0644); err != nil {
+					t.Fatalf("write non-directory path: %v", err)
+				}
+				return path
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			active, err := GetActiveVersionIn(transfer, t.TempDir(), tt.setup(t))
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("GetActiveVersionIn() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if active != tt.want {
+				t.Errorf("GetActiveVersionIn() = %q, want %q", active, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetActiveVersionInRunExtensionsUnreadable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory read permissions")
+	}
+
+	runExtensionsDir := t.TempDir()
+	if err := os.Chmod(runExtensionsDir, 0000); err != nil {
+		t.Fatalf("make merged-image directory unreadable: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(runExtensionsDir, 0700); err != nil {
+			t.Errorf("restore merged-image directory permissions: %v", err)
+		}
+	})
+
+	transfer := &config.Transfer{
+		Target: config.TargetSection{
+			MatchPattern: "myext_@v.raw",
+		},
+	}
+	if _, err := GetActiveVersionIn(transfer, t.TempDir(), runExtensionsDir); err == nil {
+		t.Fatal("GetActiveVersionIn() error = nil, want unreadable-directory error")
+	}
 }
 
 func TestVacuumWithDetailsProtectedVersion(t *testing.T) {

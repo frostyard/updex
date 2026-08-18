@@ -91,19 +91,21 @@ CLI (cmd/daemon.go) → systemd (direct, bypasses SDK)
 
 - Mock interfaces for system commands: `sysext.SysextRunner`, `systemd.SystemctlRunner`
 - `ClientConfig.SysextRunner` field for injecting mocks into the SDK client — `NewClient` stores the runner directly on the `Client` struct (does not mutate global state)
-- `ClientConfig.Paths` (`RuntimePaths`) for supplying temp filesystem trees to a client at construction — the preferred approach for path isolation since ADR-0010; use `t.TempDir()` paths for `DefinitionRoots`, `SysextLinkDir`, `CatalogConfigRoots`, etc. Independently configured clients can run in parallel without save/mutate/restore discipline.
+- `ClientConfig.Paths` (`RuntimePaths`) for supplying temp filesystem trees to a client at construction — the preferred approach for path isolation since ADR-0011; use `t.TempDir()` paths for `DefinitionRoots`, `SysextLinkDir`, `RunExtensionsDir`, `CatalogConfigRoots`, etc. Independently configured clients can run in parallel without save/mutate/restore discipline.
 - Package-level compatibility variables (`config.SearchRoots`, `catalog.ConfigRoots`, `catalog.CacheDir`, `sysext.SysextDir`) remain settable for tests that have not yet migrated; mutation before client construction still works because `NewClient` reads each global once at that point.
 - Transfer parsing receives the client's captured os-release paths as well as
   definition roots, so `%w`/related specifier expansion cannot cross client
   boundaries.
 - `internal/testutil.NewTestServer()` creates `httptest.Server` with configurable manifests and file content
 - `t.TempDir()` for filesystem operations, `t.Context()` for context
-- `tests/e2e/` builds and runs the real CLI subprocess for argument, exit-code, output, custom-config, and read-only HTTP checks. `cmd/updex/integration_test.go` runs the full Cobra/clix command in-process so package search roots can point at temporary default component and catalog trees; keep mutating subprocess paths behind parser failures so CI does not require root.
+- `tests/e2e/` builds and runs the real CLI subprocess for argument, exit-code, output, custom-config, and read-only HTTP checks in its dedicated PR job. `cmd/updex/integration_test.go` runs the full Cobra/clix command in-process so package search roots can point at temporary default component and catalog trees; these tests run in both the PR Unit Tests and Race Detection jobs. Keep mutating subprocess paths behind parser failures so CI does not require root.
+- `sysext/link_test.go` pins the `/var/lib/extensions` link lifecycle through `LinkToSysextAt` (explicit dir, no global mutation): newest-by-version selection, replacing symlinks/dangling links/regular files, staging-dir symlinks ignored, `Target.Path` fallback, metadata rejection (component, patterns, `@v`), empty/missing/non-matching staging sets, a conflicting destination directory preserved on error, sysext-dir creation failure (parent is a regular file), and removal failure (read-only dir, skipped as root). Every failing case asserts no new symlink is left behind. It also pins that `DefaultRunner` implements `PathSysextRunner` and links into the explicit dir, not `SysextDir`.
+- CLI handler seams: `cmd/updex` exposes two package-level test seams so mutating handlers can run rootless in-process — `getEUID` (swap for `func() int { return 0 }` to pass `requireRoot`) and `sysextRunner` (nil in production so `newClient` gets the SDK default; set to a `*sysext.MockRunner` to observe `Refresh`/`Unmerge` without executing systemd-sysext). `cmd/updex/features_mutation_test.go` uses both with temporary `config.SearchRoots` (drop-ins land under `roots[0]`), a temporary `sysext.SysextDir`, and a fake HTTP source to cover `runFeaturesEnable`/`runFeaturesDisable` end-to-end: `--now`, `--force`, `--no-refresh`, `--component`, dry-run, and text/JSON result shapes, including a real JSON+silent download whose stdout must decode as exactly one result object. `cmd/updex/catalog_mutation_test.go` does the same for `runCatalogAdd`/`runCatalogRemove`, additionally pointing `catalog.ConfigRoots`, `catalog.CacheDir`, and `catalog.TargetPath` at temp dirs and serving `<name>/<name>.conf`, `SHA256SUMS`, and the image from one `httptest.Server` (configure two `.catalog` files against it to exercise `[REPO/]NAME` / `--repo` disambiguation); remove cases seed the post-add state through the SDK's `CatalogAdd`.
 
 ### CLI output
 
 - Text tables by default, JSON with `--json` flag — both `--json` and `--dry-run` are provided by the `github.com/frostyard/clix` package, not defined in this repo
-- `cmd/updex/client.go` always wires `clix.NewReporter()` and `newProgressBar`; there is no repo-defined `--quiet` flag in the current code
+- `cmd/updex/client.go` always wires `clix.NewReporter()`, but enables `newProgressBar` only outside JSON and silent modes. Interactive bars and their completion newline write to stderr, preserving stdout for command results.
 - Operations requiring filesystem changes call `requireRoot()` before entering the SDK. This currently includes dry-run variants of `features enable`, `features disable`, and `features update`, so dry-run is mutation-free but not rootless from the CLI.
 
 ### Dry-run behavior
@@ -143,7 +145,7 @@ grouping of `.transfer`/`.feature` files under `sysupdate.<name>.d/`,
 searched across the same four roots (`config.SearchRoots` — a package var
 whose value is captured immutably by each client at `NewClient` via
 `ClientConfig.Paths.DefinitionRoots`; see
-[ADR-0010](../adr/0010-instance-scoped-runtime-paths.md)) with the same
+[ADR-0011](../adr/0011-capture-merged-sysext-state-per-client.md)) with the same
 priority order as the legacy default `sysupdate.d/` directory. This exists
 because native OS images now put A/B partition and UKI transfers in the
 default directory (see "Non-sysext transfers" below), and package-versioned
@@ -446,7 +448,7 @@ always override and always survive (decision recorded in
 [ADR-0004](../adr/0004-single-updex-drop-in.md)).
 
 - **Enable**: Creates drop-in at `/etc/sysupdate.d/<name>.feature.d/00-updex.conf` (or `/etc/sysupdate.<component>.d/<name>.feature.d/00-updex.conf` for a component-scoped feature — see "Components" above) setting `Enabled=true`. With `--now`, also downloads extensions immediately.
-- **Disable**: Creates drop-in setting `Enabled=false` at the same scoped path. With `--now`, calls `Unmerge()`, removes symlinks from `/var/lib/extensions/`, and deletes all versioned files. `--force` required if extensions are currently active/merged (changes take effect after reboot).
+- **Disable**: Creates drop-in setting `Enabled=false` at the same scoped path. With `--now`, calls `Unmerge()`, removes symlinks from `/var/lib/extensions/`, and deletes all versioned files. Before removal, `DisableFeature` treats an image as active when its version matches either a legacy transfer `CurrentSymlink` or an entry in the client's captured `RuntimePaths.RunExtensionsDir` (production default `/run/extensions`, systemd-sysext's merged-image snapshot). The `/var/lib/extensions` link is not an active signal: it makes an image available for a future merge but does not prove the image is currently merged. `--force` is required when either active signal matches; forced removal reports that a reboot is required.
 
 ### Auto-update daemon
 
@@ -521,6 +523,23 @@ Mutating commands enforce root before reading `--dry-run`, so examples that prev
 | `github.com/ProtonMail/go-crypto` | GPG signature verification (openpgp) |
 
 ## CI and Releases
+
+`make ci` is the canonical credential-free local gate. It mirrors the
+host-independent pull-request checks in fail-fast order: module tidiness, vet,
+formatting, golangci-lint, all non-E2E package tests, the same tests under the
+race detector, then Linux amd64 and arm64 builds. The unit and race stages do
+not filter by test name, so every hermetic test runs; black-box tests under
+`tests/e2e/` remain in their dedicated workflow job.
+
+`.github/workflows/pr-title.yml` (`amannn/action-semantic-pull-request`,
+SHA-pinned, `pull_request` `opened|edited|synchronize|reopened`, read-only
+permissions, no checkout) fails a pull request whose title is not a
+Conventional Commit, and — because the repository squash-merges with the
+"commit or PR title" default, under which a single-commit PR lands under its
+commit's subject — also validates the lone commit's subject
+(`validateSingleCommit: true`). The accepted types mirror `CONTRIBUTING.md`
+and the `.goreleaser.yaml` changelog groups. It is a plain status, not a
+required check: `main` has no branch protection or ruleset today.
 
 `.github/workflows/release.yml` publishes tagged GoReleaser Pro releases and
 packages, then dispatches `event-type: build` to `frostyard/snosi` so the

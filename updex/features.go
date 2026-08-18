@@ -295,7 +295,11 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 	if willRemoveFiles && len(featureTransfers) > 0 {
 		var mergedExtensions []string
 		for _, t := range featureTransfers {
-			activeVersion, err := sysext.GetActiveVersionAt(t, c.paths.sysextLinkDir)
+			activeVersion, err := sysext.GetActiveVersionIn(
+				t,
+				c.paths.sysextLinkDir,
+				c.paths.runExtensionsDir,
+			)
 			if err != nil {
 				c.warn("could not check merge state for %s: %v", t.Component, err)
 				continue

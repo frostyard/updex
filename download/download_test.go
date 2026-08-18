@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -122,6 +123,102 @@ func TestDownloadRetriesTooManyRequestsThenSucceeds(t *testing.T) {
 	}
 	if requests.Load() != 2 {
 		t.Fatalf("requests = %d, want 2", requests.Load())
+	}
+}
+
+func TestDownloadFailurePreservesExistingTarget(t *testing.T) {
+	tests := []struct {
+		name          string
+		urlSuffix     string
+		content       []byte
+		expectedHash  string
+		expectedError string
+		status        int
+		maxAttempts   int
+		wantRequests  int
+	}{
+		{
+			name:          "checksum mismatch",
+			urlSuffix:     "/feature.raw",
+			content:       []byte("corrupt replacement"),
+			expectedHash:  hashString([]byte("expected replacement")),
+			expectedError: "hash mismatch",
+			status:        http.StatusOK,
+			maxAttempts:   3,
+			wantRequests:  1,
+		},
+		{
+			name:          "decompression failure",
+			urlSuffix:     "/feature.raw.gz",
+			content:       []byte("not gzip data"),
+			expectedHash:  hashString([]byte("not gzip data")),
+			expectedError: "decompression failed",
+			status:        http.StatusOK,
+			maxAttempts:   3,
+			wantRequests:  1,
+		},
+		{
+			name:          "retry exhaustion",
+			urlSuffix:     "/feature.raw",
+			content:       []byte("temporary failure"),
+			expectedError: "download failed with status",
+			status:        http.StatusInternalServerError,
+			maxAttempts:   2,
+			wantRequests:  2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				w.WriteHeader(tt.status)
+				_, _ = w.Write(tt.content)
+			}))
+			defer server.Close()
+
+			targetDir := t.TempDir()
+			targetPath := filepath.Join(targetDir, "feature.raw")
+			original := []byte("installed image")
+			if err := os.WriteFile(targetPath, original, 0600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+
+			err := Download(t.Context(), server.Client(), server.URL+tt.urlSuffix, targetPath, tt.expectedHash, 0644, nil, WithRetryConfig(tt.maxAttempts, time.Millisecond))
+			if err == nil {
+				t.Fatal("Download() error = nil, want error")
+			}
+			if !strings.Contains(err.Error(), tt.expectedError) {
+				t.Errorf("Download() error = %q, want error containing %q", err, tt.expectedError)
+			}
+			if requests.Load() != int32(tt.wantRequests) {
+				t.Fatalf("requests = %d, want %d", requests.Load(), tt.wantRequests)
+			}
+
+			got, err := os.ReadFile(targetPath)
+			if err != nil {
+				t.Fatalf("ReadFile() error = %v", err)
+			}
+			if string(got) != string(original) {
+				t.Errorf("target content = %q, want %q", got, original)
+			}
+			info, err := os.Stat(targetPath)
+			if err != nil {
+				t.Fatalf("Stat() error = %v", err)
+			}
+			if gotMode := info.Mode().Perm(); gotMode != 0600 {
+				t.Errorf("target mode = %o, want 600", gotMode)
+			}
+
+			entries, err := os.ReadDir(targetDir)
+			if err != nil {
+				t.Fatalf("ReadDir() error = %v", err)
+			}
+			if len(entries) != 1 || entries[0].Name() != filepath.Base(targetPath) {
+				t.Errorf("target directory entries = %v, want only %q", entries, filepath.Base(targetPath))
+			}
+		})
 	}
 }
 

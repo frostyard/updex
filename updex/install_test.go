@@ -2,12 +2,14 @@ package updex
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/frostyard/updex/internal/testutil"
 	"github.com/frostyard/updex/sysext"
+	"github.com/frostyard/updex/version"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -31,6 +33,63 @@ CurrentSymlink=` + component + `.raw
 	path := filepath.Join(configDir, component+".transfer")
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("failed to create transfer file: %v", err)
+	}
+}
+
+func TestBuildTargetFilename(t *testing.T) {
+	tests := []struct {
+		name       string
+		patterns   []string
+		want       string
+		wantErr    error
+		wantErrMsg string
+	}{
+		{
+			name:     "prefers uncompressed pattern",
+			patterns: []string{"compressed_@v.raw.zst", "testext_@v.raw"},
+			want:     "testext_1.2.3.raw",
+		},
+		{
+			name:     "strips first compressed fallback",
+			patterns: []string{"testext_@v.raw.zst", "testext-alt_@v.raw.gz"},
+			want:     "testext_1.2.3.raw",
+		},
+		{
+			name:     "skips invalid pattern",
+			patterns: []string{"testext.raw", "testext_@v.raw"},
+			want:     "testext_1.2.3.raw",
+		},
+		{
+			name:       "returns first pattern error",
+			patterns:   []string{"testext.raw", ""},
+			wantErr:    version.ErrMissingVersionPlaceholder,
+			wantErrMsg: "invalid target pattern: pattern must contain @v placeholder",
+		},
+		{
+			name:       "rejects missing patterns",
+			wantErrMsg: "no target pattern configured",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := buildTargetFilename(tt.patterns, "1.2.3")
+			if got != tt.want {
+				t.Errorf("buildTargetFilename() = %q, want %q", got, tt.want)
+			}
+			if tt.wantErr != nil && !errors.Is(err, tt.wantErr) {
+				t.Errorf("buildTargetFilename() error = %v, want %v", err, tt.wantErr)
+			}
+			if tt.wantErrMsg == "" {
+				if err != nil {
+					t.Fatalf("buildTargetFilename() unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tt.wantErrMsg {
+				t.Errorf("buildTargetFilename() error = %v, want %q", err, tt.wantErrMsg)
+			}
+		})
 	}
 }
 

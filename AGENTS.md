@@ -12,13 +12,31 @@ make build        # Build binary to build/updex
 make test         # Run all tests
 make lint         # Run golangci-lint
 make check        # fmt + lint + test
+make ci           # Credential-free gate matching CI's fail-fast order
 make test-cover   # Tests with HTML coverage report
 make tidy         # go mod tidy
 ```
 
 Run a single test: `go test -v -run TestName ./updex/`
 
+Run `make ci` before opening a pull request. It checks module tidiness, vet,
+formatting, lint, non-E2E unit and race tests, and Linux amd64/arm64 builds.
+
 End-to-end tests live in `tests/e2e/`: black-box tests that build the real `updex` binary and run it as a subprocess against fake files and HTTP sources. Successful operations are read-only (no root required); mutating command variants are covered at the argument-validation boundary. CLI integration tests in `cmd/updex/` additionally override package search roots to exercise default component discovery and fake catalogs safely. Run both with `go test -v ./cmd/updex ./tests/e2e/...`.
+
+## Commits & Pull Requests
+
+Commit messages **and pull request titles** use
+[Conventional Commits](https://www.conventionalcommits.org/):
+`type(scope): summary`, e.g. `test(cli): cover catalog mutation handlers`,
+`fix(catalog): refuse symlinked definitions`, `docs(agents): …`. The
+repository squash-merges and its squash title default is "commit or PR
+title", so the PR title — or, for a single-commit PR, that commit's subject —
+becomes the `main` commit that svu versions and the changelog groups by. Make
+the first commit conventional too; do not carry an issue's `[quality] …` /
+`[scanner] …` title into the commit or PR. `.github/workflows/pr-title.yml`
+fails a PR whose title (or lone commit subject) is not conventional. See
+[CONTRIBUTING.md](CONTRIBUTING.md#pull-requests) for the type list.
 
 ## Release Automation
 
@@ -217,8 +235,8 @@ Key design points:
 
 - Error messages: lowercase, no trailing punctuation, wrap with `fmt.Errorf("context: %w", err)`
 - SDK functions accept a `context.Context` and an options struct, return result structs + error
-- CLI output: `common.OutputJSON()` for `--json` flag, text tables otherwise
-- Tests use `t.TempDir()` for filesystem operations and mock runners for systemd commands; use `ClientConfig.Paths` (`RuntimePaths`) to give a client its own temp trees rather than mutating package globals — independently configured clients can run in parallel without save/mutate/restore discipline (see ADR-0010)
+- CLI output: `common.OutputJSON()` for `--json` flag, text tables otherwise; download progress bars are disabled for JSON/silent modes and write to stderr in interactive mode so stdout remains a data-only stream
+- Tests use `t.TempDir()` for filesystem operations and mock runners for systemd commands; use `ClientConfig.Paths` (`RuntimePaths`) to give a client its own temp trees rather than mutating package globals — independently configured clients can run in parallel without save/mutate/restore discipline (see ADR-0011)
 - Configuration uses INI format with systemd-style priority paths: `/etc/sysupdate.d/`, `/run/sysupdate.d/`, `/usr/local/lib/sysupdate.d/`, `/usr/lib/sysupdate.d/` (plus the same four roots per discovered component, see above)
 - Transfer targets default to staging in `/var/lib/extensions.d`; `CurrentSymlink` is optional legacy state and must not be required for `/var/lib/extensions` sysext links
 

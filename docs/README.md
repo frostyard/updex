@@ -46,7 +46,11 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
   superseded by ADR-0010
 - [ADR-0010](adr/0010-instance-scoped-runtime-paths.md) — each SDK client
   captures immutable runtime paths; package-level APIs remain compatibility
-  wrappers while SDK internals migrate away from mutable globals
+  wrappers while SDK internals migrate away from mutable globals; superseded
+  by ADR-0011
+- [ADR-0011](adr/0011-capture-merged-sysext-state-per-client.md) — extends
+  client-scoped runtime paths to the merged sysext state directory and defines
+  the active signals used by `DisableFeature`
 
 ### Design
 

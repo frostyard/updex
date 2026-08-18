@@ -1,6 +1,6 @@
 # 0010 — Scope runtime paths to each SDK client
 
-- **Status:** Implemented
+- **Status:** Superseded by [0011](0011-capture-merged-sysext-state-per-client.md)
 - **Date:** 2026-08-12
 
 ## Context

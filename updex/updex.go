@@ -70,6 +70,11 @@ type RuntimePaths struct {
 	// extension images. Zero value uses sysext.SysextDir
 	// (/var/lib/extensions).
 	SysextLinkDir string
+
+	// RunExtensionsDir is the directory containing images merged by
+	// systemd-sysext. Zero value uses sysext.RunExtensionsDir
+	// (/run/extensions).
+	RunExtensionsDir string
 }
 
 // DisableCatalogCache is a sentinel value for RuntimePaths.CatalogCacheDir
@@ -86,6 +91,7 @@ type runtimePaths struct {
 	catalogCacheDir    string // "" means disabled
 	catalogTargetPath  string
 	sysextLinkDir      string
+	runExtensionsDir   string
 }
 
 // resolveRuntimePaths converts a RuntimePaths (zero = default) to a fully
@@ -132,6 +138,12 @@ func resolveRuntimePaths(rp RuntimePaths) runtimePaths {
 		p.sysextLinkDir = rp.SysextLinkDir
 	} else {
 		p.sysextLinkDir = sysext.SysextDir
+	}
+
+	if rp.RunExtensionsDir != "" {
+		p.runExtensionsDir = rp.RunExtensionsDir
+	} else {
+		p.runExtensionsDir = sysext.RunExtensionsDir
 	}
 
 	return p
