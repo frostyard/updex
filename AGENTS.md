@@ -40,8 +40,8 @@ them rather than improvising, whichever agent you are:
 - `make`
 - Optional: [`golangci-lint`](https://golangci-lint.run/) for linting —
   `make ci` requires the exact release pinned as `GOLANGCI_LINT_VERSION` in
-  the `Makefile` (currently v2.12.2; install with
-  `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2`),
+  the `Makefile` (install with the exact `go install …@v<version>` command
+  printed by `make lint-version-check` when it fails),
   [`svu`](https://github.com/caarlos0/svu) for release tagging, Node ≥ 20 for
   the docs-integrity gate
 
