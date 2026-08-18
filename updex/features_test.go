@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/frostyard/updex/config"
 	"github.com/frostyard/updex/internal/testutil"
 	"github.com/frostyard/updex/sysext"
 )
@@ -1873,5 +1874,235 @@ func TestCheckFeatures_NestedResultsSerializeAsArray(t *testing.T) {
 	}
 	if !strings.Contains(string(b), `"results":[]`) {
 		t.Errorf("expected nested \"results\":[] in output, got %s", b)
+	}
+}
+
+// dropInGuardFixture prepares a temp DefinitionRoots root holding one
+// legacy-scope feature and returns the client, the loaded feature, and the
+// drop-in paths EnableFeature/DisableFeature resolve for it
+// (<root>/sysupdate.d/<name>.feature.d/00-updex.conf). The feature is
+// loaded *before* the caller plants anything, so a direct
+// writeFeatureDropIn call models the window between load and write.
+func dropInGuardFixture(t *testing.T, enabled bool) (client *Client, feature *config.Feature, dropInDir, dropInFile string) {
+	t.Helper()
+	root := t.TempDir()
+	writeComponentFeature(t, filepath.Join(root, "sysupdate.d"), "testfeature", enabled)
+	client = NewClient(ClientConfig{
+		Paths:        RuntimePaths{DefinitionRoots: []string{root}},
+		SysextRunner: &sysext.MockRunner{},
+	})
+	features, _, err := client.loadDomain("")
+	if err != nil {
+		t.Fatalf("loadDomain: %v", err)
+	}
+	feature, err = lookupFeature(features, "testfeature", "tested")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dropInDir = filepath.Join(root, "sysupdate.d", "testfeature.feature.d")
+	dropInFile = filepath.Join(dropInDir, updexDropInName)
+	return client, feature, dropInDir, dropInFile
+}
+
+// TestEnableFeature_DropInDanglingSymlinkRefused: a dangling symlink at the
+// drop-in path must be refused, not followed (ADR-0005). os.Stat would call
+// it absent and os.WriteFile would create the link's target as root. The
+// guard fires in writeFeatureDropIn itself (checked directly, modelling a
+// link planted after the feature was loaded); the full EnableFeature path
+// errors as well and never creates the target.
+func TestEnableFeature_DropInDanglingSymlinkRefused(t *testing.T) {
+	client, feature, dropInDir, dropInFile := dropInGuardFixture(t, false)
+	if err := os.MkdirAll(dropInDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "planted-target")
+	if err := os.Symlink(target, dropInFile); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := client.writeFeatureDropIn(feature, true, false); err == nil {
+		t.Fatal("writeFeatureDropIn succeeded through a dangling symlink; want error")
+	} else if !strings.Contains(err.Error(), "not a regular file") {
+		t.Errorf("writeFeatureDropIn error = %q, want it to mention 'not a regular file'", err)
+	}
+	if _, statErr := os.Lstat(target); !os.IsNotExist(statErr) {
+		t.Errorf("symlink target %s: Lstat err = %v, want not-exist (write followed the link)", target, statErr)
+	}
+
+	result, err := client.EnableFeature(t.Context(), "testfeature", EnableFeatureOptions{})
+	if err == nil {
+		t.Fatal("EnableFeature succeeded through a dangling symlink; want error")
+	}
+	if result == nil || result.Success {
+		t.Errorf("result = %+v, want Success=false", result)
+	}
+	if _, statErr := os.Lstat(target); !os.IsNotExist(statErr) {
+		t.Errorf("symlink target %s: Lstat err = %v, want not-exist (write followed the link)", target, statErr)
+	}
+	// The link itself is left for the operator, and no temp debris remains.
+	assertOnlyEntries(t, dropInDir, updexDropInName)
+}
+
+// TestEnableFeature_DropInLiveSymlinkRefused: a live symlink at the drop-in
+// path is refused too, and whatever it points at is left untouched. The
+// loader follows the link happily, so this case reaches the guard through
+// the public EnableFeature path.
+func TestEnableFeature_DropInLiveSymlinkRefused(t *testing.T) {
+	client, _, dropInDir, dropInFile := dropInGuardFixture(t, false)
+	if err := os.MkdirAll(dropInDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "victim.conf")
+	const original = "[Feature]\nEnabled=false\n# operator-owned\n"
+	if err := os.WriteFile(target, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, dropInFile); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := client.EnableFeature(t.Context(), "testfeature", EnableFeatureOptions{}); err == nil {
+		t.Fatal("EnableFeature succeeded through a live symlink; want error")
+	} else if !strings.Contains(err.Error(), "not a regular file") {
+		t.Errorf("error = %q, want it to mention 'not a regular file'", err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Errorf("symlink target was rewritten:\n%s", got)
+	}
+	if info, err := os.Lstat(dropInFile); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("drop-in path should still be the operator's symlink (info=%v, err=%v)", info, err)
+	}
+	assertOnlyEntries(t, dropInDir, updexDropInName)
+}
+
+// TestEnableFeature_DropInDirSymlinkRefused: the <feature>.feature.d
+// directory itself may not be a symlink — MkdirAll would happily descend
+// through it and the drop-in would land in the link's target.
+func TestEnableFeature_DropInDirSymlinkRefused(t *testing.T) {
+	client, _, dropInDir, _ := dropInGuardFixture(t, false)
+	elsewhere := t.TempDir()
+	if err := os.Symlink(elsewhere, dropInDir); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := client.EnableFeature(t.Context(), "testfeature", EnableFeatureOptions{}); err == nil {
+		t.Fatal("EnableFeature succeeded through a symlinked drop-in directory; want error")
+	} else if !strings.Contains(err.Error(), "is not a directory") {
+		t.Errorf("error = %q, want it to mention 'is not a directory'", err)
+	}
+	assertOnlyEntries(t, elsewhere)
+	if info, err := os.Lstat(dropInDir); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("drop-in dir should still be the planted symlink (info=%v, err=%v)", info, err)
+	}
+}
+
+// TestEnableFeature_DropInDirIsFileRefused: a regular file where the
+// drop-in directory should be is an operator problem, not something to
+// clobber. (The loader refuses it too; the guard is what protects the
+// write once a file appears after loading.)
+func TestEnableFeature_DropInDirIsFileRefused(t *testing.T) {
+	client, feature, dropInDir, _ := dropInGuardFixture(t, false)
+	if err := os.WriteFile(dropInDir, []byte("not a dir\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.writeFeatureDropIn(feature, true, false); err == nil {
+		t.Fatal("writeFeatureDropIn succeeded over a file at the drop-in dir path; want error")
+	} else if !strings.Contains(err.Error(), "is not a directory") {
+		t.Errorf("error = %q, want it to mention 'is not a directory'", err)
+	}
+	if _, err := client.EnableFeature(t.Context(), "testfeature", EnableFeatureOptions{}); err == nil {
+		t.Fatal("EnableFeature succeeded over a file at the drop-in dir path; want error")
+	}
+	got, err := os.ReadFile(dropInDir)
+	if err != nil || string(got) != "not a dir\n" {
+		t.Errorf("file at drop-in dir path changed: %q, %v", got, err)
+	}
+}
+
+// TestEnableFeature_DropInWrittenAtomically: the happy path leaves exactly
+// one 0644 regular file with the expected contents and no temp debris,
+// whether the directory pre-existed or not; DisableFeature then replaces
+// it in place through the same guard and write.
+func TestEnableFeature_DropInWrittenAtomically(t *testing.T) {
+	client, _, dropInDir, dropInFile := dropInGuardFixture(t, false)
+
+	result, err := client.EnableFeature(t.Context(), "testfeature", EnableFeatureOptions{})
+	if err != nil {
+		t.Fatalf("EnableFeature: %v", err)
+	}
+	if !result.Success || result.DropIn != dropInFile {
+		t.Errorf("result = %+v, want Success=true DropIn=%s", result, dropInFile)
+	}
+	assertOnlyEntries(t, dropInDir, updexDropInName)
+	info, err := os.Lstat(dropInFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0644 {
+		t.Errorf("drop-in mode = %v, want regular 0644", info.Mode())
+	}
+	got, _ := os.ReadFile(dropInFile)
+	if string(got) != "[Feature]\nEnabled=true\n" {
+		t.Errorf("drop-in contents = %q", got)
+	}
+
+	if _, err := client.DisableFeature(t.Context(), "testfeature", DisableFeatureOptions{}); err != nil {
+		t.Fatalf("DisableFeature: %v", err)
+	}
+	assertOnlyEntries(t, dropInDir, updexDropInName)
+	got, _ = os.ReadFile(dropInFile)
+	if string(got) != "[Feature]\nEnabled=false\n" {
+		t.Errorf("drop-in contents after disable = %q", got)
+	}
+}
+
+// TestDisableFeature_DropInDanglingSymlinkRefused: DisableFeature writes
+// through the same helper and inherits the same guard.
+func TestDisableFeature_DropInDanglingSymlinkRefused(t *testing.T) {
+	client, feature, dropInDir, dropInFile := dropInGuardFixture(t, true)
+	if err := os.MkdirAll(dropInDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "planted-target")
+	if err := os.Symlink(target, dropInFile); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := client.writeFeatureDropIn(feature, false, false); err == nil {
+		t.Fatal("writeFeatureDropIn succeeded through a dangling symlink; want error")
+	} else if !strings.Contains(err.Error(), "not a regular file") {
+		t.Errorf("writeFeatureDropIn error = %q, want it to mention 'not a regular file'", err)
+	}
+	result, err := client.DisableFeature(t.Context(), "testfeature", DisableFeatureOptions{})
+	if err == nil {
+		t.Fatal("DisableFeature succeeded through a dangling symlink; want error")
+	}
+	if result == nil || result.Success {
+		t.Errorf("result = %+v, want Success=false", result)
+	}
+	if _, statErr := os.Lstat(target); !os.IsNotExist(statErr) {
+		t.Errorf("symlink target %s: Lstat err = %v, want not-exist", target, statErr)
+	}
+	assertOnlyEntries(t, dropInDir, updexDropInName)
+}
+
+// assertOnlyEntries fails unless dir contains exactly the named entries —
+// in particular no leftover ".00-updex.conf.tmp-*" from writeManagedFile.
+func assertOnlyEntries(t *testing.T, dir string, want ...string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir(%s): %v", dir, err)
+	}
+	var got []string
+	for _, e := range entries {
+		got = append(got, e.Name())
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("%s entries = %v, want %v", dir, got, want)
 	}
 }

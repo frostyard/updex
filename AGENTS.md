@@ -505,7 +505,11 @@ extra scrutiny:
   file permissions a transfer configures.
 - Use `os.Lstat` and reject non-regular files before writing to a managed
   definition path — `os.Stat` reports a dangling symlink as absent, which
-  would let a root-privileged write escape its directory.
+  would let a root-privileged write escape its directory. Reuse the shared
+  guard in `updex/fsguard.go` (`managedFileExists`; `os.Lstat` a directory
+  path the same way before `MkdirAll`) and write through
+  `writeManagedFile` (temp-file-plus-rename), as `writeFeatureDropIn`
+  does.
 - Make multi-file writes recoverable: snapshot before writing and roll back on
   any failure, as `updex.Client.CatalogAdd` does (both rules are recorded in
   [ADR-0005](docs/adr/0005-transactional-writes-lstat-checks.md)).
