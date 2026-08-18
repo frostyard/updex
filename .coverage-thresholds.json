@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "docs_index_coverage": 1.0,
+  "link_integrity": 1.0,
+  "symlink_resolution": 1.0,
+  "never_relax": true
+}

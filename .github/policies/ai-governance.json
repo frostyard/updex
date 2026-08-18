@@ -13,8 +13,11 @@
   "authoritative_sources": {
     "security": "docs/security/SECURITY-AI.md",
     "risk_classification": "docs/risk-tiers.md",
-    "review": "docs/review-rubric.md",
-    "contribution": "CONTRIBUTING.md"
+    "review": "docs/specs/pr-review-rubric.md",
+    "contribution": "AGENTS.md",
+    "quality_loop": "docs/design/quality-loop.md",
+    "acceptance_metric": "docs/specs/pr-acceptance-metric.md",
+    "conformance_aliases": "docs/adr/0012-acmm-conformance-via-canonical-aliases.md"
   },
   "controls": {
     "human_accountability": {
