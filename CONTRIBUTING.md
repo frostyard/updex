@@ -26,6 +26,7 @@ make fmt          # gofmt all sources — run after every change
 make lint         # golangci-lint (skipped with a message if not installed)
 make test         # go test -v ./...
 make check        # fmt + lint + test
+make ci           # canonical credential-free CI gate
 make test-cover   # tests with an HTML coverage report
 make tidy         # go mod tidy
 ```
@@ -36,7 +37,8 @@ Run a single test with the standard Go tooling:
 go test -v -run TestName ./updex/
 ```
 
-Run `make check` before opening a pull request.
+Use `make check` for the quick development loop. Run `make ci` before opening
+a pull request; it mirrors CI's fail-fast order and requires `golangci-lint`.
 
 ## Architecture
 
@@ -164,7 +166,7 @@ inbox until it can be folded in.
    multi-commit PR under the PR title; make both conventional. The `PR Title`
    workflow (`.github/workflows/pr-title.yml`) fails a PR whose title, or lone
    commit subject, is not conventional.
-4. Run `make check` and make sure it passes.
+4. Run `make ci` and make sure it passes.
 5. Update the documentation and add tests for your change.
 6. Classify the change using the [risk tier guide](docs/risk-tiers.md) and
    include the tier rationale in the pull request.

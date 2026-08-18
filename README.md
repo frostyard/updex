@@ -687,8 +687,11 @@ make lint
 # Run tests
 make test
 
-# Format, lint, and test
+# Quick format, lint, and test loop
 make check
+
+# Run the credential-free gate that mirrors CI
+make ci
 
 # Build binaries
 make build
@@ -720,7 +723,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. In short:
 - SDK functions should return structured data, not formatted output
 - CLI commands should be thin wrappers around SDK functions
 - Write tests for both SDK and CLI layers
-- Run `make check` before submitting PRs
+- Run `make ci` before submitting PRs
 
 ## License
 
