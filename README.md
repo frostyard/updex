@@ -653,6 +653,9 @@ updex features check --json
 updex features list --json | jq '.[] | select(.origin=="catalog" and .origin_name=="fedora")'
 ```
 
+The terminal download bar is suppressed in JSON mode, so stdout remains a
+valid JSON stream that is safe to pipe directly into parsers such as `jq`.
+
 ## Development
 
 ### Architecture
