@@ -114,10 +114,10 @@ func TestListGitHubTokenStrippedOnCrossOriginRedirect(t *testing.T) {
 
 	var redirectedAuthorization string
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		if req.URL.Hostname() == "api.github.com" {
+		if req.URL.Port() == "" {
 			return &http.Response{
 				StatusCode: http.StatusFound,
-				Header:     http.Header{"Location": []string{"https://catalog.example.com/list"}},
+				Header:     http.Header{"Location": []string{"https://api.github.com:444/list"}},
 				Body:       io.NopCloser(strings.NewReader("")),
 				Request:    req,
 			}, nil
