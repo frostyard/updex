@@ -34,7 +34,7 @@ repository squash-merges and its squash title default is "commit or PR
 title", so the PR title — or, for a single-commit PR, that commit's subject —
 becomes the `main` commit that svu versions and the changelog groups by. Make
 the first commit conventional too; do not carry an issue's `[quality] …` /
-`[scanner] …` title into the commit or PR. `.github/workflows/pr-title.yml`
+`[scanner] …` / `[sec-check] …` title into the commit or PR. `.github/workflows/pr-title.yml`
 fails a PR whose title (or lone commit subject) is not conventional. See
 [CONTRIBUTING.md](CONTRIBUTING.md#pull-requests) for the type list.
 
