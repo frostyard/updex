@@ -480,6 +480,8 @@ The daemon stages updates but never activates them (decision recorded in
 - The timer runs `daily`, is `Persistent=true`, and uses `RandomizedDelaySec=3600`
 - The service command is `/usr/bin/updex features update --no-refresh`, so automatic downloads are staged and not refreshed/activated until a later refresh or reboot
 - Unit installation refuses to overwrite existing timer/service files; callers must disable first
+- The service runs as root, so `updex daemon enable` sets `systemd.ServiceConfig.Sandbox` and `GenerateService` appends the `systemd.SandboxDirectives` block to `[Service]`: `NoNewPrivileges=yes`, `ProtectSystem=full`, `ProtectHome=yes`, `PrivateTmp=yes`, `ProtectKernelTunables=yes`, `ProtectKernelModules=yes`, `ProtectKernelLogs=yes`, `ProtectControlGroups=yes`, `ProtectClock=yes`, `ProtectHostname=yes`, `RestrictRealtime=yes`, `RestrictSUIDSGID=yes`, `RestrictNamespaces=yes`, `LockPersonality=yes`, `MemoryDenyWriteExecute=yes`, `SystemCallArchitectures=native`, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`, `SystemCallFilter=@system-service`
+- `ProtectSystem=full` (not `strict`) was chosen so `/var` stays writable without a `ReadWritePaths=` list: the default `/var/lib/extensions.d` staging directory, the `/var/lib/extensions` link directory, and hand-written transfers with a `Target.Path` elsewhere under `/var` keep working; `/usr`, `/boot`, `/efi`, and `/etc` are read-only, which the `--no-refresh` staged path never writes. No `CapabilityBoundingSet=` is set. Other `GenerateService` callers keep the minimal unit unless they opt in
 
 ## CLI Commands
 
