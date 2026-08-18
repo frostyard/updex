@@ -46,6 +46,10 @@ func WithRetryNotify(fn func(attempt, maxAttempts int, reason error)) Option {
 	}
 }
 
+// syncFile flushes a written file to stable storage. It is a package-level
+// seam so tests can observe which files are synced and inject sync failures.
+var syncFile = func(f *os.File) error { return f.Sync() }
+
 func resolveRetry(opts ...Option) retrySettings {
 	settings := retrySettings{cfg: retry.DefaultConfig}
 	for _, opt := range opts {
@@ -55,7 +59,9 @@ func resolveRetry(opts ...Option) retrySettings {
 }
 
 // Download fetches a file from URL, verifies its hash, decompresses if needed,
-// and atomically writes it to the target path. If httpClient is nil, a default
+// and atomically writes it to the target path. On every path (direct,
+// decompressed, and cross-device copy) the file that ends up at targetPath is
+// fsynced before it is renamed into place. If httpClient is nil, a default
 // client with a 10-minute timeout is used. If onProgress is non-nil, it is
 // called with the content length after the HTTP response is received, and the
 // returned writer receives downloaded bytes for progress tracking.
@@ -125,6 +131,13 @@ func Download(ctx context.Context, httpClient *http.Client, url, targetPath, exp
 		actualHash := fmt.Sprintf("%x", hasher.Sum(nil))
 		if actualHash != strings.ToLower(expectedHash) {
 			return fmt.Errorf("hash mismatch: expected %s, got %s", expectedHash, actualHash)
+		}
+
+		// Persist the verified bytes before the temp file is closed and
+		// renamed, so a crash after install cannot leave an empty or
+		// partial image behind the sysext link.
+		if err := syncFile(tmpFile); err != nil {
+			return fmt.Errorf("failed to sync temp file: %w", err)
 		}
 
 		// Close temp file before decompression
@@ -233,7 +246,7 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	}
 
 	// Ensure data is persisted to disk before the atomic rename
-	if err := tmpFile.Sync(); err != nil {
+	if err := syncFile(tmpFile); err != nil {
 		_ = tmpFile.Close()
 		return err
 	}
