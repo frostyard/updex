@@ -105,7 +105,7 @@ func Fetch(ctx context.Context, httpClient *http.Client, baseURL string, verify 
 	// Verify GPG signature if requested
 	if verify {
 		sigURL := manifestURL + ".gpg"
-		if err := verifySignature(ctx, httpClient, sigURL, content); err != nil {
+		if err := verifySignature(ctx, httpClient, sigURL, content, rs); err != nil {
 			return nil, fmt.Errorf("signature verification failed: %w", err)
 		}
 	}

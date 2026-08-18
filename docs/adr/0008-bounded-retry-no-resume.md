@@ -67,7 +67,10 @@ One shared policy lives in `internal/retry` and is used by both
   [`download/download.go`](../../download/download.go) (per-attempt temp
   file, 429/5xx classification, fatal hash mismatch),
   [`manifest/manifest.go`](../../manifest/manifest.go) (same
-  classification for `SHA256SUMS` fetches)
+  classification for `SHA256SUMS` fetches),
+  [`manifest/gpg.go`](../../manifest/gpg.go) (same classification for the
+  detached `SHA256SUMS.gpg` fetch; keyring load and signature check are
+  outside the retry loop)
 - Shapes: [design/overview.md — Data Flow](../design/overview.md#feature-update-end-to-end),
   [specs/sdk-api.md — download](../specs/sdk-api.md#download)
 - Builds on: [core ADR-0023 — External downloads are version-pinned and checksum-verified](https://github.com/frostyard/core/blob/main/docs/adr/0023-verified-pinned-downloads.md),
