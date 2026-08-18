@@ -293,34 +293,6 @@ func (c *Client) CatalogAdd(ctx context.Context, name string, opts CatalogAddOpt
 	return result, nil
 }
 
-// managedFileExists reports whether a regular file exists at path, which
-// is the only thing updex generates or deletes at a managed definition
-// path.
-//
-// It uses Lstat, never Stat: a symlink must be seen as itself rather than
-// followed. A dangling link would otherwise stat as absent, skipping the
-// ownership check, and the subsequent os.WriteFile would follow it and
-// create the target wherever it points — a privileged write outside the
-// component directory. Anything present that is not a regular file is an
-// error so the operator resolves it deliberately.
-//
-// A stat failure for any reason other than absence is likewise an error
-// rather than "not there": reading an unreadable path as absent would
-// skip a safety check or under-report what was left behind.
-func managedFileExists(path string) (bool, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	if !info.Mode().IsRegular() {
-		return false, fmt.Errorf("%s is not a regular file (mode %s); updex manages definitions in place and will not write through it", path, info.Mode().Type())
-	}
-	return true, nil
-}
-
 // fileSnapshot captures a file's contents (or its absence) so a failed
 // operation can restore exactly what was there before.
 type fileSnapshot struct {

@@ -71,8 +71,16 @@ code that writes to managed definition paths.
 ## References
 
 - Implements: [`updex/catalog.go`](../../updex/catalog.go)
-  (`fileSnapshot`, `snapshotFile`, `restore`, `managedFileExists`,
-  `CatalogAdd` rollback closure);
+  (`fileSnapshot`, `snapshotFile`, `restore`, `CatalogAdd` rollback
+  closure); [`updex/fsguard.go`](../../updex/fsguard.go)
+  (`managedFileExists`, `writeManagedFile` — the shared Lstat-only
+  file guard and temp-file-plus-rename write);
+  [`updex/features.go`](../../updex/features.go) (`writeFeatureDropIn` —
+  the `<feature>.feature.d/` directory and the `00-updex.conf` drop-in
+  are both Lstat-checked before `EnableFeature`/`DisableFeature` write, a
+  symlink or other non-regular entry at either path is refused rather
+  than written through, and the drop-in is written via
+  temp-file-plus-rename);
   [`systemd/manager.go`](../../systemd/manager.go) (`unitFileState`,
   `writeUnitFile`, `Install`, `Exists` — the Lstat-only existence rule
   applied to the root-written `updex-update.timer`/`.service` unit files:

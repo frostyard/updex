@@ -150,12 +150,34 @@ func (c *Client) writeFeatureDropIn(f *config.Feature, enabled bool, dryRun bool
 		return dropInFile, nil
 	}
 
-	if err := os.MkdirAll(dropInDir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create drop-in directory: %w", err)
+	// ADR-0005: this is a root write under a managed definition directory,
+	// so both the drop-in directory and the drop-in itself are checked with
+	// Lstat (never Stat) and refused when anything non-regular is present —
+	// a symlink at the directory path, dangling or live, would otherwise be
+	// followed by MkdirAll and the write below it would land wherever the
+	// link points; a symlink at the file path is managedFileExists' case.
+	// A stat failure other than absence is an error too, so nothing
+	// unreadable is ever misread as absent. The write itself then goes
+	// through a temp file plus rename so it never follows a link planted
+	// between check and write.
+	switch info, err := os.Lstat(dropInDir); {
+	case err == nil && info.IsDir():
+		// present and real: nothing to create
+	case err == nil:
+		return "", fmt.Errorf("drop-in directory %s exists and is not a directory (mode %s); remove it manually", dropInDir, info.Mode().Type())
+	case os.IsNotExist(err):
+		if err := os.MkdirAll(dropInDir, 0755); err != nil {
+			return "", fmt.Errorf("failed to create drop-in directory: %w", err)
+		}
+	default:
+		return "", fmt.Errorf("failed to check drop-in directory: %w", err)
+	}
+	if _, err := managedFileExists(dropInFile); err != nil {
+		return "", fmt.Errorf("failed to check drop-in file: %w", err)
 	}
 
 	content := fmt.Sprintf("[Feature]\nEnabled=%v\n", enabled)
-	if err := os.WriteFile(dropInFile, []byte(content), 0644); err != nil {
+	if err := writeManagedFile(dropInFile, content); err != nil {
 		return "", fmt.Errorf("failed to write drop-in file: %w", err)
 	}
 
