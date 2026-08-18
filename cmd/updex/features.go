@@ -103,8 +103,11 @@ func newFeaturesEnableCmd() *cobra.Command {
 		Short: "Enable a feature",
 		Long: `Enable a feature by creating a drop-in configuration file.
 
-This creates a file at /etc/sysupdate.d/<feature>.feature.d/00-updex.conf
-that sets Enabled=true for the specified feature.
+This creates a drop-in that sets Enabled=true for the specified feature:
+/etc/sysupdate.d/<feature>.feature.d/00-updex.conf for a feature from the
+legacy default directory (or a -C/--definitions override), or
+/etc/sysupdate.<component>.d/<feature>.feature.d/00-updex.conf for a feature
+discovered under a systemd-sysupdate component.
 
 OPTIONS:
   --now      Immediately download extensions for this feature
@@ -135,8 +138,11 @@ func newFeaturesDisableCmd() *cobra.Command {
 		Short: "Disable a feature",
 		Long: `Disable a feature by creating a drop-in configuration file.
 
-This creates a file at /etc/sysupdate.d/<feature>.feature.d/00-updex.conf
-that sets Enabled=false for the specified feature.
+This creates a drop-in that sets Enabled=false for the specified feature:
+/etc/sysupdate.d/<feature>.feature.d/00-updex.conf for a feature from the
+legacy default directory (or a -C/--definitions override), or
+/etc/sysupdate.<component>.d/<feature>.feature.d/00-updex.conf for a feature
+discovered under a systemd-sysupdate component.
 
 OPTIONS:
   --now      Immediately unmerge AND remove extension files
