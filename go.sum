@@ -36,10 +36,10 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/frankban/quicktest v1.14.6 h1:7Xjx+VpznH+oBnejlPUj8oUpdxnVs4f8XU8WnHkI4W8=
 github.com/frankban/quicktest v1.14.6/go.mod h1:4ptaffx2x8+WTWXmUCuVU6aPUX1/Mz7zb5vbUoiM6w0=
-github.com/frostyard/clix v0.3.1 h1:mAg7lbSe6orpqhk3kPAevQTMO9qm3/S5J11fnVx0nRM=
-github.com/frostyard/clix v0.3.1/go.mod h1:K8pENLAMvKTf5oQ/vZJ/adbSnM0W8BEfHVB6XzlM+ok=
-github.com/frostyard/std v0.2.0 h1:zO+DRuR5uBUguhiVLjp1gzuPeXmnGTclFwThr9g5VaY=
-github.com/frostyard/std v0.2.0/go.mod h1:K/gk2IXCe/YAGed8MlVaAdlvmAmOzrif2b9pJkZ7mHc=
+github.com/frostyard/clix v0.4.0 h1:Ph5pA2oHnMFSW8CaKcvH6yhENJUA7FepAyfiIj+3UME=
+github.com/frostyard/clix v0.4.0/go.mod h1:GMHCukVz2d/tu+GIgdWVvkJ+XVw0M/95yoh7X76gGg8=
+github.com/frostyard/std v0.2.2 h1:6xjnD/FX1hwho9Y1yK20hNPxt7oj8DSzWgM0aH1vmpQ=
+github.com/frostyard/std v0.2.2/go.mod h1:BkFhrobnjPYLAeZ58JJmaxly4MNims1KzoWdg4HHuNo=
 github.com/fsnotify/fsnotify v1.10.1 h1:b0/UzAf9yR5rhf3RPm9gf3ehBPpf0oZKIjtpKrx59Ho=
 github.com/fsnotify/fsnotify v1.10.1/go.mod h1:TLheqan6HD6GBK6PrDWyDPBaEV8LspOxvPSjC+bVfgo=
 github.com/go-viper/mapstructure/v2 v2.5.0 h1:vM5IJoUAy3d7zRSVtIwQgBj7BiWtMPfmPEgAXnvj1Ro=
