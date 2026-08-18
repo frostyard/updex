@@ -248,7 +248,7 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	// Ensure data is persisted to disk before the atomic rename
 	if err := syncFile(tmpFile); err != nil {
 		_ = tmpFile.Close()
-		return err
+		return fmt.Errorf("failed to sync destination file: %w", err)
 	}
 	_ = tmpFile.Close()
 

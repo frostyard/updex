@@ -261,13 +261,13 @@ func gzipBytes(t *testing.T, content []byte) []byte {
 func TestDownloadSyncsFileBeforeRename(t *testing.T) {
 	content := []byte("feature image contents")
 	tests := []struct {
-		name      string
-		urlSuffix string
-		body      []byte
-		wantSuffx string
+		name       string
+		urlSuffix  string
+		body       []byte
+		wantSuffix string
 	}{
-		{name: "uncompressed", urlSuffix: "/feature.raw", body: content, wantSuffx: ""},
-		{name: "gzip", urlSuffix: "/feature.raw.gz", body: gzipBytes(t, content), wantSuffx: ".decompressed"},
+		{name: "uncompressed", urlSuffix: "/feature.raw", body: content, wantSuffix: ""},
+		{name: "gzip", urlSuffix: "/feature.raw.gz", body: gzipBytes(t, content), wantSuffix: ".decompressed"},
 	}
 
 	for _, tt := range tests {
@@ -302,8 +302,8 @@ func TestDownloadSyncsFileBeforeRename(t *testing.T) {
 					continue
 				}
 				found = true
-				if !strings.HasPrefix(info.Name(), ".updex-download-") || !strings.HasSuffix(info.Name(), tt.wantSuffx) {
-					t.Errorf("synced file name = %q, want temp file %q*%q", info.Name(), ".updex-download-", tt.wantSuffx)
+				if !strings.HasPrefix(info.Name(), ".updex-download-") || !strings.HasSuffix(info.Name(), tt.wantSuffix) {
+					t.Errorf("synced file name = %q, want temp file %q*%q", info.Name(), ".updex-download-", tt.wantSuffix)
 				}
 				if info.Size() != int64(len(content)) {
 					t.Errorf("synced file size = %d, want %d", info.Size(), len(content))
