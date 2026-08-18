@@ -5,7 +5,7 @@ Docs are split by the question they answer (the shape comes from
 
 | Directory | Question | Contents |
 | --- | --- | --- |
-| [adr/](adr/) | **Why** did we choose this? | Architecture Decision Records — immutable once accepted; superseded, never edited |
+| [adr/](adr/) | **Why** did we choose this? | Architecture Decision Records — immutable once accepted: superseded, never rewritten; only link-only maintenance per [core ADR-0033](https://github.com/frostyard/core/blob/main/docs/adr/0033-link-maintenance-in-immutable-adrs.md) |
 | [design/](design/) | **How** does it fit together? | Living documents describing the current architecture |
 | [specs/](specs/) | **What exactly** is the contract? | Precise, testable interface definitions |
 | [plans/](plans/) | **When/in what order** do we build? | Roadmaps and phase plans; updated as work lands |
@@ -101,7 +101,12 @@ criteria and the other fleet repos name these exact paths (ADR-0012):
 
 - **New docs start from their category's `TEMPLATE.md`** (in each directory).
 - New decision → new ADR with the next number; if it reverses an old one, mark
-  the old one `Superseded by NNNN` rather than editing it.
+  the old one `Superseded by NNNN` rather than editing it. The only other
+  edit an Accepted or Superseded ADR may receive is link-only maintenance
+  (retarget a moved artifact, or a retired one to a commit permalink labeled
+  historical) per core ADR-0033 — never a change to the decision, rationale,
+  consequences, or alternatives; Superseded ADRs' relative links are checked
+  by the docs gate like every other doc.
 - Design docs are updated in place to always reflect reality.
 - Specs change only alongside the code that implements them.
 - Adding a doc means adding it to the index above; `node scripts/check-docs.mjs`

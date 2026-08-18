@@ -3,7 +3,10 @@
 <!--
 Filename: NNNN-kebab-case-title.md (next free number).
 ADRs are immutable once Accepted. To reverse one, write a new ADR and set the
-old one's Status to "Superseded by NNNN".
+old one's Status to "Superseded by NNNN". The one permitted edit afterwards is
+link-only maintenance per core ADR-0033 (retarget a moved artifact, or point a
+retired one at a commit permalink labeled historical) — never the decision
+text; the docs gate checks relative links in Superseded ADRs too.
 -->
 
 - **Status:** Proposed | Accepted | Superseded by [NNNN](NNNN-title.md)
