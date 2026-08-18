@@ -43,9 +43,9 @@ PR template ──► review rubric ──► CI gates ──► corrections ─
 - **Gate** — [.github/workflows/test.yml](../../.github/workflows/test.yml)
   runs on every PR and push to `main`:
   - *Lint* (pinned golangci-lint — the release named by
-    `GOLANGCI_LINT_VERSION` in the `Makefile`, currently v2.12.2, which the
-    Lint job reads and `make ci` asserts via `make lint-version-check` —
-    with `.golangci.yml`), *Security Scan* (pinned
+    `GOLANGCI_LINT_VERSION` in the `Makefile`, which the Lint job reads
+    and `make ci` asserts via `make lint-version-check`, configured by
+    `.golangci.yml`), *Security Scan* (pinned
     `govulncheck`), *Unit Tests* with coverage uploaded to Codecov, *E2E
     Tests* ([tests/e2e/README.md](../../tests/e2e/README.md)), *Race
     Detection*, *Verify* (tidy, `go vet`, gofmt), and *Build* for linux
