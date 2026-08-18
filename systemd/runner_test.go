@@ -28,14 +28,7 @@ func TestDefaultSystemctlRunnerCommands(t *testing.T) {
 			if err := tt.run(); err != nil {
 				t.Fatalf("command failed: %v", err)
 			}
-
-			got, err := os.ReadFile(logPath)
-			if err != nil {
-				t.Fatalf("read command log: %v", err)
-			}
-			if strings.TrimSpace(string(got)) != tt.want {
-				t.Errorf("command arguments = %q, want %q", strings.TrimSpace(string(got)), tt.want)
-			}
+			assertSystemctlArgs(t, logPath, tt.want)
 		})
 	}
 }
@@ -54,7 +47,7 @@ func TestDefaultSystemctlRunnerCommandError(t *testing.T) {
 }
 
 func TestDefaultSystemctlRunnerIsActive(t *testing.T) {
-	installFakeSystemctl(t)
+	logPath := installFakeSystemctl(t)
 	runner := &DefaultSystemctlRunner{}
 
 	tests := []struct {
@@ -78,12 +71,13 @@ func TestDefaultSystemctlRunnerIsActive(t *testing.T) {
 			if got != tt.want {
 				t.Errorf("IsActive() = %v, want %v", got, tt.want)
 			}
+			assertSystemctlArgs(t, logPath, "is-active\nupdex.timer")
 		})
 	}
 }
 
 func TestDefaultSystemctlRunnerIsEnabled(t *testing.T) {
-	installFakeSystemctl(t)
+	logPath := installFakeSystemctl(t)
 	runner := &DefaultSystemctlRunner{}
 
 	tests := []struct {
@@ -107,7 +101,20 @@ func TestDefaultSystemctlRunnerIsEnabled(t *testing.T) {
 			if got != tt.want {
 				t.Errorf("IsEnabled() = %v, want %v", got, tt.want)
 			}
+			assertSystemctlArgs(t, logPath, "is-enabled\nupdex.timer")
 		})
+	}
+}
+
+func assertSystemctlArgs(t *testing.T, logPath, want string) {
+	t.Helper()
+
+	got, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read command log: %v", err)
+	}
+	if strings.TrimSpace(string(got)) != want {
+		t.Errorf("command arguments = %q, want %q", strings.TrimSpace(string(got)), want)
 	}
 }
 
