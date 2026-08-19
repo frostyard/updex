@@ -32,6 +32,11 @@ func TestPublicMetricsIndexIsSubstantive(t *testing.T) {
 		"## Publication and privacy contract",
 		"https://github.com/frostyard/updex/actions/workflows/test.yml",
 		"https://codecov.io/gh/frostyard/updex",
+		// The Coverage row must name the enforced floor's public source, not
+		// only the best-effort Codecov dashboard.
+		"Enforce coverage floor",
+		"make coverage-check",
+		"80.0% total statement-coverage floor",
 		"../specs/pr-acceptance-metric.md",
 	} {
 		if !strings.Contains(contents, required) {

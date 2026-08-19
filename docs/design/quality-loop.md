@@ -8,7 +8,7 @@ Contracts: [specs/pr-review-rubric.md](../specs/pr-review-rubric.md),
 is also the quality dashboard (formerly `docs/AI-QUALITY-ASSURANCE.md`).
 
 [![Tests](https://github.com/frostyard/updex/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/frostyard/updex/actions/workflows/test.yml?query=branch%3Amain)
-[![codecov](https://codecov.io/gh/frostyard/updex/graph/badge.svg?branch=main)](https://codecov.io/gh/frostyard/updex)
+[![codecov](https://codecov.io/gh/frostyard/updex/graph/badge.svg?branch=main)](https://codecov.io/gh/frostyard/updex) (best-effort, pending onboarding on codecov.io — the enforced coverage gate is the 80.0% floor below)
 
 ## Overview
 
