@@ -214,7 +214,7 @@ func TestLinkToSysextAt(t *testing.T) {
 				}
 				t.Cleanup(func() { _ = os.Chmod(sysextDir, 0755) })
 			},
-			wantErr: "failed to remove existing",
+			wantErr: "failed to replace existing",
 			check: func(t *testing.T, stagingDir, sysextDir string) {
 				want := filepath.Join(stagingDir, "myext_1.0.0.raw")
 				if got := readLink(t, filepath.Join(sysextDir, "myext.raw")); got != want {
@@ -361,5 +361,68 @@ func TestDefaultRunnerLinksAtExplicitDir(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(untouched); len(entries) != 0 {
 		t.Errorf("package-global SysextDir must not be written when an explicit dir is given, got %d entries", len(entries))
+	}
+}
+
+// TestLinkToSysextAt_AtomicReplace pins that the link is replaced by creating
+// a temp symlink beside it and renaming over it: no temp file survives a
+// success, and none survives an injected rename failure — where the old link
+// must also stay exactly as it was. (The absence of a missing-link moment
+// between the two states is rename(2)'s guarantee and not observable
+// in-process; the leftovers and the surviving old link are.)
+func TestLinkToSysextAt_AtomicReplace(t *testing.T) {
+	stagingDir := t.TempDir()
+	sysextDir := t.TempDir()
+	tr := linkTransfer(stagingDir)
+	linkPath := filepath.Join(sysextDir, "myext.raw")
+	stageImages(t, stagingDir, "myext_1.0.0.raw", "myext_2.0.0.raw")
+
+	old := filepath.Join(stagingDir, "myext_1.0.0.raw")
+	if err := os.Symlink(old, linkPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// Injected failure: the temp symlink is created, rename refuses, the temp
+	// is removed and the old link survives untouched.
+	restore := renameLink
+	renameLink = func(oldpath, newpath string) error {
+		if _, err := os.Lstat(oldpath); err != nil {
+			t.Errorf("rename called before the temp symlink %s existed: %v", oldpath, err)
+		}
+		return os.ErrPermission
+	}
+	err := LinkToSysextAt(tr, sysextDir)
+	renameLink = restore
+	if err == nil || !strings.Contains(err.Error(), "failed to replace existing") {
+		t.Fatalf("LinkToSysextAt() with failing rename: error = %v, want 'failed to replace existing'", err)
+	}
+	if got := readLink(t, linkPath); got != old {
+		t.Errorf("old link must survive a failed replacement, got %q", got)
+	}
+	assertOnly(t, sysextDir, "myext.raw")
+
+	// Success: the link now points at the newest image and nothing else is
+	// left in the directory.
+	if err := LinkToSysextAt(tr, sysextDir); err != nil {
+		t.Fatalf("LinkToSysextAt() = %v", err)
+	}
+	if got := readLink(t, linkPath); filepath.Base(got) != "myext_2.0.0.raw" {
+		t.Errorf("link target = %q, want myext_2.0.0.raw", got)
+	}
+	assertOnly(t, sysextDir, "myext.raw")
+}
+
+func assertOnly(t *testing.T, dir string, want ...string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if len(names) != len(want) || strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Errorf("%s should hold exactly %v, got %v", dir, want, names)
 	}
 }

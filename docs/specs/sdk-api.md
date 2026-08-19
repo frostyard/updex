@@ -97,7 +97,7 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFeatureOptions) (*FeatureActionResult, error)
 ```
 
-Enable creates a drop-in file setting `Enabled=true`. With `Now: true`, it downloads extensions via the shared `installTransfer` pipeline. Disable creates a drop-in setting `Enabled=false`.
+Enable creates a drop-in file setting `Enabled=true`. With `Now: true`, it downloads extensions via the shared `installTransfer` pipeline; a component whose newest image is already staged and current is not re-downloaded, but its sysext link is restored if it is missing, dangling, or points at another image (`restored sysext link without re-downloading` — reported through the progress reporter, not the result). Disable creates a drop-in setting `Enabled=false`.
 
 In dry-run mode, enable/disable skip writing drop-ins and skip sysext/filesystem mutations. `EnableFeature` with `Now: true` records associated transfer components as would-download entries without fetching manifests or resolving exact versions. `DisableFeature` with `Now: true` still checks active versions for force-safety, then records component-level would-remove entries instead of deleting files.
 
@@ -134,7 +134,7 @@ The manifest cache key is `Transfer.Source.Path` only, but verification is a pro
 
 Dry-run update results use the normal `UpdateResult` shape: `Downloaded=true` means the component would be downloaded, `Installed=false` means no install happened, and `RemovedVersions` is populated from `sysext.PlanVacuumAfterInstall` unless `NoVacuum` is true. The CLI still enforces root before calling this SDK method, but the SDK method itself is read-only in dry-run mode apart from remote manifest fetches.
 
-Already-current components are detected by `sysext.GetInstalledVersions`: the selected newest version must be both present on disk and equal to the current version resolved from a legacy `CurrentSymlink` (or newest installed when no symlink exists). After current detection but before any no-op return, update removes the legacy staging symlink if the transfer defines one. A newer installed-but-not-current version is still treated as needing installation so the `/var/lib/extensions` link can be updated.
+Already-current components are detected by `sysext.GetInstalledVersions`: the selected newest version must be both present on disk and equal to the current version resolved from a legacy `CurrentSymlink` (or newest installed when no symlink exists). After current detection but before any no-op return, update removes the legacy staging symlink if the transfer defines one. A newer installed-but-not-current version is still treated as needing installation so the `/var/lib/extensions` link can be updated. An already-current component restores a missing sysext link without re-downloading: if `<SysextLinkDir>/<component>.<ext>` is absent, dangling, not a symlink, or resolves to another image, `installTransfer` relinks it (through the runner) and still returns `Downloaded=false`; a link that already resolves to the current image is not touched. A failure to list installed versions on that path is a component error (`failed to inspect installed versions: …`), not a fall-through into download.
 
 **UpdateFeaturesOptions:**
 | Field | Type | Description |

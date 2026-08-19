@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/frostyard/updex/config"
 	"github.com/frostyard/updex/version"
@@ -430,21 +431,82 @@ func LinkToSysextAt(t *config.Transfer, sysextDir string) error {
 		return fmt.Errorf("failed to create sysext directory: %w", err)
 	}
 
-	// Remove existing symlink or file if present
+	// Replace atomically: create the new symlink beside the destination and
+	// rename it over the old one, so systemd-sysext never observes a moment
+	// with no link at all. rename(2) replaces an existing symlink or regular
+	// file in place and refuses a directory (it is preserved); the temp is
+	// removed if anything fails.
+	replacing := false
 	if info, err := os.Lstat(destSymlink); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 || info.Mode().IsRegular() {
-			if err := os.Remove(destSymlink); err != nil {
-				return fmt.Errorf("failed to remove existing %s: %w", destSymlink, err)
-			}
-		}
+		replacing = info.Mode()&os.ModeSymlink != 0 || info.Mode().IsRegular()
 	}
-
-	// Create symlink to the actual target file
-	if err := os.Symlink(actualTargetPath, destSymlink); err != nil {
+	fail := func(err error) error {
+		if replacing {
+			return fmt.Errorf("failed to replace existing %s: %w", destSymlink, err)
+		}
 		return fmt.Errorf("failed to create symlink %s -> %s: %w", destSymlink, actualTargetPath, err)
+	}
+	tempSymlink := fmt.Sprintf("%s.tmp-%d-%d", destSymlink, os.Getpid(), time.Now().UnixNano())
+	if err := os.Symlink(actualTargetPath, tempSymlink); err != nil {
+		return fail(err)
+	}
+	if err := renameLink(tempSymlink, destSymlink); err != nil {
+		_ = os.Remove(tempSymlink)
+		return fail(err)
 	}
 
 	return nil
+}
+
+// renameLink is os.Rename, replaceable by tests that inject a rename failure
+// to prove LinkToSysextAt leaves no temp symlink behind.
+var renameLink = os.Rename
+
+// LinkTargetAt returns the path LinkToSysextAt links <sysextDir>/<link name>
+// to: the newest installed image for the transfer in its staging directory.
+// It errors when the transfer has no usable target pattern or no installed
+// image.
+func LinkTargetAt(t *config.Transfer, sysextDir string) (string, error) {
+	if SysextLinkName(t) == "" {
+		return "", fmt.Errorf("cannot determine sysext link name")
+	}
+	files, err := installedVersionFilesAt(t, sysextDir)
+	if err != nil {
+		return "", err
+	}
+	if len(files) == 0 {
+		return "", fmt.Errorf("no installed versions found for %s", t.Component)
+	}
+	return filepath.Join(targetDirAt(t, sysextDir), files[0].filename), nil
+}
+
+// LinkIsCurrentAt reports whether <sysextDir>/<link name> is a symlink that
+// resolves to LinkTargetAt: false when the link is absent, dangling, not a
+// symlink, or points somewhere else. The error is LinkTargetAt's.
+func LinkIsCurrentAt(t *config.Transfer, sysextDir string) (bool, error) {
+	want, err := LinkTargetAt(t, sysextDir)
+	if err != nil {
+		return false, err
+	}
+	linkPath := filepath.Join(sysextDir, SysextLinkName(t))
+	info, err := os.Lstat(linkPath)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return false, nil
+	}
+	target, err := os.Readlink(linkPath)
+	if err != nil {
+		return false, nil
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(linkPath), target)
+	}
+	if filepath.Clean(target) != filepath.Clean(want) {
+		return false, nil
+	}
+	if _, err := os.Stat(linkPath); err != nil {
+		return false, nil // dangling
+	}
+	return true, nil
 }
 
 // LinkToSysext creates a symlink in /var/lib/extensions pointing to the newest

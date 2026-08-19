@@ -898,8 +898,14 @@ func TestUpdateFeatures_RemovesLegacyCurrentSymlinkWhenAlreadyCurrent(t *testing
 	if err := os.Symlink("testext_1.0.0.raw", legacyLink); err != nil {
 		t.Fatalf("failed to create legacy symlink: %v", err)
 	}
+	// The instance sysext link dir already carries a correct link, so the
+	// already-current path has nothing to restore.
+	sysextDir := t.TempDir()
+	if err := os.Symlink(extPath, filepath.Join(sysextDir, "testext.raw")); err != nil {
+		t.Fatalf("failed to create sysext link: %v", err)
+	}
 
-	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner, Paths: RuntimePaths{SysextLinkDir: sysextDir}})
 	results, err := client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true})
 	if err != nil {
 		t.Fatalf("UpdateFeatures failed: %v", err)
