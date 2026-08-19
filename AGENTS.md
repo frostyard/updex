@@ -528,8 +528,9 @@ Go 1.26. Use modern idioms: `any`, `slices`/`maps`/`cmp` packages, `t.Context()`
 Changes that touch downloads, configuration parsing, or filesystem writes get
 extra scrutiny:
 
-- Always verify SHA256 hashes before installing, and keep GPG verification of
-  `SHA256SUMS` working (it is on by default, per systemd-sysupdate).
+- Always verify SHA256 hashes before installing, keep decompressed image output
+  bounded, and keep GPG verification of `SHA256SUMS` working (it is on by
+  default, per systemd-sysupdate).
 - Validate names and paths (see `catalog.ValidateSysextName`) so nothing
   traversal-shaped reaches `filepath.Join` or a URL; respect and validate the
   file permissions a transfer configures.
