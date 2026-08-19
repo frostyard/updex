@@ -32,22 +32,34 @@ for (const cat of categories) {
   }
 }
 
-// ---- 2. Link integrity: relative md links resolve. ----
-const mdFiles = [
-  join(root, "AGENTS.md"),
-  join(root, "README.md"),
-  join(root, "docs/README.md"),
-  join(root, ".memory/README.md"),
-  join(root, "tests/e2e/README.md"),
-];
-for (const cat of categories) {
-  for (const name of readdirSync(join(root, "docs", cat))) {
-    if (name.endsWith(".md") && name !== "TEMPLATE.md") mdFiles.push(join(root, "docs", cat, name));
+// ---- Tree walk shared by the link and symlink checks. ----
+// completions/ and manpages/ are generated output; .worktrees/ and .codex/ are
+// not part of the tracked tree. A symlinked directory is recorded as a symlink
+// and not descended, so aliased trees are never double-counted.
+const SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", "completions", "manpages", ".worktrees", ".codex"]);
+const symlinks = [];
+const mdFiles = [];
+(function walk(dir) {
+  for (const name of readdirSync(dir)) {
+    const path = join(dir, name);
+    const stat = lstatSync(path);
+    if (stat.isSymbolicLink()) {
+      // Aliases are not docs: they carry no cross-link obligations (ADR-0012),
+      // and their content is already link-checked at its canonical path — a
+      // relative link cannot resolve from both the canonical path and the
+      // alias path — so symlinked Markdown stays out of the link denominator.
+      symlinks.push(path);
+    } else if (stat.isDirectory()) {
+      if (!SKIP_DIRS.has(name)) walk(path);
+    } else if (name.endsWith(".md") && name !== "TEMPLATE.md") {
+      // TEMPLATE.md files hold deliberate placeholder links (NNNN-....md).
+      mdFiles.push(path);
+    }
   }
-}
-for (const name of readdirSync(join(root, ".github", "prompts"))) {
-  if (name.endsWith(".md")) mdFiles.push(join(root, ".github", "prompts", name));
-}
+})(root);
+mdFiles.sort();
+
+// ---- 2. Link integrity: relative md links resolve in every real Markdown file. ----
 let linksTotal = 0;
 let linksOk = 0;
 for (const file of mdFiles) {
@@ -64,16 +76,6 @@ for (const file of mdFiles) {
 }
 
 // ---- 3. Symlink resolution: every repo symlink resolves inside the repo. ----
-const SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", "completions", "manpages", ".worktrees", ".codex"]);
-const symlinks = [];
-(function walk(dir) {
-  for (const name of readdirSync(dir)) {
-    const path = join(dir, name);
-    const stat = lstatSync(path);
-    if (stat.isSymbolicLink()) symlinks.push(path);
-    else if (stat.isDirectory() && !SKIP_DIRS.has(name)) walk(path);
-  }
-})(root);
 let linksResolved = 0;
 for (const path of symlinks) {
   try {

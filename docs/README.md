@@ -111,7 +111,10 @@ criteria and the other fleet repos name these exact paths (ADR-0012):
 - Specs change only alongside the code that implements them.
 - Adding a doc means adding it to the index above; `node scripts/check-docs.mjs`
   fails CI when a doc in the four categories is unindexed or a relative link
-  is dead.
+  is dead. The link check covers every real-blob Markdown file in the
+  repository — not just `docs/` — including `.agents/skills/`,
+  `.github/prompts/`, `.memory/`, and `tests/e2e/`; alias symlinks and
+  `TEMPLATE.md` files are excluded.
 - Conformance alias symlinks (`docs/quality.md`, `docs/metrics.md`,
   `docs/review-rubric.md`, and the root-level `CLAUDE.md`/`GEMINI.md`/
   `CONTRIBUTING.md`/`.cursorrules`) are not docs: they are not indexed here
