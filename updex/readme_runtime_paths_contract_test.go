@@ -23,13 +23,24 @@ func TestReadmeDocumentsRuntimePathsFields(t *testing.T) {
 	}
 	contents := string(data)
 
+	start := strings.Index(contents, "type RuntimePaths struct {")
+	if start == -1 {
+		t.Fatal("README.md does not contain the RuntimePaths struct block")
+	}
+	rest := contents[start:]
+	end := strings.Index(rest, "}\n```")
+	if end == -1 {
+		t.Fatal("README.md RuntimePaths struct block does not terminate before the end of the code block")
+	}
+	block := rest[:end]
+
 	for i := 0; i < typ.NumField(); i++ {
 		field := typ.Field(i)
 		if !field.IsExported() {
 			continue
 		}
-		if !strings.Contains(contents, field.Name) {
-			t.Errorf("README.md does not mention RuntimePaths field %q", field.Name)
+		if !strings.Contains(block, field.Name) {
+			t.Errorf("README.md RuntimePaths block does not mention field %q", field.Name)
 		}
 	}
 }
