@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -392,4 +393,95 @@ func TestE2E_FeaturesListAndCheck(t *testing.T) {
 	if checked[0].Results[0].NewestVersion != "1.0.0" || !checked[0].Results[0].UpdateAvailable {
 		t.Errorf("unexpected check result: %+v", checked[0].Results[0])
 	}
+}
+
+// helpLongFlag matches one FLAGS-block line of `updex --help` and captures
+// its long flag name, tolerating an optional shorthand in front of it. Only
+// the leading flag column is considered, so a description mentioning another
+// flag is never mistaken for a declaration.
+var helpLongFlag = regexp.MustCompile(`^\s+(?:-[A-Za-z],?\s+)?(--[A-Za-z][A-Za-z0-9-]*)(?:\s|$)`)
+
+// TestE2E_GlobalFlagsAreDocumentedInREADME pins README.md's "### Global
+// Flags" table to the binary's own --help output: every global long flag
+// updex advertises must have a row there. Adding or renaming a global flag
+// without updating the table fails here instead of drifting silently, which
+// is how `-s, --silent` went undocumented.
+func TestE2E_GlobalFlagsAreDocumentedInREADME(t *testing.T) {
+	result := runUpdexCommand(t, "--help")
+	if result.exitCode != 0 {
+		t.Fatalf("updex --help exited %d:\n%s%s", result.exitCode, result.stdout, result.stderr)
+	}
+
+	flags := parseHelpGlobalFlags(result.stdout + result.stderr)
+	if len(flags) == 0 {
+		t.Fatalf("no global flags parsed from the --help FLAGS block:\n%s%s", result.stdout, result.stderr)
+	}
+
+	table := readGlobalFlagsTable(t)
+
+	// -h/--help and --version are supplied by the CLI framework rather than
+	// by updex, and the table documents updex's own behavior flags.
+	ignored := map[string]bool{"--help": true, "--version": true}
+
+	for _, flag := range flags {
+		if ignored[flag] {
+			continue
+		}
+		// Match only the table's *flag column* so mentioning a flag in a description
+		// (e.g. "`--silent` takes priority over `--json`") can't satisfy the requirement.
+		row := regexp.MustCompile("(?m)^\\|\\s*`[^`]*" + regexp.QuoteMeta(flag) + "[^`]*`\\s*\\|")
+		if !row.MatchString(table) {
+			t.Errorf("global flag %s is listed by `updex --help` but has no row in README.md's \"### Global Flags\" table", flag)
+		}
+	}
+}
+
+// parseHelpGlobalFlags returns the long flag names declared in the FLAGS
+// block of `updex --help`, in the order they appear.
+func parseHelpGlobalFlags(help string) []string {
+	var flags []string
+	inFlags := false
+	for _, line := range strings.Split(help, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "FLAGS" {
+			inFlags = true
+			continue
+		}
+		if !inFlags {
+			continue
+		}
+		// A subsequent all-caps block heading ends the FLAGS section.
+		if trimmed != "" && !strings.HasPrefix(trimmed, "-") && trimmed == strings.ToUpper(trimmed) {
+			break
+		}
+		if m := helpLongFlag.FindStringSubmatch(line); m != nil {
+			flags = append(flags, m[1])
+		}
+	}
+	return flags
+}
+
+// readGlobalFlagsTable returns the body of README.md's "### Global Flags"
+// section, up to the next heading at the same or a higher level.
+func readGlobalFlagsTable(t *testing.T) string {
+	t.Helper()
+	repoRoot, err := repoRootDir()
+	if err != nil {
+		t.Fatalf("locating repo root: %v", err)
+	}
+	readme, err := os.ReadFile(filepath.Join(repoRoot, "README.md"))
+	if err != nil {
+		t.Fatalf("reading README.md: %v", err)
+	}
+
+	const heading = "### Global Flags"
+	start := strings.Index(string(readme), heading)
+	if start < 0 {
+		t.Fatalf("README.md has no %q heading", heading)
+	}
+	body := string(readme)[start+len(heading):]
+	if end := strings.Index(body, "\n#"); end >= 0 {
+		body = body[:end]
+	}
+	return body
 }
