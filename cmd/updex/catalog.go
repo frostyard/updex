@@ -132,7 +132,7 @@ live query.`,
 
 func newCatalogAddCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "add [REPO/]NAME",
+		Use:   "add NAME",
 		Short: "Install a sysext from a catalog",
 		Long: `Install a sysext from a configured catalog: fetch its published transfer
 definition, write .transfer/.feature files into the catalog's component
@@ -160,7 +160,7 @@ Requires root privileges.`,
 
 func newCatalogRemoveCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "remove [REPO/]NAME",
+		Use:   "remove NAME",
 		Short: "Remove a catalog-added sysext",
 		Long: `Remove a sysext previously installed with 'catalog add': disable its
 feature, unmerge, delete the downloaded images and /var/lib/extensions
