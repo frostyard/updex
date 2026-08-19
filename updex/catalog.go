@@ -233,9 +233,9 @@ func (c *Client) CatalogAdd(ctx context.Context, name string, opts CatalogAddOpt
 	// the previous state exactly: a fresh add rolls back to nothing, a
 	// re-add rolls back to its previously working definitions. Every
 	// failure past this point must go through rollback — a half-written
-	// definition is as damaging as a half-installed one, and os.WriteFile
-	// truncates on open, so even the write calls can destroy a working
-	// file before failing.
+	// definition is as damaging as a half-installed one, and a write that
+	// fails part-way (or an enable that fails after it) must put the
+	// previous definitions back exactly.
 	dropInDir := filepath.Join(dir, name+".feature.d")
 	snapshots := []fileSnapshot{
 		snapshotFile(result.TransferFile),
@@ -262,15 +262,35 @@ func (c *Client) CatalogAdd(ctx context.Context, name string, opts CatalogAddOpt
 		}
 	}
 
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	// ADR-0005: the component directory is Lstat-checked (never Stat) before
+	// it is created — a symlink at the directory path, dangling or live,
+	// would otherwise be followed by MkdirAll and both definitions below
+	// would land wherever it points, outside the definition roots. Anything
+	// present that is not a real directory is refused for the operator to
+	// resolve; a stat failure other than absence is an error, never "absent".
+	switch info, err := os.Lstat(dir); {
+	case err == nil && info.IsDir():
+		// present and real: nothing to create
+	case err == nil:
 		rollback()
-		return result, fmt.Errorf("failed to create component directory: %w", err)
+		return result, fmt.Errorf("component directory %s exists and is not a directory (mode %s); remove it manually", dir, info.Mode().Type())
+	case os.IsNotExist(err):
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			rollback()
+			return result, fmt.Errorf("failed to create component directory: %w", err)
+		}
+	default:
+		rollback()
+		return result, fmt.Errorf("failed to check component directory: %w", err)
 	}
-	if err := os.WriteFile(result.TransferFile, transferData, 0644); err != nil {
+	// Temp file plus rename (writeManagedFileBytes): the write never follows a
+	// link planted at either path after the managedFileExists check above,
+	// and a failure part-way leaves no truncated definition behind.
+	if err := writeManagedFileBytes(result.TransferFile, transferData, 0644); err != nil {
 		rollback()
 		return result, fmt.Errorf("failed to write transfer file: %w", err)
 	}
-	if err := os.WriteFile(result.FeatureFile, featureData, 0644); err != nil {
+	if err := writeManagedFileBytes(result.FeatureFile, featureData, 0644); err != nil {
 		rollback()
 		return result, fmt.Errorf("failed to write feature file: %w", err)
 	}
@@ -341,8 +361,11 @@ func (s fileSnapshot) restore() {
 	case !s.captured:
 		// Nothing to rewrite and nothing safe to delete.
 	default:
+		// The same temp-file-plus-rename write as the add itself, with the
+		// captured mode: restore never follows a link planted at the path
+		// while the failed add was running.
 		if err := os.MkdirAll(filepath.Dir(s.path), 0755); err == nil {
-			_ = os.WriteFile(s.path, s.data, s.mode)
+			_ = writeManagedFileBytes(s.path, s.data, s.mode)
 		}
 	}
 }

@@ -352,11 +352,16 @@ Design decisions (verified with the user, 2026-08):
   `CatalogAdd` snapshots the `.transfer`,
   `.feature`, and its `00-updex.conf` drop-in (`fileSnapshot` in
   `updex/catalog.go`) before writing, and every failure past that point
-  runs the same `rollback()` closure — including the `MkdirAll` and the
-  two `os.WriteFile` calls, which matters because `os.WriteFile`
-  truncates on open, so a failing write can destroy a working definition
-  by itself (third review round). Restore semantics: a fresh add's files
-  are removed, a re-add's previous contents are rewritten; then the
+  runs the same `rollback()` closure — the component-directory check and
+  `MkdirAll`, the two definition writes, and the enable step (third review
+  round). The writes go through the shared `writeManagedFileBytes`
+  (`updex/fsguard.go`; `writeManagedFile` is its 0644 string form): a
+  temp file in the component directory plus rename, so a failing write
+  cannot truncate a working definition and never follows a link planted at
+  the path after the `managedFileExists` check, and a failure part-way
+  leaves no `.<name>.tmp-*` debris. Restore semantics: a fresh add's files
+  are removed, a re-add's previous contents are rewritten by the same
+  temp-plus-rename write with the captured mode; then the
   drop-in dir and (fresh adds only) the component dir are `os.Remove`d,
   which no-ops when non-empty. No enabled-but-broken state, no destroyed
   working definition, no mismatched old/new pair.
@@ -374,8 +379,17 @@ Design decisions (verified with the user, 2026-08):
   `managedFileExists` and `snapshotFile` use `os.Lstat`, and anything
   present that is not a regular file is an error. `os.Stat` reports a
   *dangling* symlink as absent, which skipped the ownership check and let
-  the following `os.WriteFile` follow the link and create its target
-  outside the component directory — a root-privileged write. `CatalogRemove`
+  the following write follow the link and create its target outside the
+  component directory — a root-privileged write. The component directory
+  itself is guarded the same way as `writeFeatureDropIn` guards the drop-in
+  directory: `CatalogAdd` `os.Lstat`s it before `MkdirAll` — absent is
+  created, a real directory is used, anything else is refused
+  (`component directory … exists and is not a directory; remove it
+  manually`) — because `MkdirAll` follows a symlinked directory and both
+  definitions would land in its target (pinned by
+  `TestCatalogAdd_RefusesSymlinkedComponentDir`,
+  `TestCatalogAdd_NeverWritesThroughTransferSymlink`, and
+  `TestCatalogAdd_LeavesNoTempDebris`). `CatalogRemove`
   validates both the `.feature` and `.transfer` paths this way before
   `DisableFeature{Now}`, so a symlink cannot produce a half-completed
   teardown either.

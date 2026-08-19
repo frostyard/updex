@@ -1181,3 +1181,156 @@ func TestCatalogAdd_ThenStandardLifecycle(t *testing.T) {
 		t.Error("expected zoxide enabled after standard EnableFeature")
 	}
 }
+
+// TestCatalogAdd_RefusesSymlinkedComponentDir (ADR-0005): a symlink planted
+// at the component directory path must be refused before anything is
+// written — MkdirAll would follow it and both definitions would land in the
+// link's target, outside the definition roots.
+func TestCatalogAdd_RefusesSymlinkedComponentDir(t *testing.T) {
+	roots := withComponentSearchRoots(t)
+	catalogRoot := withCatalogConfigRoots(t)
+	targetDir := t.TempDir()
+
+	server := newCatalogServer(t, "zoxide", "1.0.0", targetDir)
+	writeCatalogRepo(t, catalogRoot, "fedora", server.URL, "")
+
+	elsewhere := t.TempDir()
+	componentDir := filepath.Join(roots[0], "sysupdate.catalog-fedora.d")
+	if err := os.Symlink(elsewhere, componentDir); err != nil {
+		t.Fatal(err)
+	}
+
+	client := NewClient(ClientConfig{SysextRunner: &sysext.MockRunner{}})
+	_, err := client.CatalogAdd(t.Context(), "zoxide", CatalogAddOptions{})
+	if err == nil || !strings.Contains(err.Error(), "is not a directory") {
+		t.Fatalf("expected the symlinked component directory to be refused, got %v", err)
+	}
+	entries, readErr := os.ReadDir(elsewhere)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("add wrote through the directory symlink into %s: %v", elsewhere, names)
+	}
+}
+
+// TestCatalogAdd_NeverWritesThroughTransferSymlink (ADR-0005): a live symlink
+// at the .transfer path pointing outside the definition roots is refused, and
+// the target it points at keeps its bytes; the managed write itself, given
+// such a link, replaces the link with a regular file and never opens the
+// target.
+func TestCatalogAdd_NeverWritesThroughTransferSymlink(t *testing.T) {
+	roots := withComponentSearchRoots(t)
+	catalogRoot := withCatalogConfigRoots(t)
+	targetDir := t.TempDir()
+
+	server := newCatalogServer(t, "zoxide", "1.0.0", targetDir)
+	writeCatalogRepo(t, catalogRoot, "fedora", server.URL, "")
+
+	componentDir := filepath.Join(roots[0], "sysupdate.catalog-fedora.d")
+	if err := os.MkdirAll(componentDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.conf")
+	original := []byte("operator data that must survive\n")
+	if err := os.WriteFile(outside, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(componentDir, "zoxide.transfer")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+
+	client := NewClient(ClientConfig{SysextRunner: &sysext.MockRunner{}})
+	if _, err := client.CatalogAdd(t.Context(), "zoxide", CatalogAddOptions{}); err == nil {
+		t.Fatal("expected CatalogAdd to refuse the symlinked transfer path")
+	}
+	if got, err := os.ReadFile(outside); err != nil || string(got) != string(original) {
+		t.Fatalf("link target changed after CatalogAdd: %q (err %v), want %q", got, err, original)
+	}
+
+	// The write primitive over the same link: the link is replaced, not
+	// followed, and the target is untouched.
+	if err := writeManagedFile(link, "[Transfer]\nFeatures=zoxide\n"); err != nil {
+		t.Fatalf("writeManagedFile over a symlink: %v", err)
+	}
+	info, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		t.Errorf("writeManagedFile left a symlink at %s", link)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0644 {
+		t.Errorf("writeManagedFile result mode = %v, want regular 0644", info.Mode())
+	}
+	if got, err := os.ReadFile(outside); err != nil || string(got) != string(original) {
+		t.Errorf("writeManagedFile wrote through the link: target now %q (err %v)", got, err)
+	}
+}
+
+// TestCatalogAdd_LeavesNoTempDebris (ADR-0005): the temp-file-plus-rename
+// writes leave no ".<name>.tmp-*" behind, on the success path and on the
+// rollback path after the enable step fails.
+func TestCatalogAdd_LeavesNoTempDebris(t *testing.T) {
+	noDebris := func(t *testing.T, dir string) {
+		t.Helper()
+		matches, err := filepath.Glob(filepath.Join(dir, ".*.tmp-*"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(matches) != 0 {
+			t.Errorf("temp debris left in %s: %v", dir, matches)
+		}
+	}
+
+	t.Run("success", func(t *testing.T) {
+		roots := withComponentSearchRoots(t)
+		catalogRoot := withCatalogConfigRoots(t)
+		targetDir := t.TempDir()
+		server := newCatalogServer(t, "zoxide", "1.0.0", targetDir)
+		writeCatalogRepo(t, catalogRoot, "fedora", server.URL, "")
+		// Construct after the server: RuntimePaths captures catalog.TargetPath
+		// at construction and newCatalogServer points it at targetDir.
+		client := NewClient(ClientConfig{SysextRunner: &sysext.MockRunner{}, Paths: RuntimePaths{SysextLinkDir: t.TempDir()}})
+
+		if _, err := client.CatalogAdd(t.Context(), "zoxide", CatalogAddOptions{}); err != nil {
+			t.Fatalf("CatalogAdd failed: %v", err)
+		}
+		componentDir := filepath.Join(roots[0], "sysupdate.catalog-fedora.d")
+		if _, err := os.Stat(filepath.Join(componentDir, "zoxide.transfer")); err != nil {
+			t.Fatalf("transfer file not written: %v", err)
+		}
+		noDebris(t, componentDir)
+	})
+
+	t.Run("enable failure rolls back", func(t *testing.T) {
+		roots := withComponentSearchRoots(t)
+		catalogRoot := withCatalogConfigRoots(t)
+		targetDir := t.TempDir()
+		// The conf is served but no SHA256SUMS: enable-with-download fails
+		// after both definitions were written.
+		var server *httptest.Server
+		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/zoxide/zoxide.conf" {
+				_, _ = fmt.Fprintf(w, "[Transfer]\nVerify=false\n\n[Source]\nType=url-file\nPath=%s/zoxide/\nMatchPattern=zoxide-@v.raw\n\n[Target]\nType=regular-file\nPath=%s\nMatchPattern=zoxide-@v.raw\n", server.URL, targetDir)
+				return
+			}
+			http.NotFound(w, r)
+		}))
+		defer server.Close()
+		writeCatalogRepo(t, catalogRoot, "fedora", server.URL, "")
+
+		client := NewClient(ClientConfig{SysextRunner: &sysext.MockRunner{}})
+		if _, err := client.CatalogAdd(t.Context(), "zoxide", CatalogAddOptions{}); err == nil {
+			t.Fatal("expected CatalogAdd to fail when the download fails")
+		}
+		componentDir := filepath.Join(roots[0], "sysupdate.catalog-fedora.d")
+		noDebris(t, componentDir)
+		noDebris(t, roots[0])
+	})
+}

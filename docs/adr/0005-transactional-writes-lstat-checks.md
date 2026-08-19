@@ -72,9 +72,14 @@ code that writes to managed definition paths.
 
 - Implements: [`updex/catalog.go`](../../updex/catalog.go)
   (`fileSnapshot`, `snapshotFile`, `restore`, `CatalogAdd` rollback
-  closure); [`updex/fsguard.go`](../../updex/fsguard.go)
-  (`managedFileExists`, `writeManagedFile` — the shared Lstat-only
-  file guard and temp-file-plus-rename write);
+  closure; `CatalogAdd` Lstat-checks the component directory before
+  `MkdirAll` — a symlink or file there is refused, not descended into —
+  and writes both definitions, and `restore` rewrites a captured
+  definition, through the shared temp-file-plus-rename write);
+  [`updex/fsguard.go`](../../updex/fsguard.go)
+  (`managedFileExists`, `writeManagedFile` / `writeManagedFileBytes` — the
+  shared Lstat-only file guard and temp-file-plus-rename write, the latter
+  taking bytes and an explicit mode);
   [`updex/features.go`](../../updex/features.go) (`writeFeatureDropIn` —
   the `<feature>.feature.d/` directory and the `00-updex.conf` drop-in
   are both Lstat-checked before `EnableFeature`/`DisableFeature` write, a

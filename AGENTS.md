@@ -404,17 +404,22 @@ Key design points:
   `^[a-zA-Z0-9_][a-zA-Z0-9._+-]*$`) in the SDK and in `FetchConf`, and
   `CachedList` re-validates `Repo.Name`, so traversal-shaped values never
   reach `filepath.Join` or URLs. Any failure after the `fileSnapshot`s
-  are taken — including the definition writes themselves, since
-  `os.WriteFile` truncates on open — goes through one `rollback()`
-  closure that restores exactly what was there before (fresh add → files
-  removed; re-add → previous `.transfer`/`.feature`/drop-in contents
-  rewritten). A snapshot distinguishes `existed` from `captured`, so a
+  are taken — the component-directory check, the definition writes, and
+  the enable step — goes through one `rollback()` closure that restores
+  exactly what was there before (fresh add → files removed; re-add →
+  previous `.transfer`/`.feature`/drop-in contents rewritten). The
+  definitions and the restore are written with `writeManagedFileBytes`
+  (`updex/fsguard.go`; temp file plus rename), so a failing write cannot
+  truncate a working definition and never follows a link planted after the
+  check. A snapshot distinguishes `existed` from `captured`, so a
   path that exists but cannot be read is never deleted by rollback, and
   `managedFileExists` surfaces non-not-exist stat errors instead of
   treating them as absence. Both it and `snapshotFile` use `os.Lstat` and
   reject anything that is not a regular file: `os.Stat` calls a dangling
-  symlink absent, which skipped the ownership guard and let `os.WriteFile`
-  create the link's target outside the component directory as root. `CatalogRemove` validates the `.transfer`'s ownership
+  symlink absent, which skipped the ownership guard and let a plain write
+  create the link's target outside the component directory as root; the
+  component directory is `os.Lstat`-checked before `MkdirAll` for the same
+  reason (a symlinked directory would be followed). `CatalogRemove` validates the `.transfer`'s ownership
   *before* calling `DisableFeature{Now}` and refuses outright on a
   mismatch, since that teardown deletes images described by whatever
   transfer claims the feature; it then deletes only updex's
