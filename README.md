@@ -52,7 +52,15 @@ installing it:
 
 ```bash
 sha256sum --ignore-missing --check checksums.txt
+gh attestation verify <downloaded-artifact> --repo frostyard/updex
 ```
+
+The checksum detects a corrupt or truncated download; the attestation
+(GitHub build provenance, attached by the release workflow) binds the artifact
+to a tag release built by `frostyard/updex`'s own workflow, so a file that
+merely matches a `checksums.txt` served from the same place isn't enough.
+`gh attestation verify` needs the [GitHub CLI](https://cli.github.com/) and
+works on `checksums.txt` too.
 
 Running the packaged CLI does not require Go or `make`. It requires a
 systemd-based Linux system with `systemd-sysext`; operations that modify system

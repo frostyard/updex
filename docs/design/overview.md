@@ -570,7 +570,11 @@ and the `.goreleaser.yaml` changelog groups. It is a plain status, not a
 required check: `main` has no branch protection or ruleset today.
 
 `.github/workflows/release.yml` publishes tagged GoReleaser Pro releases and
-packages, then dispatches `event-type: build` to `frostyard/snosi` so the
+packages, attests build provenance for `dist/checksums.txt` and every
+distributable asset (`actions/attest-build-provenance`, SHA-pinned; workflow
+permissions `id-token: write` and `attestations: write`; users verify with
+`gh attestation verify <artifact> --repo frostyard/updex`, see README
+"Installation"), then dispatches `event-type: build` to `frostyard/snosi` so the
 component release promptly fans out into an image rebuild
 ([frostyard/core ADR-0013](https://github.com/frostyard/core/blob/main/docs/adr/0013-release-fanout-via-repository-dispatch.md)).
 The tag-only trigger is the dispatch guard; the step must not check for a
