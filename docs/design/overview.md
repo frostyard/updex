@@ -554,7 +554,9 @@ Mutating commands enforce root before reading `--dry-run`, so examples that prev
 
 `make ci` is the canonical credential-free local gate. It mirrors the
 host-independent pull-request checks in fail-fast order: module tidiness, vet,
-formatting, golangci-lint, all non-E2E package tests, the same tests under the
+formatting, golangci-lint, all non-E2E package tests (with `-coverprofile`),
+the 80.0% total statement-coverage floor (`make test-coverage-check` (`scripts/test-coverage-check.sh`) then
+`make coverage-check` (`scripts/check-coverage.sh`)), the same tests under the
 race detector, then Linux amd64 and arm64 builds. The unit and race stages do
 not filter by test name, so every hermetic test runs; black-box tests under
 `tests/e2e/` remain in their dedicated workflow job.
@@ -570,7 +572,11 @@ and the `.goreleaser.yaml` changelog groups. It is a plain status, not a
 required check: `main` has no branch protection or ruleset today.
 
 `.github/workflows/release.yml` publishes tagged GoReleaser Pro releases and
-packages, then dispatches `event-type: build` to `frostyard/snosi` so the
+packages, attests build provenance for `dist/checksums.txt` and every
+distributable asset (`actions/attest-build-provenance`, SHA-pinned; workflow
+permissions `id-token: write` and `attestations: write`; users verify with
+`gh attestation verify <artifact> --repo frostyard/updex`, see README
+"Installation"), then dispatches `event-type: build` to `frostyard/snosi` so the
 component release promptly fans out into an image rebuild
 ([frostyard/core ADR-0013](https://github.com/frostyard/core/blob/main/docs/adr/0013-release-fanout-via-repository-dispatch.md)).
 The tag-only trigger is the dispatch guard; the step must not check for a
