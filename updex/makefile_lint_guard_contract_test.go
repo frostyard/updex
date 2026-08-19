@@ -32,6 +32,31 @@ func TestMakefileLintRecipeDoesNotSwallowFailures(t *testing.T) {
 	}
 }
 
+func TestMakefileCIRunsE2EAfterCoverageAndBeforeRace(t *testing.T) {
+	data, err := os.ReadFile("../Makefile")
+	if err != nil {
+		t.Fatalf("read Makefile: %v", err)
+	}
+	recipe := extractRecipe(t, string(data), "ci:")
+
+	stages := []string{
+		"$(MAKE) coverage-check",
+		"$(GO) test -v ./tests/e2e/...",
+		"$(GO) test -race",
+	}
+	previous := -1
+	for _, stage := range stages {
+		index := strings.Index(recipe, stage)
+		if index == -1 {
+			t.Fatalf("Makefile ci recipe must contain %q; got:\n%s", stage, recipe)
+		}
+		if index <= previous {
+			t.Fatalf("Makefile ci recipe stages are out of order at %q; got:\n%s", stage, recipe)
+		}
+		previous = index
+	}
+}
+
 // extractRecipe returns the lines of the recipe whose target line begins with
 // target (e.g. "lint:"), i.e. the target line plus the following tab-indented
 // command lines, stopping at the next non-indented, non-blank line.

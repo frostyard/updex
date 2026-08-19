@@ -16,7 +16,8 @@ go test -v ./cmd/updex ./tests/e2e/... # plus the CLI integration tests
 ```
 
 CI runs it in the `E2E Tests` job of
-[`.github/workflows/test.yml`](../../.github/workflows/test.yml); `make ci`
-deliberately excludes it (the credential-free gate runs non-E2E unit and
-race tests). This README is the discoverable e2e entry point named by
+[`.github/workflows/test.yml`](../../.github/workflows/test.yml); the canonical
+credential-free `make ci` gate also runs the same command after its coverage
+check and before its non-E2E race tests. This README is the discoverable e2e
+entry point named by
 [ADR-0012](../../docs/adr/0012-acmm-conformance-via-canonical-aliases.md).

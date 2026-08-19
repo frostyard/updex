@@ -752,7 +752,7 @@ make test
 # Quick format, lint, and test loop
 make check
 
-# Run the credential-free gate that mirrors CI
+# Run the credential-free gate that mirrors CI, including E2E
 make ci
 
 # Build binaries
@@ -773,6 +773,9 @@ way an operator would invoke it. The suite covers help, version and shell
 completion output; argument and exit-code handling for every command variant;
 configuration errors; and text/JSON feature listing and update checks.
 Successful operations are read-only so the tests run without root privileges.
+The canonical `make ci` gate runs this suite after its coverage check and
+before race detection; the dedicated `E2E Tests` workflow job runs it in
+parallel with the other pull-request jobs.
 Additional CLI integration tests in `cmd/updex/` use temporary search roots
 and a fake catalog server to cover default component discovery and
 `GITHUB_TOKEN` request authentication.

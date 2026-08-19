@@ -14,9 +14,8 @@ closes. -->
 
 - [ ] `make fmt` — code is formatted
 - [ ] `make ci` — tidy, vet, gofmt, lint (`.golangci.yml`), unit tests, the
-      80.0% coverage floor (`make test-coverage-check` then `make coverage-check`), race tests, linux
-      amd64/arm64 builds
-- [ ] CLI/e2e changes: `go test -v ./cmd/updex ./tests/e2e/...` green
+      80.0% coverage floor (`make test-coverage-check` then `make coverage-check`),
+      E2E tests, race tests, linux amd64/arm64 builds
 - [ ] New or changed behavior has focused tests, including failure paths
 
 ## Risk classification

@@ -76,8 +76,9 @@ Run a single test: `go test -v -run TestName ./updex/`
 Build workflow: make code changes → `make fmt` → `make build` → smoke-test
 with `./build/updex --help`. Use `make check` for the quick development loop.
 Run `make ci` before opening a pull request. It checks module tidiness, vet,
-formatting, lint, non-E2E unit and race tests, and Linux amd64/arm64 builds,
-and requires `golangci-lint`. The lint step first runs
+formatting, lint, non-E2E unit tests with coverage, the hermetic E2E suite,
+non-E2E race tests, and Linux amd64/arm64 builds, and requires
+`golangci-lint`. The lint step first runs
 `make lint-version-check`, which fails unless the installed `golangci-lint`
 matches `GOLANGCI_LINT_VERSION` in the `Makefile` (currently 2.12.2) — the
 CI Lint job reads the same variable to install that release, so the Makefile
@@ -92,7 +93,7 @@ the baseline to the observed `go tool cover -func=coverage.out` total in the
 same pull request.
 
 End-to-end tests live in `tests/e2e/` (entry point:
-[tests/e2e/README.md](tests/e2e/README.md)): black-box tests that build the real `updex` binary and run it as a subprocess against fake files and HTTP sources. Successful operations are read-only (no root required); mutating command variants are covered at the argument-validation boundary. CLI integration tests in `cmd/updex/` additionally override package search roots to exercise default component discovery and fake catalogs safely. Run both with `go test -v ./cmd/updex ./tests/e2e/...`.
+[tests/e2e/README.md](tests/e2e/README.md)): black-box tests that build the real `updex` binary and run it as a subprocess against fake files and HTTP sources. Successful operations are read-only (no root required); mutating command variants are covered at the argument-validation boundary. `make ci` runs this suite after the coverage gate and before the race tests. CLI integration tests in `cmd/updex/` additionally override package search roots to exercise default component discovery and fake catalogs safely. Run both with `go test -v ./cmd/updex ./tests/e2e/...`.
 
 ## Commits & Pull Requests
 

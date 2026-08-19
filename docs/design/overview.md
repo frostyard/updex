@@ -108,7 +108,7 @@ CLI (cmd/daemon.go) ─┘                version, sysext, systemd
   boundaries.
 - `internal/testutil.NewTestServer()` creates `httptest.Server` with configurable manifests and file content
 - `t.TempDir()` for filesystem operations, `t.Context()` for context
-- `tests/e2e/` builds and runs the real CLI subprocess for argument, exit-code, output, custom-config, and read-only HTTP checks in its dedicated PR job. `cmd/updex/integration_test.go` runs the full Cobra/clix command in-process so package search roots can point at temporary default component and catalog trees; these tests run in both the PR Unit Tests and Race Detection jobs. Keep mutating subprocess paths behind parser failures so CI does not require root.
+- `tests/e2e/` builds and runs the real CLI subprocess for argument, exit-code, output, custom-config, and read-only HTTP checks in the canonical local gate and its dedicated PR job. `cmd/updex/integration_test.go` runs the full Cobra/clix command in-process so package search roots can point at temporary default component and catalog trees; these tests run in both the PR Unit Tests and Race Detection jobs. Keep mutating subprocess paths behind parser failures so CI does not require root.
 - `sysext/link_test.go` pins the `/var/lib/extensions` link lifecycle through `LinkToSysextAt` (explicit dir, no global mutation): newest-by-version selection, replacing symlinks/dangling links/regular files, staging-dir symlinks ignored, `Target.Path` fallback, metadata rejection (component, patterns, `@v`), empty/missing/non-matching staging sets, a conflicting destination directory preserved on error, sysext-dir creation failure (parent is a regular file), and removal failure (read-only dir, skipped as root). Every failing case asserts no new symlink is left behind. It also pins that `DefaultRunner` implements `PathSysextRunner` and links into the explicit dir, not `SysextDir`.
 - CLI handler seams: `cmd/updex` exposes three package-level test seams so mutating handlers can run rootless in-process — `getEUID` (swap for `func() int { return 0 }` to pass `requireRoot`), `sysextRunner` (nil in production so `newClient` gets the SDK default; set to a `*sysext.MockRunner` to observe `Refresh`/`Unmerge`), and `systemdManager` (nil in production; set to a temporary `systemd.NewTestManager` for daemon wrappers). `cmd/updex/features_mutation_test.go` uses the first two with temporary `config.SearchRoots` (drop-ins land under `roots[0]`), a temporary `sysext.SysextDir`, and a fake HTTP source to cover `runFeaturesEnable`/`runFeaturesDisable` end-to-end: `--now`, `--force`, `--no-refresh`, `--component`, dry-run, and text/JSON result shapes, including a real JSON+silent download whose stdout must decode as exactly one result object. `cmd/updex/catalog_mutation_test.go` does the same for `runCatalogAdd`/`runCatalogRemove`, additionally pointing `catalog.ConfigRoots`, `catalog.CacheDir`, and `catalog.TargetPath` at temp dirs and serving `<name>/<name>.conf`, `SHA256SUMS`, and the image from one `httptest.Server` (configure two `.catalog` files against it to exercise `[REPO/]NAME` / `--repo` disambiguation); remove cases seed the post-add state through the SDK's `CatalogAdd`.
 
@@ -570,10 +570,11 @@ formatting, golangci-lint, all non-E2E package tests (with `-coverprofile`),
 the `max(80.0, baseline - 0.5)` total statement-coverage gate
 (`make test-coverage-check` (`scripts/test-coverage-check.sh`) then
 `make coverage-check` (`scripts/check-coverage.sh`), with the committed
-`.coverage-baseline`), the same tests under the
-race detector, then Linux amd64 and arm64 builds. The unit and race stages do
-not filter by test name, so every hermetic test runs; black-box tests under
-`tests/e2e/` remain in their dedicated workflow job.
+`.coverage-baseline`), the black-box `tests/e2e/` suite, the non-E2E tests
+under the race detector, then Linux amd64 and arm64 builds. The unit and race
+stages do not filter by test name. The dedicated E2E workflow job remains, and
+the local gate runs its same `go test -v ./tests/e2e/...` command after coverage
+and before race detection.
 
 `.github/workflows/pr-title.yml` (`amannn/action-semantic-pull-request`,
 SHA-pinned, `pull_request` `opened|edited|synchronize|reopened`, read-only

@@ -37,10 +37,9 @@ Apply the machine-readable controls in
    [risk tier](../../docs/risk-tiers.md) and that the tier's required
    evidence is present.
 3. Run the gates the rubric names:
-   - `make ci` (tidy, vet, gofmt, lint, unit + race tests, linux
+   - `make ci` (tidy, vet, gofmt, lint, unit + E2E + race tests, linux
      amd64/arm64 builds)
-   - `go test -v ./cmd/updex ./tests/e2e/...` when CLI or e2e behavior
-     changed
+   - `go test -v ./cmd/updex ./tests/e2e/...` for a focused CLI/E2E rerun
    - `node scripts/check-docs.mjs`
 4. If the diff changes SDK surface, configuration formats, or catalog
    behavior, verify [docs/specs/sdk-api.md](../../docs/specs/sdk-api.md),
