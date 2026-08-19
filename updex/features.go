@@ -462,7 +462,9 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 	var hasErrors bool
 
 	// Cache manifests by source URL to avoid redundant HTTP requests
-	// when multiple transfers share the same source.
+	// when multiple transfers share the same source. getAvailableVersions
+	// refetches (with verification) when a Verify=true transfer meets an
+	// unverified entry; the verified manifest then replaces it here.
 	manifestCache := make(map[string]*manifest.Manifest)
 
 	for _, f := range features {
@@ -572,7 +574,9 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 	allResults := make([]CheckFeaturesResult, 0)
 
 	// Cache manifests by source URL to avoid redundant HTTP requests
-	// when multiple transfers share the same source.
+	// when multiple transfers share the same source. getAvailableVersions
+	// refetches (with verification) when a Verify=true transfer meets an
+	// unverified entry; the verified manifest then replaces it here.
 	manifestCache := make(map[string]*manifest.Manifest)
 	var hasErrors bool
 
