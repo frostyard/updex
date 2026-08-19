@@ -69,7 +69,7 @@ repogen#37–#55).
    | Session summary | `.claude/session-summary.md` (current state / last landed / next) |
 
 5. **Wire the gate.** Copy core's
-   [`scripts/check-docs.mjs`](../../../scripts/check-docs.mjs) and adapt
+   [`scripts/check-docs.mjs`](https://github.com/frostyard/core/blob/main/scripts/check-docs.mjs) and adapt
    only: the `SKIP_DIRS` set (add the repo's build-output dirs) and the
    link-checked file list. It fails CI on any broken or repo-escaping
    symlink, unindexed doc, or dead relative link. Add a `docs-gate` job
