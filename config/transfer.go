@@ -206,7 +206,9 @@ func loadTransfersFromPaths(searchPaths, osReleasePaths []string) ([]*Transfer, 
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse %s: %w", filePath, err)
 		}
-		transfers = append(transfers, t)
+		if t != nil { // nil means masked
+			transfers = append(transfers, t)
+		}
 	}
 
 	// Sort by component name for consistent ordering
@@ -251,6 +253,13 @@ func FilterSysextTransfers(transfers []*Transfer) []*Transfer {
 }
 
 func parseTransferFile(filePath, component string, specCtx *specifierContext) (*Transfer, error) {
+	// A /dev/null symlink masks the transfer while still claiming its filename
+	// during the earlier priority-path collection.
+	linkTarget, err := os.Readlink(filePath)
+	if err == nil && linkTarget == "/dev/null" {
+		return nil, nil
+	}
+
 	cfg, err := ini.Load(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load INI file: %w", err)

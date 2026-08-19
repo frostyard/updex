@@ -75,6 +75,12 @@ Define how a single component (e.g., a kernel image, extension image) is downloa
 
 **Filename**: `<component>.transfer` (e.g., `kernel.transfer`)
 
+### Masked transfers
+
+A transfer is **masked** when its file is a symlink to `/dev/null`. The
+masked transfer is ignored, but its higher-priority filename still suppresses
+lower-priority definitions of the same name.
+
 ```ini
 [Transfer]
 MinVersion=1.0.0

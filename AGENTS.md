@@ -594,7 +594,8 @@ issue. Report it privately by emailing the maintainer at
 
 **docs-integrity gate** `node scripts/check-docs.mjs` (the `docs-gate` CI
 job) fails on any unindexed doc in the four categories, any dead relative
-link in `AGENTS.md`/`README.md`/`docs/` — Superseded ADRs included, per
+link in any real-blob Markdown file in the repository (alias symlinks and
+`TEMPLATE.md` excluded) — Superseded ADRs included, per
 [core ADR-0033](https://github.com/frostyard/core/blob/main/docs/adr/0033-link-maintenance-in-immutable-adrs.md),
 which permits link-only repairs to immutable ADRs — or any
 broken/repo-escaping symlink; thresholds in `.coverage-thresholds.json` are
