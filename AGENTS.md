@@ -123,7 +123,12 @@ tagged release and packages, it must dispatch `event-type: build` to
 `refs/tags/<tag>`, never `refs/heads/<default>`.
 `updex/release_workflow_contract_test.go` pins the tag-only trigger and
 unguarded snosi dispatch required by
-[frostyard/core ADR-0013](https://github.com/frostyard/core/blob/main/docs/adr/0013-release-fanout-via-repository-dispatch.md).
+[frostyard/core ADR-0013](https://github.com/frostyard/core/blob/main/docs/adr/0013-release-fanout-via-repository-dispatch.md),
+and (`TestReleaseWorkflowAttestsBuildProvenance`) that the workflow grants
+`id-token: write` + `attestations: write` and runs a SHA-pinned
+`actions/attest-build-provenance` over `checksums.txt` and the release assets,
+so every tag release carries GitHub build provenance
+(`gh attestation verify <artifact> --repo frostyard/updex`).
 `updex/snapshot_workflow_contract_test.go` pins the snapshot contract above —
 the `goreleaser-nightly` group with boolean `cancel-in-progress: true`, the
 `workflow_run` trigger on `Tests` for `main`, and the job's
