@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/frostyard/updex/catalog"
 	"github.com/frostyard/updex/config"
@@ -316,8 +318,26 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 		return result, err
 	}
 
-	// Transfers for this feature (needed for merge state check and file removal)
-	featureTransfers := config.GetTransfersForFeature(transfers, name)
+	// The transfers `--now` may remove: members of this feature that no
+	// remaining enabled feature still activates once it is disabled. A
+	// transfer another enabled feature also lists (Features=alpha beta) keeps
+	// its staged image and sysext link; the same set drives the merge-state
+	// check and RemovedFiles, so nothing still active is ever inspected or
+	// deleted for this disable.
+	featureTransfers := config.TransfersReleasedByDisabling(transfers, features, name)
+	var retainedTransfers []string
+	for _, t := range transfers {
+		if !slices.Contains(t.Transfer.Features, name) && !slices.Contains(t.Transfer.RequisiteFeatures, name) {
+			continue
+		}
+		if !slices.ContainsFunc(featureTransfers, func(released *config.Transfer) bool { return released == t }) {
+			retainedTransfers = append(retainedTransfers, t.Component)
+		}
+	}
+	retainedNote := ""
+	if len(retainedTransfers) > 0 {
+		retainedNote = fmt.Sprintf(" Kept %s: still activated by another enabled feature.", strings.Join(retainedTransfers, ", "))
+	}
 
 	willRemoveFiles := opts.Now
 
@@ -438,9 +458,9 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 			result.NextActionMessage += " and remove extension files"
 		}
 	} else if willRemoveFiles && opts.Force {
-		result.NextActionMessage = fmt.Sprintf("Feature '%s' disabled and files removed. Reboot required for changes to take effect.", name)
+		result.NextActionMessage = fmt.Sprintf("Feature '%s' disabled and files removed. Reboot required for changes to take effect.%s", name, retainedNote)
 	} else if willRemoveFiles {
-		result.NextActionMessage = fmt.Sprintf("Feature '%s' disabled and %d extension file(s) removed.", name, len(result.RemovedFiles))
+		result.NextActionMessage = fmt.Sprintf("Feature '%s' disabled and %d extension file(s) removed.%s", name, len(result.RemovedFiles), retainedNote)
 	} else {
 		result.NextActionMessage = fmt.Sprintf("Feature '%s' disabled. Run 'updex features update' to apply changes.", name)
 	}

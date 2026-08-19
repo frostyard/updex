@@ -593,6 +593,34 @@ func FilterTransfersByFeatures(transfers []*Transfer, features []*Feature) []*Tr
 	return filtered
 }
 
+// TransfersReleasedByDisabling returns the transfers that featureName is a
+// member of (through Features or RequisiteFeatures) and that no remaining
+// enabled feature would still activate once featureName is disabled — the
+// set a `features disable --now` may remove. It evaluates the same OR/AND
+// activation predicate FilterTransfersByFeatures uses against the
+// post-disable feature state, so a transfer another enabled feature still
+// lists (Features=alpha beta, beta enabled) is not released by disabling
+// alpha, while a transfer whose only activator was featureName is.
+func TransfersReleasedByDisabling(transfers []*Transfer, features []*Feature, featureName string) []*Transfer {
+	after := make([]*Feature, 0, len(features))
+	for _, f := range features {
+		if f.Name == featureName {
+			disabled := *f
+			disabled.Enabled = false
+			after = append(after, &disabled)
+			continue
+		}
+		after = append(after, f)
+	}
+	var released []*Transfer
+	for _, t := range GetTransfersForFeature(transfers, featureName) {
+		if !isTransferEnabledByFeatures(t, after) {
+			released = append(released, t)
+		}
+	}
+	return released
+}
+
 // isTransferEnabledByFeatures checks if a transfer should be active based on features
 func isTransferEnabledByFeatures(t *Transfer, features []*Feature) bool {
 	// Standalone transfers (no feature requirements) are always enabled

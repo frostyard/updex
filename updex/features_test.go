@@ -2306,3 +2306,98 @@ func TestCheckFeatures_SharedSource_FetchesManifestOnce(t *testing.T) {
 		t.Fatalf("SHA256SUMS requested %d time(s) for two transfers sharing one source, want exactly 1", got)
 	}
 }
+
+// sharedTransferFixture stages one image for a transfer two features share
+// (`Features=alpha beta`, both enabled), links it under an instance sysext
+// link dir, and returns a client whose definition roots, link dir, and merged
+// state dir all live under temp directories.
+func sharedTransferFixture(t *testing.T) (client *Client, extPath, linkPath string) {
+	t.Helper()
+	root := t.TempDir()
+	defDir := filepath.Join(root, "sysupdate.d")
+	if err := os.MkdirAll(defDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	targetDir := t.TempDir()
+	linkDir := t.TempDir()
+	createFeatureFile(t, defDir, "alpha", true)
+	createFeatureFile(t, defDir, "beta", true)
+	transfer := "[Transfer]\nFeatures=alpha beta\nVerify=false\n\n[Source]\nType=url-file\nPath=http://localhost\nMatchPattern=shared_@v.raw\n\n[Target]\nPath=" + targetDir + "\nMatchPattern=shared_@v.raw\n"
+	if err := os.WriteFile(filepath.Join(defDir, "shared.transfer"), []byte(transfer), 0644); err != nil {
+		t.Fatal(err)
+	}
+	extPath = filepath.Join(targetDir, "shared_1.0.0.raw")
+	if err := os.WriteFile(extPath, []byte("shared extension content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	linkPath = filepath.Join(linkDir, "shared.raw")
+	if err := os.Symlink(extPath, linkPath); err != nil {
+		t.Fatal(err)
+	}
+	client = NewClient(ClientConfig{
+		Paths:        RuntimePaths{DefinitionRoots: []string{root}, SysextLinkDir: linkDir, RunExtensionsDir: t.TempDir()},
+		SysextRunner: &sysext.MockRunner{},
+	})
+	return client, extPath, linkPath
+}
+
+// TestDisableFeature_Now_KeepsTransferStillActivatedByAnotherEnabledFeature:
+// disabling alpha must not remove an image and link that beta, still enabled,
+// activates through the same transfer.
+func TestDisableFeature_Now_KeepsTransferStillActivatedByAnotherEnabledFeature(t *testing.T) {
+	client, extPath, linkPath := sharedTransferFixture(t)
+
+	result, err := client.DisableFeature(t.Context(), "alpha", DisableFeatureOptions{Now: true, NoRefresh: true})
+	if err != nil {
+		t.Fatalf("DisableFeature failed: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("expected Success=true, got error %q", result.Error)
+	}
+	if _, err := os.Stat(extPath); err != nil {
+		t.Errorf("shared image removed although beta still activates it: %v", err)
+	}
+	if _, err := os.Lstat(linkPath); err != nil {
+		t.Errorf("shared sysext link removed although beta still activates it: %v", err)
+	}
+	if len(result.RemovedFiles) != 0 {
+		t.Errorf("RemovedFiles = %v, want none", result.RemovedFiles)
+	}
+	if !strings.Contains(result.NextActionMessage, "Kept shared") {
+		t.Errorf("NextActionMessage = %q, want it to say the shared transfer was kept", result.NextActionMessage)
+	}
+}
+
+// TestDisableFeature_Now_RemovesTransferWhenLastActivatorDisabled: once beta
+// is disabled too, the transfer has no activator left and its image and link
+// go — so the shared-transfer test above cannot pass by never removing.
+func TestDisableFeature_Now_RemovesTransferWhenLastActivatorDisabled(t *testing.T) {
+	client, extPath, linkPath := sharedTransferFixture(t)
+
+	if _, err := client.DisableFeature(t.Context(), "alpha", DisableFeatureOptions{Now: true, NoRefresh: true}); err != nil {
+		t.Fatalf("disable alpha: %v", err)
+	}
+	if _, err := os.Stat(extPath); err != nil {
+		t.Fatalf("image must survive the first disable: %v", err)
+	}
+
+	result, err := client.DisableFeature(t.Context(), "beta", DisableFeatureOptions{Now: true, NoRefresh: true})
+	if err != nil {
+		t.Fatalf("disable beta: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("expected Success=true, got error %q", result.Error)
+	}
+	if _, err := os.Stat(extPath); !os.IsNotExist(err) {
+		t.Errorf("image still present after the last activator was disabled (stat err %v)", err)
+	}
+	if _, err := os.Lstat(linkPath); !os.IsNotExist(err) {
+		t.Errorf("sysext link still present after the last activator was disabled (lstat err %v)", err)
+	}
+	if len(result.RemovedFiles) == 0 {
+		t.Error("RemovedFiles is empty, want the removed image")
+	}
+	if strings.Contains(result.NextActionMessage, "Kept") {
+		t.Errorf("NextActionMessage = %q, want no retained-transfer note", result.NextActionMessage)
+	}
+}
