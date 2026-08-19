@@ -3,13 +3,12 @@
 #
 # Usage: scripts/test-coverage-check.sh
 #
-# Builds two synthetic Go coverage profiles in a temporary directory -- one
-# whose total statement coverage is above the 80.0% floor and one below it --
-# and asserts that check-coverage.sh exits 0 for the first and 1 for the
-# second. Exits 0 when both assertions hold.
+# Builds synthetic Go coverage profiles and exercises both the absolute floor
+# and the repository-local .coverage-baseline ratchet. Exits 0 when every
+# exact-status assertion holds.
 set -eu
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(CDPATH= cd "$(dirname "$0")" && pwd)"
 CHECK="$SCRIPT_DIR/check-coverage.sh"
 
 TMP="$(mktemp -d)"
@@ -52,35 +51,98 @@ EOF_PROFILE
 
 failures=0
 
-echo "--- expect exit 0: coverage above floor"
-if "$CHECK" "$TMP/above.out" 80.0; then
-    echo "PASS: above-floor profile accepted"
-else
-    echo "FAIL: above-floor profile rejected (exit $?)"
-    failures=$((failures + 1))
-fi
+assert_status() {
+    expected="$1"
+    description="$2"
+    shift 2
 
-echo "--- expect exit 1: coverage below floor"
-if "$CHECK" "$TMP/below.out" 80.0; then
-    echo "FAIL: below-floor profile accepted"
-    failures=$((failures + 1))
-else
+    echo "--- expect exit $expected: $description"
+    set +e
+    "$@"
     status=$?
-    if [ "$status" -eq 1 ]; then
-        echo "PASS: below-floor profile rejected with exit 1"
+    set -e
+    if [ "$status" -eq "$expected" ]; then
+        echo "PASS: $description (exit $status)"
     else
-        echo "FAIL: below-floor profile rejected with unexpected exit $status"
+        echo "FAIL: $description (exit $status, want $expected)"
         failures=$((failures + 1))
     fi
-fi
+}
 
-echo "--- expect exit 0: COVERAGE_MIN env override lowers the floor"
-if COVERAGE_MIN=40 "$CHECK" "$TMP/below.out"; then
-    echo "PASS: COVERAGE_MIN override honoured"
-else
-    echo "FAIL: COVERAGE_MIN override ignored (exit $?)"
-    failures=$((failures + 1))
-fi
+# Copy the checker into isolated repository-shaped roots so each case controls
+# whether a baseline exists without touching the real repository baseline.
+make_check_root() {
+    root="$1"
+    mkdir -p "$root/scripts"
+    cp "$CHECK" "$root/scripts/check-coverage.sh"
+}
+
+NO_BASELINE_ROOT="$TMP/no-baseline"
+make_check_root "$NO_BASELINE_ROOT"
+assert_status 0 "no baseline keeps the legacy absolute-floor success" \
+    "$NO_BASELINE_ROOT/scripts/check-coverage.sh" "$TMP/above.out" 80.0
+assert_status 1 "no baseline keeps the legacy absolute-floor failure" \
+    "$NO_BASELINE_ROOT/scripts/check-coverage.sh" "$TMP/below.out" 80.0
+assert_status 0 "COVERAGE_MIN override works without a baseline" \
+    env COVERAGE_MIN=40 "$NO_BASELINE_ROOT/scripts/check-coverage.sh" "$TMP/below.out"
+
+ABOVE_ROOT="$TMP/above-baseline"
+make_check_root "$ABOVE_ROOT"
+printf '%s\n' 85.0 > "$ABOVE_ROOT/.coverage-baseline"
+assert_status 0 "coverage above the baseline is accepted" \
+    "$ABOVE_ROOT/scripts/check-coverage.sh" "$TMP/above.out" 80.0
+
+WITHIN_ROOT="$TMP/within-tolerance"
+make_check_root "$WITHIN_ROOT"
+printf '%s\n' 90.5 > "$WITHIN_ROOT/.coverage-baseline"
+assert_status 0 "coverage within 0.5 points below the baseline is accepted" \
+    "$WITHIN_ROOT/scripts/check-coverage.sh" "$TMP/above.out" 80.0
+
+RATCHET_ROOT="$TMP/ratchet-failure"
+make_check_root "$RATCHET_ROOT"
+printf '%s\n' 91.0 > "$RATCHET_ROOT/.coverage-baseline"
+assert_status 1 "90.0% is above 80.0% but more than 0.5 points below the baseline" \
+    "$RATCHET_ROOT/scripts/check-coverage.sh" "$TMP/above.out" 80.0
+assert_status 0 "COVERAGE_TOLERANCE overrides the default tolerance" \
+    env COVERAGE_TOLERANCE=1.0 "$RATCHET_ROOT/scripts/check-coverage.sh" "$TMP/above.out" 80.0
+
+LOW_BASELINE_ROOT="$TMP/low-baseline"
+make_check_root "$LOW_BASELINE_ROOT"
+printf '%s\n' 40.0 > "$LOW_BASELINE_ROOT/.coverage-baseline"
+assert_status 1 "the 80.0% absolute floor wins over a low baseline" \
+    "$LOW_BASELINE_ROOT/scripts/check-coverage.sh" "$TMP/below.out" 80.0
+
+INVALID_ROOT="$TMP/invalid-baseline"
+make_check_root "$INVALID_ROOT"
+printf '%s\n' invalid > "$INVALID_ROOT/.coverage-baseline"
+assert_status 2 "an unparsable baseline is a usage error" \
+    "$INVALID_ROOT/scripts/check-coverage.sh" "$TMP/above.out" 80.0
+
+MULTILINE_ROOT="$TMP/multiline-baseline"
+make_check_root "$MULTILINE_ROOT"
+printf '%s\n' 90.0 91.0 > "$MULTILINE_ROOT/.coverage-baseline"
+assert_status 2 "a multi-line baseline is a usage error" \
+    "$MULTILINE_ROOT/scripts/check-coverage.sh" "$TMP/above.out" 80.0
+
+DIRECTORY_ROOT="$TMP/directory-baseline"
+make_check_root "$DIRECTORY_ROOT"
+mkdir "$DIRECTORY_ROOT/.coverage-baseline"
+assert_status 2 "a directory baseline is a usage error" \
+    "$DIRECTORY_ROOT/scripts/check-coverage.sh" "$TMP/above.out" 80.0
+
+UNREADABLE_ROOT="$TMP/unreadable-baseline"
+make_check_root "$UNREADABLE_ROOT"
+printf '%s\n' 90.0 > "$UNREADABLE_ROOT/.coverage-baseline"
+chmod 000 "$UNREADABLE_ROOT/.coverage-baseline"
+assert_status 2 "an unreadable baseline is a usage error" \
+    "$UNREADABLE_ROOT/scripts/check-coverage.sh" "$TMP/above.out" 80.0
+
+SYMLINK_ROOT="$TMP/symlink-baseline"
+make_check_root "$SYMLINK_ROOT"
+printf '%s\n' 90.0 > "$SYMLINK_ROOT/baseline-target"
+ln -s baseline-target "$SYMLINK_ROOT/.coverage-baseline"
+assert_status 2 "a symlink baseline is a usage error" \
+    "$SYMLINK_ROOT/scripts/check-coverage.sh" "$TMP/above.out" 80.0
 
 if [ "$failures" -ne 0 ]; then
     echo "test-coverage-check: $failures assertion(s) failed" >&2
