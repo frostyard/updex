@@ -556,8 +556,10 @@ Mutating commands enforce root before reading `--dry-run`, so examples that prev
 `make ci` is the canonical credential-free local gate. It mirrors the
 host-independent pull-request checks in fail-fast order: module tidiness, vet,
 formatting, golangci-lint, all non-E2E package tests (with `-coverprofile`),
-the 80.0% total statement-coverage floor (`make test-coverage-check` (`scripts/test-coverage-check.sh`) then
-`make coverage-check` (`scripts/check-coverage.sh`)), the same tests under the
+the `max(80.0, baseline - 0.5)` total statement-coverage gate
+(`make test-coverage-check` (`scripts/test-coverage-check.sh`) then
+`make coverage-check` (`scripts/check-coverage.sh`), with the committed
+`.coverage-baseline`), the same tests under the
 race detector, then Linux amd64 and arm64 builds. The unit and race stages do
 not filter by test name, so every hermetic test runs; black-box tests under
 `tests/e2e/` remain in their dedicated workflow job.

@@ -8,7 +8,7 @@ Contracts: [specs/pr-review-rubric.md](../specs/pr-review-rubric.md),
 is also the quality dashboard (formerly `docs/AI-QUALITY-ASSURANCE.md`).
 
 [![Tests](https://github.com/frostyard/updex/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/frostyard/updex/actions/workflows/test.yml?query=branch%3Amain)
-[![codecov](https://codecov.io/gh/frostyard/updex/graph/badge.svg?branch=main)](https://codecov.io/gh/frostyard/updex) (best-effort, pending onboarding on codecov.io — the enforced coverage gate is the 80.0% floor below)
+[![codecov](https://codecov.io/gh/frostyard/updex/graph/badge.svg?branch=main)](https://codecov.io/gh/frostyard/updex) (best-effort, pending onboarding on codecov.io — the enforced coverage gate is the in-repo floor and ratchet below)
 
 ## Overview
 
@@ -49,10 +49,13 @@ PR template ──► review rubric ──► CI gates ──► corrections ─
     and `make ci` asserts via `make lint-version-check`, configured by
     `.golangci.yml`), *Security Scan* (pinned
     `govulncheck`), *Unit Tests* with coverage — the job (and `make ci`)
-    enforces the 80.0% total statement-coverage floor over the non-E2E
-    packages via [scripts/check-coverage.sh](../../scripts/check-coverage.sh)
-    (`make coverage-check`, self-tested first by `make test-coverage-check`
-    against fixture profiles); a regression below the floor fails the gate —
+    enforces `max(80.0, baseline - 0.5)` total statement coverage over the
+    non-E2E packages via
+    [scripts/check-coverage.sh](../../scripts/check-coverage.sh), using the
+    committed [`.coverage-baseline`](../../.coverage-baseline) and a default
+    0.5-percentage-point tolerance (`make coverage-check`, self-tested first
+    by `make test-coverage-check` against fixture profiles); a regression
+    below the effective floor fails the gate —
     *E2E Tests* ([tests/e2e/README.md](../../tests/e2e/README.md)), *Race
     Detection*, *Verify* (tidy, `go vet`, gofmt), and *Build* for linux
     amd64/arm64 — `make ci` reproduces the credential-free subset locally in
@@ -68,8 +71,8 @@ PR template ──► review rubric ──► CI gates ──► corrections ─
     attached to pull requests. `codecov.yml` records the *intended* statuses
     — project coverage no more than 1% below the base commit, patch coverage
     at least 70% of changed lines — which take effect only once the
-    repository is onboarded; until then the in-repo 80.0% floor above is the
-    only enforced coverage signal.
+    repository is onboarded; until then the in-repo absolute floor and
+    baseline ratchet above are the only enforced coverage signal.
   - `Nightly compliance` (`.github/workflows/nightly-compliance.yml`, 03:27
     UTC and on dispatch) re-verifies downloaded module content, requires a
     clean `go mod tidy`, queries the current Go vulnerability database with
@@ -136,9 +139,12 @@ go test -v ./cmd/updex ./tests/e2e/...   # for CLI / e2e changes
 Failure modes: a broken alias or missing index line fails docs-gate (fix the
 canonical target or the index, never the alias); a lint finding after
 pinning `.golangci.yml` means the gate was already red — fix the finding,
-never loosen the config; a coverage-floor failure (`check-coverage: FAIL: total coverage X% is below the required floor of 80.0%`) means the change
-lowered total statement coverage below the floor — add tests, never lower
-`COVERAGE_MIN` in `scripts/check-coverage.sh`.
+never loosen the config; a coverage failure means the change crossed either
+the absolute 80.0% minimum or the baseline tolerance bound — add tests, never
+lower `COVERAGE_MIN` or widen `COVERAGE_TOLERANCE`. When a PR legitimately
+raises coverage, regenerate `coverage.out` with the non-E2E atomic test
+command used by `make ci`, read `go tool cover -func=coverage.out`, and bump
+`.coverage-baseline` to that observed total in the same PR.
 
 ## References
 

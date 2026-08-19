@@ -64,7 +64,7 @@ make lint         # Run golangci-lint (.golangci.yml; skipped with a message if 
 make check        # fmt + lint + test
 make ci           # Credential-free gate matching CI's fail-fast order
 make test-cover   # Tests with HTML coverage report
-make coverage-check        # Enforce the 80.0% total statement-coverage floor on coverage.out
+make coverage-check        # Enforce the absolute floor and committed coverage ratchet
 make test-coverage-check   # Self-test scripts/check-coverage.sh with fixture profiles
 make tidy         # go mod tidy
 make clean        # Remove build artifacts
@@ -84,9 +84,12 @@ CI Lint job reads the same variable to install that release, so the Makefile
 is the single place to bump it and local and CI lint results cannot drift
 (`make lint` only warns on a mismatch). The unit-test step writes `coverage.out`, and
 `make ci` (and the Unit Tests CI job) then enforces a total statement-coverage
-floor of 80.0% over the non-E2E packages via `make coverage-check`
-(`scripts/check-coverage.sh`); a coverage regression below the floor fails the
-gate.
+gate of `max(80.0, baseline - 0.5)` over the non-E2E packages via
+`make coverage-check` (`scripts/check-coverage.sh` and the committed
+`.coverage-baseline`); a coverage regression below the effective floor fails
+the gate. When coverage rises, regenerate the non-E2E atomic profile and bump
+the baseline to the observed `go tool cover -func=coverage.out` total in the
+same pull request.
 
 End-to-end tests live in `tests/e2e/` (entry point:
 [tests/e2e/README.md](tests/e2e/README.md)): black-box tests that build the real `updex` binary and run it as a subprocess against fake files and HTTP sources. Successful operations are read-only (no root required); mutating command variants are covered at the argument-validation boundary. CLI integration tests in `cmd/updex/` additionally override package search roots to exercise default component discovery and fake catalogs safely. Run both with `go test -v ./cmd/updex ./tests/e2e/...`.
@@ -649,8 +652,10 @@ lint (golangci-lint), security scan (`govulncheck`), unit tests with coverage,
 end-to-end tests, race-detector tests, verification (`go mod tidy`
 cleanliness, `go vet`, `gofmt`), docs integrity (`scripts/check-docs.mjs`),
 and cross-compiled builds for linux/amd64 and linux/arm64. The unit test job
-enforces the 80.0% total statement-coverage floor (`make coverage-check`,
-`scripts/check-coverage.sh`); that floor is the enforced coverage gate. It
+enforces `max(80.0, baseline - 0.5)` total statement coverage
+(`make coverage-check`, `scripts/check-coverage.sh`, and
+`.coverage-baseline`); that absolute floor plus ratchet is the enforced
+coverage gate. It
 also uploads `coverage.out` to Codecov on a best-effort basis
 (`continue-on-error`) — the upload currently fails because the repository is
 not onboarded on codecov.io, so the project (−1% max) and patch (70%)
