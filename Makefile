@@ -100,6 +100,8 @@ ci:
 	@echo "==> coverage floor"
 	$(MAKE) test-coverage-check
 	$(MAKE) coverage-check
+	@echo "==> end-to-end tests"
+	$(GO) test -v ./tests/e2e/...
 	@echo "==> race detector"
 	$(GO) test -race -short -v $$($(GO) list ./... | grep -v '/tests/e2e$$')
 	@echo "==> cross-architecture build"
