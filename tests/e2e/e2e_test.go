@@ -184,6 +184,26 @@ func TestE2E_HelpAndCompletion(t *testing.T) {
 		}
 	}
 
+	// fang's help renderer strips every bracketed group out of a cobra Use
+	// string and re-appends it after the remaining words, so a Use like
+	// "add [REPO/]NAME" printed the never-accepted "add NAME [REPO/]". The
+	// usage line must read as the command is invoked; the REPO/NAME form is
+	// documented in the Long text and examples instead.
+	for _, sub := range []string{"add", "remove"} {
+		t.Run("catalog_"+sub+"_usage", func(t *testing.T) {
+			result := runUpdexCommand(t, "catalog", sub, "--help")
+			if result.err != nil {
+				t.Fatalf("catalog %s --help failed: %v\n%s", sub, result.err, result.stderr)
+			}
+			if strings.Contains(result.stdout, "[REPO/]") {
+				t.Errorf("catalog %s --help prints a usage form the command does not accept:\n%s", sub, result.stdout)
+			}
+			if !strings.Contains(result.stdout, "catalog "+sub+" NAME") {
+				t.Errorf("catalog %s --help usage line does not read %q:\n%s", sub, "catalog "+sub+" NAME", result.stdout)
+			}
+		})
+	}
+
 	version := runUpdexCommand(t, "--version")
 	if version.err != nil {
 		t.Fatalf("updex --version failed: %v\n%s", version.err, version.stderr)

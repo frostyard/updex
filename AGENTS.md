@@ -129,6 +129,13 @@ and (`TestReleaseWorkflowAttestsBuildProvenance`) that the workflow grants
 `actions/attest-build-provenance` over `checksums.txt` and the release assets,
 so every tag release carries GitHub build provenance
 (`gh attestation verify <artifact> --repo frostyard/updex`).
+`updex/workflow_pins_contract_test.go` pins the core ADR-0021 shape of every
+workflow under `.github/workflows/`: each external `uses:` is a full
+40-character commit SHA with a `# <version>` comment, the same SHA carries
+the same label in every file, each workflow declares top-level
+`permissions:`, and each `actions/checkout` step sets
+`persist-credentials: false` (no job pushes; release and snapshot publish
+through the API).
 `updex/snapshot_workflow_contract_test.go` pins the snapshot contract above —
 the `goreleaser-nightly` group with boolean `cancel-in-progress: true`, the
 `workflow_run` trigger on `Tests` for `main`, and the job's
