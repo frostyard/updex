@@ -1,4 +1,4 @@
-.PHONY: all build clean fmt lint lint-version-check test test-cover coverage-check test-coverage-check tidy check ci install help
+.PHONY: all build clean fmt lint lint-version-check test test-cover coverage-check test-coverage-check docs-check tidy check ci install help
 
 # Build variables
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -105,7 +105,17 @@ ci:
 	@echo "==> cross-architecture build"
 	GOOS=linux GOARCH=amd64 $(MAKE) build
 	GOOS=linux GOARCH=arm64 $(MAKE) build
+	@echo "==> docs integrity"
+	$(MAKE) docs-check
 	@echo "==> CI gate passed"
+
+## docs-check: Run the docs-integrity gate (index, links, aliases) — the CI "Docs integrity" job
+docs-check:
+	@command -v node >/dev/null 2>&1 || { \
+	  echo "docs-check: 'node' is not on PATH; the docs-integrity gate needs Node >= 20 (see AGENTS.md Prerequisites)" >&2; \
+	  exit 1; \
+	}
+	node scripts/check-docs.mjs
 
 ## help: Show this help message
 help:

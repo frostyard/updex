@@ -68,7 +68,7 @@ make coverage-check        # Enforce the 80.0% total statement-coverage floor on
 make test-coverage-check   # Self-test scripts/check-coverage.sh with fixture profiles
 make tidy         # go mod tidy
 make clean        # Remove build artifacts
-node scripts/check-docs.mjs   # Docs-integrity gate (index, links, aliases)
+make docs-check   # Docs-integrity gate (index, links, aliases) — node scripts/check-docs.mjs; runs inside make ci
 ```
 
 Run a single test: `go test -v -run TestName ./updex/`
@@ -76,8 +76,9 @@ Run a single test: `go test -v -run TestName ./updex/`
 Build workflow: make code changes → `make fmt` → `make build` → smoke-test
 with `./build/updex --help`. Use `make check` for the quick development loop.
 Run `make ci` before opening a pull request. It checks module tidiness, vet,
-formatting, lint, non-E2E unit and race tests, and Linux amd64/arm64 builds,
-and requires `golangci-lint`. The lint step first runs
+formatting, lint, non-E2E unit and race tests, Linux amd64/arm64 builds, and
+docs integrity (`make docs-check`; fails loudly when `node` is missing rather
+than skipping), and requires `golangci-lint`. The lint step first runs
 `make lint-version-check`, which fails unless the installed `golangci-lint`
 matches `GOLANGCI_LINT_VERSION` in the `Makefile` (currently 2.12.2) — the
 CI Lint job reads the same variable to install that release, so the Makefile
@@ -598,8 +599,8 @@ their canonical targets, never the aliases. `docs/review-rubric.md`,
 2. Keep changes focused; unrelated fixes belong in a separate PR.
 3. Use Conventional Commits for commit messages **and the pull request
    title** (see [Commits & Pull Requests](#commits--pull-requests)).
-4. Run `make fmt`, `make ci`, and `node scripts/check-docs.mjs` and make
-   sure they pass.
+4. Run `make fmt` and `make ci` (which includes the docs-integrity gate,
+   `make docs-check`) and make sure they pass.
 5. Update the documentation and add tests for your change.
 6. Classify the change using the [risk tier guide](docs/risk-tiers.md) and
    include the tier rationale in the pull request

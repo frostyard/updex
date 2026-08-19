@@ -14,7 +14,7 @@ closes. -->
 
 - [ ] `make fmt` — code is formatted
 - [ ] `make ci` — tidy, vet, gofmt, lint (`.golangci.yml`), unit + race
-      tests, linux amd64/arm64 builds
+      tests, linux amd64/arm64 builds, docs integrity (`make docs-check`)
 - [ ] CLI/e2e changes: `go test -v ./cmd/updex ./tests/e2e/...` green
 - [ ] New or changed behavior has focused tests, including failure paths
 

@@ -555,7 +555,13 @@ Mutating commands enforce root before reading `--dry-run`, so examples that prev
 `make ci` is the canonical credential-free local gate. It mirrors the
 host-independent pull-request checks in fail-fast order: module tidiness, vet,
 formatting, golangci-lint, all non-E2E package tests, the same tests under the
-race detector, then Linux amd64 and arm64 builds. The unit and race stages do
+race detector, Linux amd64 and arm64 builds, then the docs-integrity gate
+(`make docs-check` → `node scripts/check-docs.mjs`, the required `Docs
+integrity` job; a missing `node` fails the stage with a message naming the
+Node ≥ 20 prerequisite, never a silent skip — core ADR-0038 requires the
+gate to predict pull-request CI). The docs stage runs last so the fast Go
+stages still fail first, matching the job order in
+`.github/workflows/test.yml`. The unit and race stages do
 not filter by test name, so every hermetic test runs; black-box tests under
 `tests/e2e/` remain in their dedicated workflow job.
 
