@@ -4,26 +4,9 @@ import (
 	"fmt"
 
 	"github.com/frostyard/clix"
-	"github.com/frostyard/updex/systemd"
+	"github.com/frostyard/updex/updex"
 	"github.com/spf13/cobra"
 )
-
-const unitName = "updex-update"
-
-// newDaemonManager and newSystemctlRunner are injectable constructors so the
-// daemon command tests can substitute an in-memory manager and a mock
-// systemctl runner instead of touching real unit files or invoking systemctl.
-var (
-	newDaemonManager   = func() *systemd.Manager { return systemd.NewManager() }
-	newSystemctlRunner = func() systemd.SystemctlRunner { return &systemd.DefaultSystemctlRunner{} }
-)
-
-type daemonStatus struct {
-	Installed bool   `json:"installed"`
-	Enabled   bool   `json:"enabled"`
-	Active    bool   `json:"active"`
-	Schedule  string `json:"schedule,omitempty"`
-}
 
 func newDaemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -86,47 +69,13 @@ func runDaemonEnable(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	mgr := newDaemonManager()
-
-	if mgr.Exists(unitName) {
-		return fmt.Errorf("timer already installed; run 'updex daemon disable' first to reinstall")
-	}
-
-	timer := &systemd.TimerConfig{
-		Name:           unitName,
-		Description:    "Automatic sysext updates",
-		OnCalendar:     "daily",
-		Persistent:     true,
-		RandomDelaySec: 3600,
-	}
-	service := &systemd.ServiceConfig{
-		Name:        unitName,
-		Description: "Automatic sysext update service",
-		ExecStart:   "/usr/bin/updex features update --no-refresh",
-		Type:        "oneshot",
-		// Sandbox the root oneshot: read-only /usr and /etc, no new
-		// privileges, restricted syscalls/address families. See
-		// systemd.SandboxDirectives.
-		Sandbox: true,
-	}
-
-	if err := mgr.Install(timer, service); err != nil {
-		return fmt.Errorf("failed to install timer: %w", err)
-	}
-
-	runner := newSystemctlRunner()
-	if err := runner.Enable(unitName + ".timer"); err != nil {
-		return fmt.Errorf("failed to enable timer: %w", err)
-	}
-	if err := runner.Start(unitName + ".timer"); err != nil {
-		return fmt.Errorf("failed to start timer: %w", err)
+	result, err := newClient().EnableDaemon(cmd.Context(), updex.EnableDaemonOptions{})
+	if err != nil {
+		return err
 	}
 
 	if clix.JSONOutput {
-		_, err := clix.OutputJSON(map[string]any{
-			"success": true,
-			"message": "Auto-update daemon enabled",
-		})
+		_, err := clix.OutputJSON(result)
 		return err
 	}
 
@@ -163,21 +112,13 @@ func runDaemonDisable(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	mgr := newDaemonManager()
-
-	if !mgr.Exists(unitName) {
-		return fmt.Errorf("timer not installed; nothing to disable")
-	}
-
-	if err := mgr.Remove(unitName); err != nil {
-		return fmt.Errorf("failed to remove timer: %w", err)
+	result, err := newClient().DisableDaemon(cmd.Context(), updex.DisableDaemonOptions{})
+	if err != nil {
+		return err
 	}
 
 	if clix.JSONOutput {
-		_, err := clix.OutputJSON(map[string]any{
-			"success": true,
-			"message": "Auto-update daemon disabled",
-		})
+		_, err := clix.OutputJSON(result)
 		return err
 	}
 
@@ -211,17 +152,9 @@ OUTPUT:
 }
 
 func runDaemonStatus(cmd *cobra.Command, args []string) error {
-	mgr := newDaemonManager()
-	runner := newSystemctlRunner()
-
-	status := daemonStatus{
-		Installed: mgr.Exists(unitName),
-	}
-
-	if status.Installed {
-		status.Enabled, _ = runner.IsEnabled(unitName + ".timer")
-		status.Active, _ = runner.IsActive(unitName + ".timer")
-		status.Schedule = "daily"
+	status, err := newClient().DaemonStatus(cmd.Context(), updex.DaemonStatusOptions{})
+	if err != nil {
+		return err
 	}
 
 	if clix.JSONOutput {

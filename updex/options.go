@@ -2,6 +2,15 @@ package updex
 
 import "github.com/frostyard/updex/manifest"
 
+// EnableDaemonOptions configures the EnableDaemon operation.
+type EnableDaemonOptions struct{}
+
+// DisableDaemonOptions configures the DisableDaemon operation.
+type DisableDaemonOptions struct{}
+
+// DaemonStatusOptions configures the DaemonStatus operation.
+type DaemonStatusOptions struct{}
+
 // UpdateFeaturesOptions configures the UpdateFeatures operation.
 type UpdateFeaturesOptions struct {
 	// DryRun previews changes without modifying filesystem.

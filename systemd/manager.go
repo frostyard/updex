@@ -186,3 +186,25 @@ func (m *Manager) Exists(name string) bool {
 	}
 	return false
 }
+
+// Enable enables a systemd unit through the manager's configured runner.
+func (m *Manager) Enable(unit string) error {
+	return m.runner.Enable(unit)
+}
+
+// Start starts a systemd unit through the manager's configured runner.
+func (m *Manager) Start(unit string) error {
+	return m.runner.Start(unit)
+}
+
+// IsEnabled reports whether a systemd unit is enabled through the manager's
+// configured runner.
+func (m *Manager) IsEnabled(unit string) (bool, error) {
+	return m.runner.IsEnabled(unit)
+}
+
+// IsActive reports whether a systemd unit is active through the manager's
+// configured runner.
+func (m *Manager) IsActive(unit string) (bool, error) {
+	return m.runner.IsActive(unit)
+}

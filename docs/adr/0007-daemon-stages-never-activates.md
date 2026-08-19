@@ -15,11 +15,11 @@ administrators own, so it must not clobber units it did not create.
 
 ## Decision
 
-`updex daemon enable` (`cmd/updex/daemon.go`) installs a systemd timer that
-stages but never activates:
+`updex daemon enable` (through `updex.Client.EnableDaemon`) installs a systemd
+timer that stages but never activates:
 
 - Units are named `updex-update.timer`/`updex-update.service` — the
-  `<tool>-<verb>` convention (`unitName` constant).
+  `<tool>-<verb>` convention (`daemonUnitName` constant).
 - The timer runs `OnCalendar=daily` with `Persistent=true` and
   `RandomizedDelaySec=3600`, spreading load on the artifact origin across
   the fleet.
@@ -28,9 +28,9 @@ stages but never activates:
   downloaded, verified, and staged, and the activation symlinks updated,
   but the final `systemd-sysext refresh` is skipped — nothing changes in
   the running system until a later refresh or reboot.
-- Installation refuses to overwrite existing unit files, both at the CLI
-  (`daemon enable` errors when `mgr.Exists(unitName)`) and in
-  `systemd.Manager.Install`, which errors if either file already exists
+- Installation refuses to overwrite existing unit files, both in the SDK
+  (`EnableDaemon` errors when its manager reports an occupied unit path) and
+  in `systemd.Manager.Install`, which errors if either file already exists
   and rolls back the timer file if the service write fails. Reinstalling
   requires an explicit `daemon disable` first.
 
@@ -60,8 +60,9 @@ stages but never activates:
 
 ## References
 
-- Implements: [`cmd/updex/daemon.go`](../../cmd/updex/daemon.go)
-  (`unitName`, `runDaemonEnable`),
+- Implements: [`updex/daemon.go`](../../updex/daemon.go)
+  (`daemonUnitName`, `EnableDaemon`, `DisableDaemon`, `DaemonStatus`),
+  [`cmd/updex/daemon.go`](../../cmd/updex/daemon.go) (CLI wrappers),
   [`systemd/unit.go`](../../systemd/unit.go) (unit generation),
   [`systemd/manager.go`](../../systemd/manager.go) (`Install` overwrite
   refusal)
