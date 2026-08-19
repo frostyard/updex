@@ -362,8 +362,9 @@ sudo updex daemon disable
 | `--verify`          | Verify GPG signatures on SHA256SUMS                       |
 | `--no-refresh`      | Skip running systemd-sysext refresh after install/update  |
 | `--json`            | Output in JSON format (jq-compatible)                     |
-| `--dry-run`         | Preview changes without modifying filesystem              |
-| `--verbose`         | Enable verbose output                                     |
+| `-n, --dry-run`     | Preview changes without modifying filesystem              |
+| `-v, --verbose`     | Enable verbose output                                     |
+| `-s, --silent`      | Suppress all progress output (takes priority over `--json`) |
 
 ### `features` Flags
 
