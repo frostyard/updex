@@ -41,7 +41,10 @@ PR template ──► review rubric ──► CI gates ──► corrections ─
   for each non-draft PR; maintainers audit its findings and CI history
   before merge and remain accountable for the decision.
 - **Gate** — [.github/workflows/test.yml](../../.github/workflows/test.yml)
-  runs on every PR and push to `main`; each job is capped at 15 minutes
+  runs on every PR, every push to `main`, and every `merge_group` event so the
+  required checks also report on merge-queue branches
+  ([frostyard/core ADR-0042](https://github.com/frostyard/core/blob/main/docs/adr/0042-adopt-a-merge-queue-on-the-default-branch.md));
+  each job is capped at 15 minutes
   (`timeout-minutes: 15`) so a hung step fails the gate within minutes
   instead of pending for GitHub's 360-minute default:
   - *Lint* (pinned golangci-lint — the release named by

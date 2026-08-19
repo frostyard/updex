@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # The merge queue requests the required checks on its own
+  # `gh-readonly-queue/*` branches; without the trigger below those contexts
+  # never report and every queue entry waits out the check timeout
+  # (frostyard/core ADR-0042).
+  merge_group:
 
 permissions: {}
 

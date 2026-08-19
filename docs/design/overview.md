@@ -577,14 +577,19 @@ so every hermetic package test runs; the E2E suite also retains its dedicated
 workflow job.
 
 `.github/workflows/pr-title.yml` (`amannn/action-semantic-pull-request`,
-SHA-pinned, `pull_request` `opened|edited|synchronize|reopened`, read-only
-permissions, no checkout) fails a pull request whose title is not a
-Conventional Commit, and — because the repository squash-merges with the
+SHA-pinned, `pull_request` `opened|edited|synchronize|reopened` plus
+`merge_group`, read-only permissions, no checkout) fails a pull request whose
+title is not a Conventional Commit, and — because the repository squash-merges with the
 "commit or PR title" default, under which a single-commit PR lands under its
 commit's subject — also validates the lone commit's subject
 (`validateSingleCommit: true`). The accepted types mirror `CONTRIBUTING.md`
-and the `.goreleaser.yaml` changelog groups. It is a plain status, not a
-required check: `main` has no branch protection or ruleset today.
+and the `.goreleaser.yaml` changelog groups. `Conventional PR title` is one of
+the contexts the default-branch ruleset requires, so the workflow also runs on
+`merge_group`: there is no pull-request title to lint on a merge-queue branch,
+so the validation step carries `if: github.event_name == 'pull_request'` and
+the job succeeds with that step skipped. The guard is on the step, never on
+the job — a required job excluded from the event never reports and stalls the
+queue ([frostyard/core ADR-0042](https://github.com/frostyard/core/blob/main/docs/adr/0042-adopt-a-merge-queue-on-the-default-branch.md)).
 
 `.github/workflows/release.yml` publishes tagged GoReleaser Pro releases and
 packages, attests build provenance for `dist/checksums.txt` and every
