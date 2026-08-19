@@ -27,6 +27,14 @@ if [ ! -f "$PROFILE" ]; then
     exit 2
 fi
 
+if [ -L "$BASELINE_FILE" ] ||
+    { [ -e "$BASELINE_FILE" ] &&
+        { [ ! -f "$BASELINE_FILE" ] || [ ! -r "$BASELINE_FILE" ]; }; }
+then
+    echo "check-coverage: baseline is not a readable regular file: $BASELINE_FILE" >&2
+    exit 2
+fi
+
 case "$MIN" in
     ''|*[!0-9.]*|.|*.*.*)
         echo "check-coverage: invalid minimum percentage: '$MIN'" >&2

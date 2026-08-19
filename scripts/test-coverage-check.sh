@@ -124,6 +124,26 @@ printf '%s\n' 90.0 91.0 > "$MULTILINE_ROOT/.coverage-baseline"
 assert_status 2 "a multi-line baseline is a usage error" \
     "$MULTILINE_ROOT/scripts/check-coverage.sh" "$TMP/above.out" 80.0
 
+DIRECTORY_ROOT="$TMP/directory-baseline"
+make_check_root "$DIRECTORY_ROOT"
+mkdir "$DIRECTORY_ROOT/.coverage-baseline"
+assert_status 2 "a directory baseline is a usage error" \
+    "$DIRECTORY_ROOT/scripts/check-coverage.sh" "$TMP/above.out" 80.0
+
+UNREADABLE_ROOT="$TMP/unreadable-baseline"
+make_check_root "$UNREADABLE_ROOT"
+printf '%s\n' 90.0 > "$UNREADABLE_ROOT/.coverage-baseline"
+chmod 000 "$UNREADABLE_ROOT/.coverage-baseline"
+assert_status 2 "an unreadable baseline is a usage error" \
+    "$UNREADABLE_ROOT/scripts/check-coverage.sh" "$TMP/above.out" 80.0
+
+SYMLINK_ROOT="$TMP/symlink-baseline"
+make_check_root "$SYMLINK_ROOT"
+printf '%s\n' 90.0 > "$SYMLINK_ROOT/baseline-target"
+ln -s baseline-target "$SYMLINK_ROOT/.coverage-baseline"
+assert_status 2 "a symlink baseline is a usage error" \
+    "$SYMLINK_ROOT/scripts/check-coverage.sh" "$TMP/above.out" 80.0
+
 if [ "$failures" -ne 0 ]; then
     echo "test-coverage-check: $failures assertion(s) failed" >&2
     exit 1
