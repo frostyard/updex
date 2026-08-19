@@ -68,7 +68,7 @@ test-cover:
 	$(GO) test -coverprofile=coverage.out ./...
 	$(GO) tool cover -html=coverage.out -o coverage.html
 
-## coverage-check: Enforce the 80.0% total statement-coverage floor on coverage.out
+## coverage-check: Enforce the absolute floor and committed coverage ratchet on coverage.out
 coverage-check:
 	./scripts/check-coverage.sh coverage.out
 
