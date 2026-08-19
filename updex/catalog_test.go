@@ -1334,3 +1334,42 @@ func TestCatalogAdd_LeavesNoTempDebris(t *testing.T) {
 		noDebris(t, roots[0])
 	})
 }
+
+// TestCatalogAddRefusesSymlinkedComponentDir_RuntimePaths is the same
+// guard exercised through ClientConfig.Paths (RuntimePaths.DefinitionRoots)
+// rather than the package-level search roots: the client resolves the
+// component directory from its own captured roots, and the guard refuses a
+// symlink there without touching its target.
+func TestCatalogAddRefusesSymlinkedComponentDir_RuntimePaths(t *testing.T) {
+	catalogRoot := withCatalogConfigRoots(t)
+	targetDir := t.TempDir()
+	server := newCatalogServer(t, "zoxide", "1.0.0", targetDir)
+	writeCatalogRepo(t, catalogRoot, "fedora", server.URL, "")
+
+	root := t.TempDir()
+	roots := []string{filepath.Join(root, "etc"), filepath.Join(root, "run"), filepath.Join(root, "usr", "local", "lib"), filepath.Join(root, "usr", "lib")}
+	for _, d := range roots {
+		if err := os.MkdirAll(d, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	elsewhere := t.TempDir()
+	componentDir := filepath.Join(roots[0], "sysupdate.catalog-fedora.d")
+	if err := os.Symlink(elsewhere, componentDir); err != nil {
+		t.Fatal(err)
+	}
+
+	client := NewClient(ClientConfig{
+		SysextRunner: &sysext.MockRunner{},
+		Paths:        RuntimePaths{DefinitionRoots: roots, SysextLinkDir: t.TempDir()},
+	})
+	_, err := client.CatalogAdd(t.Context(), "zoxide", CatalogAddOptions{})
+	if err == nil || !strings.Contains(err.Error(), "is not a directory") {
+		t.Fatalf("expected the symlinked component directory to be refused, got %v", err)
+	}
+	for _, name := range []string{"zoxide.transfer", "zoxide.feature"} {
+		if _, statErr := os.Stat(filepath.Join(elsewhere, name)); !os.IsNotExist(statErr) {
+			t.Errorf("%s exists in the symlink target %s (stat err %v)", name, elsewhere, statErr)
+		}
+	}
+}
