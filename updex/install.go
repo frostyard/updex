@@ -32,7 +32,10 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 	c.debug("selected version %s (from %d available)", versionToInstall, len(available))
 
 	// Check if already installed and current
-	installed, current, _ := sysext.GetInstalledVersionsAt(transfer, c.paths.sysextLinkDir)
+	installed, current, err := sysext.GetInstalledVersionsAt(transfer, c.paths.sysextLinkDir)
+	if err != nil {
+		return "", nil, false, fmt.Errorf("failed to inspect installed versions: %w", err)
+	}
 	if !opts.DryRun && transfer.Target.CurrentSymlink != "" {
 		if err := sysext.RemoveLegacyCurrentSymlinkAt(transfer, c.paths.sysextLinkDir); err != nil {
 			c.warn("failed to remove legacy symlink for %s: %v", transfer.Component, err)
@@ -40,6 +43,22 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 	}
 	for _, v := range installed {
 		if v == versionToInstall && v == current {
+			// The image is staged and current, but the systemd-sysext link
+			// may be missing, dangling, or pointing at another image (a
+			// crashed earlier run, a hand-edited link dir). Restore it
+			// without re-downloading; a correct link is left untouched.
+			if !opts.DryRun {
+				linked, err := sysext.LinkIsCurrentAt(transfer, c.paths.sysextLinkDir)
+				if err != nil {
+					return "", nil, false, fmt.Errorf("failed to inspect sysext link: %w", err)
+				}
+				if !linked {
+					if err := c.linkToSysext(transfer); err != nil {
+						return "", nil, false, err
+					}
+					c.msg("restored sysext link for %s", transfer.Component)
+				}
+			}
 			return versionToInstall, m, false, nil
 		}
 	}
@@ -78,16 +97,8 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 		return "", nil, false, fmt.Errorf("download failed: %w", err)
 	}
 
-	var linkErr error
-	if runner, ok := c.runner.(sysext.PathSysextRunner); ok {
-		linkErr = runner.LinkToSysextAt(transfer, c.paths.sysextLinkDir)
-	} else {
-		// Preserve compatibility with injected runners that implement the
-		// original SysextRunner interface.
-		linkErr = c.runner.LinkToSysext(transfer)
-	}
-	if linkErr != nil {
-		return "", nil, false, fmt.Errorf("failed to link to sysext: %w", linkErr)
+	if err := c.linkToSysext(transfer); err != nil {
+		return "", nil, false, err
 	}
 
 	// Refresh systemd-sysext. Both SDK callers batch this with NoRefresh:
@@ -110,6 +121,24 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 	}
 
 	return versionToInstall, m, true, refreshErr
+}
+
+// linkToSysext points the systemd-sysext link for transfer at its newest
+// staged image through the client's runner, in the client's link directory
+// when the runner supports one.
+func (c *Client) linkToSysext(transfer *config.Transfer) error {
+	var linkErr error
+	if runner, ok := c.runner.(sysext.PathSysextRunner); ok {
+		linkErr = runner.LinkToSysextAt(transfer, c.paths.sysextLinkDir)
+	} else {
+		// Preserve compatibility with injected runners that implement the
+		// original SysextRunner interface.
+		linkErr = c.runner.LinkToSysext(transfer)
+	}
+	if linkErr != nil {
+		return fmt.Errorf("failed to link to sysext: %w", linkErr)
+	}
+	return nil
 }
 
 // buildTargetFilename derives the installed filename for a version from the
