@@ -22,8 +22,9 @@ import (
 type ProgressFunc func(contentLength int64) io.Writer
 
 type retrySettings struct {
-	cfg    retry.Config
-	notify retry.Notify
+	cfg                 retry.Config
+	notify              retry.Notify
+	maxDecompressedSize int64
 }
 
 // Option configures download behavior.
@@ -46,12 +47,27 @@ func WithRetryNotify(fn func(attempt, maxAttempts int, reason error)) Option {
 	}
 }
 
+// DefaultMaxDecompressedSize is the maximum decompressed image size used by
+// Download when WithMaxDecompressedSize is not supplied.
+const DefaultMaxDecompressedSize int64 = 8 << 30
+
+// WithMaxDecompressedSize sets the maximum number of decompressed bytes that
+// Download will write. The value must be greater than zero.
+func WithMaxDecompressedSize(bytes int64) Option {
+	return func(settings *retrySettings) {
+		settings.maxDecompressedSize = bytes
+	}
+}
+
 // syncFile flushes a written file to stable storage. It is a package-level
 // seam so tests can observe which files are synced and inject sync failures.
 var syncFile = func(f *os.File) error { return f.Sync() }
 
 func resolveRetry(opts ...Option) retrySettings {
-	settings := retrySettings{cfg: retry.DefaultConfig}
+	settings := retrySettings{
+		cfg:                 retry.DefaultConfig,
+		maxDecompressedSize: DefaultMaxDecompressedSize,
+	}
 	for _, opt := range opts {
 		opt(&settings)
 	}
@@ -78,6 +94,9 @@ func Download(ctx context.Context, httpClient *http.Client, url, targetPath, exp
 		}
 	}
 	rs := resolveRetry(opts...)
+	if rs.maxDecompressedSize <= 0 {
+		return fmt.Errorf("maximum decompressed size must be greater than zero")
+	}
 
 	var tmpPath string
 	err := retry.Do(ctx, rs.cfg, rs.notify, func() error {
@@ -161,7 +180,7 @@ func Download(ctx context.Context, httpClient *http.Client, url, targetPath, exp
 	compressionType := detectCompression(url)
 	if compressionType != "" {
 		// Decompress to another temp file
-		if err := decompressFile(tmpPath, decompressedPath, compressionType); err != nil {
+		if err := decompressFile(tmpPath, decompressedPath, compressionType, rs.maxDecompressedSize); err != nil {
 			_ = os.Remove(decompressedPath)
 			return fmt.Errorf("decompression failed: %w", err)
 		}
