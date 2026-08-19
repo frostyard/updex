@@ -188,6 +188,73 @@ Mode=0755
 	}
 }
 
+func TestLoadTransfersMasked(t *testing.T) {
+	const validTransfer = `[Source]
+Type=url-file
+Path=https://example.com/releases
+MatchPattern=valid_@v.raw
+
+[Target]
+Type=regular-file
+MatchPattern=valid_@v.raw
+`
+
+	t.Run("custom directory", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "valid.transfer"), []byte(validTransfer), 0644); err != nil {
+			t.Fatalf("failed to write valid transfer: %v", err)
+		}
+		if err := os.Symlink("/dev/null", filepath.Join(dir, "masked.transfer")); err != nil {
+			t.Fatalf("failed to create masked transfer: %v", err)
+		}
+
+		transfers, err := LoadTransfersIn(dir, SearchRoots, nil)
+		if err != nil {
+			t.Fatalf("LoadTransfersIn() error = %v", err)
+		}
+		if len(transfers) != 1 {
+			t.Fatalf("expected 1 transfer, got %d", len(transfers))
+		}
+		if got := transfers[0].Component; got != "valid" {
+			t.Errorf("Component = %q, want %q", got, "valid")
+		}
+	})
+
+	t.Run("higher priority mask suppresses vendor definition", func(t *testing.T) {
+		root := t.TempDir()
+		etcRoot := filepath.Join(root, "etc")
+		usrRoot := filepath.Join(root, "usr", "lib")
+		etcDefault := filepath.Join(etcRoot, "sysupdate.d")
+		usrDefault := filepath.Join(usrRoot, "sysupdate.d")
+		usrComponent := filepath.Join(usrRoot, "sysupdate.extra.d")
+		for _, dir := range []string{etcDefault, usrDefault, usrComponent} {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				t.Fatalf("failed to create %s: %v", dir, err)
+			}
+		}
+		if err := os.Symlink("/dev/null", filepath.Join(etcDefault, "vendor.transfer")); err != nil {
+			t.Fatalf("failed to create masked vendor transfer: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(usrDefault, "vendor.transfer"), []byte(validTransfer), 0644); err != nil {
+			t.Fatalf("failed to write vendor transfer: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(usrComponent, "component.transfer"), []byte(validTransfer), 0644); err != nil {
+			t.Fatalf("failed to write component transfer: %v", err)
+		}
+
+		transfers, _, err := LoadAllTransfersIn("", []string{etcRoot, usrRoot}, nil)
+		if err != nil {
+			t.Fatalf("LoadAllTransfersIn() error = %v", err)
+		}
+		if len(transfers) != 1 {
+			t.Fatalf("expected 1 transfer, got %d", len(transfers))
+		}
+		if got := transfers[0].Component; got != "component" {
+			t.Errorf("Component = %q, want %q", got, "component")
+		}
+	})
+}
+
 func TestLoadTransfersDefaults(t *testing.T) {
 	tmpDir := t.TempDir()
 

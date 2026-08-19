@@ -242,6 +242,7 @@ See [Configuration Reference](../specs/config-reference.md) for detailed format 
 - **`.transfer`** files define how components are downloaded and installed
 - **`.feature.d/`** drop-in directories override feature settings (applied alphabetically)
 - Masked feature files are symlinks to `/dev/null`. `LoadFeatures` still returns a masked feature entry, with `Enabled=false` and `Masked=true`, so list output can show it as masked while mutating SDK calls reject it.
+- Masked transfer files are symlinks to `/dev/null`; they are omitted from the loaded domain while still suppressing lower-priority definitions with the same filename.
 
 ### Key transfer settings
 
