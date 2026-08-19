@@ -29,6 +29,11 @@ func TestCopilotAssignmentSecretIsCanonical(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list workflows: %v", err)
 	}
+	yamlFiles, err := filepath.Glob("../.github/workflows/*.yaml")
+	if err != nil {
+		t.Fatalf("list workflows: %v", err)
+	}
+	files = append(files, yamlFiles...)
 	for _, file := range files {
 		data, err := os.ReadFile(file)
 		if err != nil {
