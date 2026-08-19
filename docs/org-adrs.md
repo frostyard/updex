@@ -23,6 +23,7 @@ The ones that bind updex:
 - [ADR-0033 — Permit link-only maintenance in immutable ADRs](https://github.com/frostyard/core/blob/main/docs/adr/0033-link-maintenance-in-immutable-adrs.md) — Accepted/Superseded ADRs in docs/adr/ may receive link-only repairs (moved target, or a commit permalink labeled historical) but no change to the decision text; `scripts/check-docs.mjs` checks relative links in Superseded ADRs under the same 1.0 link-integrity requirement as every other doc (no exemption)
 - [ADR-0034 — Cancel stale rolling dev releases](https://github.com/frostyard/core/blob/main/docs/adr/0034-cancel-stale-rolling-dev-releases.md) — snapshot.yml's `goreleaser-nightly` concurrency group with `cancel-in-progress: true`, `workflow_run` on Tests/main, and the success guard; pinned by `updex/snapshot_workflow_contract_test.go`
 - [ADR-0038 — make ci stays canonical; the test-name filter is chairlift-only](https://github.com/frostyard/core/blob/main/docs/adr/0038-scope-the-test-name-filter-to-chairlift.md) — `make ci` mirrors updex's credential-free CI jobs while all hermetic tests run without name filtering
+- [ADR-0042 — A merge queue on the default branch](https://github.com/frostyard/core/blob/main/docs/adr/0042-adopt-a-merge-queue-on-the-default-branch.md) — every workflow producing a required check also triggers on `merge_group`; `pr-title.yml` skips its lint step there rather than excluding the job
 
 When changing behavior covered by one of these, update or supersede the ADR
 in frostyard/core first, then change this repo in the same effort.

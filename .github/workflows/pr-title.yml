@@ -6,14 +6,22 @@ name: PR Title
 # that svu versions and the GoReleaser changelog groups by. So the PR title
 # must be a Conventional Commit, and when there is exactly one commit that
 # commit's subject must be too (see AGENTS.md "Commits & Pull Requests").
+# `Conventional PR title` is a required check, so it must also report on the
+# merge queue's own check requests (frostyard/core ADR-0042). There is no
+# pull-request title to lint there, so the lint step below is skipped and the
+# job succeeds; excluding the job with a job-level `if` would leave the
+# required check unreported and stall the queue.
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
+  merge_group:
 
 permissions: {}
 
 concurrency:
-  group: pr-title-${{ github.event.pull_request.number }}
+  # `github.event.pull_request.number` is empty on a merge-queue event, so
+  # fall back to the ref to keep one group per queue entry.
+  group: pr-title-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -27,6 +35,7 @@ jobs:
       # Reads the title and commit list only; never checks out or executes
       # pull-request-controlled code.
       - name: Validate title (and single-commit subject)
+        if: github.event_name == 'pull_request'
         uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
