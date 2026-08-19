@@ -2,6 +2,7 @@ package download
 
 import (
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,8 +11,16 @@ import (
 	"github.com/ulikunitz/xz"
 )
 
+// ErrDecompressedTooLarge reports that decompressed output crossed the
+// configured maximum size.
+var ErrDecompressedTooLarge = errors.New("decompressed image exceeds the maximum size")
+
 // decompressFile decompresses a file based on the compression type
-func decompressFile(srcPath, dstPath, compressionType string) (retErr error) {
+func decompressFile(srcPath, dstPath, compressionType string, maxBytes int64) (retErr error) {
+	if maxBytes <= 0 {
+		return fmt.Errorf("maximum decompressed size must be greater than zero")
+	}
+
 	src, err := os.Open(srcPath)
 	if err != nil {
 		return fmt.Errorf("failed to open source file: %w", err)
@@ -34,9 +43,19 @@ func decompressFile(srcPath, dstPath, compressionType string) (retErr error) {
 	}
 	defer func() { _ = reader.Close() }()
 
-	_, err = io.Copy(dst, reader)
-	if err != nil {
+	written, err := io.CopyN(dst, reader, maxBytes)
+	if err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("failed to decompress: %w", err)
+	}
+	if written == maxBytes {
+		var extra [1]byte
+		extraBytes, readErr := io.ReadFull(reader, extra[:])
+		if extraBytes > 0 {
+			return fmt.Errorf("%w (%d bytes)", ErrDecompressedTooLarge, maxBytes)
+		}
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return fmt.Errorf("failed to decompress: %w", readErr)
+		}
 	}
 
 	// Persist the decompressed output before the caller renames it into

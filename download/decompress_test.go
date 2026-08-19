@@ -171,7 +171,7 @@ func TestDecompressFile(t *testing.T) {
 	}
 
 	// Test decompression
-	if err := decompressFile(srcPath, dstPath, "gz"); err != nil {
+	if err := decompressFile(srcPath, dstPath, "gz", DefaultMaxDecompressedSize); err != nil {
 		t.Fatalf("decompressFile() error = %v", err)
 	}
 
@@ -207,7 +207,7 @@ func TestDecompressFileZstd(t *testing.T) {
 		t.Fatalf("failed to write compressed file: %v", err)
 	}
 
-	if err := decompressFile(srcPath, dstPath, "zstd"); err != nil {
+	if err := decompressFile(srcPath, dstPath, "zstd", DefaultMaxDecompressedSize); err != nil {
 		t.Fatalf("decompressFile() error = %v", err)
 	}
 
@@ -242,7 +242,7 @@ func TestDecompressFileXZ(t *testing.T) {
 		t.Fatalf("failed to write compressed file: %v", err)
 	}
 
-	if err := decompressFile(srcPath, dstPath, "xz"); err != nil {
+	if err := decompressFile(srcPath, dstPath, "xz", DefaultMaxDecompressedSize); err != nil {
 		t.Fatalf("decompressFile() error = %v", err)
 	}
 
@@ -265,7 +265,7 @@ func TestDecompressFileUnsupported(t *testing.T) {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	err := decompressFile(srcPath, dstPath, "unsupported")
+	err := decompressFile(srcPath, dstPath, "unsupported", DefaultMaxDecompressedSize)
 	if err == nil {
 		t.Error("expected error for unsupported compression type")
 	}
@@ -273,7 +273,7 @@ func TestDecompressFileUnsupported(t *testing.T) {
 
 func TestDecompressFileNonexistentSource(t *testing.T) {
 	tmpDir := t.TempDir()
-	err := decompressFile("/nonexistent/path", tmpDir+"/test.out", "gz")
+	err := decompressFile("/nonexistent/path", tmpDir+"/test.out", "gz", DefaultMaxDecompressedSize)
 	if err == nil {
 		t.Error("expected error for nonexistent source file")
 	}

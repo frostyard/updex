@@ -258,6 +258,69 @@ func gzipBytes(t *testing.T, content []byte) []byte {
 	return buf.Bytes()
 }
 
+func TestDownloadMaxDecompressedSize(t *testing.T) {
+	content := bytes.Repeat([]byte("a"), 2<<20)
+	compressed := gzipBytes(t, content)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(compressed)
+	}))
+	defer server.Close()
+
+	t.Run("rejects oversized decompressed output and cleans up", func(t *testing.T) {
+		targetDir := t.TempDir()
+		targetPath := filepath.Join(targetDir, "feature.raw")
+		err := Download(
+			t.Context(),
+			server.Client(),
+			server.URL+"/feature.raw.gz",
+			targetPath,
+			hashString(compressed),
+			0644,
+			nil,
+			WithMaxDecompressedSize(1<<20),
+		)
+		if !errors.Is(err, ErrDecompressedTooLarge) {
+			t.Fatalf("Download() error = %v, want ErrDecompressedTooLarge", err)
+		}
+		if !strings.Contains(err.Error(), "exceeds the maximum size") {
+			t.Errorf("Download() error = %q, want maximum-size message", err)
+		}
+		if _, err := os.Stat(targetPath); !os.IsNotExist(err) {
+			t.Errorf("Stat(target) error = %v, want not-exist", err)
+		}
+		for _, pattern := range []string{".updex-download-*", "*.decompressed"} {
+			matches, err := filepath.Glob(filepath.Join(targetDir, pattern))
+			if err != nil {
+				t.Fatalf("Glob(%q) error = %v", pattern, err)
+			}
+			if len(matches) != 0 {
+				t.Errorf("temporary files matching %q remain: %v", pattern, matches)
+			}
+		}
+	})
+
+	t.Run("default limit accepts the same stream", func(t *testing.T) {
+		targetPath := filepath.Join(t.TempDir(), "feature.raw")
+		if err := Download(t.Context(), server.Client(), server.URL+"/feature.raw.gz", targetPath, hashString(compressed), 0644, nil); err != nil {
+			t.Fatalf("Download() error = %v", err)
+		}
+		got, err := os.ReadFile(targetPath)
+		if err != nil {
+			t.Fatalf("ReadFile() error = %v", err)
+		}
+		if !bytes.Equal(got, content) {
+			t.Errorf("downloaded content differs from decompressed fixture")
+		}
+	})
+
+	t.Run("exact limit accepts the same stream", func(t *testing.T) {
+		targetPath := filepath.Join(t.TempDir(), "feature.raw")
+		if err := Download(t.Context(), server.Client(), server.URL+"/feature.raw.gz", targetPath, hashString(compressed), 0644, nil, WithMaxDecompressedSize(int64(len(content)))); err != nil {
+			t.Fatalf("Download() error = %v", err)
+		}
+	})
+}
+
 func TestDownloadSyncsFileBeforeRename(t *testing.T) {
 	content := []byte("feature image contents")
 	tests := []struct {
