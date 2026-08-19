@@ -375,7 +375,7 @@ sudo updex daemon disable
 | `--json`            | Output in JSON format (jq-compatible)                     |
 | `-n, --dry-run`     | Preview changes without modifying filesystem              |
 | `-v, --verbose`     | Enable verbose output                                     |
-| `-s, --silent`      | Suppress all progress output (takes priority over `--json`) |
+| `-s, --silent`      | Suppress progress/reporting noise; with `--json`, still emit the final machine-readable result |
 
 ### `features` Flags
 
