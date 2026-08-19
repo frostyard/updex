@@ -427,9 +427,9 @@ func TestE2E_GlobalFlagsAreDocumentedInREADME(t *testing.T) {
 		if ignored[flag] {
 			continue
 		}
-		// Require a boundary after the name so `--verb` cannot be satisfied
-		// by a row documenting `--verbose`.
-		row := regexp.MustCompile(regexp.QuoteMeta(flag) + `([^A-Za-z0-9-]|$)`)
+		// Match only the table's *flag column* so mentioning a flag in a description
+		// (e.g. "`--silent` takes priority over `--json`") can't satisfy the requirement.
+		row := regexp.MustCompile("(?m)^\\|\\s*`[^`]*" + regexp.QuoteMeta(flag) + "[^`]*`\\s*\\|")
 		if !row.MatchString(table) {
 			t.Errorf("global flag %s is listed by `updex --help` but has no row in README.md's \"### Global Flags\" table", flag)
 		}
