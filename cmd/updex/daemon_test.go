@@ -271,32 +271,32 @@ func TestRunDaemonStatus_Installed(t *testing.T) {
 	}
 }
 
-// TestRunDaemonStatus_SuppressesQueryErrors verifies the documented behavior that
-// status reports Installed but leaves Enabled/Active false when the systemctl
-// queries error, rather than failing the command.
-func TestRunDaemonStatus_SuppressesQueryErrors(t *testing.T) {
-	mock := &systemd.MockSystemctlRunner{
-		IsEnabledErr: errors.New("query failed"),
-		IsActiveErr:  errors.New("query failed"),
+func TestRunDaemonStatus_ReturnsQueryErrors(t *testing.T) {
+	queryErr := errors.New("query failed")
+	tests := []struct {
+		name    string
+		mock    *systemd.MockSystemctlRunner
+		context string
+	}{
+		{name: "enabled", mock: &systemd.MockSystemctlRunner{IsEnabledErr: queryErr}, context: "query enabled state"},
+		{name: "active", mock: &systemd.MockSystemctlRunner{IsEnabledResult: true, IsActiveErr: queryErr}, context: "query active state"},
 	}
-	dir := daemonTestEnv(t, mock)
-	seedUnits(t, dir)
-	clix.JSONOutput = true
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := daemonTestEnv(t, test.mock)
+			seedUnits(t, dir)
+			clix.JSONOutput = true
 
-	out, err := captureStdout(t, func() error { return runDaemonStatus(daemonTestCommand(t), nil) })
-	if err != nil {
-		t.Fatalf("status must suppress query errors, got: %v", err)
-	}
-
-	var status sdk.DaemonStatusResult
-	if jsonErr := json.Unmarshal([]byte(out), &status); jsonErr != nil {
-		t.Fatalf("status JSON output invalid: %v\n%s", jsonErr, out)
-	}
-	if !status.Installed {
-		t.Errorf("expected installed=true, got: %+v", status)
-	}
-	if status.Enabled || status.Active {
-		t.Errorf("expected enabled/active to be false when queries error, got: %+v", status)
+			cmd := newDaemonCmd()
+			cmd.SetArgs([]string{"status"})
+			out, err := captureStdout(t, cmd.Execute)
+			if !errors.Is(err, queryErr) || !strings.Contains(err.Error(), test.context) {
+				t.Fatalf("daemon status error = %v, want contextual query failure", err)
+			}
+			if out != "" {
+				t.Fatalf("daemon status rendered successful output after query failure: %q", out)
+			}
+		})
 	}
 }
 

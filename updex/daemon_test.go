@@ -232,20 +232,39 @@ func TestDaemonStatus(t *testing.T) {
 		}
 	})
 
-	t.Run("query errors retain conservative false values", func(t *testing.T) {
+	t.Run("enabled query error", func(t *testing.T) {
+		queryErr := errors.New("query failed")
+		runner := &systemd.MockSystemctlRunner{IsEnabledErr: queryErr}
+		client, unitPath := newDaemonTestClient(t, runner)
+		seedDaemonUnits(t, unitPath)
+
+		status, err := client.DaemonStatus(t.Context(), DaemonStatusOptions{})
+		if status != nil {
+			t.Fatalf("DaemonStatus() status = %+v, want nil", status)
+		}
+		if !errors.Is(err, queryErr) || !strings.Contains(err.Error(), "query enabled state") {
+			t.Fatalf("DaemonStatus() error = %v, want contextual enabled-state error", err)
+		}
+		if runner.IsActiveCalled {
+			t.Fatal("DaemonStatus() queried active state after enabled-state failure")
+		}
+	})
+
+	t.Run("active query error", func(t *testing.T) {
+		queryErr := errors.New("query failed")
 		runner := &systemd.MockSystemctlRunner{
-			IsEnabledErr: errors.New("query failed"),
-			IsActiveErr:  errors.New("query failed"),
+			IsEnabledResult: true,
+			IsActiveErr:     queryErr,
 		}
 		client, unitPath := newDaemonTestClient(t, runner)
 		seedDaemonUnits(t, unitPath)
 
 		status, err := client.DaemonStatus(t.Context(), DaemonStatusOptions{})
-		if err != nil {
-			t.Fatalf("DaemonStatus() error = %v", err)
+		if status != nil {
+			t.Fatalf("DaemonStatus() status = %+v, want nil", status)
 		}
-		if !status.Installed || status.Enabled || status.Active {
-			t.Fatalf("DaemonStatus() = %+v", status)
+		if !errors.Is(err, queryErr) || !strings.Contains(err.Error(), "query active state") {
+			t.Fatalf("DaemonStatus() error = %v, want contextual active-state error", err)
 		}
 	})
 }
