@@ -528,6 +528,8 @@ To completely hide a feature, create a symlink to `/dev/null`:
 ln -s /dev/null /etc/sysupdate.d/devel.feature
 ```
 
+The same `/dev/null` symlink idiom masks a `.transfer` file.
+
 ## systemd-sysupdate Components
 
 A component is a named grouping of `.transfer`/`.feature` files, used to give a
