@@ -114,7 +114,12 @@ docs-check:
 	@command -v node >/dev/null 2>&1 || { \
 	  echo "docs-check: 'node' is not on PATH; the docs-integrity gate needs Node >= 20 (see AGENTS.md Prerequisites)" >&2; \
 	  exit 1; \
-	}
+	}; \
+	major="$$(node -p 'process.versions.node.split(".")[0]')"; \
+	if [ "$$major" -lt 20 ]; then \
+	  echo "docs-check: node $$major.x is too old; the docs-integrity gate needs Node >= 20 (see AGENTS.md Prerequisites)" >&2; \
+	  exit 1; \
+	fi
 	node scripts/check-docs.mjs
 
 ## help: Show this help message
