@@ -134,6 +134,12 @@ the `goreleaser-nightly` group with boolean `cancel-in-progress: true`, the
 `workflow_run` trigger on `Tests` for `main`, and the job's
 `workflow_run.conclusion == 'success'` guard — required by
 [frostyard/core ADR-0034](https://github.com/frostyard/core/blob/main/docs/adr/0034-cancel-stale-rolling-dev-releases.md).
+`updex/manpage_hook_contract_test.go` pins the release man-page hook: it runs
+`go run ./cmd/updex-cli man` exactly as GoReleaser's before-hook
+`scripts/manpages.sh` does and asserts a `.TH UPDEX 1` roff page with a
+`.SH NAME` section of at least 1000 bytes, so a dependency bump that drops or
+renames the fang-injected hidden `man` subcommand fails the Unit Tests job on
+the pull request instead of GoReleaser at tag time (skipped under `-short`).
 
 Releases are tagged with semantic versions (`vMAJOR.MINOR.PATCH`) and built by
 GoReleaser. Maintainers run `make bump`, which builds, tests, formats, lints,
