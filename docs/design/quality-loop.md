@@ -103,7 +103,8 @@ PR template ──► review rubric ──► CI gates ──► corrections ─
   issue runs [`ai-fix-requested.yml`](../../.github/workflows/ai-fix-requested.yml),
   which assigns the issue to GitHub Copilot on the default branch; a
   maintainer can retry with the workflow's `issue_number` input. The
-  workflow needs a repository secret `COPILOT_ASSIGN_PAT` (a Copilot-licensed
+  workflow needs the fleet-wide canonical repository secret
+  `COPILOT_ASSIGNMENT_TOKEN` per frostyard/core ADR-0020 (a Copilot-licensed
   maintainer's user token scoped to this repository: read metadata,
   read/write Actions, Contents, Issues, Pull requests). It never checks out
   issue-authored content and grants no permissions to its `GITHUB_TOKEN`;

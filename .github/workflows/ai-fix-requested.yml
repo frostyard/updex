@@ -22,7 +22,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'ai-fix-requested'
     runs-on: ubuntu-latest
     env:
-      GH_TOKEN: ${{ secrets.COPILOT_ASSIGN_PAT }}
+      GH_TOKEN: ${{ secrets.COPILOT_ASSIGNMENT_TOKEN }}
       ISSUE_NUMBER: ${{ inputs.issue_number || github.event.issue.number }}
     steps:
       - name: Assign requested issue
@@ -31,7 +31,7 @@ jobs:
           set -euo pipefail
 
           if [[ -z "${GH_TOKEN:-}" ]]; then
-            echo "::error::COPILOT_ASSIGN_PAT is not configured"
+            echo "::error::COPILOT_ASSIGNMENT_TOKEN is not configured"
             exit 1
           fi
           if [[ ! "$ISSUE_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
