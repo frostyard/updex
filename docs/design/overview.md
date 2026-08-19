@@ -570,10 +570,11 @@ formatting, golangci-lint, all non-E2E package tests (with `-coverprofile`),
 the `max(80.0, baseline - 0.5)` total statement-coverage gate
 (`make test-coverage-check` (`scripts/test-coverage-check.sh`) then
 `make coverage-check` (`scripts/check-coverage.sh`), with the committed
-`.coverage-baseline`), the same tests under the
-race detector, then Linux amd64 and arm64 builds. The unit and race stages do
-not filter by test name, so every hermetic test runs; black-box tests under
-`tests/e2e/` remain in their dedicated workflow job.
+`.coverage-baseline`), the black-box `tests/e2e/` suite as a separate
+non-coverage step, the same unit tests under the race detector, then Linux
+amd64 and arm64 builds. The unit and race stages do not filter by test name,
+so every hermetic package test runs; the E2E suite also retains its dedicated
+workflow job.
 
 `.github/workflows/pr-title.yml` (`amannn/action-semantic-pull-request`,
 SHA-pinned, `pull_request` `opened|edited|synchronize|reopened`, read-only

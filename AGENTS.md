@@ -76,11 +76,12 @@ Run a single test: `go test -v -run TestName ./updex/`
 Build workflow: make code changes → `make fmt` → `make build` → smoke-test
 with `./build/updex --help`. Use `make check` for the quick development loop.
 Run `make ci` before opening a pull request. It checks module tidiness, vet,
-formatting, lint, non-E2E unit and race tests, and Linux amd64/arm64 builds,
-and requires `golangci-lint`. The lint step first runs
-`make lint-version-check`, which fails unless the installed `golangci-lint`
-matches `GOLANGCI_LINT_VERSION` in the `Makefile` (currently 2.12.2) — the
-CI Lint job reads the same variable to install that release, so the Makefile
+formatting, lint, non-E2E unit and race tests, the separate black-box E2E
+suite, and Linux amd64/arm64 builds, and requires `golangci-lint`. The lint
+step first runs `make lint-version-check`, which fails unless the installed
+`golangci-lint` matches `GOLANGCI_LINT_VERSION` in the `Makefile` (currently
+2.12.2) — the CI Lint job reads the same variable to install that release, so
+the Makefile
 is the single place to bump it and local and CI lint results cannot drift
 (`make lint` only warns on a mismatch). The unit-test step writes `coverage.out`, and
 `make ci` (and the Unit Tests CI job) then enforces a total statement-coverage

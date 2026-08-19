@@ -58,8 +58,9 @@ PR template ──► review rubric ──► CI gates ──► corrections ─
     below the effective floor fails the gate —
     *E2E Tests* ([tests/e2e/README.md](../../tests/e2e/README.md)), *Race
     Detection*, *Verify* (tidy, `go vet`, gofmt), and *Build* for linux
-    amd64/arm64 — `make ci` reproduces the credential-free subset locally in
-    the same fail-fast order.
+    amd64/arm64 — `make ci` reproduces that credential-free subset locally,
+    including the E2E suite as its own non-coverage step, in the same fail-fast
+    order.
   - *Docs integrity* (`docs-gate`): `node scripts/check-docs.mjs` checks
     docs-index coverage, relative-link integrity, and symlink resolution
     against [.coverage-thresholds.json](../../.coverage-thresholds.json) —
