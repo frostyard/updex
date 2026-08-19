@@ -68,10 +68,10 @@ does not activate extensions. `DisableDaemon` stops/disables through
 `systemd.Manager.Remove`, removes both units, and reloads systemd.
 `DaemonStatus` reports an absent installation without querying systemctl; for
 an installed timer it reports enabled/active state and the `daily` schedule.
-As in the CLI behavior this API replaces, status query errors are suppressed
-and the runner's returned boolean is retained (the default runner returns
-false on an error). All three methods reject an already canceled context
-before filesystem or systemctl work.
+If either enabled- or active-state query fails, `DaemonStatus` returns that
+failure with context rather than reporting a successful false state; the CLI
+therefore fails instead of rendering an inaccurate status. All three methods
+reject an already canceled context before filesystem or systemctl work.
 
 The option structs are intentionally empty for future compatible expansion.
 Actions return:
