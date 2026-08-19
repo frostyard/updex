@@ -234,6 +234,7 @@ type RuntimePaths struct {
     CatalogCacheDir    string   // Cache dir for catalog listings; "" = default user cache; DisableCatalogCache = off
     CatalogTargetPath  string   // Trusted staging dir for catalog transfer files
     SysextLinkDir      string   // Dir where systemd-sysext looks for extension images
+    RunExtensionsDir   string   // Dir containing images merged by systemd-sysext; default /run/extensions
 }
 ```
 
