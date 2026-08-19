@@ -160,7 +160,7 @@ updex is a Go SDK and CLI for managing systemd-sysext images. It replicates `sys
 **SDK-first design**: All logic lives in the `updex/` package as a public Go API. CLI commands in `cmd/` are thin Cobra wrappers that parse flags, call SDK functions, and format output. SDK code must never import CLI packages. The SDK can be imported by other Go applications for programmatic sysext management.
 
 Key packages:
-- `updex/` — Public SDK: `Client` struct with `Features()`, `EnableFeature()`, `DisableFeature()`, `UpdateFeatures()`, `CheckFeatures()`, `Components()`
+- `updex/` — Public SDK: `Client` struct with feature, component, catalog, and daemon lifecycle methods (`EnableDaemon()`, `DisableDaemon()`, `DaemonStatus()`)
 - `cmd/updex/` — Cobra command handlers calling SDK methods (flags, output formatting, progress bars)
 - `config/` — Parses `.transfer` and `.feature` INI files from systemd-style search paths, including systemd-sysupdate "component" discovery (see below)
 - `catalog/` — Sysext catalog primitives (see below): `*.catalog` repo config loading, sysext enumeration via a GitHub contents API endpoint, fetching the catalog's published `.conf`, and rendering it into updex `.transfer`/`.feature` files
@@ -508,8 +508,9 @@ Go 1.26. Use modern idioms: `any`, `slices`/`maps`/`cmp` packages, `t.Context()`
   happy path. Keep tests idempotent so they can run in parallel.
 - Use `t.TempDir()` for filesystem operations and `t.Context()` for contexts.
 - Mock system commands through the `sysext.SysextRunner` and
-  `systemd.SystemctlRunner` interfaces; inject them via
-  `ClientConfig.SysextRunner` rather than mutating global state.
+  `systemd.SystemctlRunner` interfaces; inject the former through
+  `ClientConfig.SysextRunner` and the latter through a temporary
+  `ClientConfig.SystemdManager`, rather than mutating global state.
 - Use `internal/testutil.NewTestServer()` for HTTP sources and manifests.
 - Use `ClientConfig.Paths` (`RuntimePaths`) to give a client its own temp
   trees rather than mutating package globals — independently configured

@@ -8,6 +8,7 @@ import (
 
 	"github.com/frostyard/clix"
 	"github.com/frostyard/updex/sysext"
+	"github.com/frostyard/updex/systemd"
 	"github.com/frostyard/updex/updex"
 	"github.com/schollz/progressbar/v3"
 )
@@ -18,14 +19,20 @@ import (
 // without executing systemd-sysext (the same seam pattern as getEUID).
 var sysextRunner sysext.SysextRunner
 
+// systemdManager is the systemd manager handed to every CLI-constructed
+// client. It stays nil in production so the SDK constructs its default;
+// daemon command tests inject a manager rooted at a temporary unit directory.
+var systemdManager *systemd.Manager
+
 // newClient creates a new updex client with the appropriate progress reporter.
 func newClient() *updex.Client {
 	clientConfig := updex.ClientConfig{
-		Definitions:  definitions,
-		Verify:       verify,
-		Verbose:      clix.Verbose,
-		Progress:     clix.NewReporter(),
-		SysextRunner: sysextRunner,
+		Definitions:    definitions,
+		Verify:         verify,
+		Verbose:        clix.Verbose,
+		Progress:       clix.NewReporter(),
+		SysextRunner:   sysextRunner,
+		SystemdManager: systemdManager,
 	}
 	if !clix.JSONOutput && !clix.Silent {
 		clientConfig.OnDownloadProgress = newProgressBar

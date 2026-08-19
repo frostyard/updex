@@ -142,6 +142,13 @@ func main() {
         fmt.Printf("%s: %s (%d features)\n", c.Name, c.SourceDir, c.FeatureCount)
     }
 
+    // Inspect the reusable automatic-update daemon lifecycle.
+    daemon, err := client.DaemonStatus(ctx, updex.DaemonStatusOptions{})
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("daemon installed=%v active=%v\n", daemon.Installed, daemon.Active)
+
     // Enable a feature and download extensions immediately
     result, err := client.EnableFeature(ctx, "docker", updex.EnableFeatureOptions{
         Now: true,
@@ -215,6 +222,9 @@ extensions.
 | `CatalogList`    | `CatalogList(ctx, CatalogListOptions) ([]CatalogEntry, error)`                   | Enumerate sysexts available from configured catalogs                                 |
 | `CatalogAdd`     | `CatalogAdd(ctx, name, CatalogAddOptions) (*CatalogAddResult, error)`            | Install a sysext from a catalog (write definitions, enable, download)                |
 | `CatalogRemove`  | `CatalogRemove(ctx, name, CatalogRemoveOptions) (*CatalogRemoveResult, error)`   | Remove a catalog-added sysext and its generated definitions                          |
+| `EnableDaemon`   | `EnableDaemon(ctx, EnableDaemonOptions) (*DaemonActionResult, error)`            | Install, enable, and start the automatic-update timer                                |
+| `DisableDaemon`  | `DisableDaemon(ctx, DisableDaemonOptions) (*DaemonActionResult, error)`          | Stop, disable, and remove the automatic-update timer                                 |
+| `DaemonStatus`   | `DaemonStatus(ctx, DaemonStatusOptions) (*DaemonStatusResult, error)`             | Inspect installed, enabled, active, and schedule state                               |
 
 `FeaturesOptions`, `EnableFeatureOptions`, `DisableFeatureOptions`, `UpdateFeaturesOptions`, and `CheckFeaturesOptions` all carry a `Component string` field that scopes the operation to a single named systemd-sysupdate component instead of the default union domain (see "systemd-sysupdate Components" below). It cannot be combined with a `Definitions` override on `ClientConfig`.
 
@@ -227,6 +237,7 @@ type ClientConfig struct {
     Verbose            bool                  // Enable debug-level output
     Progress           reporter.Reporter     // Optional progress reporter
     SysextRunner       sysext.SysextRunner   // Optional mock runner for testing
+    SystemdManager     *systemd.Manager       // Optional unit manager and runner for daemon operations
     OnDownloadProgress download.ProgressFunc // Optional download progress callback
     HTTPClient         *http.Client          // Optional shared HTTP client
     Paths              RuntimePaths          // Optional instance-scoped filesystem paths (see below)

@@ -28,6 +28,7 @@ import (
 	"github.com/frostyard/updex/config"
 	"github.com/frostyard/updex/download"
 	"github.com/frostyard/updex/sysext"
+	"github.com/frostyard/updex/systemd"
 )
 
 // RuntimePaths holds the filesystem paths an updex.Client consults at
@@ -158,6 +159,7 @@ type Client struct {
 	httpClient *http.Client
 	reporter   reporter.Reporter
 	runner     sysext.SysextRunner
+	systemd    *systemd.Manager
 }
 
 // ClientConfig holds configuration for the Client.
@@ -184,6 +186,12 @@ type ClientConfig struct {
 	// If nil, uses the default runner that executes real commands.
 	// Set this in tests to inject a mock.
 	SysextRunner sysext.SysextRunner
+
+	// SystemdManager is an optional manager for systemd unit files and
+	// systemctl operations. If nil, a production manager for
+	// /etc/systemd/system and the real systemctl command is used. Tests can
+	// inject a manager with a temporary unit path and mock runner.
+	SystemdManager *systemd.Manager
 
 	// OnDownloadProgress is an optional callback for download progress tracking.
 	// If non-nil, it is passed to [download.Download] and called with the
@@ -219,6 +227,10 @@ func NewClient(cfg ClientConfig) *Client {
 	if sr == nil {
 		sr = &sysext.DefaultRunner{}
 	}
+	sm := cfg.SystemdManager
+	if sm == nil {
+		sm = systemd.NewManager()
+	}
 	hc := cfg.HTTPClient
 	if hc == nil {
 		hc = &http.Client{
@@ -232,6 +244,7 @@ func NewClient(cfg ClientConfig) *Client {
 		httpClient: hc,
 		reporter:   r,
 		runner:     sr,
+		systemd:    sm,
 	}
 }
 

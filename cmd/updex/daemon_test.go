@@ -10,8 +10,34 @@ import (
 
 	"github.com/frostyard/clix"
 	"github.com/frostyard/updex/systemd"
+	sdk "github.com/frostyard/updex/updex"
 	"github.com/spf13/cobra"
 )
+
+const daemonTestUnitName = "updex-update"
+
+func daemonTestCommand(t *testing.T) *cobra.Command {
+	t.Helper()
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	return cmd
+}
+
+func TestDaemonHandlersStayBehindSDKBoundary(t *testing.T) {
+	source, err := os.ReadFile("daemon.go")
+	if err != nil {
+		t.Fatalf("read daemon command source: %v", err)
+	}
+	contents := string(source)
+	if strings.Contains(contents, `"github.com/frostyard/updex/systemd"`) {
+		t.Fatal("daemon command must not import systemd directly")
+	}
+	for _, method := range []string{".EnableDaemon(", ".DisableDaemon(", ".DaemonStatus("} {
+		if !strings.Contains(contents, method) {
+			t.Errorf("daemon command does not call SDK method %s", method)
+		}
+	}
+}
 
 // daemonTestEnv installs injectable seams for the daemon command tests: an
 // in-memory systemd Manager rooted at a temp dir and a single MockSystemctlRunner
@@ -21,17 +47,15 @@ func daemonTestEnv(t *testing.T, mock *systemd.MockSystemctlRunner) (unitDir str
 	t.Helper()
 	unitDir = t.TempDir()
 
-	oldManager, oldRunner := newDaemonManager, newSystemctlRunner
+	oldManager := systemdManager
 	oldGetEUID, oldJSON := getEUID, clix.JSONOutput
 	t.Cleanup(func() {
-		newDaemonManager = oldManager
-		newSystemctlRunner = oldRunner
+		systemdManager = oldManager
 		getEUID = oldGetEUID
 		clix.JSONOutput = oldJSON
 	})
 
-	newDaemonManager = func() *systemd.Manager { return systemd.NewTestManager(unitDir, mock) }
-	newSystemctlRunner = func() systemd.SystemctlRunner { return mock }
+	systemdManager = systemd.NewTestManager(unitDir, mock)
 	getEUID = func() int { return 0 }
 	clix.JSONOutput = false
 	return unitDir
@@ -40,7 +64,7 @@ func daemonTestEnv(t *testing.T, mock *systemd.MockSystemctlRunner) (unitDir str
 func seedUnits(t *testing.T, dir string) {
 	t.Helper()
 	for _, ext := range []string{".timer", ".service"} {
-		if err := os.WriteFile(filepath.Join(dir, unitName+ext), []byte("stub"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, daemonTestUnitName+ext), []byte("stub"), 0644); err != nil {
 			t.Fatalf("failed to seed unit file: %v", err)
 		}
 	}
@@ -50,7 +74,7 @@ func TestRunDaemonEnable_RejectsNonRoot(t *testing.T) {
 	daemonTestEnv(t, &systemd.MockSystemctlRunner{})
 	getEUID = func() int { return 1000 }
 
-	err := runDaemonEnable(&cobra.Command{}, nil)
+	err := runDaemonEnable(daemonTestCommand(t), nil)
 	if err == nil || !strings.Contains(err.Error(), "root privileges") {
 		t.Fatalf("expected root-privileges error, got: %v", err)
 	}
@@ -60,7 +84,7 @@ func TestRunDaemonDisable_RejectsNonRoot(t *testing.T) {
 	daemonTestEnv(t, &systemd.MockSystemctlRunner{})
 	getEUID = func() int { return 1000 }
 
-	err := runDaemonDisable(&cobra.Command{}, nil)
+	err := runDaemonDisable(daemonTestCommand(t), nil)
 	if err == nil || !strings.Contains(err.Error(), "root privileges") {
 		t.Fatalf("expected root-privileges error, got: %v", err)
 	}
@@ -71,7 +95,7 @@ func TestRunDaemonEnable_AlreadyInstalled(t *testing.T) {
 	dir := daemonTestEnv(t, mock)
 	seedUnits(t, dir)
 
-	err := runDaemonEnable(&cobra.Command{}, nil)
+	err := runDaemonEnable(daemonTestCommand(t), nil)
 	if err == nil || !strings.Contains(err.Error(), "already installed") {
 		t.Fatalf("expected already-installed error, got: %v", err)
 	}
@@ -85,20 +109,20 @@ func TestRunDaemonEnable_Success(t *testing.T) {
 	dir := daemonTestEnv(t, mock)
 	clix.JSONOutput = true
 
-	out, err := captureStdout(t, func() error { return runDaemonEnable(&cobra.Command{}, nil) })
+	out, err := captureStdout(t, func() error { return runDaemonEnable(daemonTestCommand(t), nil) })
 	if err != nil {
 		t.Fatalf("enable failed: %v", err)
 	}
 
 	for _, ext := range []string{".timer", ".service"} {
-		if _, statErr := os.Stat(filepath.Join(dir, unitName+ext)); statErr != nil {
+		if _, statErr := os.Stat(filepath.Join(dir, daemonTestUnitName+ext)); statErr != nil {
 			t.Errorf("expected %s unit file to be written: %v", ext, statErr)
 		}
 	}
 	if !mock.DaemonReloadCalled {
 		t.Error("expected daemon-reload after install")
 	}
-	serviceContent, readErr := os.ReadFile(filepath.Join(dir, unitName+".service"))
+	serviceContent, readErr := os.ReadFile(filepath.Join(dir, daemonTestUnitName+".service"))
 	if readErr != nil {
 		t.Fatalf("read written service unit: %v", readErr)
 	}
@@ -112,10 +136,10 @@ func TestRunDaemonEnable_Success(t *testing.T) {
 			t.Errorf("written service unit missing %q\nGot:\n%s", expected, serviceContent)
 		}
 	}
-	if mock.EnableUnit != unitName+".timer" || !mock.EnableCalled {
+	if mock.EnableUnit != daemonTestUnitName+".timer" || !mock.EnableCalled {
 		t.Errorf("expected timer to be enabled, got called=%v unit=%q", mock.EnableCalled, mock.EnableUnit)
 	}
-	if mock.StartUnit != unitName+".timer" || !mock.StartCalled {
+	if mock.StartUnit != daemonTestUnitName+".timer" || !mock.StartCalled {
 		t.Errorf("expected timer to be started, got called=%v unit=%q", mock.StartCalled, mock.StartUnit)
 	}
 
@@ -132,11 +156,9 @@ func TestRunDaemonEnable_InstallFailure(t *testing.T) {
 	mock := &systemd.MockSystemctlRunner{}
 	daemonTestEnv(t, mock)
 	// Point the manager at a path that cannot be written so Install fails.
-	newDaemonManager = func() *systemd.Manager {
-		return systemd.NewTestManager(filepath.Join(t.TempDir(), "does", "not", "exist"), mock)
-	}
+	systemdManager = systemd.NewTestManager(filepath.Join(t.TempDir(), "does", "not", "exist"), mock)
 
-	err := runDaemonEnable(&cobra.Command{}, nil)
+	err := runDaemonEnable(daemonTestCommand(t), nil)
 	if err == nil || !strings.Contains(err.Error(), "failed to install timer") {
 		t.Fatalf("expected install failure, got: %v", err)
 	}
@@ -149,7 +171,7 @@ func TestRunDaemonEnable_EnableFailure(t *testing.T) {
 	mock := &systemd.MockSystemctlRunner{EnableErr: errors.New("boom")}
 	daemonTestEnv(t, mock)
 
-	err := runDaemonEnable(&cobra.Command{}, nil)
+	err := runDaemonEnable(daemonTestCommand(t), nil)
 	if err == nil || !strings.Contains(err.Error(), "failed to enable timer") {
 		t.Fatalf("expected enable failure, got: %v", err)
 	}
@@ -162,7 +184,7 @@ func TestRunDaemonEnable_StartFailure(t *testing.T) {
 	mock := &systemd.MockSystemctlRunner{StartErr: errors.New("boom")}
 	daemonTestEnv(t, mock)
 
-	err := runDaemonEnable(&cobra.Command{}, nil)
+	err := runDaemonEnable(daemonTestCommand(t), nil)
 	if err == nil || !strings.Contains(err.Error(), "failed to start timer") {
 		t.Fatalf("expected start failure, got: %v", err)
 	}
@@ -172,7 +194,7 @@ func TestRunDaemonDisable_NotInstalled(t *testing.T) {
 	mock := &systemd.MockSystemctlRunner{}
 	daemonTestEnv(t, mock)
 
-	err := runDaemonDisable(&cobra.Command{}, nil)
+	err := runDaemonDisable(daemonTestCommand(t), nil)
 	if err == nil || !strings.Contains(err.Error(), "not installed") {
 		t.Fatalf("expected not-installed error, got: %v", err)
 	}
@@ -184,13 +206,13 @@ func TestRunDaemonDisable_Success(t *testing.T) {
 	seedUnits(t, dir)
 	clix.JSONOutput = true
 
-	out, err := captureStdout(t, func() error { return runDaemonDisable(&cobra.Command{}, nil) })
+	out, err := captureStdout(t, func() error { return runDaemonDisable(daemonTestCommand(t), nil) })
 	if err != nil {
 		t.Fatalf("disable failed: %v", err)
 	}
 
 	for _, ext := range []string{".timer", ".service"} {
-		if _, statErr := os.Stat(filepath.Join(dir, unitName+ext)); !os.IsNotExist(statErr) {
+		if _, statErr := os.Stat(filepath.Join(dir, daemonTestUnitName+ext)); !os.IsNotExist(statErr) {
 			t.Errorf("expected %s unit file to be removed", ext)
 		}
 	}
@@ -212,12 +234,12 @@ func TestRunDaemonStatus_NotInstalled(t *testing.T) {
 	daemonTestEnv(t, mock)
 	clix.JSONOutput = true
 
-	out, err := captureStdout(t, func() error { return runDaemonStatus(&cobra.Command{}, nil) })
+	out, err := captureStdout(t, func() error { return runDaemonStatus(daemonTestCommand(t), nil) })
 	if err != nil {
 		t.Fatalf("status failed: %v", err)
 	}
 
-	var status daemonStatus
+	var status sdk.DaemonStatusResult
 	if jsonErr := json.Unmarshal([]byte(out), &status); jsonErr != nil {
 		t.Fatalf("status JSON output invalid: %v\n%s", jsonErr, out)
 	}
@@ -235,12 +257,12 @@ func TestRunDaemonStatus_Installed(t *testing.T) {
 	seedUnits(t, dir)
 	clix.JSONOutput = true
 
-	out, err := captureStdout(t, func() error { return runDaemonStatus(&cobra.Command{}, nil) })
+	out, err := captureStdout(t, func() error { return runDaemonStatus(daemonTestCommand(t), nil) })
 	if err != nil {
 		t.Fatalf("status failed: %v", err)
 	}
 
-	var status daemonStatus
+	var status sdk.DaemonStatusResult
 	if jsonErr := json.Unmarshal([]byte(out), &status); jsonErr != nil {
 		t.Fatalf("status JSON output invalid: %v\n%s", jsonErr, out)
 	}
@@ -261,12 +283,12 @@ func TestRunDaemonStatus_SuppressesQueryErrors(t *testing.T) {
 	seedUnits(t, dir)
 	clix.JSONOutput = true
 
-	out, err := captureStdout(t, func() error { return runDaemonStatus(&cobra.Command{}, nil) })
+	out, err := captureStdout(t, func() error { return runDaemonStatus(daemonTestCommand(t), nil) })
 	if err != nil {
 		t.Fatalf("status must suppress query errors, got: %v", err)
 	}
 
-	var status daemonStatus
+	var status sdk.DaemonStatusResult
 	if jsonErr := json.Unmarshal([]byte(out), &status); jsonErr != nil {
 		t.Fatalf("status JSON output invalid: %v\n%s", jsonErr, out)
 	}
@@ -283,7 +305,7 @@ func TestRunDaemonStatus_TextOutput(t *testing.T) {
 	dir := daemonTestEnv(t, mock)
 	seedUnits(t, dir)
 
-	out, err := captureStdout(t, func() error { return runDaemonStatus(&cobra.Command{}, nil) })
+	out, err := captureStdout(t, func() error { return runDaemonStatus(daemonTestCommand(t), nil) })
 	if err != nil {
 		t.Fatalf("status failed: %v", err)
 	}

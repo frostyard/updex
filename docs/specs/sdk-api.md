@@ -13,6 +13,7 @@ type ClientConfig struct {
     Verbose            bool                  // Enable debug output
     Progress           reporter.Reporter     // Progress reporter (optional)
     SysextRunner       sysext.SysextRunner   // Mock runner for tests (optional)
+    SystemdManager     *systemd.Manager       // Unit manager and runner for daemon operations (optional)
     OnDownloadProgress download.ProgressFunc // Download progress callback (optional)
     HTTPClient         *http.Client          // Shared HTTP client (optional)
     Paths              RuntimePaths          // Instance-scoped filesystem paths (optional)
@@ -47,9 +48,52 @@ directory. `sysext.GetActiveVersionIn` additionally receives the captured
 merged-image directory. The original package functions remain compatibility
 wrappers over their package variables or production constants.
 
-Other fields: if `SysextRunner` is nil it defaults to `&sysext.DefaultRunner{}`; if `Progress` is nil it defaults to `reporter.NoopReporter{}`; if `HTTPClient` is nil a default `http.Client` with a 10-minute timeout, the standard 10-redirect limit, and an HTTPS-to-HTTP downgrade refusal is created. HTTP-to-HTTP and HTTPS-to-HTTPS redirects remain allowed. A caller-supplied `HTTPClient` is stored unchanged, including its redirect policy. `OnDownloadProgress` is called with the HTTP response content length (-1 if unknown) and must return a fresh `io.Writer` per attempt to avoid double-counting retried downloads.
+Other fields: if `SysextRunner` is nil it defaults to `&sysext.DefaultRunner{}`; if `SystemdManager` is nil it defaults to `systemd.NewManager()` for `/etc/systemd/system` and the real `systemctl`; if `Progress` is nil it defaults to `reporter.NoopReporter{}`; if `HTTPClient` is nil a default `http.Client` with a 10-minute timeout, the standard 10-redirect limit, and an HTTPS-to-HTTP downgrade refusal is created. HTTP-to-HTTP and HTTPS-to-HTTPS redirects remain allowed. A caller-supplied `HTTPClient` is stored unchanged, including its redirect policy. `OnDownloadProgress` is called with the HTTP response content length (-1 if unknown) and must return a fresh `io.Writer` per attempt to avoid double-counting retried downloads.
 
 ## Methods
+
+### Daemon lifecycle
+
+```go
+func (c *Client) EnableDaemon(ctx context.Context, opts EnableDaemonOptions) (*DaemonActionResult, error)
+func (c *Client) DisableDaemon(ctx context.Context, opts DisableDaemonOptions) (*DaemonActionResult, error)
+func (c *Client) DaemonStatus(ctx context.Context, opts DaemonStatusOptions) (*DaemonStatusResult, error)
+```
+
+`EnableDaemon` constructs the fixed daily timer and sandboxed root oneshot,
+installs the units without overwriting occupied paths, then enables and starts
+`updex-update.timer`. The service runs
+`/usr/bin/updex features update --no-refresh`, so unattended work stages but
+does not activate extensions. `DisableDaemon` stops/disables through
+`systemd.Manager.Remove`, removes both units, and reloads systemd.
+`DaemonStatus` reports an absent installation without querying systemctl; for
+an installed timer it reports enabled/active state and the `daily` schedule.
+As in the CLI behavior this API replaces, status query errors are suppressed
+and the runner's returned boolean is retained (the default runner returns
+false on an error). All three methods reject an already canceled context
+before filesystem or systemctl work.
+
+The option structs are intentionally empty for future compatible expansion.
+Actions return:
+
+```go
+type DaemonActionResult struct {
+    Success bool   `json:"success"`
+    Message string `json:"message"`
+}
+
+type DaemonStatusResult struct {
+    Installed bool   `json:"installed"`
+    Enabled   bool   `json:"enabled"`
+    Active    bool   `json:"active"`
+    Schedule  string `json:"schedule,omitempty"`
+}
+```
+
+The CLI keeps root authorization at its boundary, then forwards the Cobra
+context and formats these result types. SDK callers inject
+`ClientConfig.SystemdManager` when they need a non-production unit path or a
+mock `SystemctlRunner`.
 
 ### Features
 
@@ -415,5 +459,6 @@ recorded in [ADR-0008](../adr/0008-bounded-retry-no-resume.md).
 - `NewTestManager(unitPath string, runner SystemctlRunner) *Manager` — Create manager with custom paths and runner for testing
 - `GenerateTimer(cfg *TimerConfig) string` — Generate systemd timer unit content
 - `GenerateService(cfg *ServiceConfig) string` — Generate systemd service unit content; `ServiceConfig.Sandbox` appends the `SandboxDirectives` hardening block to `[Service]` (the daemon unit sets it; other callers keep the minimal unit)
-- `Manager.Install(timer, service) / Remove(name) / Exists(name)` — Unit lifecycle
+- `Manager.Install(timer, service) / Remove(name) / Exists(name)` — Unit-file lifecycle
+- `Manager.Enable(unit) / Start(unit) / IsEnabled(unit) / IsActive(unit)` — Runner-backed primitives used by the daemon SDK orchestration
 - `SystemctlRunner` interface — `DaemonReload()`, `Enable(unit)`, `Disable(unit)`, `Start(unit)`, `Stop(unit)`, `IsActive(unit)`, `IsEnabled(unit)` methods executed via `DefaultSystemctlRunner` (real commands) or `MockSystemctlRunner` (tests)

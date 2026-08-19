@@ -522,6 +522,52 @@ func TestExists(t *testing.T) {
 	}
 }
 
+func TestManagerSystemctlPrimitives(t *testing.T) {
+	enableErr := errors.New("enable failed")
+	startErr := errors.New("start failed")
+	enabledErr := errors.New("enabled query failed")
+	activeErr := errors.New("active query failed")
+	runner := &MockSystemctlRunner{
+		EnableErr:       enableErr,
+		StartErr:        startErr,
+		IsEnabledResult: true,
+		IsEnabledErr:    enabledErr,
+		IsActiveResult:  true,
+		IsActiveErr:     activeErr,
+	}
+	manager := NewTestManager(t.TempDir(), runner)
+
+	if err := manager.Enable("example.timer"); !errors.Is(err, enableErr) {
+		t.Fatalf("Enable() error = %v, want %v", err, enableErr)
+	}
+	if !runner.EnableCalled || runner.EnableUnit != "example.timer" {
+		t.Fatalf("Enable() call = (%v, %q)", runner.EnableCalled, runner.EnableUnit)
+	}
+
+	if err := manager.Start("example.timer"); !errors.Is(err, startErr) {
+		t.Fatalf("Start() error = %v, want %v", err, startErr)
+	}
+	if !runner.StartCalled || runner.StartUnit != "example.timer" {
+		t.Fatalf("Start() call = (%v, %q)", runner.StartCalled, runner.StartUnit)
+	}
+
+	enabled, err := manager.IsEnabled("example.timer")
+	if !enabled || !errors.Is(err, enabledErr) {
+		t.Fatalf("IsEnabled() = (%v, %v), want (true, %v)", enabled, err, enabledErr)
+	}
+	if !runner.IsEnabledCalled || runner.IsEnabledUnit != "example.timer" {
+		t.Fatalf("IsEnabled() call = (%v, %q)", runner.IsEnabledCalled, runner.IsEnabledUnit)
+	}
+
+	active, err := manager.IsActive("example.timer")
+	if !active || !errors.Is(err, activeErr) {
+		t.Fatalf("IsActive() = (%v, %v), want (true, %v)", active, err, activeErr)
+	}
+	if !runner.IsActiveCalled || runner.IsActiveUnit != "example.timer" {
+		t.Fatalf("IsActive() call = (%v, %q)", runner.IsActiveCalled, runner.IsActiveUnit)
+	}
+}
+
 func TestNewManager(t *testing.T) {
 	mgr := NewManager()
 

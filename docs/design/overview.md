@@ -4,7 +4,10 @@
 
 updex is a Go SDK and CLI for managing [systemd-sysext](https://www.freedesktop.org/software/systemd/man/latest/systemd-sysext.html) images. It replicates `systemd-sysupdate` functionality for `url-file` transfers, providing feature-based management of system extensions with version tracking, SHA256 verification, optional GPG signing, and automatic cleanup.
 
-The project follows an **SDK-first design** for feature management: the core workflows live in public Go packages, and the CLI is mostly a thin wrapper that parses flags and formats output. The `daemon` command is the main exception: it imports the `systemd` package directly to install/remove timer units because daemon lifecycle is systemd-unit management rather than feature update logic.
+The project follows an **SDK-first design**: core feature, catalog, component,
+and daemon workflows live behind public `updex.Client` methods. The CLI is a
+thin wrapper that authorizes privileged operations, parses flags, calls the
+SDK, and formats structured results.
 
 Public repository observability is indexed at `docs/metrics/README.md` (a real tree, per ADR-0012). That page links live CI, nightly compliance, Codecov, pull-request, AI-fix, and release evidence and excludes secrets, private prompts, vulnerability embargoes, and managed-host telemetry; the monthly acceptance metric consumed by `.github/auto-qa-tuning.json` is defined in `docs/specs/pr-acceptance-metric.md` (`docs/metrics.md` resolves to it), and the whole declare→review→gate→learn→observe loop is `docs/design/quality-loop.md`. `updex/public_metrics_contract_test.go` prevents the ACMM paths, the substantive signal contract, and the tuning reference from drifting apart.
 
@@ -18,7 +21,7 @@ cmd/updex/features_run.go       Run functions for feature subcommands
 cmd/updex/components.go         components (list discovered systemd-sysupdate components)
 cmd/updex/catalog.go            catalog list|search|add|remove ([REPO/]NAME parsing,
                                 --repo/--force flags, output formatting)
-cmd/updex/daemon.go             daemon enable|disable|status (direct systemd timers)
+cmd/updex/daemon.go             daemon enable|disable|status SDK wrappers
 cmd/updex/client.go             CLI → SDK client factory
 
 updex/                          Public SDK (Client + methods)
@@ -38,6 +41,8 @@ updex/                          Public SDK (Client + methods)
   options.go                    Option structs for all operations (each
                                 feature-related struct carries Component string)
   results.go                    Result structs for all operations
+  daemon.go                     EnableDaemon(), DisableDaemon(), DaemonStatus()
+                                systemd lifecycle orchestration
   catalog.go                    CatalogList(), CatalogAdd(), CatalogRemove() —
                                 orchestrate catalog/ primitives plus
                                 EnableFeature/DisableFeature reuse
@@ -68,13 +73,10 @@ internal/testutil/              HTTP test server helpers (module-internal)
 ### Package dependency flow
 
 ```
-CLI (cmd/features*) → SDK (updex/) → config, manifest, download, version, sysext
-                                  → sysext → config, version
-CLI (cmd/catalog.go) → SDK (updex/catalog.go) → catalog, config
-CLI (cmd/daemon.go) → systemd (direct, bypasses SDK)
+CLI (cmd/features*) ─┐
+CLI (cmd/catalog.go) ├→ SDK (updex/) → config, catalog, manifest, download,
+CLI (cmd/daemon.go) ─┘                version, sysext, systemd
 ```
-
-> Note: `cmd/updex/daemon.go` imports `systemd` directly rather than through the SDK layer. This is a known architectural deviation from the SDK-first pattern.
 
 ## Key Patterns
 
@@ -85,6 +87,9 @@ CLI (cmd/daemon.go) → systemd (direct, bypasses SDK)
 - Return dedicated result structs with status fields + error
 - `ClientConfig.HTTPClient` is reused for manifest fetches and downloads; if nil, `NewClient` creates one with a 10-minute timeout, the standard 10-redirect limit, and an HTTPS-to-HTTP downgrade refusal
 - `ClientConfig.Progress` receives informational/warning/debug messages; `ClientConfig.OnDownloadProgress` is a separate download-byte callback
+- `ClientConfig.SystemdManager` injects the unit-file path and
+  `SystemctlRunner` used by daemon SDK methods; nil selects the production
+  `/etc/systemd/system` manager
 - `UpdateFeatures` and `CheckFeatures` cache fetched manifests by `Transfer.Source.Path` only. Future changes that mix verification policy or auth by transfer for the same source URL need to revisit that cache key.
 - The feature SDK methods (`UpdateFeatures`, `CheckFeatures`, enable/disable with `Now`) use `config.GetTransfersForFeature`, which includes transfers where the feature appears in either `Features` or `RequisiteFeatures`. The more general `config.FilterTransfersByFeatures` implements full active-transfer logic, including standalone transfers and AND/OR feature requirements, but it is not the main path for current feature update/check workflows.
 - Error messages: lowercase, no trailing punctuation, wrapped with `fmt.Errorf("context: %w", err)`
@@ -93,6 +98,9 @@ CLI (cmd/daemon.go) → systemd (direct, bypasses SDK)
 
 - Mock interfaces for system commands: `sysext.SysextRunner`, `systemd.SystemctlRunner`
 - `ClientConfig.SysextRunner` field for injecting mocks into the SDK client — `NewClient` stores the runner directly on the `Client` struct (does not mutate global state)
+- `ClientConfig.SystemdManager` for injecting a `systemd.NewTestManager`
+  rooted at `t.TempDir()` with a mock `SystemctlRunner`; daemon SDK tests use
+  this instead of touching real units or invoking `systemctl`
 - `ClientConfig.Paths` (`RuntimePaths`) for supplying temp filesystem trees to a client at construction — the preferred approach for path isolation since ADR-0011; use `t.TempDir()` paths for `DefinitionRoots`, `SysextLinkDir`, `RunExtensionsDir`, `CatalogConfigRoots`, etc. Independently configured clients can run in parallel without save/mutate/restore discipline.
 - Package-level compatibility variables (`config.SearchRoots`, `catalog.ConfigRoots`, `catalog.CacheDir`, `sysext.SysextDir`) remain settable for tests that have not yet migrated; mutation before client construction still works because `NewClient` reads each global once at that point.
 - Transfer parsing receives the client's captured os-release paths as well as
@@ -102,7 +110,7 @@ CLI (cmd/daemon.go) → systemd (direct, bypasses SDK)
 - `t.TempDir()` for filesystem operations, `t.Context()` for context
 - `tests/e2e/` builds and runs the real CLI subprocess for argument, exit-code, output, custom-config, and read-only HTTP checks in its dedicated PR job. `cmd/updex/integration_test.go` runs the full Cobra/clix command in-process so package search roots can point at temporary default component and catalog trees; these tests run in both the PR Unit Tests and Race Detection jobs. Keep mutating subprocess paths behind parser failures so CI does not require root.
 - `sysext/link_test.go` pins the `/var/lib/extensions` link lifecycle through `LinkToSysextAt` (explicit dir, no global mutation): newest-by-version selection, replacing symlinks/dangling links/regular files, staging-dir symlinks ignored, `Target.Path` fallback, metadata rejection (component, patterns, `@v`), empty/missing/non-matching staging sets, a conflicting destination directory preserved on error, sysext-dir creation failure (parent is a regular file), and removal failure (read-only dir, skipped as root). Every failing case asserts no new symlink is left behind. It also pins that `DefaultRunner` implements `PathSysextRunner` and links into the explicit dir, not `SysextDir`.
-- CLI handler seams: `cmd/updex` exposes two package-level test seams so mutating handlers can run rootless in-process — `getEUID` (swap for `func() int { return 0 }` to pass `requireRoot`) and `sysextRunner` (nil in production so `newClient` gets the SDK default; set to a `*sysext.MockRunner` to observe `Refresh`/`Unmerge` without executing systemd-sysext). `cmd/updex/features_mutation_test.go` uses both with temporary `config.SearchRoots` (drop-ins land under `roots[0]`), a temporary `sysext.SysextDir`, and a fake HTTP source to cover `runFeaturesEnable`/`runFeaturesDisable` end-to-end: `--now`, `--force`, `--no-refresh`, `--component`, dry-run, and text/JSON result shapes, including a real JSON+silent download whose stdout must decode as exactly one result object. `cmd/updex/catalog_mutation_test.go` does the same for `runCatalogAdd`/`runCatalogRemove`, additionally pointing `catalog.ConfigRoots`, `catalog.CacheDir`, and `catalog.TargetPath` at temp dirs and serving `<name>/<name>.conf`, `SHA256SUMS`, and the image from one `httptest.Server` (configure two `.catalog` files against it to exercise `[REPO/]NAME` / `--repo` disambiguation); remove cases seed the post-add state through the SDK's `CatalogAdd`.
+- CLI handler seams: `cmd/updex` exposes three package-level test seams so mutating handlers can run rootless in-process — `getEUID` (swap for `func() int { return 0 }` to pass `requireRoot`), `sysextRunner` (nil in production so `newClient` gets the SDK default; set to a `*sysext.MockRunner` to observe `Refresh`/`Unmerge`), and `systemdManager` (nil in production; set to a temporary `systemd.NewTestManager` for daemon wrappers). `cmd/updex/features_mutation_test.go` uses the first two with temporary `config.SearchRoots` (drop-ins land under `roots[0]`), a temporary `sysext.SysextDir`, and a fake HTTP source to cover `runFeaturesEnable`/`runFeaturesDisable` end-to-end: `--now`, `--force`, `--no-refresh`, `--component`, dry-run, and text/JSON result shapes, including a real JSON+silent download whose stdout must decode as exactly one result object. `cmd/updex/catalog_mutation_test.go` does the same for `runCatalogAdd`/`runCatalogRemove`, additionally pointing `catalog.ConfigRoots`, `catalog.CacheDir`, and `catalog.TargetPath` at temp dirs and serving `<name>/<name>.conf`, `SHA256SUMS`, and the image from one `httptest.Server` (configure two `.catalog` files against it to exercise `[REPO/]NAME` / `--repo` disambiguation); remove cases seed the post-add state through the SDK's `CatalogAdd`.
 
 ### CLI output
 
@@ -481,6 +489,9 @@ The daemon stages updates but never activates them (decision recorded in
 [ADR-0007](../adr/0007-daemon-stages-never-activates.md)).
 
 - `updex daemon enable` installs `/etc/systemd/system/updex-update.timer` and `.service`, then enables and starts the timer
+- `Client.EnableDaemon`, `Client.DisableDaemon`, and `Client.DaemonStatus`
+  own unit construction and lifecycle sequencing; the daemon CLI retains only
+  root authorization, SDK invocation, and text/JSON formatting
 - The timer runs `daily`, is `Persistent=true`, and uses `RandomizedDelaySec=3600`
 - The service command is `/usr/bin/updex features update --no-refresh`, so automatic downloads are staged and not refreshed/activated until a later refresh or reboot
 - Unit installation refuses to overwrite existing timer/service files; callers must disable first. The existence check is `os.Lstat`-based per [ADR-0005](../adr/0005-transactional-writes-lstat-checks.md) (`systemd.unitFileState`): a symlink (dangling or live), directory, or other non-regular entry at either unit path is refused outright (`unit path … exists and is not a regular file; remove it manually`) rather than written through, and each unit is written as a fresh 0644 regular file via temp-file-plus-rename in the unit directory (`systemd.writeUnitFile`), so the write never follows a link that appears between check and write. `Manager.Exists` uses the same Lstat view and treats any occupied unit path — including a dangling symlink — as present, so `daemon enable` reports "already installed" instead of attempting a write the guard would reject, and `daemon status` never reports a planted entry as absent
