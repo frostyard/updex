@@ -8,7 +8,7 @@
 # exact-status assertion holds.
 set -eu
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(CDPATH= cd "$(dirname "$0")" && pwd)"
 CHECK="$SCRIPT_DIR/check-coverage.sh"
 
 TMP="$(mktemp -d)"
