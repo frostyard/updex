@@ -34,8 +34,8 @@ for (const cat of categories) {
 
 // ---- Tree walk shared by the link and symlink checks. ----
 // completions/ and manpages/ are generated output; .worktrees/ and .codex/ are
-// not part of the tracked tree. A symlinked directory is recorded as a symlink
-// and not descended, so aliased trees are never double-counted.
+// not part of the repository checkout. A symlinked directory is recorded as a
+// symlink and not descended, so aliased trees are never double-counted.
 const SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", "completions", "manpages", ".worktrees", ".codex"]);
 const symlinks = [];
 const mdFiles = [];
