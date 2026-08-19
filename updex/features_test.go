@@ -5,9 +5,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/frostyard/updex/config"
@@ -2104,5 +2108,195 @@ func assertOnlyEntries(t *testing.T, dir string, want ...string) {
 	}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("%s entries = %v, want %v", dir, got, want)
+	}
+}
+
+// sharedSourceFixture stages one enabled feature with two transfers that
+// share a single Source.Path against a server that serves SHA256SUMS (and,
+// when content is given, the files) but no SHA256SUMS.gpg. Components are
+// named so that "aaa" sorts (and therefore loads) before "zzz": the caller
+// picks which of the two carries Verify=true so both load orders can be
+// exercised. It returns the config dir and the per-component target dir.
+func sharedSourceFixture(t *testing.T, server *httptest.Server, verifyAAA, verifyZZZ bool) (configDir, targetDir string) {
+	t.Helper()
+	configDir = t.TempDir()
+	targetDir = t.TempDir()
+	createFeatureFile(t, configDir, "testfeature", true)
+	writeCheckTransfer(t, configDir, "aaa", "testfeature", server.URL, targetDir, verifyAAA)
+	writeCheckTransfer(t, configDir, "zzz", "testfeature", server.URL, targetDir, verifyZZZ)
+	return configDir, targetDir
+}
+
+// unsignedSharedServer serves a manifest listing aaa/zzz 1.0.0 (plus their
+// content when withContent is true) and counts SHA256SUMS requests; it never
+// serves SHA256SUMS.gpg, so any Verify=true transfer must fail verification.
+func unsignedSharedServer(t *testing.T, withContent bool) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	aaaContent := []byte("aaa extension content")
+	zzzContent := []byte("zzz extension content")
+	files := map[string]string{
+		"aaa_1.0.0.raw": hashContent(aaaContent),
+		"zzz_1.0.0.raw": hashContent(zzzContent),
+	}
+	content := map[string][]byte{}
+	if withContent {
+		content["aaa_1.0.0.raw"] = aaaContent
+		content["zzz_1.0.0.raw"] = zzzContent
+	}
+	var manifestRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		switch {
+		case path == "SHA256SUMS":
+			manifestRequests.Add(1)
+			for name, hash := range files {
+				_, _ = fmt.Fprintf(w, "%s  %s\n", hash, name)
+			}
+		case content[path] != nil:
+			_, _ = w.Write(content[path])
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server, &manifestRequests
+}
+
+// TestCheckFeatures_SharedSource_VerifyTrueNeverUsesUnverifiedCache pins the
+// invariant that manifest verification is a property of the transfer, not of
+// load order: with two transfers sharing one Source.Path, the Verify=true
+// transfer must fail signature verification against a source without a
+// detached signature no matter whether its Verify=false sibling fetched (and
+// cached) the manifest first, and the Verify=false sibling still succeeds.
+func TestCheckFeatures_SharedSource_VerifyTrueNeverUsesUnverifiedCache(t *testing.T) {
+	cases := []struct {
+		name                 string
+		verifyAAA            bool // aaa loads first
+		verifyZZZ            bool // zzz loads second
+		verified, unverified string
+	}{
+		{name: "unverified first, verified second", verifyAAA: false, verifyZZZ: true, verified: "zzz", unverified: "aaa"},
+		{name: "verified first, unverified second", verifyAAA: true, verifyZZZ: false, verified: "aaa", unverified: "zzz"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server, _ := unsignedSharedServer(t, false)
+			configDir, _ := sharedSourceFixture(t, server, tc.verifyAAA, tc.verifyZZZ)
+
+			client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: &sysext.MockRunner{}})
+			results, err := client.CheckFeatures(t.Context(), CheckFeaturesOptions{})
+
+			if err == nil {
+				t.Fatal("expected CheckFeatures to return an error: the Verify=true transfer cannot be verified")
+			}
+			if len(results) != 1 || len(results[0].Results) != 2 {
+				t.Fatalf("expected 1 feature with 2 component results, got %+v", results)
+			}
+			byComponent := map[string]CheckResult{}
+			for _, r := range results[0].Results {
+				byComponent[r.Component] = r
+			}
+			v := byComponent[tc.verified]
+			if v.Error == "" || !strings.Contains(v.Error, "signature") {
+				t.Errorf("%s (Verify=true) must fail with a signature error, got %+v", tc.verified, v)
+			}
+			if v.UpdateAvailable || v.NewestVersion != "" {
+				t.Errorf("%s (Verify=true) must not report an update from an unverified manifest: %+v", tc.verified, v)
+			}
+			u := byComponent[tc.unverified]
+			if u.Error != "" {
+				t.Errorf("%s (Verify=false) must still succeed, got error %q", tc.unverified, u.Error)
+			}
+			if !u.UpdateAvailable || u.NewestVersion != "1.0.0" {
+				t.Errorf("%s (Verify=false) must still report its version, got %+v", tc.unverified, u)
+			}
+		})
+	}
+}
+
+// TestUpdateFeatures_SharedSource_VerifyTrueNeverUsesUnverifiedCache is the
+// UpdateFeatures counterpart: the Verify=false transfer downloads its file,
+// the Verify=true sibling sharing the same Source.Path fails verification and
+// writes nothing to the target directory, in either load order.
+func TestUpdateFeatures_SharedSource_VerifyTrueNeverUsesUnverifiedCache(t *testing.T) {
+	cases := []struct {
+		name                 string
+		verifyAAA, verifyZZZ bool
+		verified, unverified string
+	}{
+		{name: "unverified first, verified second", verifyAAA: false, verifyZZZ: true, verified: "zzz", unverified: "aaa"},
+		{name: "verified first, unverified second", verifyAAA: true, verifyZZZ: false, verified: "aaa", unverified: "zzz"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server, _ := unsignedSharedServer(t, true)
+			configDir, targetDir := sharedSourceFixture(t, server, tc.verifyAAA, tc.verifyZZZ)
+
+			client := NewClient(ClientConfig{
+				Definitions:  configDir,
+				SysextRunner: &sysext.MockRunner{},
+				Paths: RuntimePaths{
+					DefinitionRoots:  []string{t.TempDir()},
+					SysextLinkDir:    t.TempDir(),
+					RunExtensionsDir: t.TempDir(),
+				},
+			})
+			results, err := client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true})
+
+			if err == nil {
+				t.Fatal("expected UpdateFeatures to return an error: the Verify=true transfer cannot be verified")
+			}
+			if len(results) != 1 || len(results[0].Results) != 2 {
+				t.Fatalf("expected 1 feature with 2 component results, got %+v", results)
+			}
+			byComponent := map[string]UpdateResult{}
+			for _, r := range results[0].Results {
+				byComponent[r.Component] = r
+			}
+			v := byComponent[tc.verified]
+			if v.Error == "" || !strings.Contains(v.Error, "signature") {
+				t.Errorf("%s (Verify=true) must fail with a signature error, got %+v", tc.verified, v)
+			}
+			if v.Downloaded || v.Installed {
+				t.Errorf("%s (Verify=true) must not download or install from an unverified manifest: %+v", tc.verified, v)
+			}
+			if _, statErr := os.Stat(filepath.Join(targetDir, tc.verified+"_1.0.0.raw")); !os.IsNotExist(statErr) {
+				t.Errorf("%s (Verify=true) must leave no file in the target dir, stat err = %v", tc.verified, statErr)
+			}
+			u := byComponent[tc.unverified]
+			if u.Error != "" || !u.Downloaded {
+				t.Errorf("%s (Verify=false) must still download, got %+v", tc.unverified, u)
+			}
+			if _, statErr := os.Stat(filepath.Join(targetDir, tc.unverified+"_1.0.0.raw")); statErr != nil {
+				t.Errorf("%s (Verify=false) file missing from target dir: %v", tc.unverified, statErr)
+			}
+		})
+	}
+}
+
+// TestCheckFeatures_SharedSource_FetchesManifestOnce preserves the PR #69
+// optimisation: two transfers sharing one Source.Path with the same
+// verification requirement still trigger exactly one SHA256SUMS request per
+// CheckFeatures call — the verification guard only bypasses the cache when a
+// Verify=true transfer meets an unverified entry.
+func TestCheckFeatures_SharedSource_FetchesManifestOnce(t *testing.T) {
+	server, manifestRequests := unsignedSharedServer(t, false)
+	configDir, _ := sharedSourceFixture(t, server, false, false)
+
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: &sysext.MockRunner{}})
+	results, err := client.CheckFeatures(t.Context(), CheckFeaturesOptions{})
+	if err != nil {
+		t.Fatalf("CheckFeatures failed: %v", err)
+	}
+	if len(results) != 1 || len(results[0].Results) != 2 {
+		t.Fatalf("expected 1 feature with 2 component results, got %+v", results)
+	}
+	for _, r := range results[0].Results {
+		if r.Error != "" || !r.UpdateAvailable || r.NewestVersion != "1.0.0" {
+			t.Errorf("unexpected result for %s: %+v", r.Component, r)
+		}
+	}
+	if got := manifestRequests.Load(); got != 1 {
+		t.Fatalf("SHA256SUMS requested %d time(s) for two transfers sharing one source, want exactly 1", got)
 	}
 }

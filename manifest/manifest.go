@@ -20,6 +20,11 @@ const maxManifestSize = 4 << 20
 type Manifest struct {
 	URL   string            // Base URL where manifest was fetched from
 	Files map[string]string // filename -> SHA256 hash
+	// Verified reports whether the detached GPG signature was checked and
+	// valid when this manifest was fetched. It is false for verify=false
+	// fetches. Callers that cache manifests use it to ensure a transfer that
+	// requires verification never consumes a manifest fetched without it.
+	Verified bool
 }
 
 type retrySettings struct {
@@ -117,6 +122,9 @@ func Fetch(ctx context.Context, httpClient *http.Client, baseURL string, verify 
 	}
 
 	m.URL = baseURL
+	// verifySignature returned nil above whenever verify was requested, so
+	// Verified mirrors the request: true only after a successful check.
+	m.Verified = verify
 	return m, nil
 }
 

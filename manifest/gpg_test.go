@@ -297,3 +297,37 @@ func setTestKeyringPaths(t *testing.T, paths ...string) {
 		keyringPaths = original
 	})
 }
+
+// TestFetchRecordsVerified pins Manifest.Verified: false when the caller did
+// not request verification (even though a valid signature is available), and
+// true only after CheckDetachedSignature succeeded. Callers that cache
+// manifests rely on this so a transfer requiring verification never consumes
+// a manifest that was fetched without it.
+func TestFetchRecordsVerified(t *testing.T) {
+	content, signature := signedManifest(t)
+	server, sigRequests := signatureServer(t, content, func(w http.ResponseWriter, _ int32) {
+		_, _ = w.Write(signature)
+	})
+
+	unverified, err := Fetch(t.Context(), server.Client(), server.URL, false, WithRetryConfig(1, time.Millisecond))
+	if err != nil {
+		t.Fatalf("Fetch(verify=false) error = %v", err)
+	}
+	if unverified.Verified {
+		t.Fatal("Fetch(verify=false) must not report Verified=true")
+	}
+	if sigRequests.Load() != 0 {
+		t.Fatalf("verify=false fetched the signature %d time(s), want 0", sigRequests.Load())
+	}
+
+	verified, err := Fetch(t.Context(), server.Client(), server.URL, true, WithRetryConfig(1, time.Millisecond))
+	if err != nil {
+		t.Fatalf("Fetch(verify=true) error = %v", err)
+	}
+	if !verified.Verified {
+		t.Fatal("Fetch(verify=true) with a valid signature must report Verified=true")
+	}
+	if sigRequests.Load() != 1 {
+		t.Fatalf("verify=true fetched the signature %d time(s), want 1", sigRequests.Load())
+	}
+}
