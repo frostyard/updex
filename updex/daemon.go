@@ -83,8 +83,16 @@ func (c *Client) DaemonStatus(ctx context.Context, _ DaemonStatusOptions) (*Daem
 		Installed: c.systemd.Exists(daemonUnitName),
 	}
 	if status.Installed {
-		status.Enabled, _ = c.systemd.IsEnabled(daemonUnitName + ".timer")
-		status.Active, _ = c.systemd.IsActive(daemonUnitName + ".timer")
+		enabled, err := c.systemd.IsEnabled(daemonUnitName + ".timer")
+		if err != nil {
+			return nil, fmt.Errorf("get daemon status: query enabled state: %w", err)
+		}
+		active, err := c.systemd.IsActive(daemonUnitName + ".timer")
+		if err != nil {
+			return nil, fmt.Errorf("get daemon status: query active state: %w", err)
+		}
+		status.Enabled = enabled
+		status.Active = active
 		status.Schedule = daemonSchedule
 	}
 	return status, nil
