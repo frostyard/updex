@@ -18,6 +18,7 @@ type goreleaserWorkflow struct {
 			Name string            `yaml:"name"`
 			If   string            `yaml:"if"`
 			Uses string            `yaml:"uses"`
+			Env  map[string]string `yaml:"env"`
 			With map[string]string `yaml:"with"`
 			Run  string            `yaml:"run"`
 		} `yaml:"steps"`
@@ -54,8 +55,11 @@ func TestReleaseConfigWorkflowValidatesBeforeMerge(t *testing.T) {
 	if got := job.Permissions["contents"]; got != "read" {
 		t.Errorf("release-config permissions.contents = %q, want read", got)
 	}
-	if got := job.Env["GORELEASER_KEY"]; got != "${{ secrets.GORELEASER_KEY }}" {
-		t.Errorf("release-config GORELEASER_KEY = %q, want repository secret", got)
+	if _, ok := job.Env["GORELEASER_KEY"]; ok {
+		t.Error("release-config job env must not expose GORELEASER_KEY")
+	}
+	if got := job.Env["HAS_GORELEASER_KEY"]; got != "${{ secrets.GORELEASER_KEY != '' }}" {
+		t.Errorf("release-config HAS_GORELEASER_KEY = %q, want non-secret availability indicator", got)
 	}
 
 	var checkout, validate, trustedMissingKey, forkWithoutKey bool
@@ -68,20 +72,27 @@ func TestReleaseConfigWorkflowValidatesBeforeMerge(t *testing.T) {
 		}
 		if strings.HasPrefix(step.Uses, "goreleaser/goreleaser-action@") {
 			validate = true
-			if step.If != "env.GORELEASER_KEY != ''" {
-				t.Errorf("GoReleaser validation guard = %q, want non-empty key guard", step.If)
+			if step.If != "env.HAS_GORELEASER_KEY == 'true'" {
+				t.Errorf("GoReleaser validation guard = %q, want available-key guard", step.If)
+			}
+			if got := step.Env["GORELEASER_KEY"]; got != "${{ secrets.GORELEASER_KEY }}" {
+				t.Errorf("GoReleaser validation GORELEASER_KEY = %q, want repository secret", got)
 			}
 			if step.With["distribution"] != "goreleaser-pro" ||
 				step.With["version"] != "~> v2" ||
 				step.With["args"] != "check" {
 				t.Errorf("GoReleaser validation inputs = %v, want goreleaser-pro v2 args check", step.With)
 			}
+		} else if _, ok := step.Env["GORELEASER_KEY"]; ok {
+			t.Errorf("%q step env must not expose GORELEASER_KEY", step.Name)
 		}
-		if strings.Contains(step.If, "github.event.pull_request.head.repo.full_name == github.repository") &&
+		if strings.Contains(step.If, "env.HAS_GORELEASER_KEY != 'true'") &&
+			strings.Contains(step.If, "github.event.pull_request.head.repo.full_name == github.repository") &&
 			strings.Contains(step.Run, "not validated") && strings.Contains(step.Run, "exit 1") {
 			trustedMissingKey = true
 		}
-		if strings.Contains(step.If, "github.event.pull_request.head.repo.full_name != github.repository") &&
+		if strings.Contains(step.If, "env.HAS_GORELEASER_KEY != 'true'") &&
+			strings.Contains(step.If, "github.event.pull_request.head.repo.full_name != github.repository") &&
 			strings.Contains(step.Run, "not validated") && strings.Contains(step.Run, "GITHUB_STEP_SUMMARY") {
 			forkWithoutKey = true
 		}

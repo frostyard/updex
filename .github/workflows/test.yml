@@ -239,7 +239,7 @@ jobs:
     permissions:
       contents: read
     env:
-      GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
+      HAS_GORELEASER_KEY: ${{ secrets.GORELEASER_KEY != '' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -252,21 +252,23 @@ jobs:
           go-version: "1.26.6"
 
       - name: Validate GoReleaser Pro configuration
-        if: env.GORELEASER_KEY != ''
+        if: env.HAS_GORELEASER_KEY == 'true'
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        env:
+          GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
         with:
           distribution: goreleaser-pro
           version: "~> v2"
           args: check
 
       - name: Fail when trusted runs cannot validate the release configuration
-        if: env.GORELEASER_KEY == '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        if: env.HAS_GORELEASER_KEY != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         run: |
           echo "::error::GORELEASER_KEY is unavailable; the GoReleaser Pro configuration was not validated."
           exit 1
 
       - name: Report unvalidated fork pull request
-        if: env.GORELEASER_KEY == '' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        if: env.HAS_GORELEASER_KEY != 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
         run: |
           echo "::warning::GoReleaser Pro configuration was not validated because secrets are unavailable to fork pull requests."
           echo "### Release configuration not validated" >> "$GITHUB_STEP_SUMMARY"
