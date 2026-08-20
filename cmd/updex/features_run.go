@@ -94,7 +94,8 @@ func runFeaturesEnable(cmd *cobra.Command, args []string) error {
 	result, err := client.EnableFeature(cmd.Context(), args[0], opts)
 
 	if clix.JSONOutput {
-		_, _ = clix.OutputJSON(result)
+		_, jsonErr := clix.OutputJSON(result)
+		return errors.Join(err, jsonErr)
 	} else if result != nil {
 		switch {
 		case result.RefreshError != "":
@@ -160,7 +161,8 @@ func runFeaturesDisable(cmd *cobra.Command, args []string) error {
 	result, err := client.DisableFeature(cmd.Context(), args[0], opts)
 
 	if clix.JSONOutput {
-		_, _ = clix.OutputJSON(result)
+		_, jsonErr := clix.OutputJSON(result)
+		return errors.Join(err, jsonErr)
 	} else if result != nil {
 		switch {
 		case result.RefreshError != "":
