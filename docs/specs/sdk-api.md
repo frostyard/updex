@@ -65,7 +65,10 @@ installs the units without overwriting occupied paths, then enables and starts
 `updex-update.timer`. The service runs
 `/usr/bin/updex features update --no-refresh`, so unattended work stages but
 does not activate extensions. `DisableDaemon` stops/disables through
-`systemd.Manager.Remove`, removes both units, and reloads systemd.
+`systemd.Manager.Remove`, removes both units, and reloads systemd. Removal
+attempts every cleanup step; stop, disable, unit-file removal, and reload
+failures are contextualized and joined, and `DisableDaemon` returns that error
+with no success result.
 `DaemonStatus` reports an absent installation without querying systemctl; for
 an installed timer it reports enabled/active state and the `daily` schedule.
 If either enabled- or active-state query fails, `DaemonStatus` returns that
