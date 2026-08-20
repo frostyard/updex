@@ -133,20 +133,22 @@ func (m *Manager) Install(timer *TimerConfig, service *ServiceConfig) error {
 	return nil
 }
 
-// Remove removes timer and service unit files and calls daemon-reload.
-// It stops and disables the timer first (ignoring errors if not running/enabled),
-// then removes both files. Returns nil on success, aggregates actual errors.
+// Remove stops and disables the timer, removes both unit files, and calls
+// daemon-reload. Every step is attempted, and all failures are returned
+// together.
 func (m *Manager) Remove(name string) error {
 	timerPath := filepath.Join(m.UnitPath, name+".timer")
 	servicePath := filepath.Join(m.UnitPath, name+".service")
 
-	// Stop timer (ignore errors - may not be running)
-	_ = m.runner.Stop(name + ".timer")
-
-	// Disable timer (ignore errors - may not be enabled)
-	_ = m.runner.Disable(name + ".timer")
-
 	var errs []error
+
+	if err := m.runner.Stop(name + ".timer"); err != nil {
+		errs = append(errs, fmt.Errorf("stop timer: %w", err))
+	}
+
+	if err := m.runner.Disable(name + ".timer"); err != nil {
+		errs = append(errs, fmt.Errorf("disable timer: %w", err))
+	}
 
 	// Remove timer file (ignore IsNotExist errors)
 	if err := os.Remove(timerPath); err != nil && !os.IsNotExist(err) {

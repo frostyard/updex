@@ -192,6 +192,57 @@ func TestDisableDaemonFailures(t *testing.T) {
 			t.Fatalf("DisableDaemon() error = %v", err)
 		}
 	})
+
+	for _, test := range []struct {
+		name        string
+		configure   func(*systemd.MockSystemctlRunner, error)
+		wantContext string
+	}{
+		{
+			name: "stop",
+			configure: func(runner *systemd.MockSystemctlRunner, cause error) {
+				runner.StopErr = cause
+			},
+			wantContext: "stop timer",
+		},
+		{
+			name: "disable",
+			configure: func(runner *systemd.MockSystemctlRunner, cause error) {
+				runner.DisableErr = cause
+			},
+			wantContext: "disable timer",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cause := errors.New(test.name + " failed")
+			runner := &systemd.MockSystemctlRunner{}
+			test.configure(runner, cause)
+			client, unitPath := newDaemonTestClient(t, runner)
+			seedDaemonUnits(t, unitPath)
+
+			result, err := client.DisableDaemon(t.Context(), DisableDaemonOptions{})
+
+			if result != nil {
+				t.Fatalf("DisableDaemon() result = %+v, want nil", result)
+			}
+			if !errors.Is(err, cause) || !strings.Contains(err.Error(), test.wantContext) {
+				t.Fatalf("DisableDaemon() error = %v, want contextualized cause %v", err, cause)
+			}
+			if !runner.StopCalled || !runner.DisableCalled || !runner.DaemonReloadCalled {
+				t.Fatalf(
+					"DisableDaemon() calls = stop:%v disable:%v reload:%v, want all true",
+					runner.StopCalled,
+					runner.DisableCalled,
+					runner.DaemonReloadCalled,
+				)
+			}
+			for _, suffix := range []string{".timer", ".service"} {
+				if _, statErr := os.Lstat(filepath.Join(unitPath, daemonUnitName+suffix)); !os.IsNotExist(statErr) {
+					t.Errorf("unit %s remains after failed DisableDaemon(): %v", suffix, statErr)
+				}
+			}
+		})
+	}
 }
 
 func TestDaemonStatus(t *testing.T) {

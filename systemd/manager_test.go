@@ -348,25 +348,37 @@ func TestRemove(t *testing.T) {
 			timerExists:       true,
 			serviceExists:     true,
 			stopErr:           errors.New("stop failed"),
+			wantErr:           true,
 			wantStopCalled:    true,
 			wantDisableCalled: true,
 			wantDaemonReload:  true,
-			// Should continue with removal anyway
 		},
 		{
 			name:              "disable fails",
 			timerExists:       true,
 			serviceExists:     true,
 			disableErr:        errors.New("disable failed"),
+			wantErr:           true,
 			wantStopCalled:    true,
 			wantDisableCalled: true,
 			wantDaemonReload:  true,
-			// Should continue with removal anyway
 		},
 		{
 			name:              "daemon-reload fails",
 			timerExists:       true,
 			serviceExists:     true,
+			daemonReloadErr:   errors.New("reload failed"),
+			wantErr:           true,
+			wantStopCalled:    true,
+			wantDisableCalled: true,
+			wantDaemonReload:  true,
+		},
+		{
+			name:              "stop disable and reload fail",
+			timerExists:       true,
+			serviceExists:     true,
+			stopErr:           errors.New("stop failed"),
+			disableErr:        errors.New("disable failed"),
 			daemonReloadErr:   errors.New("reload failed"),
 			wantErr:           true,
 			wantStopCalled:    true,
@@ -403,6 +415,21 @@ func TestRemove(t *testing.T) {
 			} else if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
+			for operation, cause := range map[string]error{
+				"stop timer":    tt.stopErr,
+				"disable timer": tt.disableErr,
+				"daemon-reload": tt.daemonReloadErr,
+			} {
+				if cause == nil {
+					continue
+				}
+				if !errors.Is(err, cause) {
+					t.Errorf("Remove() error = %v, want cause %v", err, cause)
+				}
+				if !strings.Contains(err.Error(), operation) {
+					t.Errorf("Remove() error = %v, want context %q", err, operation)
+				}
+			}
 
 			// Check Stop was called
 			if tt.wantStopCalled {
@@ -429,16 +456,14 @@ func TestRemove(t *testing.T) {
 				t.Error("DaemonReload() not called")
 			}
 
-			// Verify files are removed (for successful cases)
-			if !tt.wantErr {
-				timerPath := filepath.Join(tmpDir, "updex-update.timer")
-				if _, err := os.Stat(timerPath); !os.IsNotExist(err) {
-					t.Error("timer file should be removed")
-				}
-				servicePath := filepath.Join(tmpDir, "updex-update.service")
-				if _, err := os.Stat(servicePath); !os.IsNotExist(err) {
-					t.Error("service file should be removed")
-				}
+			// Stop, disable, and reload failures must not prevent file cleanup.
+			timerPath := filepath.Join(tmpDir, "updex-update.timer")
+			if _, err := os.Stat(timerPath); !os.IsNotExist(err) {
+				t.Error("timer file should be removed")
+			}
+			servicePath := filepath.Join(tmpDir, "updex-update.service")
+			if _, err := os.Stat(servicePath); !os.IsNotExist(err) {
+				t.Error("service file should be removed")
 			}
 		})
 	}
