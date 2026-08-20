@@ -153,7 +153,7 @@ Requires root privileges.`,
   sudo updex catalog add zoxide
 
   # Preview
-  updex catalog add zoxide --dry-run`,
+  sudo updex catalog add zoxide --dry-run`,
 		Args: cobra.ExactArgs(1),
 		RunE: runCatalogAdd,
 	}

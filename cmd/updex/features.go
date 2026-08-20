@@ -122,7 +122,7 @@ Requires root privileges.`,
   sudo updex features enable docker --now
 
   # Preview what would happen
-  updex features enable --dry-run docker`,
+  sudo updex features enable --dry-run docker`,
 		Args: cobra.ExactArgs(1),
 		RunE: runFeaturesEnable,
 	}
@@ -161,7 +161,7 @@ Requires root privileges.`,
   sudo updex features disable docker --now --force
 
   # Preview what would be removed
-  updex features disable --dry-run docker --now`,
+  sudo updex features disable --dry-run docker --now`,
 		Args: cobra.ExactArgs(1),
 		RunE: runFeaturesDisable,
 	}
