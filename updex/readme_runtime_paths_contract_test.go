@@ -44,3 +44,38 @@ func TestReadmeDocumentsRuntimePathsFields(t *testing.T) {
 		}
 	}
 }
+
+func TestReadmeSDKQuickstartUsesUnionDefinitionDomain(t *testing.T) {
+	data, err := os.ReadFile("../README.md")
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	contents := string(data)
+
+	start := strings.Index(contents, "## Library (SDK) Usage")
+	if start == -1 {
+		t.Fatal("README.md does not contain the SDK usage section")
+	}
+	rest := contents[start:]
+	codeStart := strings.Index(rest, "```go\n")
+	if codeStart == -1 {
+		t.Fatal("README.md SDK usage section does not contain a Go quickstart")
+	}
+	quickstart := rest[codeStart+len("```go\n"):]
+	codeEnd := strings.Index(quickstart, "\n```")
+	if codeEnd == -1 {
+		t.Fatal("README.md SDK quickstart code block is not terminated")
+	}
+	quickstart = quickstart[:codeEnd]
+
+	if !strings.Contains(quickstart, "union of the legacy default directory") ||
+		!strings.Contains(quickstart, "client.Features(ctx)") {
+		t.Fatal("README.md SDK quickstart no longer promises union feature discovery")
+	}
+	if strings.Contains(quickstart, "Definitions:") {
+		t.Error("README.md SDK quickstart overrides Definitions while promising union feature discovery")
+	}
+	if !strings.Contains(quickstart, "Verify: true") {
+		t.Error("README.md SDK quickstart no longer demonstrates forced verification")
+	}
+}
