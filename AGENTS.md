@@ -125,6 +125,14 @@ older snapshot work.
 tagged release and packages, it must dispatch `event-type: build` to
 `frostyard/snosi` without a default-branch ref guard: a tag run's ref is
 `refs/tags/<tag>`, never `refs/heads/<default>`.
+The `Release config` job in `.github/workflows/test.yml` runs the same
+SHA-pinned GoReleaser Pro v2 action with `args: check` on pull requests, pushes
+to `main`, and merge-queue branches. Trusted runs fail when the Pro key is
+missing; fork pull requests, which cannot receive repository secrets, report
+explicitly that validation did not occur and rely on the trusted merge-queue
+run before merge. `updex/release_config_workflow_contract_test.go` pins the
+event coverage, least privileges, secret handling, and release/snapshot action
+parity.
 `updex/release_workflow_contract_test.go` pins the tag-only trigger and
 unguarded snosi dispatch required by
 [frostyard/core ADR-0013](https://github.com/frostyard/core/blob/main/docs/adr/0013-release-fanout-via-repository-dispatch.md),

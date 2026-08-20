@@ -576,6 +576,16 @@ amd64 and arm64 builds. The unit and race stages do not filter by test name,
 so every hermetic package test runs; the E2E suite also retains its dedicated
 workflow job.
 
+The credentialed `Release config` job in `.github/workflows/test.yml` closes
+the remaining pre-merge release-surface gap: on pull requests, pushes to
+`main`, and merge-queue branches it runs the same SHA-pinned GoReleaser Pro v2
+action as the publishing workflows, with `args: check`, read-only repository
+permission, and checkout credentials disabled. Trusted runs fail if
+`GORELEASER_KEY` is unavailable, rather than passing without validation. Fork
+pull requests cannot receive that secret, so their job explicitly records that
+the configuration was not validated; the trusted merge-queue run supplies the
+enforced pre-merge result.
+
 `.github/workflows/pr-title.yml` (`amannn/action-semantic-pull-request`,
 SHA-pinned, `pull_request` `opened|edited|synchronize|reopened` plus
 `merge_group`, read-only permissions, no checkout) fails a pull request whose
