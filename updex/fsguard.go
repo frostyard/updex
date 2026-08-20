@@ -47,7 +47,13 @@ func managedFileExists(path string) (bool, error) {
 // check and the write: rename replaces the directory entry rather than
 // opening whatever it points at, and a failure part-way leaves no
 // truncated file and no temp debris behind.
-func writeManagedFile(path, content string) (err error) {
+func writeManagedFile(path, content string) error {
+	return writeManagedFileWithMode(path, []byte(content), 0644)
+}
+
+// writeManagedFileWithMode is the mode-preserving form used when rollback
+// restores a captured managed file.
+func writeManagedFileWithMode(path string, content []byte, mode os.FileMode) (err error) {
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return err
@@ -59,10 +65,10 @@ func writeManagedFile(path, content string) (err error) {
 			_ = os.Remove(tmpPath)
 		}
 	}()
-	if _, err = tmp.WriteString(content); err != nil {
+	if _, err = tmp.Write(content); err != nil {
 		return err
 	}
-	if err = tmp.Chmod(0644); err != nil {
+	if err = tmp.Chmod(mode.Perm()); err != nil {
 		return err
 	}
 	if err = tmp.Sync(); err != nil {

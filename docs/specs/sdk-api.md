@@ -239,10 +239,13 @@ and Lstat rules by
   output to `config.EtcComponentDir(repo.Component)`, then calls
   `EnableFeature{Now: true, Component: repo.Component}`. Writes are
   snapshotted first and *every* failure after that point (the `MkdirAll`,
-  either `os.WriteFile`, or the enable/download) restores the prior state
-  exactly: a fresh add's files are deleted (with the drop-in dir and
-  component dir removed if empty), a re-add's previous
-  `.transfer`/`.feature`/`00-updex.conf` contents are rewritten. With
+  either definition write, or the enable/download) restores the prior state
+  exactly. Definitions and captured rollback contents are written through
+  a same-directory temporary regular file plus rename, so a symlink planted
+  after the ownership check is replaced rather than followed; rollback
+  preserves the captured permissions. A fresh add's files are deleted
+  (with the drop-in dir and component dir removed if empty), and a re-add's
+  previous `.transfer`/`.feature`/`00-updex.conf` contents are restored. With
   `DryRun: true` it reports the target paths (conflict check still runs)
   and skips the writes and the enable.
 - `CatalogRemove` validates the name and finds the owning repo: the

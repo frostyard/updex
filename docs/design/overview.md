@@ -361,14 +361,16 @@ Design decisions (verified with the user, 2026-08):
   `CatalogAdd` snapshots the `.transfer`,
   `.feature`, and its `00-updex.conf` drop-in (`fileSnapshot` in
   `updex/catalog.go`) before writing, and every failure past that point
-  runs the same `rollback()` closure — including the `MkdirAll` and the
-  two `os.WriteFile` calls, which matters because `os.WriteFile`
-  truncates on open, so a failing write can destroy a working definition
-  by itself (third review round). Restore semantics: a fresh add's files
-  are removed, a re-add's previous contents are rewritten; then the
-  drop-in dir and (fresh adds only) the component dir are `os.Remove`d,
-  which no-ops when non-empty. No enabled-but-broken state, no destroyed
-  working definition, no mismatched old/new pair.
+  runs the same `rollback()` closure — including the `MkdirAll`, both
+  definition writes, and the enable/download. Definition writes use
+  `writeManagedFile`, and captured rollback contents use its
+  mode-preserving variant: each creates a same-directory temporary regular
+  file, syncs and closes it, then renames it over the managed path. A fresh
+  add's files are removed; a re-add restores previous bytes and permissions;
+  then the drop-in dir and (fresh adds only) the component dir are
+  `os.Remove`d, which no-ops when non-empty. Per-file atomic replacement
+  prevents truncation and symlink-following races, while the snapshots
+  prevent an enabled-but-broken state or mismatched old/new pair.
   `fileSnapshot` tracks `existed` (stat succeeded) separately from
   `captured` (contents read): a path that exists but cannot be read — a
   directory in the way, an unreadable file — is left strictly alone by
@@ -383,8 +385,10 @@ Design decisions (verified with the user, 2026-08):
   `managedFileExists` and `snapshotFile` use `os.Lstat`, and anything
   present that is not a regular file is an error. `os.Stat` reports a
   *dangling* symlink as absent, which skipped the ownership check and let
-  the following `os.WriteFile` follow the link and create its target
-  outside the component directory — a root-privileged write. `CatalogRemove`
+  an open-in-place write follow the link and create its target outside the
+  component directory — a root-privileged write. The atomic writer also
+  replaces the managed directory entry rather than following a symlink
+  planted after the check. `CatalogRemove`
   validates both the `.feature` and `.transfer` paths this way before
   `DisableFeature{Now}`, so a symlink cannot produce a half-completed
   teardown either.

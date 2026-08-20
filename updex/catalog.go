@@ -233,9 +233,9 @@ func (c *Client) CatalogAdd(ctx context.Context, name string, opts CatalogAddOpt
 	// the previous state exactly: a fresh add rolls back to nothing, a
 	// re-add rolls back to its previously working definitions. Every
 	// failure past this point must go through rollback — a half-written
-	// definition is as damaging as a half-installed one, and os.WriteFile
-	// truncates on open, so even the write calls can destroy a working
-	// file before failing.
+	// definition is as damaging as a half-installed one. Each individual
+	// definition write is atomic, while the snapshots protect the
+	// multi-file transaction.
 	dropInDir := filepath.Join(dir, name+".feature.d")
 	snapshots := []fileSnapshot{
 		snapshotFile(result.TransferFile),
@@ -266,11 +266,11 @@ func (c *Client) CatalogAdd(ctx context.Context, name string, opts CatalogAddOpt
 		rollback()
 		return result, fmt.Errorf("failed to create component directory: %w", err)
 	}
-	if err := os.WriteFile(result.TransferFile, transferData, 0644); err != nil {
+	if err := writeManagedFile(result.TransferFile, string(transferData)); err != nil {
 		rollback()
 		return result, fmt.Errorf("failed to write transfer file: %w", err)
 	}
-	if err := os.WriteFile(result.FeatureFile, featureData, 0644); err != nil {
+	if err := writeManagedFile(result.FeatureFile, string(featureData)); err != nil {
 		rollback()
 		return result, fmt.Errorf("failed to write feature file: %w", err)
 	}
@@ -342,7 +342,7 @@ func (s fileSnapshot) restore() {
 		// Nothing to rewrite and nothing safe to delete.
 	default:
 		if err := os.MkdirAll(filepath.Dir(s.path), 0755); err == nil {
-			_ = os.WriteFile(s.path, s.data, s.mode)
+			_ = writeManagedFileWithMode(s.path, s.data, s.mode)
 		}
 	}
 }
