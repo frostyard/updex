@@ -2,6 +2,7 @@ package updex
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -220,6 +221,39 @@ func runCatalogHandler(t *testing.T, handler func(*cobra.Command, []string) erro
 		cmd.SetContext(t.Context())
 		return handler(cmd, []string{arg})
 	})
+}
+
+func TestRunCatalogMutations_PropagateJSONOutputError(t *testing.T) {
+	tests := []struct {
+		name    string
+		handler func(*cobra.Command, []string) error
+		install bool
+	}{
+		{name: "add", handler: runCatalogAdd},
+		{name: "remove", handler: runCatalogRemove, install: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fx := newCatalogCLIFixture(t)
+			fx.addRepo(t, "fedora")
+			if tt.install {
+				fx.install(t, "fedora")
+			}
+			setCatalogCLIFlags(t, catalogCLIFlags{
+				repo:       "fedora",
+				dryRun:     true,
+				jsonOutput: true,
+				runner:     &sysext.MockRunner{},
+			})
+			refuseJSONOutput(t)
+
+			_, err := runCatalogHandler(t, tt.handler, "zoxide")
+			if !errors.Is(err, errJSONOutputRefused) {
+				t.Fatalf("%s error = %v, want JSON output error", tt.name, err)
+			}
+		})
+	}
 }
 
 func TestRunCatalogAdd(t *testing.T) {

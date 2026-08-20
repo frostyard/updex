@@ -1,6 +1,7 @@
 package updex
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -262,7 +263,8 @@ func runCatalogAdd(cmd *cobra.Command, args []string) error {
 
 	if clix.JSONOutput {
 		if result != nil {
-			_, _ = clix.OutputJSON(result)
+			_, jsonErr := clix.OutputJSON(result)
+			return errors.Join(err, jsonErr)
 		}
 		return err
 	}
@@ -308,7 +310,8 @@ func runCatalogRemove(cmd *cobra.Command, args []string) error {
 
 	if clix.JSONOutput {
 		if result != nil {
-			_, _ = clix.OutputJSON(result)
+			_, jsonErr := clix.OutputJSON(result)
+			return errors.Join(err, jsonErr)
 		}
 		return err
 	}

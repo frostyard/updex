@@ -214,6 +214,74 @@ func runFeatureHandler(t *testing.T, handler func(*cobra.Command, []string) erro
 	})
 }
 
+var errJSONOutputRefused = errors.New("json output refused")
+
+type refusingJSONWriter struct{}
+
+func (refusingJSONWriter) Write([]byte) (int, error) {
+	return 0, errJSONOutputRefused
+}
+
+func refuseJSONOutput(t *testing.T) {
+	t.Helper()
+	old := clix.Stdout
+	clix.Stdout = refusingJSONWriter{}
+	t.Cleanup(func() { clix.Stdout = old })
+}
+
+func TestRunFeatureMutations_PropagateJSONOutputError(t *testing.T) {
+	tests := []struct {
+		name    string
+		handler func(*cobra.Command, []string) error
+		enabled bool
+	}{
+		{name: "enable", handler: runFeaturesEnable, enabled: false},
+		{name: "disable", handler: runFeaturesDisable, enabled: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fx := newFeatureCLIFixture(t)
+			definitionsDir := t.TempDir()
+			fx.writeDefinitions(t, definitionsDir, tt.enabled)
+			setFeatureCLIFlags(t, featureCLIFlags{
+				definitions: definitionsDir,
+				dryRun:      true,
+				jsonOutput:  true,
+				runner:      &sysext.MockRunner{},
+			})
+			refuseJSONOutput(t)
+
+			_, err := runFeatureHandler(t, tt.handler, "testfeature")
+			if !errors.Is(err, errJSONOutputRefused) {
+				t.Fatalf("%s error = %v, want JSON output error", tt.name, err)
+			}
+		})
+	}
+}
+
+func TestRunFeaturesEnable_JoinsSDKAndJSONOutputErrors(t *testing.T) {
+	fx := newFeatureCLIFixture(t)
+	definitionsDir := t.TempDir()
+	fx.writeDefinitions(t, definitionsDir, false)
+	refreshErr := errors.New("refresh refused")
+	setFeatureCLIFlags(t, featureCLIFlags{
+		definitions: definitionsDir,
+		now:         true,
+		jsonOutput:  true,
+		runner:      &sysext.MockRunner{RefreshErr: refreshErr},
+	})
+	refuseJSONOutput(t)
+
+	_, err := runFeatureHandler(t, runFeaturesEnable, "testfeature")
+	if !errors.Is(err, refreshErr) {
+		t.Errorf("error = %v, want SDK refresh error", err)
+	}
+	if !errors.Is(err, errJSONOutputRefused) {
+		t.Errorf("error = %v, want JSON output error", err)
+	}
+}
+
 func TestRunFeaturesEnable(t *testing.T) {
 	type tc struct {
 		name string
