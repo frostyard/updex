@@ -3,6 +3,7 @@ package download
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,6 +26,7 @@ type retrySettings struct {
 	cfg                 retry.Config
 	notify              retry.Notify
 	maxDecompressedSize int64
+	maxDownloadSize     int64
 }
 
 // Option configures download behavior.
@@ -59,6 +61,33 @@ func WithMaxDecompressedSize(bytes int64) Option {
 	}
 }
 
+// ErrDownloadTooLarge reports that the bytes read from the server (the
+// compressed, or for an uncompressed image the raw, payload) crossed the
+// configured download ceiling before hash verification could reject them.
+var ErrDownloadTooLarge = errors.New("downloaded image exceeds the maximum size")
+
+// DefaultMaxDownloadSize bounds the bytes Download reads from the server, so a
+// malicious or misbehaving mirror cannot stream unbounded data to disk (as
+// root) before the post-download hash and signature checks can reject it. It
+// applies to the payload as received — the compressed image, or an
+// uncompressed image where DefaultMaxDecompressedSize never applies. The
+// ceiling is a small multiple of the decompressed cap (twice
+// DefaultMaxDecompressedSize): a compressed image is typically far smaller than
+// its decompressed form and an uncompressed one equals it, so twice the
+// decompressed limit bounds both with headroom. It is a resource-exhaustion
+// guard, not a tuning knob for ordinary images; raise it with
+// WithMaxDownloadSize for a legitimately larger payload.
+const DefaultMaxDownloadSize int64 = 2 * DefaultMaxDecompressedSize
+
+// WithMaxDownloadSize sets the maximum number of bytes Download will read from
+// the server before failing with ErrDownloadTooLarge. The value must be greater
+// than zero.
+func WithMaxDownloadSize(bytes int64) Option {
+	return func(settings *retrySettings) {
+		settings.maxDownloadSize = bytes
+	}
+}
+
 // syncFile flushes a written file to stable storage. It is a package-level
 // seam so tests can observe which files are synced and inject sync failures.
 var syncFile = func(f *os.File) error { return f.Sync() }
@@ -71,6 +100,7 @@ func resolveRetry(opts ...Option) retrySettings {
 	settings := retrySettings{
 		cfg:                 retry.DefaultConfig,
 		maxDecompressedSize: DefaultMaxDecompressedSize,
+		maxDownloadSize:     DefaultMaxDownloadSize,
 	}
 	for _, opt := range opts {
 		opt(&settings)
@@ -100,6 +130,9 @@ func Download(ctx context.Context, httpClient *http.Client, url, targetPath, exp
 	rs := resolveRetry(opts...)
 	if rs.maxDecompressedSize <= 0 {
 		return fmt.Errorf("maximum decompressed size must be greater than zero")
+	}
+	if rs.maxDownloadSize <= 0 {
+		return fmt.Errorf("maximum download size must be greater than zero")
 	}
 
 	var tmpPath string
@@ -135,6 +168,13 @@ func Download(ctx context.Context, httpClient *http.Client, url, targetPath, exp
 			return fmt.Errorf("download failed with status: %s", resp.Status)
 		}
 
+		// Reject an over-limit payload before streaming when the server
+		// declares its size, so a hostile Content-Length never even starts a
+		// write.
+		if resp.ContentLength > rs.maxDownloadSize {
+			return fmt.Errorf("%w: Content-Length %d exceeds the limit of %d bytes", ErrDownloadTooLarge, resp.ContentLength, rs.maxDownloadSize)
+		}
+
 		// Compute hash while downloading
 		hasher := sha256.New()
 		reader := io.TeeReader(resp.Body, hasher)
@@ -146,8 +186,18 @@ func Download(ctx context.Context, httpClient *http.Client, url, targetPath, exp
 				dst = io.MultiWriter(tmpFile, pw)
 			}
 		}
-		if _, err := io.Copy(dst, reader); err != nil {
+		// Bound the bytes read from the (untrusted) server: read at most one
+		// byte past the ceiling, so an unbounded or under-declared response
+		// cannot fill the disk before the hash check below can reject it. This
+		// also covers the uncompressed path, where maxDecompressedSize never
+		// applies. ErrDownloadTooLarge is not transient, so the retry loop
+		// stops rather than re-streaming.
+		written, err := io.Copy(dst, io.LimitReader(reader, rs.maxDownloadSize+1))
+		if err != nil {
 			return retry.TransientIfNetwork(fmt.Errorf("failed to write file: %w", err))
+		}
+		if written > rs.maxDownloadSize {
+			return fmt.Errorf("%w of %d bytes", ErrDownloadTooLarge, rs.maxDownloadSize)
 		}
 
 		// Verify hash of compressed file
