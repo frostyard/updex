@@ -358,16 +358,24 @@ Design decisions (verified with the user, 2026-08):
   `filepath.Join` (definition paths or cache filenames) or URLs.
 - **Transactional add**
   ([ADR-0005](../adr/0005-transactional-writes-lstat-checks.md)):
-  `CatalogAdd` snapshots the `.transfer`,
-  `.feature`, and its `00-updex.conf` drop-in (`fileSnapshot` in
-  `updex/catalog.go`) before writing, and every failure past that point
-  runs the same `rollback()` closure — including the `MkdirAll`, both
-  definition writes, and the enable/download. Definition writes use
+  `CatalogAdd` snapshots the `.transfer`, `.feature`, its `00-updex.conf`
+  drop-in, every staged entry matching the transfer target patterns, and the
+  effective sysext link before install. Matching regular images are streamed
+  to same-directory temporary backups rather than retained as `[]byte`, so
+  heap use is bounded while temporary disk use scales with retained image
+  size. The snapshots are removed after success or rollback. A matching staged
+  entry or link destination that is neither a regular file nor a symlink is
+  refused before enable/download can replace it. Every failure past the first
+  definition write runs the same `rollback()` closure — including `MkdirAll`,
+  either definition write, download, link mutation, vacuum, and the final
+  refresh. Definition writes use
   `writeManagedFile`, and captured rollback contents use its
   mode-preserving variant: each creates a same-directory temporary regular
   file, syncs and closes it, then renames it over the managed path. A fresh
-  add's files are removed; a re-add restores previous bytes and permissions;
-  then the drop-in dir and (fresh adds only) the component dir are
+  add's definitions, staged image, and link are removed; a re-add restores
+  previous definition bytes and permissions, staged images, and link target;
+  restoration errors are joined with the original operation error. Then the
+  drop-in dir and (fresh adds only) the component dir are
   `os.Remove`d, which no-ops when non-empty. Per-file atomic replacement
   prevents truncation and symlink-following races, while the snapshots
   prevent an enabled-but-broken state or mismatched old/new pair.

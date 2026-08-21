@@ -438,9 +438,16 @@ Key design points:
   reach `filepath.Join` or URLs. Any failure after the `fileSnapshot`s
   are taken — including the definition writes themselves, since
   `os.WriteFile` truncates on open — goes through one `rollback()`
-  closure that restores exactly what was there before (fresh add → files
-  removed; re-add → previous `.transfer`/`.feature`/drop-in contents
-  rewritten). A snapshot distinguishes `existed` from `captured`, so a
+  closure that restores exactly what was there before (fresh add → generated
+  definitions, matching staged images, and sysext link removed; re-add →
+  previous `.transfer`/`.feature`/drop-in contents, staged images, and link
+  target restored). Regular staged images are streamed to same-directory
+  temporary rollback files instead of retained in heap, and those files are
+  removed after success or rollback. Matching staged entries and link
+  destinations that are neither regular files nor symlinks are refused before
+  install. Unrelated staging entries are preserved, and rollback errors are
+  joined with the original operation error rather than hidden. A
+  definition snapshot distinguishes `existed` from `captured`, so a
   path that exists but cannot be read is never deleted by rollback, and
   `managedFileExists` surfaces non-not-exist stat errors instead of
   treating them as absence. Both it and `snapshotFile` use `os.Lstat` and

@@ -237,15 +237,23 @@ and Lstat rules by
   target files that are unmarked or marked by a different repo
   (`catalog.GeneratedFileRepo`), writes `RenderTransfer`/`RenderFeature`
   output to `config.EtcComponentDir(repo.Component)`, then calls
-  `EnableFeature{Now: true, Component: repo.Component}`. Writes are
-  snapshotted first and *every* failure after that point (the `MkdirAll`,
-  either definition write, or the enable/download) restores the prior state
-  exactly. Definitions and captured rollback contents are written through
-  a same-directory temporary regular file plus rename, so a symlink planted
-  after the ownership check is replaced rather than followed; rollback
-  preserves the captured permissions. A fresh add's files are deleted
+  `EnableFeature{Now: true, Component: repo.Component}`. Before install it
+  snapshots every matching staged image and the effective sysext link in
+  addition to the generated definitions and enable drop-in. Regular staged
+  files are streamed to same-directory temporary backups, bounding heap use
+  independently of image size; temporary disk use scales with retained image
+  size, and backups are removed after success or rollback. A matching staged
+  entry or link destination that is neither a regular file nor a symlink is
+  refused rather than replaced. *Every* failure after definition writes begin,
+  including download, link, vacuum, and final-refresh failures, restores the
+  prior state exactly. Definitions and captured rollback contents are written
+  through a same-directory temporary regular file plus rename, so a symlink
+  planted after the ownership check is replaced rather than followed;
+  rollback preserves the captured permissions. A fresh add's files are deleted
   (with the drop-in dir and component dir removed if empty), and a re-add's
-  previous `.transfer`/`.feature`/`00-updex.conf` contents are restored. With
+  previous `.transfer`/`.feature`/`00-updex.conf`, matching staged images, and
+  sysext link target are restored. Rollback errors are joined with the original
+  operation error so neither failure is hidden. With
   `DryRun: true` it reports the target paths (conflict check still runs)
   and skips the writes and the enable.
 - `CatalogRemove` validates the name and finds the owning repo: the

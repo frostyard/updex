@@ -1,19 +1,54 @@
 package updex
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 
 	"github.com/frostyard/updex/catalog"
 	"github.com/frostyard/updex/config"
 	"github.com/frostyard/updex/sysext"
 )
+
+type catalogPathRunner struct {
+	refreshErr error
+	linkErr    error
+	onRefresh  func()
+}
+
+func (r *catalogPathRunner) Refresh() error {
+	if r.onRefresh != nil {
+		r.onRefresh()
+	}
+	return r.refreshErr
+}
+
+func (*catalogPathRunner) Merge() error   { return nil }
+func (*catalogPathRunner) Unmerge() error { return nil }
+
+func (r *catalogPathRunner) LinkToSysext(transfer *config.Transfer) error {
+	if r.linkErr != nil {
+		return r.linkErr
+	}
+	return sysext.LinkToSysextAt(transfer, sysext.SysextDir)
+}
+
+func (r *catalogPathRunner) LinkToSysextAt(transfer *config.Transfer, sysextDir string) error {
+	if r.linkErr != nil {
+		return r.linkErr
+	}
+	return sysext.LinkToSysextAt(transfer, sysextDir)
+}
 
 // withCatalogConfigRoots points catalog.ConfigRoots at a fresh temp
 // directory and returns it. It also redirects catalog.CacheDir to a temp
@@ -81,6 +116,10 @@ func writeEnableDropIn(t *testing.T, dir, name string, enabled bool) {
 // SHA256SUMS manifest, and one .raw image, all under /<name>/. The conf's
 // transfer downloads into targetDir.
 func newCatalogServer(t *testing.T, name, version, targetDir string) *httptest.Server {
+	return newCatalogServerWithTargetPattern(t, name, version, targetDir, name+"-@v.raw")
+}
+
+func newCatalogServerWithTargetPattern(t *testing.T, name, version, targetDir, targetPattern string) *httptest.Server {
 	t.Helper()
 
 	originalTargetPath := catalog.TargetPath
@@ -106,9 +145,9 @@ MatchPattern=%s-@v.raw
 InstancesMax=2
 Type=regular-file
 Path=%s
-MatchPattern=%s-@v.raw
+MatchPattern=%s
 CurrentSymlink=/var/lib/extensions/%s.raw
-`, server.URL, name, name, targetDir, name, name)
+`, server.URL, name, name, targetDir, targetPattern, name)
 			_, _ = w.Write([]byte(conf))
 		case "/" + name + "/SHA256SUMS":
 			_, _ = fmt.Fprintf(w, "%s  %s\n", hashContent(rawContent), rawName)
@@ -538,6 +577,7 @@ MatchPattern=zoxide-@v.raw
 				http.NotFound(w, r)
 				return
 			}
+
 			_, _ = fmt.Fprintf(w, "%s  zoxide-1.0.0.raw\n", hashContent(rawContent))
 		case "/zoxide/zoxide-1.0.0.raw":
 			_, _ = w.Write(rawContent)
@@ -592,6 +632,429 @@ MatchPattern=zoxide-@v.raw
 // while writing the definitions — not just during enable/download —
 // restores the previous working files. os.WriteFile truncates on open, so
 // without rollback a re-add could leave a working transfer destroyed.
+func TestCatalogAdd_RefreshFailureRollsBackManagedInstallState(t *testing.T) {
+	const name = "zoxide"
+	refreshErr := errors.New("injected refresh failure")
+
+	t.Run("fresh add removes staged image and link", func(t *testing.T) {
+		definitionRoot := t.TempDir()
+		catalogRoot := t.TempDir()
+		targetDir := t.TempDir()
+		linkDir := t.TempDir()
+		unrelatedImage := filepath.Join(targetDir, "operator-owned.raw")
+		unrelatedLink := filepath.Join(linkDir, "operator-owned.raw")
+		if err := os.WriteFile(unrelatedImage, []byte("operator image"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(unrelatedLink, []byte("operator link entry"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		server := newCatalogServer(t, name, "1.0.0", targetDir)
+		writeCatalogRepo(t, catalogRoot, "fedora", server.URL, "")
+		client := NewClient(ClientConfig{
+			Paths: RuntimePaths{
+				DefinitionRoots:    []string{definitionRoot},
+				CatalogConfigRoots: []string{catalogRoot},
+				CatalogCacheDir:    DisableCatalogCache,
+				CatalogTargetPath:  targetDir,
+				SysextLinkDir:      linkDir,
+				RunExtensionsDir:   t.TempDir(),
+			},
+			SysextRunner: &catalogPathRunner{refreshErr: refreshErr},
+		})
+
+		_, err := client.CatalogAdd(t.Context(), name, CatalogAddOptions{})
+		if !errors.Is(err, refreshErr) {
+			t.Fatalf("CatalogAdd error = %v, want injected refresh failure", err)
+		}
+
+		componentDir := filepath.Join(definitionRoot, "sysupdate.catalog-fedora.d")
+		if _, err := os.Stat(componentDir); !os.IsNotExist(err) {
+			t.Errorf("fresh add left generated definitions at %s: %v", componentDir, err)
+		}
+		if _, err := os.Stat(filepath.Join(targetDir, name+"-1.0.0.raw")); !os.IsNotExist(err) {
+			t.Errorf("fresh add left staged image: %v", err)
+		}
+		if _, err := os.Lstat(filepath.Join(linkDir, name+".raw")); !os.IsNotExist(err) {
+			t.Errorf("fresh add left sysext link: %v", err)
+		}
+		assertFileContent(t, unrelatedImage, "operator image")
+		assertFileContent(t, unrelatedLink, "operator link entry")
+	})
+
+	t.Run("re-add restores previous files and link target", func(t *testing.T) {
+		definitionRoot := t.TempDir()
+		catalogRoot := t.TempDir()
+		targetDir := t.TempDir()
+		linkDir := t.TempDir()
+		var publishV2 atomic.Bool
+
+		rawV1 := []byte("catalog image v1")
+		rawV2 := []byte("catalog image v2")
+		var server *httptest.Server
+		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			version := "1.0.0"
+			raw := rawV1
+			minVersion := ""
+			if publishV2.Load() {
+				version = "2.0.0"
+				raw = rawV2
+				minVersion = "MinVersion=2.0.0\n"
+			}
+			switch r.URL.Path {
+			case "/" + name + "/" + name + ".conf":
+				_, _ = fmt.Fprintf(w, `[Transfer]
+Verify=false
+InstancesMax=1
+%s
+[Source]
+Type=url-file
+Path=%s/%s/
+MatchPattern=%s-@v.raw
+
+[Target]
+Type=regular-file
+Path=%s
+MatchPattern=%s-@v.raw
+`, minVersion, server.URL, name, name, targetDir, name)
+			case "/" + name + "/SHA256SUMS":
+				_, _ = fmt.Fprintf(w, "%s  %s-%s.raw\n", hashContent(raw), name, version)
+			case "/" + name + "/" + name + "-" + version + ".raw":
+				_, _ = w.Write(raw)
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		t.Cleanup(server.Close)
+		writeCatalogRepo(t, catalogRoot, "fedora", server.URL, "")
+
+		runner := &catalogPathRunner{}
+		client := NewClient(ClientConfig{
+			Paths: RuntimePaths{
+				DefinitionRoots:    []string{definitionRoot},
+				CatalogConfigRoots: []string{catalogRoot},
+				CatalogCacheDir:    DisableCatalogCache,
+				CatalogTargetPath:  targetDir,
+				SysextLinkDir:      linkDir,
+				RunExtensionsDir:   t.TempDir(),
+			},
+			SysextRunner: runner,
+		})
+		if _, err := client.CatalogAdd(t.Context(), name, CatalogAddOptions{}); err != nil {
+			t.Fatalf("initial CatalogAdd: %v", err)
+		}
+
+		componentDir := filepath.Join(definitionRoot, "sysupdate.catalog-fedora.d")
+		paths := []string{
+			filepath.Join(componentDir, name+".transfer"),
+			filepath.Join(componentDir, name+".feature"),
+			filepath.Join(componentDir, name+".feature.d", updexDropInName),
+		}
+		before := make(map[string][]byte, len(paths))
+		for _, path := range paths {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before[path] = data
+		}
+		v1Path := filepath.Join(targetDir, name+"-1.0.0.raw")
+		assertFileContent(t, v1Path, string(rawV1))
+		linkPath := filepath.Join(linkDir, name+".raw")
+		linkBefore, err := os.Readlink(linkPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		publishV2.Store(true)
+		runner.refreshErr = refreshErr
+		_, err = client.CatalogAdd(t.Context(), name, CatalogAddOptions{})
+		if !errors.Is(err, refreshErr) {
+			t.Fatalf("re-add error = %v, want injected refresh failure", err)
+		}
+
+		for path, want := range before {
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read restored %s: %v", path, err)
+			}
+			if string(got) != string(want) {
+				t.Errorf("%s was not restored", path)
+			}
+		}
+		assertFileContent(t, v1Path, string(rawV1))
+		if _, err := os.Stat(filepath.Join(targetDir, name+"-2.0.0.raw")); !os.IsNotExist(err) {
+			t.Errorf("failed re-add left v2 staged image: %v", err)
+		}
+		linkAfter, err := os.Readlink(linkPath)
+		if err != nil {
+			t.Fatalf("read restored sysext link: %v", err)
+		}
+		if linkAfter != linkBefore {
+			t.Errorf("sysext link target = %q, want restored %q", linkAfter, linkBefore)
+		}
+	})
+}
+
+func TestCatalogAdd_LinkFailureRemovesDownloadedImage(t *testing.T) {
+	const name = "zoxide"
+	linkErr := errors.New("injected link failure")
+	definitionRoot := t.TempDir()
+	catalogRoot := t.TempDir()
+	targetDir := t.TempDir()
+	linkDir := t.TempDir()
+
+	server := newCatalogServer(t, name, "1.0.0", targetDir)
+	writeCatalogRepo(t, catalogRoot, "fedora", server.URL, "")
+	client := NewClient(ClientConfig{
+		Paths: RuntimePaths{
+			DefinitionRoots:    []string{definitionRoot},
+			CatalogConfigRoots: []string{catalogRoot},
+			CatalogCacheDir:    DisableCatalogCache,
+			CatalogTargetPath:  targetDir,
+			SysextLinkDir:      linkDir,
+			RunExtensionsDir:   t.TempDir(),
+		},
+		SysextRunner: &catalogPathRunner{linkErr: linkErr},
+	})
+
+	_, err := client.CatalogAdd(t.Context(), name, CatalogAddOptions{})
+	if !errors.Is(err, linkErr) {
+		t.Fatalf("CatalogAdd error = %v, want injected link failure", err)
+	}
+	if _, err := os.Stat(filepath.Join(targetDir, name+"-1.0.0.raw")); !os.IsNotExist(err) {
+		t.Errorf("link failure left downloaded image: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(definitionRoot, "sysupdate.catalog-fedora.d")); !os.IsNotExist(err) {
+		t.Errorf("link failure left generated definitions: %v", err)
+	}
+}
+
+func TestCatalogAdd_CompressedTargetPatternRollback(t *testing.T) {
+	const name = "zoxide"
+	linkErr := errors.New("injected link failure")
+	definitionRoot := t.TempDir()
+	catalogRoot := t.TempDir()
+	targetDir := t.TempDir()
+	linkDir := t.TempDir()
+
+	server := newCatalogServerWithTargetPattern(t, name, "1.0.0", targetDir, name+"-@v.raw.zst")
+	writeCatalogRepo(t, catalogRoot, "fedora", server.URL, "")
+	client := NewClient(ClientConfig{
+		Paths: RuntimePaths{
+			DefinitionRoots:    []string{definitionRoot},
+			CatalogConfigRoots: []string{catalogRoot},
+			CatalogCacheDir:    DisableCatalogCache,
+			CatalogTargetPath:  targetDir,
+			SysextLinkDir:      linkDir,
+			RunExtensionsDir:   t.TempDir(),
+		},
+		SysextRunner: &catalogPathRunner{linkErr: linkErr},
+	})
+
+	_, err := client.CatalogAdd(t.Context(), name, CatalogAddOptions{})
+	if !errors.Is(err, linkErr) {
+		t.Fatalf("CatalogAdd error = %v, want injected link failure", err)
+	}
+	if _, err := os.Stat(filepath.Join(targetDir, name+"-1.0.0.raw")); !os.IsNotExist(err) {
+		t.Errorf("compressed-pattern rollback left decompressed image: %v", err)
+	}
+}
+
+func TestCatalogAdd_RollbackFailureJoinsOperationError(t *testing.T) {
+	const name = "zoxide"
+	refreshErr := errors.New("injected refresh failure")
+	definitionRoot := t.TempDir()
+	catalogRoot := t.TempDir()
+	targetDir := t.TempDir()
+	linkDir := t.TempDir()
+	linkPath := filepath.Join(linkDir, name+".raw")
+
+	server := newCatalogServer(t, name, "1.0.0", targetDir)
+	writeCatalogRepo(t, catalogRoot, "fedora", server.URL, "")
+	runner := &catalogPathRunner{refreshErr: refreshErr}
+	runner.onRefresh = func() {
+		if err := os.Remove(linkPath); err != nil {
+			t.Fatalf("remove sysext link before injected rollback failure: %v", err)
+		}
+		if err := os.Mkdir(linkPath, 0755); err != nil {
+			t.Fatalf("replace sysext link with directory: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(linkPath, "operator-state"), []byte("keep"), 0644); err != nil {
+			t.Fatalf("make replacement directory non-empty: %v", err)
+		}
+	}
+	client := NewClient(ClientConfig{
+		Paths: RuntimePaths{
+			DefinitionRoots:    []string{definitionRoot},
+			CatalogConfigRoots: []string{catalogRoot},
+			CatalogCacheDir:    DisableCatalogCache,
+			CatalogTargetPath:  targetDir,
+			SysextLinkDir:      linkDir,
+			RunExtensionsDir:   t.TempDir(),
+		},
+		SysextRunner: runner,
+	})
+
+	_, err := client.CatalogAdd(t.Context(), name, CatalogAddOptions{})
+	if !errors.Is(err, refreshErr) {
+		t.Fatalf("CatalogAdd error = %v, want original refresh failure preserved", err)
+	}
+	if !strings.Contains(err.Error(), "remove newly created") || !strings.Contains(err.Error(), linkPath) {
+		t.Fatalf("CatalogAdd error does not include actionable rollback failure for %s: %v", linkPath, err)
+	}
+}
+
+func TestSnapshotFilesystemEntryUsesBoundedHeap(t *testing.T) {
+	const childEnv = "UPDEX_TEST_BOUNDED_CATALOG_SNAPSHOT"
+	if os.Getenv(childEnv) == "" {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestSnapshotFilesystemEntryUsesBoundedHeap$")
+		cmd.Env = append(os.Environ(), childEnv+"=1")
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("bounded snapshot subprocess: %v\n%s", err, output)
+		}
+		return
+	}
+
+	previousLimit := debug.SetMemoryLimit(32 << 20)
+	defer debug.SetMemoryLimit(previousLimit)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "zoxide-1.0.0.raw")
+	image, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := image.Truncate(128 << 20); err != nil {
+		_ = image.Close()
+		t.Fatal(err)
+	}
+	if err := image.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	runtime.GC()
+	var before runtime.MemStats
+	runtime.ReadMemStats(&before)
+	snapshot, err := snapshotFilesystemEntry(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.GC()
+	var after runtime.MemStats
+	runtime.ReadMemStats(&after)
+	runtime.KeepAlive(snapshot)
+	if after.HeapAlloc > before.HeapAlloc+(16<<20) {
+		t.Fatalf("snapshot retained %d MiB of heap for a sparse image", (after.HeapAlloc-before.HeapAlloc)>>20)
+	}
+	if err := snapshot.restore(); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != filepath.Base(path) {
+		t.Fatalf("snapshot restore left backup artifacts: %v", entries)
+	}
+	snapshot, err = snapshotFilesystemEntry(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := snapshot.cleanup(); err != nil {
+		t.Fatal(err)
+	}
+	entries, err = os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != filepath.Base(path) {
+		t.Fatalf("successful snapshot cleanup left backup artifacts: %v", entries)
+	}
+}
+
+func TestCatalogAdd_RefusesSpecialManagedInstallEntries(t *testing.T) {
+	const name = "zoxide"
+	for _, test := range []struct {
+		name string
+		path func(targetDir, linkDir string) string
+	}{
+		{name: "matching staged image", path: func(targetDir, _ string) string {
+			return filepath.Join(targetDir, name+"-1.0.0.raw")
+		}},
+		{name: "sysext link", path: func(_, linkDir string) string {
+			return filepath.Join(linkDir, name+".raw")
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			definitionRoot := t.TempDir()
+			catalogRoot := t.TempDir()
+			targetDir := t.TempDir()
+			linkDir := t.TempDir()
+			priorImage := filepath.Join(targetDir, name+"-0.9.0.raw")
+			if err := os.WriteFile(priorImage, []byte("prior image"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			specialPath := test.path(targetDir, linkDir)
+			if err := syscall.Mkfifo(specialPath, 0600); err != nil {
+				t.Fatal(err)
+			}
+
+			server := newCatalogServer(t, name, "1.0.0", targetDir)
+			writeCatalogRepo(t, catalogRoot, "fedora", server.URL, "")
+			client := NewClient(ClientConfig{
+				Paths: RuntimePaths{
+					DefinitionRoots:    []string{definitionRoot},
+					CatalogConfigRoots: []string{catalogRoot},
+					CatalogCacheDir:    DisableCatalogCache,
+					CatalogTargetPath:  targetDir,
+					SysextLinkDir:      linkDir,
+					RunExtensionsDir:   t.TempDir(),
+				},
+				SysextRunner: &catalogPathRunner{refreshErr: errors.New("injected refresh failure")},
+			})
+
+			_, err := client.CatalogAdd(t.Context(), name, CatalogAddOptions{})
+			if err == nil || !strings.Contains(err.Error(), "is not a regular file") {
+				t.Fatalf("CatalogAdd error = %v, want special-entry refusal", err)
+			}
+			info, err := os.Lstat(specialPath)
+			if err != nil {
+				t.Fatalf("special entry was removed: %v", err)
+			}
+			if info.Mode()&os.ModeNamedPipe == 0 {
+				t.Fatalf("special entry mode = %s, want named pipe", info.Mode())
+			}
+			assertFileContent(t, priorImage, "prior image")
+			entries, err := os.ReadDir(targetDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, entry := range entries {
+				if strings.Contains(entry.Name(), ".rollback-") {
+					t.Fatalf("special-entry refusal left rollback artifact %s", entry.Name())
+				}
+			}
+			componentDir := filepath.Join(definitionRoot, "sysupdate.catalog-fedora.d")
+			if _, err := os.Stat(componentDir); !os.IsNotExist(err) {
+				t.Fatalf("special-entry refusal left generated definitions: %v", err)
+			}
+		})
+	}
+}
+
+func assertFileContent(t *testing.T, path, want string) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if string(got) != want {
+		t.Errorf("%s content = %q, want %q", path, got, want)
+	}
+}
+
 func TestCatalogAdd_WriteFailureRestoresPrevious(t *testing.T) {
 	roots := withComponentSearchRoots(t)
 	catalogRoot := withCatalogConfigRoots(t)
