@@ -115,8 +115,7 @@ import (
 
 func main() {
     client := updex.NewClient(updex.ClientConfig{
-        Definitions: "/etc/sysupdate.d",
-        Verify:      true,
+        Verify: true,
     })
 
     ctx := context.Background()
