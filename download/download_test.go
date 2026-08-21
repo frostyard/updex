@@ -453,6 +453,75 @@ func TestDownloadSyncFailureLeavesNoTarget(t *testing.T) {
 	}
 }
 
+func TestCopyFileCopiesContentAndMode(t *testing.T) {
+	content := []byte("cross-device image contents")
+	srcPath := filepath.Join(t.TempDir(), "source.raw")
+	if err := os.WriteFile(srcPath, content, 0600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	dstPath := filepath.Join(t.TempDir(), "target.raw")
+
+	if err := copyFile(srcPath, dstPath, 0750); err != nil {
+		t.Fatalf("copyFile() error = %v", err)
+	}
+	got, err := os.ReadFile(dstPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Errorf("target content = %q, want %q", got, content)
+	}
+	info, err := os.Stat(dstPath)
+	if err != nil {
+		t.Fatalf("Stat() error = %v", err)
+	}
+	if gotMode := info.Mode().Perm(); gotMode != 0750 {
+		t.Errorf("target mode = %o, want 750", gotMode)
+	}
+}
+
+func TestCopyFileCloseFailurePreservesTarget(t *testing.T) {
+	srcPath := filepath.Join(t.TempDir(), "source.raw")
+	if err := os.WriteFile(srcPath, []byte("replacement"), 0600); err != nil {
+		t.Fatalf("WriteFile(source) error = %v", err)
+	}
+	targetDir := t.TempDir()
+	dstPath := filepath.Join(targetDir, "target.raw")
+	original := []byte("installed image")
+	if err := os.WriteFile(dstPath, original, 0600); err != nil {
+		t.Fatalf("WriteFile(target) error = %v", err)
+	}
+
+	closeErr := errors.New("injected close failure")
+	realClose := closeCopyFile
+	t.Cleanup(func() { closeCopyFile = realClose })
+	closeCopyFile = func(f *os.File) error {
+		if err := f.Close(); err != nil {
+			return err
+		}
+		return closeErr
+	}
+
+	err := copyFile(srcPath, dstPath, 0644)
+	if !errors.Is(err, closeErr) {
+		t.Fatalf("copyFile() error = %v, want it to wrap %v", err, closeErr)
+	}
+	got, err := os.ReadFile(dstPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !bytes.Equal(got, original) {
+		t.Errorf("target content = %q, want preserved %q", got, original)
+	}
+	entries, err := os.ReadDir(targetDir)
+	if err != nil {
+		t.Fatalf("ReadDir() error = %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != filepath.Base(dstPath) {
+		t.Errorf("target directory entries = %v, want only %q", entries, filepath.Base(dstPath))
+	}
+}
+
 func hashString(content []byte) string {
 	sum := sha256.Sum256(content)
 	return fmt.Sprintf("%x", sum)
