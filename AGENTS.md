@@ -118,8 +118,10 @@ fails a PR whose title (or lone commit subject) is not conventional. See
 release under the `dev` tag after successful `main` tests. Its
 `goreleaser-nightly` concurrency group must keep `cancel-in-progress: true`:
 overlapping runs delete and recreate the same release, then collide while
-uploading identically named assets. The newest successful test run supersedes
-older snapshot work.
+uploading identically named assets. Checkout is pinned to the triggering
+`workflow_run.head_sha`, so publication always uses the exact commit whose
+Tests run succeeded. The newest successful test run supersedes older snapshot
+work.
 
 `.github/workflows/release.yml` runs only for tag pushes. After publishing the
 tagged release and packages, it must dispatch `event-type: build` to
