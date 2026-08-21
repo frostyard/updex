@@ -452,9 +452,11 @@ Omitting `Verify=` enables signature verification, matching systemd-sysupdate. S
 | ---------------- | -------------------------------------------------------------------------------- | ----------------------- |
 | `Type`           | Must be `regular-file`                                                           | -                       |
 | `Path`           | Target staging directory for downloaded versions                                 | `/var/lib/extensions.d` |
+| `PathRelativeTo`  | If set, updex treats the transfer as a non-sysext OS transfer (an A/B partition or UKI update, per `sysupdate.d(5)`) and **ignores it entirely** — it is downloaded and installed by nothing in updex | (none)                  |
 | `MatchPattern`   | Output filename pattern with `@v`                                                | -                       |
 | `CurrentSymlink` | Optional legacy staging symlink name; if present, updex removes it during update | (none)                  |
 | `Mode`           | File permissions (octal)                                                         | `0644`                  |
+| `ReadOnly`        | Parsed for `sysupdate.d(5)` compatibility; updex does not currently act on it     | `no`                    |
 
 ### Version Patterns
 
