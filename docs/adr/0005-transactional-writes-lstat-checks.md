@@ -5,12 +5,13 @@
 
 ## Context
 
-`CatalogAdd` mutates several files as root in one logical operation: a
-`.transfer`, a `.feature`, and the `00-updex.conf` enable drop-in. A
-failure partway through — including `os.WriteFile` itself, which truncates
-on open and can destroy a working file before failing — would leave a
-half-installed state: definitions present with a broken enable, or a
-mismatched old/new pair that every later `features update` retries.
+`CatalogAdd` mutates several paths as root in one logical operation: a
+`.transfer`, a `.feature`, the `00-updex.conf` enable drop-in, downloaded
+staging images, and the active sysext link. A failure partway through —
+including a download, link replacement, final refresh, or definition write —
+would leave a half-installed state: definitions present with a broken enable,
+a mismatched old/new pair that every later `features update` retries, or
+staged/link state that no longer matches the definitions.
 Separately, these privileged writes resolve paths an unprivileged user may
 have planted symlinks at: `os.Stat` reports a *dangling* symlink as absent,
 so a naive existence check would skip the ownership guard and the following
@@ -22,14 +23,19 @@ filesystem.
 Privileged multi-file mutations are transactional and refuse to operate
 through non-regular files:
 
-- Before writing anything, `CatalogAdd` snapshots every path it will touch
-  (`fileSnapshot`/`snapshotFile` in `updex/catalog.go`). Every failure past
-  that point — directory creation, either write, or the follow-up
-  `EnableFeature{Now}` — runs a single `rollback()` closure that restores
-  each snapshot exactly: a fresh add rolls back to nothing, a re-add rolls
-  back to its previous working contents. A path that existed but could not
-  be read (`existed && !captured`) is left strictly alone, since removing
-  it would destroy state the snapshot cannot rebuild.
+- Before mutating each part of the operation, `CatalogAdd` snapshots the
+  generated definitions and drop-in, all staged entries matching the
+  transfer's target patterns, and the transfer's sysext link. Every failure
+  past that point runs a single `rollback()` closure that restores each
+  snapshot exactly: a fresh add rolls back to nothing, while a re-add restores
+  its previous definitions, staged images, and link target. Unrelated staging
+  entries are never removed. A definition path that existed but could not be
+  read (`existed && !captured`) is left strictly alone, since removing it
+  would destroy state the snapshot cannot rebuild.
+- The original operation error is always preserved. If restoration itself
+  fails, `CatalogAdd` joins the rollback error into the returned error so
+  callers can identify both the original failure and the state that could not
+  be restored.
 - Existence checks at managed definition paths use `os.Lstat`, never
   `os.Stat`, and anything present that is not a regular file is an error
   (`managedFileExists`) — resolved deliberately by the operator, never
@@ -44,17 +50,17 @@ code that writes to managed definition paths.
 
 ## Consequences
 
-- No enabled-but-broken state and no destroyed working definition: a
-  failed add leaves the system exactly as it was, and a failed re-add
-  restores the previous working files.
+- No enabled-but-broken state and no destroyed working definition: a failed
+  add leaves definitions, matching staging images, and the sysext link as they
+  were, and a failed re-add restores the previous working install.
 - Symlink-planting cannot redirect a root write outside the component
   directory (fixed during PR #137 review, fourth round).
 - Every new multi-file mutation must snapshot first and route all failure
   paths through rollback — forgetting one write call silently reopens the
   truncation hazard, which reviews must watch for.
-- Rollback is best-effort by design (the original error is already being
-  returned); a rollback failure can still leave debris, but only after an
-  I/O environment already failing.
+- A rollback failure can still leave debris after an I/O environment has
+  failed, but it is never silent: the returned joined error names the
+  restoration step while retaining the original operation error.
 
 ## Alternatives considered
 
@@ -71,8 +77,8 @@ code that writes to managed definition paths.
 ## References
 
 - Implements: [`updex/catalog.go`](../../updex/catalog.go)
-  (`fileSnapshot`, `snapshotFile`, `restore`, `CatalogAdd` rollback
-  closure); [`updex/fsguard.go`](../../updex/fsguard.go)
+  (`fileSnapshot`, `catalogManagedStateSnapshot`, `snapshotFile`, `restore`,
+  `CatalogAdd` rollback closure); [`updex/fsguard.go`](../../updex/fsguard.go)
   (`managedFileExists`, `writeManagedFile` — the shared Lstat-only
   file guard and temp-file-plus-rename write);
   [`updex/features.go`](../../updex/features.go) (`writeFeatureDropIn` —

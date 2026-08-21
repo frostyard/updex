@@ -129,7 +129,7 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 func (c *Client) linkToSysext(transfer *config.Transfer) error {
 	var linkErr error
 	if runner, ok := c.runner.(sysext.PathSysextRunner); ok {
-		linkErr = runner.LinkToSysextAt(transfer, c.paths.sysextLinkDir)
+		linkErr = runner.LinkToSysextAt(transfer, c.sysextLinkDirForRunner())
 	} else {
 		// Preserve compatibility with injected runners that implement the
 		// original SysextRunner interface.
@@ -139,6 +139,16 @@ func (c *Client) linkToSysext(transfer *config.Transfer) error {
 		return fmt.Errorf("failed to link to sysext: %w", linkErr)
 	}
 	return nil
+}
+
+// sysextLinkDirForRunner returns the directory that linkToSysext will
+// actually mutate. Legacy runners use the package default because their
+// interface cannot accept a client-specific path.
+func (c *Client) sysextLinkDirForRunner() string {
+	if _, ok := c.runner.(sysext.PathSysextRunner); ok {
+		return c.paths.sysextLinkDir
+	}
+	return sysext.SysextDir
 }
 
 // buildTargetFilename derives the installed filename for a version from the
