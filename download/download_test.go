@@ -457,3 +457,80 @@ func hashString(content []byte) string {
 	sum := sha256.Sum256(content)
 	return fmt.Sprintf("%x", sum)
 }
+
+func TestDownloadRejectsOversizeBody(t *testing.T) {
+	// The server streams far more than the configured ceiling. Download must
+	// stop at the bound and fail, never writing the whole body to disk.
+	const limit = 1024
+	body := bytes.Repeat([]byte("x"), limit*8)
+	var served atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n, _ := w.Write(body)
+		served.Add(int64(n))
+	}))
+	defer server.Close()
+
+	targetPath := filepath.Join(t.TempDir(), "feature.raw")
+	err := Download(t.Context(), server.Client(), server.URL+"/feature.raw", targetPath, hashString(body), 0644, nil, WithMaxDownloadSize(limit))
+	if !errors.Is(err, ErrDownloadTooLarge) {
+		t.Fatalf("Download() error = %v, want ErrDownloadTooLarge", err)
+	}
+	if _, statErr := os.Stat(targetPath); !os.IsNotExist(statErr) {
+		t.Fatalf("target file exists after an oversize download was rejected: %v", statErr)
+	}
+	// Nothing oversized should remain staged next to the target either.
+	entries, err := os.ReadDir(filepath.Dir(targetPath))
+	if err != nil {
+		t.Fatalf("ReadDir() error = %v", err)
+	}
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			t.Fatalf("Info() error = %v", err)
+		}
+		if info.Size() > limit+1 {
+			t.Fatalf("a %d-byte temp file was left behind; the download was not bounded", info.Size())
+		}
+	}
+}
+
+func TestDownloadRejectsOversizeContentLength(t *testing.T) {
+	// A hostile Content-Length is rejected before any streaming begins.
+	const limit = 1024
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", int64(limit)*100))
+		w.WriteHeader(http.StatusOK)
+		// Write a little and stop; the declared length is what matters here.
+		_, _ = w.Write(bytes.Repeat([]byte("x"), 16))
+	}))
+	defer server.Close()
+
+	targetPath := filepath.Join(t.TempDir(), "feature.raw")
+	err := Download(t.Context(), server.Client(), server.URL+"/feature.raw", targetPath, hashString([]byte("unused")), 0644, nil, WithMaxDownloadSize(limit))
+	if !errors.Is(err, ErrDownloadTooLarge) {
+		t.Fatalf("Download() error = %v, want ErrDownloadTooLarge from the Content-Length pre-check", err)
+	}
+}
+
+func TestDownloadWithinLimitSucceeds(t *testing.T) {
+	// An ordinary download comfortably under the ceiling still succeeds and its
+	// hash is verified.
+	content := []byte("a legitimately sized image payload")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(content)
+	}))
+	defer server.Close()
+
+	targetPath := filepath.Join(t.TempDir(), "feature.raw")
+	err := Download(t.Context(), server.Client(), server.URL+"/feature.raw", targetPath, hashString(content), 0644, nil, WithMaxDownloadSize(int64(len(content))+1))
+	if err != nil {
+		t.Fatalf("Download() error = %v", err)
+	}
+	got, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatalf("content = %q, want %q", got, content)
+	}
+}
