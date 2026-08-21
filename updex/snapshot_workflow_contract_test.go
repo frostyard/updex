@@ -33,7 +33,11 @@ func TestSnapshotWorkflowCancelsStaleRollingReleases(t *testing.T) {
 			CancelInProgress any    `yaml:"cancel-in-progress"`
 		} `yaml:"concurrency"`
 		Jobs map[string]struct {
-			If string `yaml:"if"`
+			If    string `yaml:"if"`
+			Steps []struct {
+				Uses string         `yaml:"uses"`
+				With map[string]any `yaml:"with"`
+			} `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
 	if err := yaml.Unmarshal(data, &workflow); err != nil {
@@ -67,5 +71,26 @@ func TestSnapshotWorkflowCancelsStaleRollingReleases(t *testing.T) {
 	}
 	if !strings.Contains(job.If, "github.event.workflow_run.conclusion == 'success'") {
 		t.Errorf("snapshot job guard = %q, want it to require github.event.workflow_run.conclusion == 'success' (core ADR-0034: only a successful Tests run publishes the dev release)", job.If)
+	}
+
+	const wantRef = "${{ github.event.workflow_run.head_sha }}"
+	var checkoutSteps []struct {
+		Uses string
+		With map[string]any
+	}
+	for _, step := range job.Steps {
+		if strings.HasPrefix(step.Uses, "actions/checkout@") {
+			checkoutSteps = append(checkoutSteps, struct {
+				Uses string
+				With map[string]any
+			}{Uses: step.Uses, With: step.With})
+		}
+	}
+	if len(checkoutSteps) != 1 {
+		t.Fatalf("snapshot job has %d actions/checkout steps, want exactly 1 so the tested commit is unambiguous", len(checkoutSteps))
+	}
+	if got, ok := checkoutSteps[0].With["ref"].(string); !ok || got != wantRef {
+		t.Errorf("snapshot checkout ref = %v (%T), want exactly %q so publication uses the commit whose Tests run succeeded",
+			checkoutSteps[0].With["ref"], checkoutSteps[0].With["ref"], wantRef)
 	}
 }
