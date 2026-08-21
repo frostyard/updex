@@ -660,9 +660,15 @@ check: `catalog add` refuses to overwrite definitions it did not generate
 or that another catalog generated, and `catalog remove` only touches
 files marked by the repo it is acting for — so hand-written,
 package-shipped, or other-catalog definitions sharing a name or component
-are safe. A failed `add` restores the previous state exactly (a fresh add
-leaves nothing behind, a re-add keeps its previously working files, even
-if the failure happens mid-write). `remove` refuses up front if the
+are safe. A failed `add` restores the previous state exactly: a fresh add
+leaves no generated definitions, enable drop-in, staged image, or sysext link,
+while a re-add restores its previous definitions, matching staged images, and
+link target even after a download, link, vacuum, or final-refresh failure.
+Matching staged files are streamed to same-directory rollback snapshots, so
+memory use stays bounded while temporary disk use scales with retained image
+size; those snapshots are removed after success or rollback. A matching
+staging entry or link destination that is neither a regular file nor a symlink
+is refused before install rather than replaced. `remove` refuses up front if the
 sysext's `.transfer` was replaced by one it doesn't own — rather than
 tearing down images that definition describes — and deletes only updex's
 own `00-updex.conf` drop-in, leaving any administrator drop-ins in

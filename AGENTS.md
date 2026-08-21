@@ -439,8 +439,12 @@ Key design points:
   closure that restores exactly what was there before (fresh add → generated
   definitions, matching staged images, and sysext link removed; re-add →
   previous `.transfer`/`.feature`/drop-in contents, staged images, and link
-  target restored). Unrelated staging entries are preserved, and rollback
-  errors are joined with the original operation error rather than hidden. A
+  target restored). Regular staged images are streamed to same-directory
+  temporary rollback files instead of retained in heap, and those files are
+  removed after success or rollback. Matching staged entries and link
+  destinations that are neither regular files nor symlinks are refused before
+  install. Unrelated staging entries are preserved, and rollback errors are
+  joined with the original operation error rather than hidden. A
   definition snapshot distinguishes `existed` from `captured`, so a
   path that exists but cannot be read is never deleted by rollback, and
   `managedFileExists` surfaces non-not-exist stat errors instead of

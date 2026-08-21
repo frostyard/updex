@@ -32,6 +32,13 @@ through non-regular files:
   entries are never removed. A definition path that existed but could not be
   read (`existed && !captured`) is left strictly alone, since removing it
   would destroy state the snapshot cannot rebuild.
+- Matching regular staged images are streamed to same-directory temporary
+  backups instead of retained in memory. Heap use is therefore bounded
+  independently of image size, while temporary disk use scales with retained
+  image size; backup files are removed after success or rollback. Matching
+  staged entries and link destinations that are neither regular files nor
+  symlinks are refused before install rather than accepted with a rollback
+  strategy that cannot reconstruct them.
 - The original operation error is always preserved. If restoration itself
   fails, `CatalogAdd` joins the rollback error into the returned error so
   callers can identify both the original failure and the state that could not

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -308,6 +309,11 @@ func (c *Client) CatalogAdd(ctx context.Context, name string, opts CatalogAddOpt
 		return fail(fmt.Errorf("failed to snapshot catalog-managed install state: %w", err))
 	}
 	managedState = &state
+	defer func() {
+		if err := managedState.cleanup(); err != nil {
+			c.warn("failed to clean catalog rollback snapshots: %v", err)
+		}
+	}()
 	c.msg("Added %s/%s to %s", repo.Name, name, dir)
 
 	enableResult, err := c.EnableFeature(ctx, name, EnableFeatureOptions{
@@ -389,14 +395,12 @@ const (
 	filesystemEntryAbsent filesystemEntryKind = iota
 	filesystemEntryRegular
 	filesystemEntrySymlink
-	filesystemEntryOther
 )
 
 type filesystemEntrySnapshot struct {
 	path       string
 	kind       filesystemEntryKind
-	data       []byte
-	mode       os.FileMode
+	backupPath string
 	linkTarget string
 }
 
@@ -411,13 +415,45 @@ func snapshotFilesystemEntry(path string) (filesystemEntrySnapshot, error) {
 	}
 	switch {
 	case info.Mode().IsRegular():
-		data, err := os.ReadFile(path)
+		source, err := os.Open(path)
 		if err != nil {
 			return snapshot, err
 		}
+		defer source.Close()
+		sourceInfo, err := source.Stat()
+		if err != nil {
+			return snapshot, err
+		}
+		if !sourceInfo.Mode().IsRegular() || !os.SameFile(info, sourceInfo) {
+			return snapshot, fmt.Errorf("%s changed while preparing its rollback snapshot", path)
+		}
+		backup, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".rollback-*")
+		if err != nil {
+			return snapshot, err
+		}
+		backupPath := backup.Name()
+		removeBackup := true
+		defer func() {
+			if removeBackup {
+				_ = backup.Close()
+				_ = os.Remove(backupPath)
+			}
+		}()
+		if _, err := io.Copy(backup, source); err != nil {
+			return snapshot, err
+		}
+		if err := backup.Chmod(info.Mode().Perm()); err != nil {
+			return snapshot, err
+		}
+		if err := backup.Sync(); err != nil {
+			return snapshot, err
+		}
+		if err := backup.Close(); err != nil {
+			return snapshot, err
+		}
+		removeBackup = false
 		snapshot.kind = filesystemEntryRegular
-		snapshot.data = data
-		snapshot.mode = info.Mode().Perm()
+		snapshot.backupPath = backupPath
 	case info.Mode()&os.ModeSymlink != 0:
 		target, err := os.Readlink(path)
 		if err != nil {
@@ -426,7 +462,7 @@ func snapshotFilesystemEntry(path string) (filesystemEntrySnapshot, error) {
 		snapshot.kind = filesystemEntrySymlink
 		snapshot.linkTarget = target
 	default:
-		snapshot.kind = filesystemEntryOther
+		return snapshot, fmt.Errorf("%s is not a regular file or symlink (mode %s)", path, info.Mode().Type())
 	}
 	return snapshot, nil
 }
@@ -441,7 +477,7 @@ func (s filesystemEntrySnapshot) restore() error {
 		if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
 			return fmt.Errorf("recreate parent for %s: %w", s.path, err)
 		}
-		if err := writeManagedFileWithMode(s.path, s.data, s.mode); err != nil {
+		if err := os.Rename(s.backupPath, s.path); err != nil {
 			return fmt.Errorf("restore %s: %w", s.path, err)
 		}
 	case filesystemEntrySymlink:
@@ -456,9 +492,16 @@ func (s filesystemEntrySnapshot) restore() error {
 			_ = os.Remove(temp)
 			return fmt.Errorf("restore symlink %s: %w", s.path, err)
 		}
-	case filesystemEntryOther:
-		// CatalogAdd cannot replace a directory or special file at this path,
-		// so leaving it untouched is the only safe restoration.
+	}
+	return nil
+}
+
+func (s filesystemEntrySnapshot) cleanup() error {
+	if s.backupPath == "" {
+		return nil
+	}
+	if err := os.Remove(s.backupPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove rollback snapshot %s: %w", s.backupPath, err)
 	}
 	return nil
 }
@@ -511,18 +554,27 @@ func snapshotCatalogManagedState(transfer *config.Transfer, sysextLinkDir string
 		path := filepath.Join(targetDir, entry.Name())
 		snapshot, err := snapshotFilesystemEntry(path)
 		if err != nil {
-			return catalogManagedStateSnapshot{}, fmt.Errorf("snapshot staged image %s: %w", path, err)
+			return catalogManagedStateSnapshot{}, errors.Join(
+				fmt.Errorf("snapshot staged image %s: %w", path, err),
+				state.cleanup(),
+			)
 		}
 		state.staged[path] = snapshot
 	}
 
 	linkName := sysext.SysextLinkName(transfer)
 	if linkName == "" {
-		return catalogManagedStateSnapshot{}, fmt.Errorf("cannot determine sysext link name")
+		return catalogManagedStateSnapshot{}, errors.Join(
+			fmt.Errorf("cannot determine sysext link name"),
+			state.cleanup(),
+		)
 	}
 	link, err := snapshotFilesystemEntry(filepath.Join(sysextLinkDir, linkName))
 	if err != nil {
-		return catalogManagedStateSnapshot{}, fmt.Errorf("snapshot sysext link: %w", err)
+		return catalogManagedStateSnapshot{}, errors.Join(
+			fmt.Errorf("snapshot sysext link: %w", err),
+			state.cleanup(),
+		)
 	}
 	state.link = link
 	return state, nil
@@ -567,6 +619,19 @@ func (s catalogManagedStateSnapshot) restore() error {
 		_ = os.Remove(s.targetDir)
 	}
 	return errors.Join(rollbackErrs...)
+}
+
+func (s catalogManagedStateSnapshot) cleanup() error {
+	var cleanupErrs []error
+	for _, snapshot := range s.staged {
+		if err := snapshot.cleanup(); err != nil {
+			cleanupErrs = append(cleanupErrs, err)
+		}
+	}
+	if err := s.link.cleanup(); err != nil {
+		cleanupErrs = append(cleanupErrs, err)
+	}
+	return errors.Join(cleanupErrs...)
 }
 
 func matchesCatalogTarget(name string, patterns []*version.Pattern) bool {
