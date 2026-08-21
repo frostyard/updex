@@ -63,6 +63,10 @@ func WithMaxDecompressedSize(bytes int64) Option {
 // seam so tests can observe which files are synced and inject sync failures.
 var syncFile = func(f *os.File) error { return f.Sync() }
 
+// closeCopyFile closes the destination temp file used by copyFile. It is a
+// package-level seam so tests can inject the otherwise rare close failure.
+var closeCopyFile = func(f *os.File) error { return f.Close() }
+
 func resolveRetry(opts ...Option) retrySettings {
 	settings := retrySettings{
 		cfg:                 retry.DefaultConfig,
@@ -269,7 +273,9 @@ func copyFile(src, dst string, mode os.FileMode) error {
 		_ = tmpFile.Close()
 		return fmt.Errorf("failed to sync destination file: %w", err)
 	}
-	_ = tmpFile.Close()
+	if err := closeCopyFile(tmpFile); err != nil {
+		return fmt.Errorf("failed to close destination file: %w", err)
+	}
 
 	if err := os.Chmod(tmpPath, mode); err != nil {
 		return err
