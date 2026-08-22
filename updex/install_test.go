@@ -41,6 +41,7 @@ func TestBuildTargetFilename(t *testing.T) {
 	tests := []struct {
 		name       string
 		patterns   []string
+		ver        string
 		want       string
 		wantErr    error
 		wantErrMsg string
@@ -70,11 +71,60 @@ func TestBuildTargetFilename(t *testing.T) {
 			name:       "rejects missing patterns",
 			wantErrMsg: "no target pattern configured",
 		},
+		{
+			// A manifest filename captured against a bare "@v" MatchPattern
+			// (no surrounding literal characters) could substitute ".." as
+			// the version, which would otherwise escape Target.Path when
+			// joined in installTransfer.
+			name:       "rejects path-traversal version",
+			patterns:   []string{"@v"},
+			ver:        "..",
+			wantErrMsg: `invalid target pattern: invalid target filename "..": must not contain path separators or traverse directories`,
+		},
+		{
+			name:       "rejects version containing path separator",
+			patterns:   []string{"testext_@v.raw"},
+			ver:        "1.2.3/../../etc",
+			wantErrMsg: `invalid target pattern: invalid target filename "testext_1.2.3/../../etc.raw": must not contain path separators or traverse directories`,
+		},
+		{
+			// Stripping the compression suffix can turn an acceptable
+			// name into a traversal segment, so the stripped value the
+			// function would actually return must be validated too.
+			name:       "rejects traversal revealed by stripping .gz",
+			patterns:   []string{"@v"},
+			ver:        "...gz",
+			wantErrMsg: `invalid target pattern: invalid target filename "..": must not contain path separators or traverse directories`,
+		},
+		{
+			name:       "rejects traversal revealed by stripping .xz",
+			patterns:   []string{"@v"},
+			ver:        "...xz",
+			wantErrMsg: `invalid target pattern: invalid target filename "..": must not contain path separators or traverse directories`,
+		},
+		{
+			name:       "rejects traversal built from a compressed pattern literal",
+			patterns:   []string{"@v.gz"},
+			ver:        "..",
+			wantErrMsg: `invalid target pattern: invalid target filename "..": must not contain path separators or traverse directories`,
+		},
+		{
+			// Stripping ".gz" from "..gz" leaves ".", which is forbidden
+			// for the same reason.
+			name:       "rejects current-directory name revealed by stripping",
+			patterns:   []string{"@v"},
+			ver:        "..gz",
+			wantErrMsg: `invalid target pattern: invalid target filename ".": must not contain path separators or traverse directories`,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := buildTargetFilename(tt.patterns, "1.2.3")
+			ver := tt.ver
+			if ver == "" {
+				ver = "1.2.3"
+			}
+			got, err := buildTargetFilename(tt.patterns, ver)
 			if got != tt.want {
 				t.Errorf("buildTargetFilename() = %q, want %q", got, tt.want)
 			}
