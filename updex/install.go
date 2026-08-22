@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/frostyard/updex/config"
 	"github.com/frostyard/updex/download"
@@ -158,6 +159,12 @@ func buildTargetFilename(targetPatterns []string, ver string) (string, error) {
 			continue
 		}
 		name := p.BuildFilename(ver)
+		if err := validateTargetFilename(name); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
 		if stripped := download.StripCompressionSuffix(name); stripped == name {
 			return name, nil
 		} else if fallback == "" {
@@ -171,4 +178,19 @@ func buildTargetFilename(targetPatterns []string, ver string) (string, error) {
 		return "", fmt.Errorf("invalid target pattern: %w", firstErr)
 	}
 	return "", fmt.Errorf("no target pattern configured")
+}
+
+// validateTargetFilename rejects a filename built from a runtime-substituted
+// version (config.Transfer.Target.Patterns' @v placeholder) that would escape
+// Target.Path when joined with filepath.Join in installTransfer: "." or "..",
+// any path separator, or a name whose Base differs from itself (e.g. an
+// absolute path). This mirrors catalog/catalog.go's validateCatalogPatterns,
+// which validates pattern *literals* configured by trusted operators; this
+// check instead covers the version string substituted in at runtime from an
+// untrusted manifest.
+func validateTargetFilename(name string) error {
+	if name == "." || name == ".." || strings.ContainsAny(name, "/\\") || filepath.Base(name) != name {
+		return fmt.Errorf("invalid target filename %q: must not contain path separators or traverse directories", name)
+	}
+	return nil
 }

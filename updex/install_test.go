@@ -41,6 +41,7 @@ func TestBuildTargetFilename(t *testing.T) {
 	tests := []struct {
 		name       string
 		patterns   []string
+		ver        string
 		want       string
 		wantErr    error
 		wantErrMsg string
@@ -70,11 +71,31 @@ func TestBuildTargetFilename(t *testing.T) {
 			name:       "rejects missing patterns",
 			wantErrMsg: "no target pattern configured",
 		},
+		{
+			// A manifest filename captured against a bare "@v" MatchPattern
+			// (no surrounding literal characters) could substitute ".." as
+			// the version, which would otherwise escape Target.Path when
+			// joined in installTransfer.
+			name:       "rejects path-traversal version",
+			patterns:   []string{"@v"},
+			ver:        "..",
+			wantErrMsg: `invalid target pattern: invalid target filename "..": must not contain path separators or traverse directories`,
+		},
+		{
+			name:       "rejects version containing path separator",
+			patterns:   []string{"testext_@v.raw"},
+			ver:        "1.2.3/../../etc",
+			wantErrMsg: `invalid target pattern: invalid target filename "testext_1.2.3/../../etc.raw": must not contain path separators or traverse directories`,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := buildTargetFilename(tt.patterns, "1.2.3")
+			ver := tt.ver
+			if ver == "" {
+				ver = "1.2.3"
+			}
+			got, err := buildTargetFilename(tt.patterns, ver)
 			if got != tt.want {
 				t.Errorf("buildTargetFilename() = %q, want %q", got, tt.want)
 			}
