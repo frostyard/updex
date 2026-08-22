@@ -177,6 +177,43 @@ func TestInstall_CleanupOnPartialFailure(t *testing.T) {
 	}
 }
 
+// TestInstall_JoinsCleanupErrorOnPartialFailure pins that a failure to clean
+// up the timer file after a partial install failure is surfaced in the
+// returned error rather than silently dropped, mirroring the errors.Join
+// pattern Remove already uses. removeUnitFile is swapped out for the
+// duration of the test since the timer file's own directory permissions
+// cannot deterministically permit its creation while forbidding its removal
+// (both operations require write access to the same directory).
+func TestInstall_JoinsCleanupErrorOnPartialFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	mockRunner := &MockSystemctlRunner{}
+	mgr := NewTestManager(tmpDir, mockRunner)
+
+	timer, _ := testUnitConfigs("updex-update")
+	_, service := testUnitConfigs("missing-dir/updex-update")
+
+	removeErr := errors.New("remove failed: permission denied")
+	restore := removeUnitFile
+	t.Cleanup(func() { removeUnitFile = restore })
+	removeUnitFile = func(path string) error {
+		return removeErr
+	}
+
+	err := mgr.Install(timer, service)
+	if err == nil {
+		t.Fatal("expected error for service write failure")
+	}
+	if !strings.Contains(err.Error(), "failed to write service") {
+		t.Errorf("error missing service-write context: %v", err)
+	}
+	if !errors.Is(err, removeErr) {
+		t.Errorf("error does not join the cleanup failure: %v", err)
+	}
+	if mockRunner.DaemonReloadCalled {
+		t.Error("daemon-reload must not run after a failed install")
+	}
+}
+
 // TestInstall_RefusesNonRegularUnitPaths pins the ADR-0005 rule for the
 // unit installer: a dangling symlink, a directory, or a live symlink at
 // either unit path is refused before anything is written, the symlink
