@@ -52,6 +52,10 @@ func unitFileState(path string) (exists bool, err error) {
 	return true, nil
 }
 
+// removeUnitFile is os.Remove, replaceable by tests that inject a removal
+// failure during Install's partial-failure rollback.
+var removeUnitFile = os.Remove
+
 // writeUnitFile writes content to path as a fresh regular file, mode 0644,
 // via a temporary file in the same directory plus rename. The write itself
 // therefore never follows a symlink that appeared at path between the
@@ -120,9 +124,13 @@ func (m *Manager) Install(timer *TimerConfig, service *ServiceConfig) error {
 
 	// Write service file
 	if err := writeUnitFile(servicePath, serviceContent); err != nil {
-		// Clean up timer file on partial failure
-		_ = os.Remove(timerPath)
-		return fmt.Errorf("failed to write service: %w", err)
+		// Clean up timer file on partial failure; surface a failed
+		// cleanup instead of silently dropping it.
+		var removeErr error
+		if rmErr := removeUnitFile(timerPath); rmErr != nil {
+			removeErr = fmt.Errorf("failed to remove timer file after service write failure: %w", rmErr)
+		}
+		return errors.Join(fmt.Errorf("failed to write service: %w", err), removeErr)
 	}
 
 	// Reload systemd
