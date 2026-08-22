@@ -241,6 +241,7 @@ ListURL=https://api.github.com/repos/fedora-sysexts/fedora/contents/
 | `SiteURL` | yes | Base URL artifacts resolve under (`<SiteURL>/<sysext>/{<sysext>.conf,SHA256SUMS,*.raw}`); trailing slash trimmed |
 | `ListURL` | no | GitHub contents API endpoint for `catalog list`/`search`; without it the repo is skipped in listings (add/remove unaffected) |
 | `Component` | no | systemd-sysupdate component for generated files; default `catalog-<name>`, validated against `[a-zA-Z0-9_-]+` |
+| `AllowInsecure` | no | bool, default `no`; permits non-HTTPS `SiteURL`/`ListURL` values for explicitly trusted development/test endpoints. Does not affect `GITHUB_TOKEN` transmission |
 
 `catalog add` writes the generated `<sysext>.transfer`/`<sysext>.feature`
 into `/etc/sysupdate.<Component>.d/`, which is discovered as a normal named
