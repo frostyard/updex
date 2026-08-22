@@ -87,6 +87,35 @@ func TestBuildTargetFilename(t *testing.T) {
 			ver:        "1.2.3/../../etc",
 			wantErrMsg: `invalid target pattern: invalid target filename "testext_1.2.3/../../etc.raw": must not contain path separators or traverse directories`,
 		},
+		{
+			// Stripping the compression suffix can turn an acceptable
+			// name into a traversal segment, so the stripped value the
+			// function would actually return must be validated too.
+			name:       "rejects traversal revealed by stripping .gz",
+			patterns:   []string{"@v"},
+			ver:        "...gz",
+			wantErrMsg: `invalid target pattern: invalid target filename "..": must not contain path separators or traverse directories`,
+		},
+		{
+			name:       "rejects traversal revealed by stripping .xz",
+			patterns:   []string{"@v"},
+			ver:        "...xz",
+			wantErrMsg: `invalid target pattern: invalid target filename "..": must not contain path separators or traverse directories`,
+		},
+		{
+			name:       "rejects traversal built from a compressed pattern literal",
+			patterns:   []string{"@v.gz"},
+			ver:        "..",
+			wantErrMsg: `invalid target pattern: invalid target filename "..": must not contain path separators or traverse directories`,
+		},
+		{
+			// Stripping ".gz" from "..gz" leaves ".", which is forbidden
+			// for the same reason.
+			name:       "rejects current-directory name revealed by stripping",
+			patterns:   []string{"@v"},
+			ver:        "..gz",
+			wantErrMsg: `invalid target pattern: invalid target filename ".": must not contain path separators or traverse directories`,
+		},
 	}
 
 	for _, tt := range tests {

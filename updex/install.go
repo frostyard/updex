@@ -150,24 +150,37 @@ func (c *Client) linkToSysext(transfer *config.Transfer) error {
 func buildTargetFilename(targetPatterns []string, ver string) (string, error) {
 	var fallback string
 	var firstErr error
+	keepErr := func(err error) {
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
 	for _, patternStr := range targetPatterns {
 		p, err := version.ParsePattern(patternStr)
 		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
+			keepErr(err)
 			continue
 		}
 		name := p.BuildFilename(ver)
 		if err := validateTargetFilename(name); err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
+			keepErr(err)
 			continue
 		}
-		if stripped := download.StripCompressionSuffix(name); stripped == name {
+		stripped := download.StripCompressionSuffix(name)
+		if stripped == name {
 			return name, nil
-		} else if fallback == "" {
+		}
+		// The stripped name, not `name`, is what this pattern would
+		// contribute, so it has to clear the same check: stripping a
+		// compression suffix can turn an acceptable name into a traversal
+		// segment (e.g. "...gz" -> ".."). A stripped value that fails
+		// validation is rejected outright rather than kept as a silent
+		// fallback, so every value returned below has been validated.
+		if err := validateTargetFilename(stripped); err != nil {
+			keepErr(err)
+			continue
+		}
+		if fallback == "" {
 			fallback = stripped
 		}
 	}
