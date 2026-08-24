@@ -291,10 +291,10 @@ func writeTestKeyring(t *testing.T, entity *openpgp.Entity, armored bool) string
 func setTestKeyringPaths(t *testing.T, paths ...string) {
 	t.Helper()
 
-	original := keyringPaths
-	keyringPaths = paths
+	original := KeyringPaths
+	KeyringPaths = paths
 	t.Cleanup(func() {
-		keyringPaths = original
+		KeyringPaths = original
 	})
 }
 
