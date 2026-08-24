@@ -126,7 +126,7 @@ Mode=0644
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `Type` | string | — | Target type (`regular-file`, `directory`; native OS images also use `partition`, which updex skips — see below) |
+| `Type` | string | — | Target type; must be empty or `regular-file` to be treated as a sysext transfer. Any other value — including `directory` and native OS images' `partition` — is silently skipped, see below |
 | `Path` | string | `/var/lib/extensions.d` | Staging directory for downloaded versioned files |
 | `PathRelativeTo` | string | — | Base directory `Path` is relative to (e.g. `boot`, used by the UKI's `/EFI/Linux` target); parsed but only meaningful for non-sysext OS transfers, see below |
 | `MatchPattern` | string | — | Filename pattern with `@v` for installed files |
