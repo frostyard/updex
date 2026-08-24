@@ -316,6 +316,12 @@ func runCatalogRemove(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if err != nil {
+		if result != nil && len(result.RemovedFiles) > 0 {
+			fmt.Printf("Deleted %d definition file(s):\n", len(result.RemovedFiles))
+			for _, f := range result.RemovedFiles {
+				fmt.Printf("  - %s\n", f)
+			}
+		}
 		return err
 	}
 
