@@ -196,6 +196,21 @@ func (fx *catalogCLIFixture) assertInstalled(t *testing.T, repo string) {
 	assertExists(t, fx.image(), "downloaded image")
 }
 
+// unmergeHookRunner runs hook during Unmerge, before delegating to the
+// embedded MockRunner. DisableFeature calls Unmerge after it has already
+// rewritten the feature's drop-in but before CatalogRemove's own definition
+// files are touched, so it is the only point at which a test can corrupt
+// state between those two steps.
+type unmergeHookRunner struct {
+	*sysext.MockRunner
+	hook func()
+}
+
+func (r *unmergeHookRunner) Unmerge() error {
+	r.hook()
+	return r.MockRunner.Unmerge()
+}
+
 func decodeCatalogAddResult(t *testing.T, output string) updex.CatalogAddResult {
 	t.Helper()
 	var r updex.CatalogAddResult
@@ -510,6 +525,12 @@ func TestRunCatalogRemove(t *testing.T) {
 		installed []string
 		arg       string
 		flags     catalogCLIFlags
+		// onUnmerge, when set, runs during the SDK's unmerge step — after
+		// DisableFeature has rewritten the drop-in but before CatalogRemove's
+		// own removal loop starts — the only seam available to break a later
+		// managed-file removal without tripping the loop's own upfront
+		// managedFileExists checks.
+		onUnmerge func(t *testing.T, fx *catalogCLIFixture)
 		wantErr   string
 		wantOut   []string
 		wantNoOut []string
@@ -710,6 +731,38 @@ func TestRunCatalogRemove(t *testing.T) {
 				assertNotExists(t, fx.componentDir("community"), "removed component directory")
 			},
 		},
+		{
+			name:      "partial removal failure surfaces the files already removed",
+			repos:     []string{"fedora"},
+			installed: []string{"fedora"},
+			arg:       "zoxide",
+			flags:     catalogCLIFlags{},
+			onUnmerge: func(t *testing.T, fx *catalogCLIFixture) {
+				t.Helper()
+				if os.Geteuid() == 0 {
+					t.Skip("root bypasses directory write permissions")
+				}
+				dropInDir := filepath.Dir(fx.dropIn("fedora"))
+				if err := os.Chmod(dropInDir, 0555); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(dropInDir, 0755) })
+			},
+			wantErr: "failed to remove",
+			wantOut: []string{"Deleted 2 definition file(s):\n"},
+			wantNoOut: []string{
+				"Removed fedora/zoxide.\n",
+			},
+			check: func(t *testing.T, fx *catalogCLIFixture, out string, runner *sysext.MockRunner) {
+				assertContains(t, out, "  - "+fx.transferFile("fedora")+"\n", "  - "+fx.featureFile("fedora")+"\n")
+				assertNotExists(t, fx.transferFile("fedora"), "transfer file")
+				assertNotExists(t, fx.featureFile("fedora"), "feature file")
+				assertExists(t, fx.dropIn("fedora"), "drop-in left behind by the failed removal")
+				if !runner.UnmergeCalled {
+					t.Error("expected unmerge before the removal loop ran")
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -723,7 +776,11 @@ func TestRunCatalogRemove(t *testing.T) {
 			}
 			runner := &sysext.MockRunner{}
 			flags := tt.flags
-			flags.runner = runner
+			if tt.onUnmerge != nil {
+				flags.runner = &unmergeHookRunner{MockRunner: runner, hook: func() { tt.onUnmerge(t, fx) }}
+			} else {
+				flags.runner = runner
+			}
 			setCatalogCLIFlags(t, flags)
 
 			out, err := runCatalogHandler(t, runCatalogRemove, tt.arg)
