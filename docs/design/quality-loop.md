@@ -47,9 +47,10 @@ PR template ──► review rubric ──► CI gates ──► corrections ─
   each job is capped at 15 minutes
   (`timeout-minutes: 15`) so a hung step fails the gate within minutes
   instead of pending for GitHub's 360-minute default:
-  - *Lint* (pinned golangci-lint — the release named by
-    `GOLANGCI_LINT_VERSION` in the `Makefile`, which the Lint job reads
-    and `make ci` asserts via `make lint-version-check`, configured by
+  - *Lint* (pinned golangci-lint — the release
+    [`mise.toml`](../../mise.toml) pins, installed from
+    [`mise.lock`](../../mise.lock) by `jdx/mise-action` in the Lint job,
+    and asserted by `make ci` via `make lint-version-check`, configured by
     `.golangci.yml`), *Security Scan* (pinned
     `govulncheck`), *Unit Tests* with coverage — the job (and `make ci`)
     enforces `max(80.0, baseline - 0.5)` total statement coverage over the
