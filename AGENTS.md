@@ -60,9 +60,10 @@ privileges. Building and running the unit tests does not — the test suite uses
 make fmt          # Format code (run after every change)
 make build        # Build binary to build/updex
 make test         # Run all tests
-make lint         # Run golangci-lint (.golangci.yml; skipped with a message if not installed)
-make check        # fmt + lint + test
-make ci           # Credential-free gate matching CI's fail-fast order
+make lint         # Run golangci-lint (.golangci.yml; fails if not installed)
+make check        # fmt + lint + test (mutating: fmt rewrites files)
+make verify       # Non-mutating, credential-free gate for read-only reviewers: tidy diff, vet, gofmt -l, exact-pin lint, non-E2E tests
+make ci           # Credential-free gate matching CI's fail-fast order (verify-static, then coverage, E2E, race, cross-build)
 make test-cover   # Tests with HTML coverage report
 make coverage-check        # Enforce the absolute floor and committed coverage ratchet
 make test-coverage-check   # Self-test scripts/check-coverage.sh with fixture profiles
@@ -80,10 +81,13 @@ formatting, lint, non-E2E unit and race tests, the separate black-box E2E
 suite, and Linux amd64/arm64 builds, and requires `golangci-lint`. The lint
 step first runs `make lint-version-check`, which fails unless the installed
 `golangci-lint` matches `GOLANGCI_LINT_VERSION` in the `Makefile` (currently
-2.12.2) — the CI Lint job reads the same variable to install that release, so
+2.13.1) — the CI Lint job reads the same variable to install that release, so
 the Makefile
 is the single place to bump it and local and CI lint results cannot drift
-(`make lint` only warns on a mismatch). The unit-test step writes `coverage.out`, and
+(`make lint` fails when the linter is absent and only warns on a mismatch).
+A read-only reviewer — one that must not rewrite files — runs `make verify`
+instead of `make check`: the same static checks, then the non-E2E tests,
+with nothing that formats or writes. The unit-test step writes `coverage.out`, and
 `make ci` (and the Unit Tests CI job) then enforces a total statement-coverage
 gate of `max(80.0, baseline - 0.5)` over the non-E2E packages via
 `make coverage-check` (`scripts/check-coverage.sh` and the committed
@@ -588,9 +592,8 @@ issue. Report it privately by emailing the maintainer at
   [README transfer configuration](README.md#transfer-section) for the
   operator-facing reference.
 - **Build issues:** `make build` failing → check `go version` is 1.26.6+;
-  dependency download failures → `make tidy`; a missing `golangci-lint` is
-  optional locally (`make lint` skips with a message) but required for
-  `make ci`, which also fails with
+  dependency download failures → `make tidy`; a missing `golangci-lint`
+  fails `make lint`, `make verify`, and `make ci`; `make ci` also fails with
   `expected golangci-lint <pinned>, found <installed>` when the installed
   release differs from `GOLANGCI_LINT_VERSION` in the `Makefile` — install
   the pinned release with the `go install` command it prints.

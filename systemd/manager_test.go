@@ -135,16 +135,18 @@ func TestInstall(t *testing.T) {
 }
 
 func testUnitConfigs(name string) (*TimerConfig, *ServiceConfig) {
-	return &TimerConfig{
-			Name:        name,
-			Description: "Test timer",
-			OnCalendar:  "daily",
-		}, &ServiceConfig{
-			Name:        name,
-			Description: "Test service",
-			Type:        "oneshot",
-			ExecStart:   "/usr/bin/updex update",
-		}
+	timer := &TimerConfig{
+		Name:        name,
+		Description: "Test timer",
+		OnCalendar:  "daily",
+	}
+	service := &ServiceConfig{
+		Name:        name,
+		Description: "Test service",
+		Type:        "oneshot",
+		ExecStart:   "/usr/bin/updex update",
+	}
+	return timer, service
 }
 
 func TestInstall_CleanupOnPartialFailure(t *testing.T) {
