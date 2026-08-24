@@ -577,8 +577,9 @@ Mutating commands enforce root before reading `--dry-run`, so examples that prev
 ## CI and Releases
 
 `make ci` is the canonical credential-free local gate. It mirrors the
-host-independent pull-request checks in fail-fast order: module tidiness, vet,
-formatting, golangci-lint, all non-E2E package tests (with `-coverprofile`),
+host-independent pull-request checks in fail-fast order: the shared
+`make verify-static` checks (module tidiness, vet, formatting, golangci-lint
+at the exact pin), all non-E2E package tests (with `-coverprofile`),
 the `max(80.0, baseline - 0.5)` total statement-coverage gate
 (`make test-coverage-check` (`scripts/test-coverage-check.sh`) then
 `make coverage-check` (`scripts/check-coverage.sh`), with the committed
@@ -586,7 +587,9 @@ the `max(80.0, baseline - 0.5)` total statement-coverage gate
 non-coverage step, the same unit tests under the race detector, then Linux
 amd64 and arm64 builds. The unit and race stages do not filter by test name,
 so every hermetic package test runs; the E2E suite also retains its dedicated
-workflow job.
+workflow job. `make verify` is the non-mutating subset for read-only
+reviewers (such as Snowcat `pr-review` workers): `verify-static` plus the
+non-E2E tests, with nothing that formats or rewrites the checkout.
 
 The credentialed `Release config` job in `.github/workflows/test.yml` closes
 the remaining pre-merge release-surface gap: on pull requests, pushes to

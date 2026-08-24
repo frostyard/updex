@@ -756,8 +756,11 @@ make lint
 # Run tests
 make test
 
-# Quick format, lint, and test loop
+# Quick format, lint, and test loop (rewrites files via gofmt -w)
 make check
+
+# Non-mutating, credential-free gate for read-only review: tidy diff, vet, gofmt -l, lint, tests
+make verify
 
 # Run the credential-free gate that mirrors CI
 make ci

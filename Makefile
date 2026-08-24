@@ -1,4 +1,4 @@
-.PHONY: all build clean fmt lint lint-version-check test test-cover coverage-check test-coverage-check tidy check verify ci install help
+.PHONY: all build clean fmt lint lint-version-check test test-cover coverage-check test-coverage-check tidy check verify-static verify ci install help
 
 # Build variables
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -85,8 +85,8 @@ tidy:
 ## check: Run fmt, lint, and test
 check: fmt lint test
 
-## verify: Credential-free, non-mutating gate (what a read-only reviewer runs)
-verify:
+## verify-static: The non-mutating static checks shared by verify and ci (tidy diff, vet, gofmt -l, exact-pin lint)
+verify-static:
 	@echo "==> verify: go.mod is tidy"
 	$(GO) mod tidy -diff
 	@echo "==> verify: go vet"
@@ -96,11 +96,14 @@ verify:
 	@echo "==> lint (golangci-lint $(GOLANGCI_LINT_VERSION))"
 	$(MAKE) lint-version-check
 	golangci-lint run
+
+## verify: Credential-free, non-mutating gate (what a read-only reviewer runs): verify-static plus the non-E2E tests
+verify: verify-static
 	@echo "==> unit tests"
 	$(GO) test $$($(GO) list ./... | grep -v '/tests/e2e$$')
 
-## ci: Run the credential-free CI gate (verify, then coverage, race, and cross-build)
-ci: verify
+## ci: Run the credential-free CI gate (verify-static, then coverage, race, and cross-build)
+ci: verify-static
 	@echo "==> unit tests with coverage"
 	$(GO) test -v $$($(GO) list ./... | grep -v '/tests/e2e$$') -coverprofile=coverage.out -covermode=atomic
 	@echo "==> coverage floor"
