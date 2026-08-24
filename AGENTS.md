@@ -40,12 +40,16 @@ repo-specific guidance belongs in this file or `docs/`:
 
 ### Prerequisites
 
-- **Go 1.26.6 or newer** (the module targets `go 1.26.6`)
+- **Go 1.26.7** (`go.mod`'s `toolchain go1.26.7` line is the only Go build
+  pin; CI, `mise`, and Snowcat workers all read it — the module's minimum is
+  `go 1.26.6`)
 - `make`
-- Optional: [`golangci-lint`](https://golangci-lint.run/) for linting —
-  `make ci` requires the exact release pinned as `GOLANGCI_LINT_VERSION` in
-  the `Makefile` (install with the exact `go install …@v<version>` command
-  printed by `make lint-version-check` when it fails),
+- Optional: [`mise`](https://mise.jdx.dev/) to provision every other pinned
+  tool: `mise install` reads [`mise.toml`](mise.toml) and verifies each
+  download against [`mise.lock`](mise.lock) (core ADR-0043). Today that is
+  [`golangci-lint`](https://golangci-lint.run/) for `make lint` — `make ci`
+  requires the exact release `mise.toml` pins (`mise install` provisions it;
+  `make lint-version-check` fails with that instruction when it is absent),
   [`svu`](https://github.com/caarlos0/svu) for release tagging, Node ≥ 20 for
   the docs-integrity gate
 
@@ -80,11 +84,11 @@ Run `make ci` before opening a pull request. It checks module tidiness, vet,
 formatting, lint, non-E2E unit and race tests, the separate black-box E2E
 suite, and Linux amd64/arm64 builds, and requires `golangci-lint`. The lint
 step first runs `make lint-version-check`, which fails unless the installed
-`golangci-lint` matches `GOLANGCI_LINT_VERSION` in the `Makefile` (currently
-2.13.1) — the CI Lint job reads the same variable to install that release, so
-the Makefile
+`golangci-lint` matches the pin in `mise.toml` (currently 2.13.1) and was
+built with a Go no older than `go.mod`'s toolchain — the CI Lint job installs
+the same `mise.lock`-verified release through `jdx/mise-action`, so `mise.toml`
 is the single place to bump it and local and CI lint results cannot drift
-(`make lint` fails when the linter is absent and only warns on a mismatch).
+(`make lint` now fails, rather than warns, on any mismatch or missing pin).
 A read-only reviewer — one that must not rewrite files — runs `make verify`
 instead of `make check`: the same static checks, then the non-E2E tests,
 with nothing that formats or writes. The unit-test step writes `coverage.out`, and
@@ -593,10 +597,10 @@ issue. Report it privately by emailing the maintainer at
   operator-facing reference.
 - **Build issues:** `make build` failing → check `go version` is 1.26.6+;
   dependency download failures → `make tidy`; a missing `golangci-lint`
-  fails `make lint`, `make verify`, and `make ci`; `make ci` also fails with
-  `expected golangci-lint <pinned>, found <installed>` when the installed
-  release differs from `GOLANGCI_LINT_VERSION` in the `Makefile` — install
-  the pinned release with the `go install` command it prints.
+  fails `make lint`, `make verify`, and `make ci`; `make lint`/`make ci` also
+  fail with `expected golangci-lint <pinned>, found <installed>` when the
+  installed release differs from the pin in `mise.toml` — run `mise install`
+  to provision the pinned release.
 - **Runtime issues:** "configuration not found" → ensure `.transfer` files
   exist under the standard search paths; "permission denied" → most mutating
   operations require root; download failures → check network connectivity

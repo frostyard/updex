@@ -69,9 +69,9 @@ state also require root privileges.
 ### Build from source
 
 Building the CLI or library and running unit tests requires
-[Go 1.26.6 or newer](https://go.dev/doc/install) (the version required by
-`go.mod`) and `make` for the Makefile commands below. Building and testing do
-not require systemd.
+[Go 1.26.7](https://go.dev/doc/install) (`go.mod`'s `toolchain` line is the
+only Go build pin; the module's minimum is `go 1.26.6`) and `make` for the
+Makefile commands below. Building and testing do not require systemd.
 
 ```bash
 make build
