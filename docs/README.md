@@ -31,7 +31,8 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
   always survive
 - [ADR-0005](adr/0005-transactional-writes-lstat-checks.md) — privileged
   multi-file mutations snapshot first and roll back on any failure; managed
-  paths are checked with `os.Lstat` and must be regular files
+  paths are checked with `os.Lstat` and must be regular files; superseded by
+  ADR-0013
 - [ADR-0006](adr/0006-byte-preserving-render-transfer.md) — `RenderTransfer`
   is a byte-preserving line transform; `%w`/`%a` stay unexpanded so
   definitions track the running OS release
@@ -55,6 +56,11 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
   criteria are satisfied by committed relative symlinks to canonical content
   (`AGENTS.md`, `specs/`, `design/`) plus real trees for directory criteria;
   the alias table lives in the ADR and `scripts/check-docs.mjs` guards it
+- [ADR-0013](adr/0013-bounded-rollback-staged-images-and-feature-dropins.md) —
+  extends ADR-0005: staged image rollback backups stream to same-directory
+  temp files instead of memory, rollback errors join with the original
+  failure, and `writeFeatureDropIn` shares the Lstat-only guard and
+  temp-file-plus-rename writer (`updex/fsguard.go`)
 
 ### Design
 
