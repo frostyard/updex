@@ -311,6 +311,9 @@ func RenderTransferTo(conf []byte, repo Repo, name string, targetPath string) ([
 			if key == "features" {
 				continue // replaced by the injected line
 			}
+			if key == "verify" {
+				continue // catalog input must not disable GPG verification; the absent-key default (true) applies
+			}
 		}
 		out.WriteString(line)
 	}

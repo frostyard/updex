@@ -26,6 +26,7 @@ import (
 
 	"github.com/frostyard/updex/catalog"
 	"github.com/frostyard/updex/config"
+	"github.com/frostyard/updex/internal/testutil"
 )
 
 // TestClientIsolation_DefinitionRoots proves two clients each see only their
@@ -427,6 +428,8 @@ func newIsolatedCatalogServer(t *testing.T, name, targetDir string) *httptest.Se
 	const version = "1.0.0"
 	rawName := name + "-" + version + ".raw"
 	rawContent := []byte("isolated sysext image")
+	manifestContent := []byte(fmt.Sprintf("%s  %s\n", hashContent(rawContent), rawName))
+	manifestSig := testutil.SignManifest(t, manifestContent)
 
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -447,7 +450,9 @@ func newIsolatedCatalogServer(t *testing.T, name, targetDir string) *httptest.Se
 	MatchPattern=%s-@v.raw
 	`, server.URL, name, name, targetDir, name)
 		case "/" + name + "/SHA256SUMS":
-			_, _ = fmt.Fprintf(w, "%s  %s\n", hashContent(rawContent), rawName)
+			_, _ = w.Write(manifestContent)
+		case "/" + name + "/SHA256SUMS.gpg":
+			_, _ = w.Write(manifestSig)
 		case "/" + name + "/" + rawName:
 			_, _ = w.Write(rawContent)
 		default:

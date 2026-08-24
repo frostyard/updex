@@ -253,6 +253,16 @@ func TestRenderTransfer(t *testing.T) {
 	}
 }
 
+func TestRenderTransferStripsCatalogVerifyFalse(t *testing.T) {
+	out, err := RenderTransfer([]byte(zoxideConf), testRepo, "zoxide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "Verify") {
+		t.Errorf("catalog-supplied Verify key not stripped, letting config/transfer.go's true default apply:\n%s", out)
+	}
+}
+
 func TestRenderTransferToRewritesProductionTarget(t *testing.T) {
 	out, err := RenderTransferTo([]byte(zoxideConf), testRepo, "zoxide", "/isolated/extensions.d")
 	if err != nil {

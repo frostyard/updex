@@ -17,6 +17,7 @@ import (
 
 	"github.com/frostyard/updex/catalog"
 	"github.com/frostyard/updex/config"
+	"github.com/frostyard/updex/internal/testutil"
 	"github.com/frostyard/updex/sysext"
 )
 
@@ -128,6 +129,8 @@ func newCatalogServerWithTargetPattern(t *testing.T, name, version, targetDir, t
 
 	rawName := fmt.Sprintf("%s-%s.raw", name, version)
 	rawContent := []byte("fake sysext image for " + name)
+	manifestContent := []byte(fmt.Sprintf("%s  %s\n", hashContent(rawContent), rawName))
+	manifestSig := testutil.SignManifest(t, manifestContent)
 
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -150,7 +153,9 @@ CurrentSymlink=/var/lib/extensions/%s.raw
 `, server.URL, name, name, targetDir, targetPattern, name)
 			_, _ = w.Write([]byte(conf))
 		case "/" + name + "/SHA256SUMS":
-			_, _ = fmt.Fprintf(w, "%s  %s\n", hashContent(rawContent), rawName)
+			_, _ = w.Write(manifestContent)
+		case "/" + name + "/SHA256SUMS.gpg":
+			_, _ = w.Write(manifestSig)
 		case "/" + name + "/" + rawName:
 			_, _ = w.Write(rawContent)
 		default:
@@ -554,6 +559,8 @@ func TestCatalogAdd_FailedReAddRestoresPrevious(t *testing.T) {
 	// Serves a working sysext first; breakManifest makes later downloads fail.
 	var breakManifest atomic.Bool
 	rawContent := []byte("fake sysext image for zoxide")
+	manifestContent := []byte(fmt.Sprintf("%s  zoxide-1.0.0.raw\n", hashContent(rawContent)))
+	manifestSig := testutil.SignManifest(t, manifestContent)
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -578,7 +585,9 @@ MatchPattern=zoxide-@v.raw
 				return
 			}
 
-			_, _ = fmt.Fprintf(w, "%s  zoxide-1.0.0.raw\n", hashContent(rawContent))
+			_, _ = w.Write(manifestContent)
+		case "/zoxide/SHA256SUMS.gpg":
+			_, _ = w.Write(manifestSig)
 		case "/zoxide/zoxide-1.0.0.raw":
 			_, _ = w.Write(rawContent)
 		default:
@@ -692,14 +701,22 @@ func TestCatalogAdd_RefreshFailureRollsBackManagedInstallState(t *testing.T) {
 
 		rawV1 := []byte("catalog image v1")
 		rawV2 := []byte("catalog image v2")
+		manifestV1 := []byte(fmt.Sprintf("%s  %s-1.0.0.raw\n", hashContent(rawV1), name))
+		manifestV2 := []byte(fmt.Sprintf("%s  %s-2.0.0.raw\n", hashContent(rawV2), name))
+		sigV1 := testutil.SignManifest(t, manifestV1)
+		sigV2 := testutil.SignManifest(t, manifestV2)
 		var server *httptest.Server
 		server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			version := "1.0.0"
 			raw := rawV1
+			manifestContent := manifestV1
+			manifestSig := sigV1
 			minVersion := ""
 			if publishV2.Load() {
 				version = "2.0.0"
 				raw = rawV2
+				manifestContent = manifestV2
+				manifestSig = sigV2
 				minVersion = "MinVersion=2.0.0\n"
 			}
 			switch r.URL.Path {
@@ -719,7 +736,9 @@ Path=%s
 MatchPattern=%s-@v.raw
 `, minVersion, server.URL, name, name, targetDir, name)
 			case "/" + name + "/SHA256SUMS":
-				_, _ = fmt.Fprintf(w, "%s  %s-%s.raw\n", hashContent(raw), name, version)
+				_, _ = w.Write(manifestContent)
+			case "/" + name + "/SHA256SUMS.gpg":
+				_, _ = w.Write(manifestSig)
 			case "/" + name + "/" + name + "-" + version + ".raw":
 				_, _ = w.Write(raw)
 			default:

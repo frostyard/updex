@@ -13,8 +13,11 @@ import (
 	"github.com/frostyard/updex/internal/retry"
 )
 
-// Default keyring paths (matching systemd-sysupdate)
-var keyringPaths = []string{
+// KeyringPaths are the filesystem locations checked, in order, for the GPG
+// keyring used to verify manifest signatures (matching systemd-sysupdate's
+// defaults). Tests in other packages that need a downloaded manifest to pass
+// verification override this to point at a trusted test keyring.
+var KeyringPaths = []string{
 	"/etc/systemd/import-pubring.gpg",
 	"/usr/lib/systemd/import-pubring.gpg",
 }
@@ -98,7 +101,7 @@ func fetchSignature(ctx context.Context, client *http.Client, sigURL string, rs 
 
 // loadKeyring loads the GPG keyring from default paths
 func loadKeyring() (openpgp.EntityList, error) {
-	for _, path := range keyringPaths {
+	for _, path := range KeyringPaths {
 		keyring, err := readKeyringFile(path)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -110,7 +113,7 @@ func loadKeyring() (openpgp.EntityList, error) {
 		return keyring, nil
 	}
 
-	return nil, fmt.Errorf("no keyring found in %v", keyringPaths)
+	return nil, fmt.Errorf("no keyring found in %v", KeyringPaths)
 }
 
 // readKeyringFile reads a GPG keyring from a single file path.

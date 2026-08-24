@@ -14,6 +14,7 @@ import (
 	"github.com/frostyard/clix"
 	"github.com/frostyard/updex/catalog"
 	"github.com/frostyard/updex/config"
+	"github.com/frostyard/updex/internal/testutil"
 	"github.com/frostyard/updex/sysext"
 	"github.com/frostyard/updex/updex"
 	"github.com/spf13/cobra"
@@ -98,6 +99,8 @@ func newCatalogCLIFixture(t *testing.T) *catalogCLIFixture {
 
 	rawName := fmt.Sprintf("%s-%s.raw", catalogTestSysext, catalogTestVersion)
 	rawContent := []byte("fake sysext image for " + catalogTestSysext)
+	manifestContent := []byte(fmt.Sprintf("%s  %s\n", sha256Hex(rawContent), rawName))
+	manifestSig := testutil.SignManifest(t, manifestContent)
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -120,7 +123,9 @@ MatchPattern=%s-@v.raw
 CurrentSymlink=/var/lib/extensions/%s.raw
 `, server.URL, catalogTestSysext, catalogTestSysext, fx.targetDir, catalogTestSysext, catalogTestSysext)
 		case "/" + catalogTestSysext + "/SHA256SUMS":
-			_, _ = fmt.Fprintf(w, "%s  %s\n", sha256Hex(rawContent), rawName)
+			_, _ = w.Write(manifestContent)
+		case "/" + catalogTestSysext + "/SHA256SUMS.gpg":
+			_, _ = w.Write(manifestSig)
 		case "/" + catalogTestSysext + "/" + rawName:
 			_, _ = w.Write(rawContent)
 		default:
