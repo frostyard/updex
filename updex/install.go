@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/frostyard/updex/config"
 	"github.com/frostyard/updex/download"
@@ -159,18 +160,37 @@ func (c *Client) sysextLinkDirForRunner() string {
 func buildTargetFilename(targetPatterns []string, ver string) (string, error) {
 	var fallback string
 	var firstErr error
+	keepErr := func(err error) {
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
 	for _, patternStr := range targetPatterns {
 		p, err := version.ParsePattern(patternStr)
 		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
+			keepErr(err)
 			continue
 		}
 		name := p.BuildFilename(ver)
-		if stripped := download.StripCompressionSuffix(name); stripped == name {
+		if err := validateTargetFilename(name); err != nil {
+			keepErr(err)
+			continue
+		}
+		stripped := download.StripCompressionSuffix(name)
+		if stripped == name {
 			return name, nil
-		} else if fallback == "" {
+		}
+		// The stripped name, not `name`, is what this pattern would
+		// contribute, so it has to clear the same check: stripping a
+		// compression suffix can turn an acceptable name into a traversal
+		// segment (e.g. "...gz" -> ".."). A stripped value that fails
+		// validation is rejected outright rather than kept as a silent
+		// fallback, so every value returned below has been validated.
+		if err := validateTargetFilename(stripped); err != nil {
+			keepErr(err)
+			continue
+		}
+		if fallback == "" {
 			fallback = stripped
 		}
 	}
@@ -181,4 +201,19 @@ func buildTargetFilename(targetPatterns []string, ver string) (string, error) {
 		return "", fmt.Errorf("invalid target pattern: %w", firstErr)
 	}
 	return "", fmt.Errorf("no target pattern configured")
+}
+
+// validateTargetFilename rejects a filename built from a runtime-substituted
+// version (config.Transfer.Target.Patterns' @v placeholder) that would escape
+// Target.Path when joined with filepath.Join in installTransfer: "." or "..",
+// any path separator, or a name whose Base differs from itself (e.g. an
+// absolute path). This mirrors catalog/catalog.go's validateCatalogPatterns,
+// which validates pattern *literals* configured by trusted operators; this
+// check instead covers the version string substituted in at runtime from an
+// untrusted manifest.
+func validateTargetFilename(name string) error {
+	if name == "." || name == ".." || strings.ContainsAny(name, "/\\") || filepath.Base(name) != name {
+		return fmt.Errorf("invalid target filename %q: must not contain path separators or traverse directories", name)
+	}
+	return nil
 }
