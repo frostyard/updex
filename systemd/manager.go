@@ -135,7 +135,17 @@ func (m *Manager) Install(timer *TimerConfig, service *ServiceConfig) error {
 
 	// Reload systemd
 	if err := m.runner.DaemonReload(); err != nil {
-		return fmt.Errorf("daemon-reload failed: %w", err)
+		// Roll back both unit files so a failed reload never leaves an
+		// installed-looking pair behind; surface any cleanup failures
+		// alongside the original reload error instead of dropping them.
+		errs := []error{fmt.Errorf("daemon-reload failed: %w", err)}
+		if rmErr := removeUnitFile(timerPath); rmErr != nil {
+			errs = append(errs, fmt.Errorf("failed to remove timer file after daemon-reload failure: %w", rmErr))
+		}
+		if rmErr := removeUnitFile(servicePath); rmErr != nil {
+			errs = append(errs, fmt.Errorf("failed to remove service file after daemon-reload failure: %w", rmErr))
+		}
+		return errors.Join(errs...)
 	}
 
 	return nil

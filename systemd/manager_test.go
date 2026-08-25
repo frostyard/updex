@@ -216,6 +216,65 @@ func TestInstall_JoinsCleanupErrorOnPartialFailure(t *testing.T) {
 	}
 }
 
+// TestInstall_CleanupOnDaemonReloadFailure pins that a daemon-reload
+// failure after both unit files are written rolls back both files rather
+// than leaving an installed-looking pair behind despite the reload never
+// having taken effect.
+func TestInstall_CleanupOnDaemonReloadFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	mockRunner := &MockSystemctlRunner{DaemonReloadErr: errors.New("reload failed")}
+	mgr := NewTestManager(tmpDir, mockRunner)
+
+	timer, service := testUnitConfigs("updex-update")
+
+	err := mgr.Install(timer, service)
+	if err == nil {
+		t.Fatal("expected error for daemon-reload failure")
+	}
+	if !strings.Contains(err.Error(), "daemon-reload failed") {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	timerPath := filepath.Join(tmpDir, "updex-update.timer")
+	if _, err := os.Lstat(timerPath); !os.IsNotExist(err) {
+		t.Error("timer file should have been removed after daemon-reload failure")
+	}
+	servicePath := filepath.Join(tmpDir, "updex-update.service")
+	if _, err := os.Lstat(servicePath); !os.IsNotExist(err) {
+		t.Error("service file should have been removed after daemon-reload failure")
+	}
+}
+
+// TestInstall_JoinsCleanupErrorOnDaemonReloadFailure pins that a failure to
+// clean up either unit file after a daemon-reload failure is surfaced in
+// the returned error rather than silently dropped, and does not hide the
+// original daemon-reload error.
+func TestInstall_JoinsCleanupErrorOnDaemonReloadFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	mockRunner := &MockSystemctlRunner{DaemonReloadErr: errors.New("reload failed")}
+	mgr := NewTestManager(tmpDir, mockRunner)
+
+	timer, service := testUnitConfigs("updex-update")
+
+	removeErr := errors.New("remove failed: permission denied")
+	restore := removeUnitFile
+	t.Cleanup(func() { removeUnitFile = restore })
+	removeUnitFile = func(path string) error {
+		return removeErr
+	}
+
+	err := mgr.Install(timer, service)
+	if err == nil {
+		t.Fatal("expected error for daemon-reload failure")
+	}
+	if !strings.Contains(err.Error(), "daemon-reload failed") {
+		t.Errorf("error missing daemon-reload context: %v", err)
+	}
+	if !errors.Is(err, removeErr) {
+		t.Errorf("error does not join the cleanup failure: %v", err)
+	}
+}
+
 // TestInstall_RefusesNonRegularUnitPaths pins the ADR-0005 rule for the
 // unit installer: a dangling symlink, a directory, or a live symlink at
 // either unit path is refused before anything is written, the symlink
