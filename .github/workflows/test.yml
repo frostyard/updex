@@ -227,6 +227,9 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Self-test the docs integrity checker
+        run: make test-docs-check
+
       - name: Check docs index, links, and conformance aliases
         run: node scripts/check-docs.mjs
 
