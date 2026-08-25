@@ -26,6 +26,35 @@ func TestReadmeDocumentsTargetKeys(t *testing.T) {
 	}
 }
 
+// TestReadmeTargetTypeMatchesSysextFiltering pins README.md's [Target] Type
+// row to config.IsSysextTransfer's actual behavior: an omitted Type is
+// treated as regular-file, and any other non-empty value is silently
+// skipped. It must not regress to describing Type as required.
+func TestReadmeTargetTypeMatchesSysextFiltering(t *testing.T) {
+	table := readmeTargetTable(t)
+
+	typeRow := ""
+	for _, line := range strings.Split(table, "\n") {
+		if strings.Contains(line, "`Type`") {
+			typeRow = line
+			break
+		}
+	}
+	if typeRow == "" {
+		t.Fatal("README.md [Target] Section table has no `Type` row")
+	}
+
+	if strings.Contains(typeRow, "Must be `regular-file`") {
+		t.Error("README.md [Target] Type row says Type is required, but an omitted Type is treated as regular-file (see config.IsSysextTransfer)")
+	}
+	if !strings.Contains(typeRow, "omitted") && !strings.Contains(typeRow, "implicit") {
+		t.Error("README.md [Target] Type row does not document that an omitted Type defaults to regular-file")
+	}
+	if !strings.Contains(typeRow, "skipped") {
+		t.Error("README.md [Target] Type row does not document that non-regular-file values are silently skipped")
+	}
+}
+
 // targetKeysParsedBySource returns every key passed to sec.GetKey inside the
 // "// Parse [Target] section" block of config/transfer.go.
 func targetKeysParsedBySource(t *testing.T) []string {
