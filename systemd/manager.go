@@ -1,6 +1,7 @@
 package systemd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -96,8 +97,15 @@ func writeUnitFile(path, content string) (err error) {
 // written: an existing regular file is an "already exists" error (reinstall
 // requires an explicit Remove first, see ADR-0007), and a symlink,
 // directory, or other non-regular entry is refused outright rather than
-// written through (ADR-0005).
-func (m *Manager) Install(timer *TimerConfig, service *ServiceConfig) error {
+// written through (ADR-0005). ctx is honored before any filesystem write and
+// is threaded through the daemon-reload systemctl call, so an already
+// canceled or expired context prevents the install outright and a context
+// that ends while daemon-reload is running interrupts it promptly.
+func (m *Manager) Install(ctx context.Context, timer *TimerConfig, service *ServiceConfig) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	// Generate content
 	timerContent := GenerateTimer(timer)
 	serviceContent := GenerateService(service)
@@ -134,7 +142,7 @@ func (m *Manager) Install(timer *TimerConfig, service *ServiceConfig) error {
 	}
 
 	// Reload systemd
-	if err := m.runner.DaemonReload(); err != nil {
+	if err := m.daemonReload(ctx); err != nil {
 		return fmt.Errorf("daemon-reload failed: %w", err)
 	}
 
@@ -143,18 +151,24 @@ func (m *Manager) Install(timer *TimerConfig, service *ServiceConfig) error {
 
 // Remove stops and disables the timer, removes both unit files, and calls
 // daemon-reload. Every step is attempted, and all failures are returned
-// together.
-func (m *Manager) Remove(name string) error {
+// together. An already canceled or expired ctx prevents the removal outright;
+// a context that ends while one of the systemctl steps is running interrupts
+// that step promptly, and later steps are still attempted.
+func (m *Manager) Remove(ctx context.Context, name string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	timerPath := filepath.Join(m.UnitPath, name+".timer")
 	servicePath := filepath.Join(m.UnitPath, name+".service")
 
 	var errs []error
 
-	if err := m.runner.Stop(name + ".timer"); err != nil {
+	if err := m.stop(ctx, name+".timer"); err != nil {
 		errs = append(errs, fmt.Errorf("stop timer: %w", err))
 	}
 
-	if err := m.runner.Disable(name + ".timer"); err != nil {
+	if err := m.disable(ctx, name+".timer"); err != nil {
 		errs = append(errs, fmt.Errorf("disable timer: %w", err))
 	}
 
@@ -169,7 +183,7 @@ func (m *Manager) Remove(name string) error {
 	}
 
 	// Reload daemon
-	if err := m.runner.DaemonReload(); err != nil {
+	if err := m.daemonReload(ctx); err != nil {
 		errs = append(errs, fmt.Errorf("daemon-reload: %w", err))
 	}
 
@@ -198,23 +212,100 @@ func (m *Manager) Exists(name string) bool {
 }
 
 // Enable enables a systemd unit through the manager's configured runner.
-func (m *Manager) Enable(unit string) error {
-	return m.runner.Enable(unit)
+func (m *Manager) Enable(ctx context.Context, unit string) error {
+	return m.enable(ctx, unit)
 }
 
 // Start starts a systemd unit through the manager's configured runner.
-func (m *Manager) Start(unit string) error {
-	return m.runner.Start(unit)
+func (m *Manager) Start(ctx context.Context, unit string) error {
+	return m.start(ctx, unit)
 }
 
 // IsEnabled reports whether a systemd unit is enabled through the manager's
 // configured runner.
-func (m *Manager) IsEnabled(unit string) (bool, error) {
-	return m.runner.IsEnabled(unit)
+func (m *Manager) IsEnabled(ctx context.Context, unit string) (bool, error) {
+	return m.isEnabled(ctx, unit)
 }
 
 // IsActive reports whether a systemd unit is active through the manager's
 // configured runner.
-func (m *Manager) IsActive(unit string) (bool, error) {
+func (m *Manager) IsActive(ctx context.Context, unit string) (bool, error) {
+	return m.isActive(ctx, unit)
+}
+
+// daemonReload, enable, disable, start, stop, isActive, and isEnabled honor
+// ctx before touching the runner at all, then prefer the runner's
+// ContextSystemctlRunner methods when it implements that interface so an
+// in-flight systemctl command is interrupted promptly; a runner that only
+// implements the legacy SystemctlRunner keeps working exactly as before,
+// without in-flight cancellation.
+
+func (m *Manager) daemonReload(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if cr, ok := m.runner.(ContextSystemctlRunner); ok {
+		return cr.DaemonReloadContext(ctx)
+	}
+	return m.runner.DaemonReload()
+}
+
+func (m *Manager) enable(ctx context.Context, unit string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if cr, ok := m.runner.(ContextSystemctlRunner); ok {
+		return cr.EnableContext(ctx, unit)
+	}
+	return m.runner.Enable(unit)
+}
+
+func (m *Manager) disable(ctx context.Context, unit string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if cr, ok := m.runner.(ContextSystemctlRunner); ok {
+		return cr.DisableContext(ctx, unit)
+	}
+	return m.runner.Disable(unit)
+}
+
+func (m *Manager) start(ctx context.Context, unit string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if cr, ok := m.runner.(ContextSystemctlRunner); ok {
+		return cr.StartContext(ctx, unit)
+	}
+	return m.runner.Start(unit)
+}
+
+func (m *Manager) stop(ctx context.Context, unit string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if cr, ok := m.runner.(ContextSystemctlRunner); ok {
+		return cr.StopContext(ctx, unit)
+	}
+	return m.runner.Stop(unit)
+}
+
+func (m *Manager) isActive(ctx context.Context, unit string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if cr, ok := m.runner.(ContextSystemctlRunner); ok {
+		return cr.IsActiveContext(ctx, unit)
+	}
 	return m.runner.IsActive(unit)
+}
+
+func (m *Manager) isEnabled(ctx context.Context, unit string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if cr, ok := m.runner.(ContextSystemctlRunner); ok {
+		return cr.IsEnabledContext(ctx, unit)
+	}
+	return m.runner.IsEnabled(unit)
 }

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/frostyard/updex/systemd"
 )
@@ -344,6 +345,62 @@ func TestDaemonMethodsRespectCanceledContext(t *testing.T) {
 	if runner.DaemonReloadCalled || runner.EnableCalled || runner.StartCalled ||
 		runner.StopCalled || runner.DisableCalled || runner.IsEnabledCalled || runner.IsActiveCalled {
 		t.Fatal("canceled daemon operation touched systemd")
+	}
+}
+
+// TestEnableDaemonCancelsInFlightSystemctl exercises in-flight cancellation
+// end to end through the public SDK: EnableDaemon runs against a real
+// DefaultSystemctlRunner backed by a fake blocking systemctl script on PATH.
+// The SDK context is canceled only after that fake systemctl child process
+// has actually started (during Install's daemon-reload call), and
+// EnableDaemon must return promptly with an error matching context.Canceled
+// instead of waiting for the blocking command to finish on its own.
+func TestEnableDaemonCancelsInFlightSystemctl(t *testing.T) {
+	dir := t.TempDir()
+	startedPath := filepath.Join(dir, "started")
+	scriptPath := filepath.Join(dir, "systemctl")
+	script := "#!/bin/sh\n: > \"$UPDEX_SYSTEMCTL_STARTED\"\nsleep 30\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake systemctl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("UPDEX_SYSTEMCTL_STARTED", startedPath)
+
+	client, _ := newDaemonTestClient(t, &systemd.DefaultSystemctlRunner{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := client.EnableDaemon(ctx, EnableDaemonOptions{})
+		errCh <- err
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, statErr := os.Stat(startedPath); statErr == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("fake systemctl did not start in time")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	start := time.Now()
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("EnableDaemon() error = %v, want context.Canceled", err)
+		}
+		if elapsed := time.Since(start); elapsed > 3*time.Second {
+			t.Fatalf("EnableDaemon() took %v to return after cancellation, want prompt", elapsed)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("EnableDaemon() did not return after context cancellation")
 	}
 }
 

@@ -38,13 +38,13 @@ func (c *Client) EnableDaemon(ctx context.Context, _ EnableDaemonOptions) (*Daem
 		Sandbox: true,
 	}
 
-	if err := c.systemd.Install(timer, service); err != nil {
+	if err := c.systemd.Install(ctx, timer, service); err != nil {
 		return nil, fmt.Errorf("failed to install timer: %w", err)
 	}
-	if err := c.systemd.Enable(daemonUnitName + ".timer"); err != nil {
+	if err := c.systemd.Enable(ctx, daemonUnitName+".timer"); err != nil {
 		return nil, fmt.Errorf("failed to enable timer: %w", err)
 	}
-	if err := c.systemd.Start(daemonUnitName + ".timer"); err != nil {
+	if err := c.systemd.Start(ctx, daemonUnitName+".timer"); err != nil {
 		return nil, fmt.Errorf("failed to start timer: %w", err)
 	}
 
@@ -62,7 +62,7 @@ func (c *Client) DisableDaemon(ctx context.Context, _ DisableDaemonOptions) (*Da
 	if !c.systemd.Exists(daemonUnitName) {
 		return nil, fmt.Errorf("timer not installed; nothing to disable")
 	}
-	if err := c.systemd.Remove(daemonUnitName); err != nil {
+	if err := c.systemd.Remove(ctx, daemonUnitName); err != nil {
 		return nil, fmt.Errorf("failed to remove timer: %w", err)
 	}
 
@@ -83,11 +83,11 @@ func (c *Client) DaemonStatus(ctx context.Context, _ DaemonStatusOptions) (*Daem
 		Installed: c.systemd.Exists(daemonUnitName),
 	}
 	if status.Installed {
-		enabled, err := c.systemd.IsEnabled(daemonUnitName + ".timer")
+		enabled, err := c.systemd.IsEnabled(ctx, daemonUnitName+".timer")
 		if err != nil {
 			return nil, fmt.Errorf("get daemon status: query enabled state: %w", err)
 		}
-		active, err := c.systemd.IsActive(daemonUnitName + ".timer")
+		active, err := c.systemd.IsActive(ctx, daemonUnitName+".timer")
 		if err != nil {
 			return nil, fmt.Errorf("get daemon status: query active state: %w", err)
 		}

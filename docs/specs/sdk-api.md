@@ -74,7 +74,20 @@ an installed timer it reports enabled/active state and the `daily` schedule.
 If either enabled- or active-state query fails, `DaemonStatus` returns that
 failure with context rather than reporting a successful false state; the CLI
 therefore fails instead of rendering an inaccurate status. All three methods
-reject an already canceled context before filesystem or systemctl work.
+reject an already canceled context before filesystem or systemctl work, and
+the `ctx` they receive is threaded all the way through every `systemd.Manager`
+operation they call (`Install`, `Remove`, `Enable`, `Start`, `IsEnabled`,
+`IsActive`, and the `daemon-reload` each of those triggers): if `ctx` is
+canceled or expires while one of those systemctl subprocesses is running,
+`DefaultSystemctlRunner` kills it immediately (`exec.CommandContext`) and the
+call returns promptly with an error matching `context.Canceled` or
+`context.DeadlineExceeded` (`errors.Is`) instead of the raw process-kill
+error. A `SystemctlRunner` that also implements `ContextSystemctlRunner`
+(`DaemonReloadContext`, `EnableContext`, `DisableContext`, `StartContext`,
+`StopContext`, `IsActiveContext`, `IsEnabledContext`) gets this in-flight
+cancellation; `Manager` falls back to the legacy, non-cancelable
+`SystemctlRunner` methods for a runner that only implements those, so
+existing external `SystemctlRunner` implementations remain source-compatible.
 
 The option structs are intentionally empty for future compatible expansion.
 Actions return:
@@ -473,6 +486,7 @@ recorded in [ADR-0008](../adr/0008-bounded-retry-no-resume.md).
 - `NewTestManager(unitPath string, runner SystemctlRunner) *Manager` — Create manager with custom paths and runner for testing
 - `GenerateTimer(cfg *TimerConfig) string` — Generate systemd timer unit content
 - `GenerateService(cfg *ServiceConfig) string` — Generate systemd service unit content; `ServiceConfig.Sandbox` appends the `SandboxDirectives` hardening block to `[Service]` (the daemon unit sets it; other callers keep the minimal unit)
-- `Manager.Install(timer, service) / Remove(name) / Exists(name)` — Unit-file lifecycle
-- `Manager.Enable(unit) / Start(unit) / IsEnabled(unit) / IsActive(unit)` — Runner-backed primitives used by the daemon SDK orchestration
-- `SystemctlRunner` interface — `DaemonReload()`, `Enable(unit)`, `Disable(unit)`, `Start(unit)`, `Stop(unit)`, `IsActive(unit)`, `IsEnabled(unit)` methods executed via `DefaultSystemctlRunner` (real commands) or `MockSystemctlRunner` (tests)
+- `Manager.Install(ctx, timer, service) / Remove(ctx, name) / Exists(name)` — Unit-file lifecycle; `Install`/`Remove` take `ctx` first (`Exists` is a local `os.Lstat` check and does not)
+- `Manager.Enable(ctx, unit) / Start(ctx, unit) / IsEnabled(ctx, unit) / IsActive(ctx, unit)` — Runner-backed primitives used by the daemon SDK orchestration; each checks `ctx` before touching the runner, then dispatches to the runner's `ContextSystemctlRunner` method when it implements that interface, else the legacy `SystemctlRunner` method
+- `SystemctlRunner` interface — `DaemonReload()`, `Enable(unit)`, `Disable(unit)`, `Start(unit)`, `Stop(unit)`, `IsActive(unit)`, `IsEnabled(unit)` methods executed via `DefaultSystemctlRunner` (real commands) or `MockSystemctlRunner` (tests); no in-flight cancellation
+- `ContextSystemctlRunner` interface — optional context-aware counterpart (`DaemonReloadContext(ctx)`, `EnableContext(ctx, unit)`, `DisableContext(ctx, unit)`, `StartContext(ctx, unit)`, `StopContext(ctx, unit)`, `IsActiveContext(ctx, unit)`, `IsEnabledContext(ctx, unit)`); `DefaultSystemctlRunner` implements it via `exec.CommandContext`, so an in-flight `systemctl` command is killed and the call returns `ctx.Err()` (matching `context.Canceled`/`context.DeadlineExceeded` via `errors.Is`) as soon as `ctx` ends — its legacy methods delegate to the `*Context` ones with `context.Background()`. `MockSystemctlRunner` deliberately does not implement it, pinning the legacy fallback path; `MockContextSystemctlRunner` does, for testing the context-aware dispatch path
