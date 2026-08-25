@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/frostyard/updex/internal/httpclient"
 	"github.com/frostyard/updex/internal/retry"
 )
 
@@ -112,7 +113,9 @@ func resolveRetry(opts ...Option) retrySettings {
 // and atomically writes it to the target path. On every path (direct,
 // decompressed, and cross-device copy) the file that ends up at targetPath is
 // fsynced before it is renamed into place. If httpClient is nil, a default
-// client with a 10-minute timeout is used. If onProgress is non-nil, it is
+// client with a 10-minute timeout is used; that default refuses a redirect
+// that downgrades the request from HTTPS to HTTP. A caller-supplied
+// httpClient keeps its own redirect policy. If onProgress is non-nil, it is
 // called with the content length after the HTTP response is received, and the
 // returned writer receives downloaded bytes for progress tracking.
 func Download(ctx context.Context, httpClient *http.Client, url, targetPath, expectedHash string, mode uint32, onProgress ProgressFunc, opts ...Option) error {
@@ -123,9 +126,7 @@ func Download(ctx context.Context, httpClient *http.Client, url, targetPath, exp
 	}
 
 	if httpClient == nil {
-		httpClient = &http.Client{
-			Timeout: 10 * time.Minute,
-		}
+		httpClient = httpclient.New(10 * time.Minute)
 	}
 	rs := resolveRetry(opts...)
 	if rs.maxDecompressedSize <= 0 {

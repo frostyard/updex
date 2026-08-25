@@ -392,6 +392,114 @@ func TestFetchManifestResponseSizeLimit(t *testing.T) {
 	}
 }
 
+func TestFetchDefaultClientRejectsRedirectDowngrade(t *testing.T) {
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(validManifestContent()))
+	}))
+	defer plain.Close()
+
+	secure := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, plain.URL+r.URL.Path, http.StatusFound)
+	}))
+	defer secure.Close()
+
+	withDefaultTransport(t, secure.Client().Transport)
+
+	_, err := Fetch(t.Context(), nil, secure.URL, false, WithRetryConfig(1, time.Millisecond))
+	if err == nil {
+		t.Fatal("Fetch() error = nil, want redirect downgrade error")
+	}
+	if !strings.Contains(err.Error(), "redirect downgrade") {
+		t.Errorf("Fetch() error = %q, want redirect downgrade", err)
+	}
+}
+
+func TestFetchDefaultClientAllowsSameSchemeRedirect(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/SHA256SUMS" {
+			http.Redirect(w, r, server.URL+"/final", http.StatusFound)
+			return
+		}
+		_, _ = w.Write([]byte(validManifestContent()))
+	}))
+	defer server.Close()
+
+	withDefaultTransport(t, server.Client().Transport)
+
+	m, err := Fetch(t.Context(), nil, server.URL, false, WithRetryConfig(1, time.Millisecond))
+	if err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+	if got := m.Files["file.raw"]; got != testManifestHash() {
+		t.Fatalf("Files[file.raw] = %q, want %q", got, testManifestHash())
+	}
+}
+
+func TestFetchCustomClientKeepsOwnRedirectPolicy(t *testing.T) {
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(validManifestContent()))
+	}))
+	defer plain.Close()
+
+	secure := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, plain.URL+r.URL.Path, http.StatusFound)
+	}))
+	defer secure.Close()
+
+	custom := secure.Client()
+	m, err := Fetch(t.Context(), custom, secure.URL, false, WithRetryConfig(1, time.Millisecond))
+	if err != nil {
+		t.Fatalf("Fetch() error = %v, want a caller-supplied client to keep following the downgrade redirect", err)
+	}
+	if got := m.Files["file.raw"]; got != testManifestHash() {
+		t.Fatalf("Files[file.raw] = %q, want %q", got, testManifestHash())
+	}
+}
+
+func TestFetchDefaultClientKeepsThirtySecondTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(validManifestContent()))
+	}))
+	defer server.Close()
+
+	original := http.DefaultTransport
+	var deadline time.Time
+	var hasDeadline bool
+	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		deadline, hasDeadline = req.Context().Deadline()
+		return original.RoundTrip(req)
+	})
+	defer func() { http.DefaultTransport = original }()
+
+	if _, err := Fetch(t.Context(), nil, server.URL, false, WithRetryConfig(1, time.Millisecond)); err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+	if !hasDeadline {
+		t.Fatal("request had no deadline, want the 30-second default Timeout applied")
+	}
+	if got := time.Until(deadline); got <= 25*time.Second || got > 30*time.Second {
+		t.Errorf("deadline ~%v from now, want (25s, 30s]", got)
+	}
+}
+
+// roundTripFunc adapts a function to http.RoundTripper, so tests can observe
+// the request (e.g. its context deadline) before delegating to a real
+// transport.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// withDefaultTransport temporarily overrides http.DefaultTransport for tests
+// exercising a nil httpClient, which falls back to it. Manifest tests never
+// run in parallel, so this is safe without additional synchronization.
+func withDefaultTransport(t *testing.T, rt http.RoundTripper) {
+	t.Helper()
+	original := http.DefaultTransport
+	http.DefaultTransport = rt
+	t.Cleanup(func() { http.DefaultTransport = original })
+}
+
 func validManifestContent() string {
 	return testManifestHash() + "  file.raw\n"
 }

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/frostyard/updex/internal/httpclient"
 	"github.com/frostyard/updex/internal/retry"
 )
 
@@ -61,15 +62,15 @@ func resolveRetry(opts ...Option) retrySettings {
 }
 
 // Fetch downloads and parses a SHA256SUMS manifest from the given base URL.
-// If httpClient is nil, a default client with a 30-second timeout is used.
+// If httpClient is nil, a default client with a 30-second timeout is used;
+// that default refuses a redirect that downgrades the request from HTTPS to
+// HTTP. A caller-supplied httpClient keeps its own redirect policy.
 // If verify is true, it will also verify the GPG signature.
 func Fetch(ctx context.Context, httpClient *http.Client, baseURL string, verify bool, opts ...Option) (*Manifest, error) {
 	manifestURL := strings.TrimRight(baseURL, "/") + "/SHA256SUMS"
 
 	if httpClient == nil {
-		httpClient = &http.Client{
-			Timeout: 30 * time.Second,
-		}
+		httpClient = httpclient.New(30 * time.Second)
 	}
 	rs := resolveRetry(opts...)
 

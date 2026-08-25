@@ -17,16 +17,15 @@
 package updex
 
 import (
-	"errors"
 	"net/http"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/frostyard/std/reporter"
 	"github.com/frostyard/updex/catalog"
 	"github.com/frostyard/updex/config"
 	"github.com/frostyard/updex/download"
+	"github.com/frostyard/updex/internal/httpclient"
 	"github.com/frostyard/updex/sysext"
 	"github.com/frostyard/updex/systemd"
 )
@@ -233,10 +232,7 @@ func NewClient(cfg ClientConfig) *Client {
 	}
 	hc := cfg.HTTPClient
 	if hc == nil {
-		hc = &http.Client{
-			Timeout:       10 * time.Minute,
-			CheckRedirect: checkSecureRedirect,
-		}
+		hc = httpclient.New(10 * time.Minute)
 	}
 	return &Client{
 		config:     cfg,
@@ -246,18 +242,6 @@ func NewClient(cfg ClientConfig) *Client {
 		runner:     sr,
 		systemd:    sm,
 	}
-}
-
-func checkSecureRedirect(req *http.Request, via []*http.Request) error {
-	if len(via) >= 10 {
-		return errors.New("stopped after 10 redirects")
-	}
-	if len(via) > 0 &&
-		strings.EqualFold(via[len(via)-1].URL.Scheme, "https") &&
-		strings.EqualFold(req.URL.Scheme, "http") {
-		return errors.New("refusing redirect downgrade from https to http")
-	}
-	return nil
 }
 
 func (c *Client) msg(format string, a ...any) {

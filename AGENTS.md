@@ -191,7 +191,7 @@ Key packages:
 - `version/` — Pattern matching (`@v` placeholder) and semantic version comparison
 - `sysext/` — systemd-sysext integration with mockable `Runner` interface, `/var/lib/extensions` link management, and read-only vacuum planning helpers
 - `systemd/` — Generates/installs systemd timer+service units, mockable `Runner` interface
-- `internal/retry/`, `internal/testutil/` — HTTP retry policy and shared test helpers (HTTP test server)
+- `internal/retry/`, `internal/httpclient/`, `internal/testutil/` — HTTP retry policy, the shared default-HTTP-client constructor (`internal/httpclient.New`; enforces the HTTPS-to-HTTP redirect downgrade refusal used by `updex.NewClient`, `manifest.Fetch`, and `download.Download` when no caller-supplied client is given), and shared test helpers (HTTP test server)
 
 Entry point: `cmd/updex-cli/main.go` → `cmd/updex/root.go`
 
@@ -225,6 +225,7 @@ updex/
 ├── version/                  # Pattern matching and version comparison
 ├── internal/
 │   ├── retry/                # Internal HTTP retry policy
+│   ├── httpclient/           # Shared default HTTP client (redirect downgrade refusal)
 │   └── testutil/             # Shared test utilities
 ├── tests/e2e/                # End-to-end tests
 ├── docs/                     # adr/ design/ specs/ plans/ (+ metrics/ real tree)
