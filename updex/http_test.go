@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/frostyard/updex/catalog"
 )
@@ -72,6 +73,13 @@ func TestDefaultHTTPClientKeepsRedirectLimit(t *testing.T) {
 		t.Fatal("Get() error = nil")
 	} else if !strings.Contains(err.Error(), "stopped after 10 redirects") {
 		t.Errorf("Get() error = %q, want redirect limit", err)
+	}
+}
+
+func TestNewClientDefaultKeepsTenMinuteTimeout(t *testing.T) {
+	got := NewClient(ClientConfig{}).httpClient.Timeout
+	if got != 10*time.Minute {
+		t.Errorf("httpClient.Timeout = %v, want 10m", got)
 	}
 }
 

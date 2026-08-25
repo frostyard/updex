@@ -603,3 +603,127 @@ func TestDownloadWithinLimitSucceeds(t *testing.T) {
 		t.Fatalf("content = %q, want %q", got, content)
 	}
 }
+
+func TestDownloadDefaultClientRejectsRedirectDowngrade(t *testing.T) {
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("payload"))
+	}))
+	defer plain.Close()
+
+	secure := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, plain.URL+r.URL.Path, http.StatusFound)
+	}))
+	defer secure.Close()
+
+	withDefaultTransport(t, secure.Client().Transport)
+
+	targetPath := filepath.Join(t.TempDir(), "feature.raw")
+	err := Download(t.Context(), nil, secure.URL+"/feature.raw", targetPath, hashString([]byte("payload")), 0644, nil, WithRetryConfig(1, time.Millisecond))
+	if err == nil {
+		t.Fatal("Download() error = nil, want redirect downgrade error")
+	}
+	if !strings.Contains(err.Error(), "redirect downgrade") {
+		t.Errorf("Download() error = %q, want redirect downgrade", err)
+	}
+}
+
+func TestDownloadDefaultClientAllowsSameSchemeRedirect(t *testing.T) {
+	content := []byte("payload")
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/feature.raw" {
+			http.Redirect(w, r, server.URL+"/final", http.StatusFound)
+			return
+		}
+		_, _ = w.Write(content)
+	}))
+	defer server.Close()
+
+	withDefaultTransport(t, server.Client().Transport)
+
+	targetPath := filepath.Join(t.TempDir(), "feature.raw")
+	err := Download(t.Context(), nil, server.URL+"/feature.raw", targetPath, hashString(content), 0644, nil, WithRetryConfig(1, time.Millisecond))
+	if err != nil {
+		t.Fatalf("Download() error = %v", err)
+	}
+	got, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatalf("content = %q, want %q", got, content)
+	}
+}
+
+func TestDownloadCustomClientKeepsOwnRedirectPolicy(t *testing.T) {
+	content := []byte("payload")
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(content)
+	}))
+	defer plain.Close()
+
+	secure := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, plain.URL+r.URL.Path, http.StatusFound)
+	}))
+	defer secure.Close()
+
+	custom := secure.Client()
+	targetPath := filepath.Join(t.TempDir(), "feature.raw")
+	err := Download(t.Context(), custom, secure.URL+"/feature.raw", targetPath, hashString(content), 0644, nil, WithRetryConfig(1, time.Millisecond))
+	if err != nil {
+		t.Fatalf("Download() error = %v, want a caller-supplied client to keep following the downgrade redirect", err)
+	}
+	got, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatalf("content = %q, want %q", got, content)
+	}
+}
+
+func TestDownloadDefaultClientKeepsTenMinuteTimeout(t *testing.T) {
+	content := []byte("payload")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(content)
+	}))
+	defer server.Close()
+
+	original := http.DefaultTransport
+	var deadline time.Time
+	var hasDeadline bool
+	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		deadline, hasDeadline = req.Context().Deadline()
+		return original.RoundTrip(req)
+	})
+	defer func() { http.DefaultTransport = original }()
+
+	targetPath := filepath.Join(t.TempDir(), "feature.raw")
+	err := Download(t.Context(), nil, server.URL+"/feature.raw", targetPath, hashString(content), 0644, nil, WithRetryConfig(1, time.Millisecond))
+	if err != nil {
+		t.Fatalf("Download() error = %v", err)
+	}
+	if !hasDeadline {
+		t.Fatal("request had no deadline, want the 10-minute default Timeout applied")
+	}
+	if got := time.Until(deadline); got <= 9*time.Minute || got > 10*time.Minute {
+		t.Errorf("deadline ~%v from now, want (9m, 10m]", got)
+	}
+}
+
+// roundTripFunc adapts a function to http.RoundTripper, so tests can observe
+// the request (e.g. its context deadline) before delegating to a real
+// transport.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// withDefaultTransport temporarily overrides http.DefaultTransport for tests
+// exercising a nil httpClient, which falls back to it. Download tests never
+// run in parallel, so this is safe without additional synchronization.
+func withDefaultTransport(t *testing.T, rt http.RoundTripper) {
+	t.Helper()
+	original := http.DefaultTransport
+	http.DefaultTransport = rt
+	t.Cleanup(func() { http.DefaultTransport = original })
+}
