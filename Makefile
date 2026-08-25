@@ -1,4 +1,4 @@
-.PHONY: all build clean fmt lint lint-version-check test test-cover coverage-check test-coverage-check tidy check verify-static verify ci install help
+.PHONY: all build clean fmt lint lint-version-check test test-cover coverage-check test-coverage-check test-docs-check tidy check verify-static verify ci install help
 
 # Build variables
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -84,6 +84,10 @@ coverage-check:
 ## test-coverage-check: Exercise scripts/check-coverage.sh against fixture profiles
 test-coverage-check:
 	./scripts/test-coverage-check.sh
+
+## test-docs-check: Exercise scripts/check-docs.mjs against fixture repositories
+test-docs-check:
+	node scripts/test-check-docs.mjs
 
 ## tidy: Tidy go modules
 tidy:
