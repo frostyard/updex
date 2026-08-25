@@ -1,6 +1,8 @@
 package systemd
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -103,6 +105,71 @@ func TestDefaultSystemctlRunnerIsEnabled(t *testing.T) {
 			}
 			assertSystemctlArgs(t, logPath, "is-enabled\nupdex.timer")
 		})
+	}
+}
+
+// TestDefaultSystemctlRunnerContextCommands pins that the Context-suffixed
+// methods invoke the same real systemctl commands as their legacy
+// counterparts.
+func TestDefaultSystemctlRunnerContextCommands(t *testing.T) {
+	logPath := installFakeSystemctl(t)
+	runner := &DefaultSystemctlRunner{}
+	ctx := t.Context()
+
+	tests := []struct {
+		name string
+		run  func() error
+		want string
+	}{
+		{name: "daemon reload", run: func() error { return runner.DaemonReloadContext(ctx) }, want: "daemon-reload"},
+		{name: "enable", run: func() error { return runner.EnableContext(ctx, "updex.timer") }, want: "enable\nupdex.timer"},
+		{name: "disable", run: func() error { return runner.DisableContext(ctx, "updex.timer") }, want: "disable\nupdex.timer"},
+		{name: "start", run: func() error { return runner.StartContext(ctx, "updex.timer") }, want: "start\nupdex.timer"},
+		{name: "stop", run: func() error { return runner.StopContext(ctx, "updex.timer") }, want: "stop\nupdex.timer"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.run(); err != nil {
+				t.Fatalf("command failed: %v", err)
+			}
+			assertSystemctlArgs(t, logPath, tt.want)
+		})
+	}
+
+	t.Setenv("UPDEX_SYSTEMCTL_EXIT", "0")
+	if active, err := runner.IsActiveContext(ctx, "updex.timer"); err != nil || !active {
+		t.Fatalf("IsActiveContext() = (%v, %v), want (true, nil)", active, err)
+	}
+	assertSystemctlArgs(t, logPath, "is-active\nupdex.timer")
+
+	if enabled, err := runner.IsEnabledContext(ctx, "updex.timer"); err != nil || !enabled {
+		t.Fatalf("IsEnabledContext() = (%v, %v), want (true, nil)", enabled, err)
+	}
+	assertSystemctlArgs(t, logPath, "is-enabled\nupdex.timer")
+}
+
+// TestDefaultSystemctlRunnerAlreadyCanceledContext pins that every Context
+// method refuses to run systemctl at all when the context is already
+// canceled before the command starts, reporting an error matching
+// context.Canceled rather than the raw process-kill error.
+func TestDefaultSystemctlRunnerAlreadyCanceledContext(t *testing.T) {
+	installFakeSystemctl(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	runner := &DefaultSystemctlRunner{}
+
+	if err := runner.DaemonReloadContext(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("DaemonReloadContext() error = %v, want context.Canceled", err)
+	}
+	if err := runner.EnableContext(ctx, "updex.timer"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("EnableContext() error = %v, want context.Canceled", err)
+	}
+	if _, err := runner.IsActiveContext(ctx, "updex.timer"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("IsActiveContext() error = %v, want context.Canceled", err)
+	}
+	if _, err := runner.IsEnabledContext(ctx, "updex.timer"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("IsEnabledContext() error = %v, want context.Canceled", err)
 	}
 }
 

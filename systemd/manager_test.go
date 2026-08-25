@@ -1,11 +1,13 @@
 package systemd
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestInstall(t *testing.T) {
@@ -86,7 +88,7 @@ func TestInstall(t *testing.T) {
 				ExecStart:   "/usr/bin/updex update",
 			}
 
-			err := mgr.Install(timer, service)
+			err := mgr.Install(t.Context(), timer, service)
 
 			// Check error
 			if tt.wantErr {
@@ -161,7 +163,7 @@ func TestInstall_CleanupOnPartialFailure(t *testing.T) {
 	timer, _ := testUnitConfigs("updex-update")
 	_, service := testUnitConfigs("missing-dir/updex-update")
 
-	err := mgr.Install(timer, service)
+	err := mgr.Install(t.Context(), timer, service)
 	if err == nil {
 		t.Fatal("expected error for service write failure")
 	}
@@ -201,7 +203,7 @@ func TestInstall_JoinsCleanupErrorOnPartialFailure(t *testing.T) {
 		return removeErr
 	}
 
-	err := mgr.Install(timer, service)
+	err := mgr.Install(t.Context(), timer, service)
 	if err == nil {
 		t.Fatal("expected error for service write failure")
 	}
@@ -287,7 +289,7 @@ func TestInstall_RefusesNonRegularUnitPaths(t *testing.T) {
 			mgr := NewTestManager(unitDir, mockRunner)
 			timer, service := testUnitConfigs("updex-update")
 
-			err := mgr.Install(timer, service)
+			err := mgr.Install(t.Context(), timer, service)
 			if err == nil {
 				t.Fatal("expected Install to refuse a non-regular unit path")
 			}
@@ -328,7 +330,7 @@ func TestInstall_WritesRegularFiles(t *testing.T) {
 	unitDir := t.TempDir()
 	mgr := NewTestManager(unitDir, &MockSystemctlRunner{})
 	timer, service := testUnitConfigs("updex-update")
-	if err := mgr.Install(timer, service); err != nil {
+	if err := mgr.Install(t.Context(), timer, service); err != nil {
 		t.Fatalf("Install: %v", err)
 	}
 	entries, err := os.ReadDir(unitDir)
@@ -445,7 +447,7 @@ func TestRemove(t *testing.T) {
 
 			mgr := NewTestManager(tmpDir, mockRunner)
 
-			err := mgr.Remove("updex-update")
+			err := mgr.Remove(t.Context(), "updex-update")
 
 			if tt.wantErr {
 				if err == nil {
@@ -601,21 +603,21 @@ func TestManagerSystemctlPrimitives(t *testing.T) {
 	}
 	manager := NewTestManager(t.TempDir(), runner)
 
-	if err := manager.Enable("example.timer"); !errors.Is(err, enableErr) {
+	if err := manager.Enable(t.Context(), "example.timer"); !errors.Is(err, enableErr) {
 		t.Fatalf("Enable() error = %v, want %v", err, enableErr)
 	}
 	if !runner.EnableCalled || runner.EnableUnit != "example.timer" {
 		t.Fatalf("Enable() call = (%v, %q)", runner.EnableCalled, runner.EnableUnit)
 	}
 
-	if err := manager.Start("example.timer"); !errors.Is(err, startErr) {
+	if err := manager.Start(t.Context(), "example.timer"); !errors.Is(err, startErr) {
 		t.Fatalf("Start() error = %v, want %v", err, startErr)
 	}
 	if !runner.StartCalled || runner.StartUnit != "example.timer" {
 		t.Fatalf("Start() call = (%v, %q)", runner.StartCalled, runner.StartUnit)
 	}
 
-	enabled, err := manager.IsEnabled("example.timer")
+	enabled, err := manager.IsEnabled(t.Context(), "example.timer")
 	if !enabled || !errors.Is(err, enabledErr) {
 		t.Fatalf("IsEnabled() = (%v, %v), want (true, %v)", enabled, err, enabledErr)
 	}
@@ -623,7 +625,7 @@ func TestManagerSystemctlPrimitives(t *testing.T) {
 		t.Fatalf("IsEnabled() call = (%v, %q)", runner.IsEnabledCalled, runner.IsEnabledUnit)
 	}
 
-	active, err := manager.IsActive("example.timer")
+	active, err := manager.IsActive(t.Context(), "example.timer")
 	if !active || !errors.Is(err, activeErr) {
 		t.Fatalf("IsActive() = (%v, %v), want (true, %v)", active, err, activeErr)
 	}
@@ -661,5 +663,163 @@ func TestNewTestManager(t *testing.T) {
 
 	if mgr.runner != mockRunner {
 		t.Error("runner should be the provided mock")
+	}
+}
+
+// TestManagerPrefersContextRunner pins that Manager dispatches to a runner's
+// ContextSystemctlRunner methods, passing the caller's context through, when
+// the injected runner implements that interface.
+func TestManagerPrefersContextRunner(t *testing.T) {
+	runner := &MockContextSystemctlRunner{
+		IsActiveContextResult:  true,
+		IsEnabledContextResult: true,
+	}
+	mgr := NewTestManager(t.TempDir(), runner)
+	timer, service := testUnitConfigs("updex-update")
+	ctx := t.Context()
+
+	if err := mgr.Install(ctx, timer, service); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !runner.DaemonReloadContextCalled {
+		t.Error("Install() did not dispatch to DaemonReloadContext")
+	}
+	if runner.DaemonReloadCalled {
+		t.Error("Install() used the legacy DaemonReload despite a context-aware runner")
+	}
+
+	if err := mgr.Enable(ctx, "updex-update.timer"); err != nil {
+		t.Fatalf("Enable() error = %v", err)
+	}
+	if !runner.EnableContextCalled || runner.EnableContextUnit != "updex-update.timer" {
+		t.Errorf("Enable() call = (%v, %q)", runner.EnableContextCalled, runner.EnableContextUnit)
+	}
+
+	if err := mgr.Start(ctx, "updex-update.timer"); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if !runner.StartContextCalled || runner.StartContextUnit != "updex-update.timer" {
+		t.Errorf("Start() call = (%v, %q)", runner.StartContextCalled, runner.StartContextUnit)
+	}
+
+	if active, err := mgr.IsActive(ctx, "updex-update.timer"); err != nil || !active {
+		t.Fatalf("IsActive() = (%v, %v), want (true, nil)", active, err)
+	}
+	if !runner.IsActiveContextCalled {
+		t.Error("IsActive() did not dispatch to IsActiveContext")
+	}
+
+	if enabled, err := mgr.IsEnabled(ctx, "updex-update.timer"); err != nil || !enabled {
+		t.Fatalf("IsEnabled() = (%v, %v), want (true, nil)", enabled, err)
+	}
+	if !runner.IsEnabledContextCalled {
+		t.Error("IsEnabled() did not dispatch to IsEnabledContext")
+	}
+
+	if err := mgr.Remove(ctx, "updex-update"); err != nil {
+		t.Fatalf("Remove() error = %v", err)
+	}
+	if !runner.StopContextCalled || runner.StopContextUnit != "updex-update.timer" {
+		t.Errorf("Remove() stop call = (%v, %q)", runner.StopContextCalled, runner.StopContextUnit)
+	}
+	if !runner.DisableContextCalled || runner.DisableContextUnit != "updex-update.timer" {
+		t.Errorf("Remove() disable call = (%v, %q)", runner.DisableContextCalled, runner.DisableContextUnit)
+	}
+}
+
+// TestManagerAlreadyCanceledContext pins that every Manager operation checks
+// ctx before touching the runner at all, whether or not the runner
+// implements ContextSystemctlRunner: an already canceled or expired context
+// prevents both filesystem and systemctl work outright.
+func TestManagerAlreadyCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	runner := &MockContextSystemctlRunner{}
+	mgr := NewTestManager(t.TempDir(), runner)
+	timer, service := testUnitConfigs("updex-update")
+
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{name: "install", call: func() error { return mgr.Install(ctx, timer, service) }},
+		{name: "remove", call: func() error { return mgr.Remove(ctx, "updex-update") }},
+		{name: "enable", call: func() error { return mgr.Enable(ctx, "updex-update.timer") }},
+		{name: "start", call: func() error { return mgr.Start(ctx, "updex-update.timer") }},
+		{name: "is-active", call: func() error { _, err := mgr.IsActive(ctx, "updex-update.timer"); return err }},
+		{name: "is-enabled", call: func() error { _, err := mgr.IsEnabled(ctx, "updex-update.timer"); return err }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.call(); !errors.Is(err, context.Canceled) {
+				t.Fatalf("error = %v, want context.Canceled", err)
+			}
+		})
+	}
+
+	if runner.DaemonReloadContextCalled || runner.EnableContextCalled || runner.DisableContextCalled ||
+		runner.StartContextCalled || runner.StopContextCalled ||
+		runner.IsActiveContextCalled || runner.IsEnabledContextCalled {
+		t.Fatal("a canceled context reached the runner")
+	}
+	if _, err := os.ReadDir(mgr.UnitPath); err != nil {
+		t.Fatalf("read unit dir: %v", err)
+	} else if entries, _ := os.ReadDir(mgr.UnitPath); len(entries) != 0 {
+		t.Fatalf("Install() wrote unit files despite an already canceled context: %v", entries)
+	}
+}
+
+// TestManagerContextCancellationDuringDaemonReload proves in-flight
+// cancellation for real: it runs Install against DefaultSystemctlRunner
+// backed by a fake blocking systemctl script, cancels the context only after
+// the fake systemctl child process has actually started, and asserts Install
+// returns promptly with an error matching context.Canceled rather than
+// waiting for the blocking command to finish on its own.
+func TestManagerContextCancellationDuringDaemonReload(t *testing.T) {
+	dir := t.TempDir()
+	startedPath := filepath.Join(dir, "started")
+	scriptPath := filepath.Join(dir, "systemctl")
+	script := "#!/bin/sh\n: > \"$UPDEX_SYSTEMCTL_STARTED\"\nsleep 30\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake systemctl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("UPDEX_SYSTEMCTL_STARTED", startedPath)
+
+	unitDir := t.TempDir()
+	mgr := NewTestManager(unitDir, &DefaultSystemctlRunner{})
+	timer, service := testUnitConfigs("updex-update")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- mgr.Install(ctx, timer, service) }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, statErr := os.Stat(startedPath); statErr == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("fake systemctl did not start in time")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	start := time.Now()
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Install() error = %v, want context.Canceled", err)
+		}
+		if elapsed := time.Since(start); elapsed > 3*time.Second {
+			t.Fatalf("Install() took %v to return after cancellation, want prompt", elapsed)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Install() did not return after context cancellation")
 	}
 }
