@@ -7,3 +7,4 @@ lockfile = true
 
 [tools]
 golangci-lint = "2.13.1"
+node = "24"
