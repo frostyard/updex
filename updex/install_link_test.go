@@ -2,12 +2,14 @@ package updex
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/frostyard/std/reporter"
+	"github.com/frostyard/updex/config"
 	"github.com/frostyard/updex/internal/testutil"
 	"github.com/frostyard/updex/sysext"
 )
@@ -28,6 +30,13 @@ type stagedCurrentFixture struct {
 }
 
 func newStagedCurrentFixture(t *testing.T, enabled bool) *stagedCurrentFixture {
+	t.Helper()
+	return newStagedCurrentFixtureWithRunner(t, enabled, &sysext.DefaultRunner{})
+}
+
+// newStagedCurrentFixtureWithRunner is newStagedCurrentFixture with the
+// injected sysext runner chosen by the caller.
+func newStagedCurrentFixtureWithRunner(t *testing.T, enabled bool, runner sysext.SysextRunner) *stagedCurrentFixture {
 	t.Helper()
 	root := t.TempDir()
 	defDir := filepath.Join(root, "sysupdate.d")
@@ -55,7 +64,7 @@ func newStagedCurrentFixture(t *testing.T, enabled bool) *stagedCurrentFixture {
 	out := &bytes.Buffer{}
 	client := NewClient(ClientConfig{
 		Paths:        RuntimePaths{DefinitionRoots: []string{root}, SysextLinkDir: linkDir},
-		SysextRunner: &sysext.DefaultRunner{},
+		SysextRunner: runner,
 		Progress:     reporter.NewTextReporter(out),
 	})
 	return &stagedCurrentFixture{
@@ -234,5 +243,138 @@ func TestUpdateFeatures_InstalledVersionsErrorIsReported(t *testing.T) {
 	got := results[0].Results[0].Error
 	if !strings.Contains(got, "failed to inspect installed versions") {
 		t.Errorf("component error = %q, want it wrapped as 'failed to inspect installed versions'", got)
+	}
+}
+
+// legacyRunner implements only the original sysext.SysextRunner interface —
+// no LinkToSysextAt — exactly like a runner written before
+// sysext.PathSysextRunner existed. Its LinkToSysext does what the deprecated
+// sysext.LinkToSysext wrapper does (spelled out here so the test does not
+// call a deprecated API): it links into whatever sysext.SysextDir currently
+// holds. If the SDK ever calls it again, the tests below observe a link
+// appearing in a directory the client never captured.
+type legacyRunner struct {
+	linkCalled bool
+}
+
+var _ sysext.SysextRunner = (*legacyRunner)(nil)
+
+func (r *legacyRunner) Refresh() error { return nil }
+func (r *legacyRunner) Merge() error   { return nil }
+func (r *legacyRunner) Unmerge() error { return nil }
+
+func (r *legacyRunner) LinkToSysext(t *config.Transfer) error {
+	r.linkCalled = true
+	return sysext.LinkToSysextAt(t, sysext.SysextDir)
+}
+
+// redirectSysextDirAfterConstruction points the mutable package global at a
+// fresh directory the client must never touch, and returns that directory.
+// Call it only after NewClient, so it proves the client captured its link
+// directory at construction rather than reading the global later.
+func redirectSysextDirAfterConstruction(t *testing.T) string {
+	t.Helper()
+	untouched := t.TempDir()
+	old := sysext.SysextDir
+	sysext.SysextDir = untouched
+	t.Cleanup(func() { sysext.SysextDir = old })
+	return untouched
+}
+
+// A runner that predates PathSysextRunner cannot be told which directory to
+// link into. UpdateFeatures refuses it up front instead of falling back to
+// the mutable package global, and refuses before it has removed a legacy
+// symlink, downloaded, or linked anything.
+func TestUpdateFeatures_LegacyRunnerRefusedBeforeAnyMutation(t *testing.T) {
+	runner := &legacyRunner{}
+	if _, ok := any(runner).(sysext.PathSysextRunner); ok {
+		t.Fatal("legacyRunner must not implement sysext.PathSysextRunner")
+	}
+	f := newStagedCurrentFixtureWithRunner(t, true, runner)
+	untouched := redirectSysextDirAfterConstruction(t)
+
+	results, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true})
+	if err == nil {
+		t.Fatal("expected UpdateFeatures to refuse a legacy sysext runner")
+	}
+	if len(results) != 1 || len(results[0].Results) != 1 {
+		t.Fatalf("expected 1 feature result with 1 component, got %+v", results)
+	}
+	got := results[0].Results[0].Error
+	if !strings.Contains(got, "does not implement sysext.PathSysextRunner") {
+		t.Errorf("component error = %q, want it to name the unsupported runner", got)
+	}
+	if runner.linkCalled {
+		t.Error("the legacy runner's LinkToSysext must not be called")
+	}
+	assertOnlyEntries(t, untouched)
+	assertOnlyEntries(t, f.linkDir)
+	assertOnlyEntries(t, f.targetDir, "testext_1.0.0.raw")
+	if strings.Contains(f.out.String(), "restored sysext link") {
+		t.Errorf("expected no link work at all, got:\n%s", f.out.String())
+	}
+}
+
+// EnableFeature --now refuses the same runner before it writes the drop-in,
+// so the feature is not left enabled with nothing staged, and the returned
+// error is testable with errors.Is.
+func TestEnableFeature_Now_LegacyRunnerRefusedBeforeDropIn(t *testing.T) {
+	runner := &legacyRunner{}
+	f := newStagedCurrentFixtureWithRunner(t, false, runner)
+	untouched := redirectSysextDirAfterConstruction(t)
+
+	result, err := f.client.EnableFeature(t.Context(), "testfeature", EnableFeatureOptions{Now: true, NoRefresh: true})
+	if !errors.Is(err, ErrLegacySysextRunner) {
+		t.Fatalf("EnableFeature error = %v, want ErrLegacySysextRunner", err)
+	}
+	if result == nil || result.Success {
+		t.Fatalf("expected an unsuccessful result, got %+v", result)
+	}
+	if !strings.Contains(result.Error, "does not implement sysext.PathSysextRunner") {
+		t.Errorf("result.Error = %q, want it to name the unsupported runner", result.Error)
+	}
+	dropIn := filepath.Join(f.root, "sysupdate.d", "testfeature.feature.d", updexDropInName)
+	if _, err := os.Lstat(dropIn); !os.IsNotExist(err) {
+		t.Errorf("expected no drop-in at %s before the runner error, got err=%v", dropIn, err)
+	}
+	if runner.linkCalled {
+		t.Error("the legacy runner's LinkToSysext must not be called")
+	}
+	assertOnlyEntries(t, untouched)
+	assertOnlyEntries(t, f.linkDir)
+}
+
+// A dry run never links, so it stays available to a legacy runner.
+func TestEnableFeature_DryRunNowStillWorksWithLegacyRunner(t *testing.T) {
+	f := newStagedCurrentFixtureWithRunner(t, false, &legacyRunner{})
+	untouched := redirectSysextDirAfterConstruction(t)
+
+	result, err := f.client.EnableFeature(t.Context(), "testfeature", EnableFeatureOptions{Now: true, DryRun: true, NoRefresh: true})
+	if err != nil {
+		t.Fatalf("dry-run EnableFeature failed: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("expected Success=true, got error %q", result.Error)
+	}
+	assertOnlyEntries(t, untouched)
+	assertOnlyEntries(t, f.linkDir)
+}
+
+// A PathSysextRunner is handed exactly the directory the client captured,
+// never the package global, even after the global moves.
+func TestUpdateFeatures_PathRunnerReceivesCapturedLinkDir(t *testing.T) {
+	runner := &sysext.MockRunner{}
+	f := newStagedCurrentFixtureWithRunner(t, true, runner)
+	untouched := redirectSysextDirAfterConstruction(t)
+
+	f.updateOnce(t)
+	if !runner.LinkToSysextCalled {
+		t.Fatal("expected the runner to be asked to restore the missing link")
+	}
+	if runner.LinkToSysextAtDir != f.linkDir {
+		t.Errorf("LinkToSysextAt dir = %q, want the captured %q", runner.LinkToSysextAtDir, f.linkDir)
+	}
+	if runner.LinkToSysextAtDir == untouched {
+		t.Error("the runner was given the mutated package global, not the captured dir")
 	}
 }

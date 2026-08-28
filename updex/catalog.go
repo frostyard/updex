@@ -141,6 +141,14 @@ func (c *Client) CatalogAdd(ctx context.Context, name string, opts CatalogAddOpt
 	if err := catalog.ValidateSysextName(name); err != nil {
 		return nil, err
 	}
+	// A real add ends in EnableFeature(Now), so it ends in a link. Refuse a
+	// runner that cannot be told where to link before any definition is
+	// written, rather than part-way through the add's rollback transaction.
+	if !opts.DryRun {
+		if err := c.requireLinkableRunner(); err != nil {
+			return nil, err
+		}
+	}
 	repos, err := c.catalogRepos()
 	if err != nil {
 		return nil, err
@@ -304,7 +312,7 @@ func (c *Client) CatalogAdd(ctx context.Context, name string, opts CatalogAddOpt
 	if generatedTransfer == nil {
 		return fail(fmt.Errorf("generated transfer %q was not loadable", name))
 	}
-	state, err := snapshotCatalogManagedState(generatedTransfer, c.sysextLinkDirForRunner())
+	state, err := snapshotCatalogManagedState(generatedTransfer, c.paths.sysextLinkDir)
 	if err != nil {
 		return fail(fmt.Errorf("failed to snapshot catalog-managed install state: %w", err))
 	}
