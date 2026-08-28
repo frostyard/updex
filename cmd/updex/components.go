@@ -1,10 +1,6 @@
 package updex
 
 import (
-	"fmt"
-	"os"
-	"text/tabwriter"
-
 	"github.com/frostyard/clix"
 	"github.com/spf13/cobra"
 )
@@ -49,17 +45,17 @@ func runComponents(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	out := cmd.OutOrStdout()
+
 	if len(components) == 0 {
-		fmt.Println("No components discovered.")
-		return nil
+		return writeLine(out, "No components discovered.")
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "COMPONENT\tSOURCE\tFEATURES")
+	table := newTextTable(out)
+	table.Rowf("COMPONENT\tSOURCE\tFEATURES\n")
 	for _, c := range components {
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\n", c.Name, c.SourceDir, c.FeatureCount)
+		table.Rowf("%s\t%s\t%d\n", c.Name, c.SourceDir, c.FeatureCount)
 	}
-	_ = w.Flush()
 
-	return nil
+	return table.Flush()
 }

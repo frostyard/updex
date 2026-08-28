@@ -3,8 +3,6 @@ package updex
 import (
 	"errors"
 	"fmt"
-	"os"
-	"text/tabwriter"
 
 	"github.com/frostyard/clix"
 	"github.com/frostyard/updex/updex"
@@ -26,13 +24,14 @@ func runFeaturesList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	out := cmd.OutOrStdout()
+
 	if len(features) == 0 {
-		fmt.Println("No features configured.")
-		return nil
+		return writeLine(out, "No features configured.")
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "FEATURE\tDESCRIPTION\tENABLED\tCATALOG\tTRANSFERS")
+	table := newTextTable(out)
+	table.Rowf("FEATURE\tDESCRIPTION\tENABLED\tCATALOG\tTRANSFERS\n")
 	for _, f := range features {
 		status := "no"
 		if f.Masked {
@@ -52,11 +51,10 @@ func runFeaturesList(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", f.Name, f.Description, status, formatOrigin(f), transfersStr)
+		table.Rowf("%s\t%s\t%s\t%s\t%s\n", f.Name, f.Description, status, formatOrigin(f), transfersStr)
 	}
-	_ = w.Flush()
 
-	return nil
+	return table.Flush()
 }
 
 // formatOrigin renders a feature's origin for the CATALOG column: a bare
@@ -225,17 +223,20 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 		return errors.Join(err, jsonErr)
 	}
 
+	out := cmd.OutOrStdout()
+
 	if len(results) == 0 {
-		fmt.Println("No enabled features with transfers found.")
-		return err
+		return errors.Join(err, writeLine(out, "No enabled features with transfers found."))
 	}
 
 	if clix.DryRun {
-		fmt.Println("[DRY RUN] Previewing feature updates.")
+		if lineErr := writeLine(out, "[DRY RUN] Previewing feature updates."); lineErr != nil {
+			return errors.Join(err, lineErr)
+		}
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "FEATURE\tCOMPONENT\tVERSION\tSTATUS")
+	table := newTextTable(out)
+	table.Rowf("FEATURE\tCOMPONENT\tVERSION\tSTATUS\n")
 	for _, fr := range results {
 		for _, r := range fr.Results {
 			status := "error"
@@ -248,12 +249,13 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 			} else if r.Installed {
 				status = "up to date"
 			}
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", fr.Feature, r.Component, r.Version, status)
+			table.Rowf("%s\t%s\t%s\t%s\n", fr.Feature, r.Component, r.Version, status)
 		}
 	}
-	_ = w.Flush()
 
-	return err
+	// Both failures matter: the SDK error decides the exit status, and the
+	// output error says the table the operator is reading is incomplete.
+	return errors.Join(err, table.Flush())
 }
 
 func runFeaturesCheck(cmd *cobra.Command, args []string) error {
@@ -274,13 +276,14 @@ func runFeaturesCheck(cmd *cobra.Command, args []string) error {
 		return errors.Join(err, jsonErr)
 	}
 
+	out := cmd.OutOrStdout()
+
 	if len(results) == 0 {
-		fmt.Println("No enabled features with transfers found.")
-		return err
+		return errors.Join(err, writeLine(out, "No enabled features with transfers found."))
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "FEATURE\tCOMPONENT\tCURRENT\tNEWEST\tUPDATE")
+	table := newTextTable(out)
+	table.Rowf("FEATURE\tCOMPONENT\tCURRENT\tNEWEST\tUPDATE\n")
 	for _, fr := range results {
 		for _, r := range fr.Results {
 			current := r.CurrentVersion
@@ -301,10 +304,11 @@ func runFeaturesCheck(cmd *cobra.Command, args []string) error {
 			case r.UpdateAvailable:
 				update = "yes"
 			}
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", fr.Feature, r.Component, current, newest, update)
+			table.Rowf("%s\t%s\t%s\t%s\t%s\n", fr.Feature, r.Component, current, newest, update)
 		}
 	}
-	_ = w.Flush()
 
-	return err
+	// See runFeaturesUpdate: the SDK error and the output error are reported
+	// together so neither is lost.
+	return errors.Join(err, table.Flush())
 }
