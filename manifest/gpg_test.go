@@ -100,6 +100,43 @@ func TestVerifySignatureRejectsInsecureMessageHash(t *testing.T) {
 	}
 }
 
+// TestVerifySignatureRejectsInsecureHashBehindDecoyPacket pins the digest
+// floor against a multi-packet detached signature: a decoy SHA-256 packet
+// from an entity absent from the keyring, followed by a genuine SHA-1 packet
+// from the trusted entity. Verification skips the decoy (unknown issuer) and
+// would otherwise accept the SHA-1 packet, so checking only the first packet
+// is a complete bypass of the policy.
+func TestVerifySignatureRejectsInsecureHashBehindDecoyPacket(t *testing.T) {
+	content := []byte("0123456789abcdef  image.raw\n")
+	trusted := newTestEntity(t)
+	untrusted := newTestEntity(t)
+	setTestKeyringPaths(t, writeTestKeyring(t, trusted, true))
+	randomizeSignature := false
+
+	var signature bytes.Buffer
+	if err := openpgp.DetachSign(&signature, untrusted, bytes.NewReader(content), nil); err != nil {
+		t.Fatalf("DetachSign(decoy) error = %v", err)
+	}
+	sha1Config := &packet.Config{
+		DefaultHash:                           crypto.SHA1,
+		RejectMessageHashAlgorithms:           map[crypto.Hash]bool{},
+		NonDeterministicSignaturesViaNotation: &randomizeSignature,
+	}
+	if err := detachSignForHashPolicyTest(&signature, trusted, bytes.NewReader(content), sha1Config); err != nil {
+		t.Fatalf("DetachSign(trusted SHA-1) error = %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(signature.Bytes())
+	}))
+	defer server.Close()
+
+	err := verifySignature(t.Context(), server.Client(), server.URL, content, singleAttempt())
+	if err == nil || !strings.Contains(err.Error(), "rejected signature message hash algorithm: SHA-1") {
+		t.Fatalf("verifySignature() error = %v, want rejected SHA-1 message hash", err)
+	}
+}
+
 func detachSignForHashPolicyTest(w io.Writer, entity *openpgp.Entity, content io.Reader, config *packet.Config) error {
 	if config == nil || config.DefaultHash != crypto.SHA1 {
 		return openpgp.DetachSign(w, entity, content, config)

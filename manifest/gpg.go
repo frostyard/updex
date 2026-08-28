@@ -48,14 +48,8 @@ func verifySignature(ctx context.Context, client *http.Client, sigURL string, co
 		return fmt.Errorf("failed to load keyring: %w", err)
 	}
 
-	signaturePacket, parseErr := packet.NewReader(bytes.NewReader(sigData)).Next()
-	if parseErr == nil {
-		if signature, ok := signaturePacket.(*packet.Signature); ok {
-			switch signature.Hash {
-			case crypto.SHA1, crypto.MD5, crypto.RIPEMD160:
-				return fmt.Errorf("rejected signature message hash algorithm: %s", signature.Hash)
-			}
-		}
+	if err := checkSignatureHashPolicy(sigData, keyring); err != nil {
+		return err
 	}
 
 	// Verify signature
@@ -70,6 +64,42 @@ func verifySignature(ctx context.Context, client *http.Client, sigURL string, co
 	}
 
 	return nil
+}
+
+// checkSignatureHashPolicy enforces the message-digest floor on every
+// signature packet in sigData whose issuer is a signing key in keyring.
+//
+// openpgp.CheckDetachedSignature walks the whole packet stream and verifies
+// the first packet issued by a keyring key, skipping packets from unknown
+// issuers. Inspecting only the first packet would therefore let an attacker
+// prepend a decoy packet from an untrusted key using an allowed digest and
+// have an insecure SHA-1 packet from the trusted key accepted behind it, so
+// the policy must cover every packet that verification could select.
+func checkSignatureHashPolicy(sigData []byte, keyring openpgp.EntityList) error {
+	reader := packet.NewReader(bytes.NewReader(sigData))
+	for {
+		p, err := reader.Next()
+		if err != nil {
+			// Parse failures are left to CheckDetachedSignature, which
+			// reports them as an invalid signature.
+			return nil
+		}
+
+		signature, ok := p.(*packet.Signature)
+		if !ok {
+			continue
+		}
+		if signature.IssuerKeyId != nil &&
+			len(keyring.KeysByIdUsage(*signature.IssuerKeyId, packet.KeyFlagSign)) == 0 {
+			// Verification never selects this packet.
+			continue
+		}
+
+		switch signature.Hash {
+		case crypto.SHA1, crypto.MD5, crypto.RIPEMD160:
+			return fmt.Errorf("rejected signature message hash algorithm: %s", signature.Hash)
+		}
+	}
 }
 
 // fetchSignature downloads the detached signature at sigURL under the bounded
