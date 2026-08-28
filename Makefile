@@ -1,4 +1,4 @@
-.PHONY: all build clean fmt lint lint-version-check test test-cover coverage-check test-coverage-check test-docs-check tidy check verify-static verify ci install help
+.PHONY: all build clean fmt lint lint-version-check security test test-cover coverage-check test-coverage-check test-docs-check tidy check verify-static verify ci install help
 
 # Build variables
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -16,6 +16,12 @@ GOFMT := gofmt
 # Bump it there in a dedicated commit; never edit this line. Compared against
 # `golangci-lint version --short`, which prints the bare "MAJOR.MINOR.PATCH".
 GOLANGCI_LINT_VERSION := $(strip $(shell sed -n 's/^golangci-lint = "\(.*\)"/\1/p' mise.toml))
+# Pinned govulncheck release, read from the same mise.toml (core ADR-0043).
+# govulncheck ships no binaries, so mise builds it from the module via its go
+# backend; .github/workflows/test.yml installs the same version with
+# `go install …@v$(GOVULNCHECK_VERSION)` and a contract test keeps the two in
+# sync. Bump it in mise.toml (and the workflow) — never edit this line.
+GOVULNCHECK_VERSION := $(strip $(shell sed -n 's|^"go:golang.org/x/vuln/cmd/govulncheck" = "\(.*\)"|\1|p' mise.toml))
 # The Go release this module is built with, from go.mod's toolchain line —
 # the only Go pin (mise reads the same line). golangci-lint must be built
 # with a Go at least this new, or its embedded gofmt and typechecker disagree
@@ -68,6 +74,16 @@ lint-version-check:
 		exit 1; \
 	fi
 
+## security: Run the pinned govulncheck vulnerability scan (fails if the mise.toml pin is missing or the binary is not installed; never skips)
+security:
+	@test -n "$(GOVULNCHECK_VERSION)" || { echo "mise.toml pins no govulncheck"; exit 1; }
+	@command -v govulncheck >/dev/null 2>&1 || { \
+		echo "govulncheck $(GOVULNCHECK_VERSION) is required for make security (not installed)"; \
+		echo "install with: mise install"; \
+		exit 1; \
+	}
+	govulncheck ./...
+
 ## test: Run tests
 test:
 	$(GO) test -v ./...
@@ -113,8 +129,10 @@ verify: verify-static
 	@echo "==> unit tests"
 	$(GO) test $$($(GO) list ./... | grep -v '/tests/e2e$$')
 
-## ci: Run the credential-free CI gate (verify-static, then coverage, race, and cross-build)
+## ci: Run the credential-free CI gate (verify-static, security scan, then coverage, race, and cross-build)
 ci: verify-static
+	@echo "==> security scan (govulncheck)"
+	$(MAKE) security
 	@echo "==> unit tests with coverage"
 	$(GO) test -v $$($(GO) list ./... | grep -v '/tests/e2e$$') -coverprofile=coverage.out -covermode=atomic
 	@echo "==> coverage floor"
