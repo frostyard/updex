@@ -3,12 +3,14 @@ package manifest
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 
 	"github.com/ProtonMail/go-crypto/openpgp"
+	"github.com/ProtonMail/go-crypto/openpgp/packet"
 
 	"github.com/frostyard/updex/internal/retry"
 )
@@ -44,6 +46,16 @@ func verifySignature(ctx context.Context, client *http.Client, sigURL string, co
 	keyring, err := loadKeyring()
 	if err != nil {
 		return fmt.Errorf("failed to load keyring: %w", err)
+	}
+
+	signaturePacket, parseErr := packet.NewReader(bytes.NewReader(sigData)).Next()
+	if parseErr == nil {
+		if signature, ok := signaturePacket.(*packet.Signature); ok {
+			switch signature.Hash {
+			case crypto.SHA1, crypto.MD5, crypto.RIPEMD160:
+				return fmt.Errorf("rejected signature message hash algorithm: %s", signature.Hash)
+			}
+		}
 	}
 
 	// Verify signature

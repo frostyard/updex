@@ -3,6 +3,7 @@ package manifest
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"errors"
 	"io"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/ProtonMail/go-crypto/openpgp"
 	"github.com/ProtonMail/go-crypto/openpgp/armor"
+	"github.com/ProtonMail/go-crypto/openpgp/packet"
 
 	"github.com/frostyard/updex/internal/retry"
 )
@@ -45,6 +47,85 @@ func TestVerifySignature(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "invalid signature") {
 		t.Fatalf("verifySignature() error = %v, want invalid signature", err)
 	}
+}
+
+func TestVerifySignatureRejectsInsecureMessageHash(t *testing.T) {
+	content := []byte("0123456789abcdef  image.raw\n")
+	entity := newTestEntity(t)
+	setTestKeyringPaths(t, writeTestKeyring(t, entity, true))
+	randomizeSignature := false
+
+	tests := []struct {
+		name      string
+		config    *packet.Config
+		wantError string
+	}{
+		{
+			name: "SHA-1 rejected",
+			config: &packet.Config{
+				DefaultHash:                           crypto.SHA1,
+				RejectMessageHashAlgorithms:           map[crypto.Hash]bool{},
+				NonDeterministicSignaturesViaNotation: &randomizeSignature,
+			},
+			wantError: "rejected signature message hash algorithm: SHA-1",
+		},
+		{
+			name: "SHA-256 accepted",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var signature bytes.Buffer
+			if err := detachSignForHashPolicyTest(&signature, entity, bytes.NewReader(content), tt.config); err != nil {
+				t.Fatalf("DetachSign() error = %v", err)
+			}
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write(signature.Bytes())
+			}))
+			defer server.Close()
+
+			err := verifySignature(t.Context(), server.Client(), server.URL, content, singleAttempt())
+			if tt.wantError == "" {
+				if err != nil {
+					t.Fatalf("verifySignature() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("verifySignature() error = %v, want %q", err, tt.wantError)
+			}
+		})
+	}
+}
+
+func detachSignForHashPolicyTest(w io.Writer, entity *openpgp.Entity, content io.Reader, config *packet.Config) error {
+	if config == nil || config.DefaultHash != crypto.SHA1 {
+		return openpgp.DetachSign(w, entity, content, config)
+	}
+
+	issuerKeyID := entity.PrimaryKey.KeyId
+	signature := &packet.Signature{
+		Version:           entity.PrimaryKey.Version,
+		SigType:           packet.SigTypeBinary,
+		PubKeyAlgo:        entity.PrimaryKey.PubKeyAlgo,
+		Hash:              crypto.SHA1,
+		CreationTime:      time.Now(),
+		IssuerKeyId:       &issuerKeyID,
+		IssuerFingerprint: entity.PrimaryKey.Fingerprint,
+	}
+	hash, err := signature.PrepareSign(config)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(hash, content); err != nil {
+		return err
+	}
+	if err := signature.Sign(hash, entity.PrivateKey, config); err != nil {
+		return err
+	}
+	return signature.Serialize(w)
 }
 
 // singleAttempt returns retry settings that never retry, so tests of
