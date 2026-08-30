@@ -620,7 +620,22 @@ the job succeeds with that step skipped. The guard is on the step, never on
 the job — a required job excluded from the event never reports and stalls the
 queue ([frostyard/core ADR-0042](https://github.com/frostyard/core/blob/main/docs/adr/0042-adopt-a-merge-queue-on-the-default-branch.md)).
 
-`.github/workflows/release.yml` publishes tagged GoReleaser Pro releases and
+`.github/workflows/release.yml` gates, then publishes. Its first job, `gate`
+(`CI gate`), checks the tag's tree out, sets Go up from `go.mod`, installs the
+`mise.lock`-verified `golangci-lint`, and runs `make ci` with
+`permissions: contents: read`; the publishing `goreleaser` job declares
+`needs: gate`. A tag is not required to point at a commit the Tests workflow
+ever saw green — it can name an old commit, a branch head, or a `main` whose
+checks failed — so the dependency is what keeps a commit failing lint, vet,
+the unit tests, the coverage floor, the e2e suite, the race detector, or the
+cross-builds from reaching any publishing step: GoReleaser, the attestation,
+the R2 publish, and the snosi dispatch are all skipped when `gate` fails. The
+gate introduces no tooling the Tests workflow does not already install, and
+`updex/release_workflow_contract_test.go`'s
+`TestReleaseWorkflowGatesPublishOnCI` pins the dependency, the gate's `make ci`
+step, and its read-only permissions.
+
+The `goreleaser` job publishes tagged GoReleaser Pro releases and
 packages, attests build provenance for `dist/checksums.txt` and every
 distributable asset (`actions/attest-build-provenance`, SHA-pinned; workflow
 permissions `id-token: write` and `attestations: write`; users verify with
