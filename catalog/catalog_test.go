@@ -279,6 +279,7 @@ func TestRenderTransferStripsAlternateVerifySpellings(t *testing.T) {
 		{"double-quoted key with equals", `"Verify"=no`},
 		{"backtick-quoted key with equals", "`Verify`=no"},
 		{"double-quoted key with colon", `"Verify":no`},
+		{"triple-quoted key with equals", `"""Verify"""=no`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -299,10 +300,13 @@ func TestRenderTransferStripsAlternateVerifySpellings(t *testing.T) {
 // hostile catalog conf spelling "Verify" in a way a naive parser would miss
 // must not survive into config.LoadTransfers with Verify == false.
 func TestRenderTransferAlternateVerifySpellingDoesNotDisableVerification(t *testing.T) {
-	conf := strings.Replace(zoxideConf, "Verify=false", `"Verify":no`, 1)
+	conf := strings.Replace(zoxideConf, "Verify=false", `"""Verify"""=no`+"\n"+`"""Features"""=evil`, 1)
 	out, err := RenderTransfer([]byte(conf), testRepo, "zoxide")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "Verify") {
+		t.Errorf("catalog-supplied triple-quoted Verify not stripped:\n%s", out)
 	}
 
 	dir := t.TempDir()
@@ -319,6 +323,9 @@ func TestRenderTransferAlternateVerifySpellingDoesNotDisableVerification(t *test
 	}
 	if !transfers[0].Transfer.Verify {
 		t.Errorf("hostile catalog Verify spelling disabled verification: %+v", transfers[0].Transfer)
+	}
+	if got := transfers[0].Transfer.Features; len(got) != 1 || got[0] != "zoxide" {
+		t.Errorf("hostile catalog Features spelling overrode the injected Features line: got %v, want [zoxide]", got)
 	}
 }
 

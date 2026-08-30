@@ -314,6 +314,9 @@ func RenderTransferTo(conf []byte, repo Repo, name string, targetPath string) ([
 			if key == "verify" {
 				continue // catalog input must not disable GPG verification; the absent-key default (true) applies
 			}
+			if key == "" && trimmed != "" && !strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, ";") {
+				continue // key could not be unambiguously parsed; drop rather than risk a disguised Verify/Features override
+			}
 		}
 		out.WriteString(line)
 	}
@@ -452,10 +455,12 @@ func iniKeyOf(trimmedLine string) string {
 	}
 
 	var keyQuote string
-	switch trimmedLine[0] {
-	case '"':
+	switch {
+	case trimmedLine[0] == '"' && len(trimmedLine) > 6 && trimmedLine[0:3] == `"""`:
+		keyQuote = `"""`
+	case trimmedLine[0] == '"':
 		keyQuote = `"`
-	case '`':
+	case trimmedLine[0] == '`':
 		keyQuote = "`"
 	}
 	if keyQuote != "" {
