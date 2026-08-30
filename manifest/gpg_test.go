@@ -137,6 +137,42 @@ func TestVerifySignatureRejectsInsecureHashBehindDecoyPacket(t *testing.T) {
 	}
 }
 
+// TestVerifySignatureAcceptsInsecureHashAfterTrustedPacket pins the fix for
+// checkSignatureHashPolicy scanning past the packet CheckDetachedSignature
+// actually selects: a valid SHA-256 signature from the trusted entity,
+// followed by an appended SHA-1 packet that also claims the trusted key ID.
+// CheckDetachedSignature stops at the first trusted-issuer packet — the
+// SHA-256 one — and never considers the second, so the hash policy must not
+// reject the signature over a packet verification never selects.
+func TestVerifySignatureAcceptsInsecureHashAfterTrustedPacket(t *testing.T) {
+	content := []byte("0123456789abcdef  image.raw\n")
+	trusted := newTestEntity(t)
+	setTestKeyringPaths(t, writeTestKeyring(t, trusted, true))
+	randomizeSignature := false
+
+	var signature bytes.Buffer
+	if err := openpgp.DetachSign(&signature, trusted, bytes.NewReader(content), nil); err != nil {
+		t.Fatalf("DetachSign(trusted SHA-256) error = %v", err)
+	}
+	sha1Config := &packet.Config{
+		DefaultHash:                           crypto.SHA1,
+		RejectMessageHashAlgorithms:           map[crypto.Hash]bool{},
+		NonDeterministicSignaturesViaNotation: &randomizeSignature,
+	}
+	if err := detachSignForHashPolicyTest(&signature, trusted, bytes.NewReader(content), sha1Config); err != nil {
+		t.Fatalf("DetachSign(trusted SHA-1 decoy) error = %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(signature.Bytes())
+	}))
+	defer server.Close()
+
+	if err := verifySignature(t.Context(), server.Client(), server.URL, content, singleAttempt()); err != nil {
+		t.Fatalf("verifySignature() error = %v, want success (policy must stop at the first trusted-issuer packet)", err)
+	}
+}
+
 func detachSignForHashPolicyTest(w io.Writer, entity *openpgp.Entity, content io.Reader, config *packet.Config) error {
 	if config == nil || config.DefaultHash != crypto.SHA1 {
 		return openpgp.DetachSign(w, entity, content, config)

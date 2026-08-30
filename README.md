@@ -698,7 +698,7 @@ e5f6g7h8...  myext_1.1.0.raw.xz
 i9j0k1l2...  myext_1.2.0.raw.xz
 ```
 
-For GPG verification, also provide `SHA256SUMS.gpg` (detached signature).
+For GPG verification, also provide `SHA256SUMS.gpg` (detached signature). Detached signatures using SHA-1, MD5, or RIPEMD-160 as their message digest are rejected before verification.
 
 Fetching `SHA256SUMS` retries transient network failures and HTTP 5xx/429 responses with exponential backoff. Manifest responses are limited to 4 MiB and detached signature responses to 1 MiB; oversized responses are rejected before parsing or signature verification. The detached signature fetch is verified after the manifest body is fetched.
 

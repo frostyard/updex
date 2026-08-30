@@ -66,15 +66,21 @@ func verifySignature(ctx context.Context, client *http.Client, sigURL string, co
 	return nil
 }
 
-// checkSignatureHashPolicy enforces the message-digest floor on every
-// signature packet in sigData whose issuer is a signing key in keyring.
+// checkSignatureHashPolicy enforces the message-digest floor on the first
+// signature packet in sigData whose issuer resolves to a signing key in
+// keyring.
 //
-// openpgp.CheckDetachedSignature walks the whole packet stream and verifies
-// the first packet issued by a keyring key, skipping packets from unknown
-// issuers. Inspecting only the first packet would therefore let an attacker
+// openpgp.CheckDetachedSignature walks the packet stream and verifies the
+// first packet issued by a keyring key, skipping packets from unknown
+// issuers but never looking past the first one it can match. Inspecting only
+// the very first packet in the stream would therefore let an attacker
 // prepend a decoy packet from an untrusted key using an allowed digest and
-// have an insecure SHA-1 packet from the trusted key accepted behind it, so
-// the policy must cover every packet that verification could select.
+// have an insecure SHA-1 packet from the trusted key accepted behind it; but
+// inspecting every trusted-issuer packet in the stream would let an attacker
+// append a second, insecure-hash packet claiming the same trusted key after
+// a valid one, causing a false rejection of a signature verification never
+// actually selects. The policy must therefore stop at the same packet
+// CheckDetachedSignature would select, not before it and not after.
 func checkSignatureHashPolicy(sigData []byte, keyring openpgp.EntityList) error {
 	reader := packet.NewReader(bytes.NewReader(sigData))
 	for {
@@ -89,7 +95,7 @@ func checkSignatureHashPolicy(sigData []byte, keyring openpgp.EntityList) error 
 		if !ok {
 			continue
 		}
-		if signature.IssuerKeyId != nil &&
+		if signature.IssuerKeyId == nil ||
 			len(keyring.KeysByIdUsage(*signature.IssuerKeyId, packet.KeyFlagSign)) == 0 {
 			// Verification never selects this packet.
 			continue
@@ -99,6 +105,7 @@ func checkSignatureHashPolicy(sigData []byte, keyring openpgp.EntityList) error 
 		case crypto.SHA1, crypto.MD5, crypto.RIPEMD160:
 			return fmt.Errorf("rejected signature message hash algorithm: %s", signature.Hash)
 		}
+		return nil
 	}
 }
 
