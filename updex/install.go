@@ -2,6 +2,7 @@ package updex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,16 @@ import (
 // It returns the version selected, the resolved manifest, whether a download occurred, and any error.
 // If opts.CachedManifest is non-nil, it is used instead of fetching the manifest over HTTP.
 func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer, opts installTransferOptions) (string, *manifest.Manifest, bool, error) {
+	// A real install ends in a link. Refuse a runner that cannot be told
+	// where to link before removing a legacy symlink or downloading
+	// anything, so the failure leaves no half-installed state behind. A dry
+	// run never links, so it stays available.
+	if !opts.DryRun {
+		if err := c.requireLinkableRunner(); err != nil {
+			return "", nil, false, err
+		}
+	}
+
 	// Get available versions (applies MinVersion filter)
 	available, m, patterns, err := c.getAvailableVersions(ctx, transfer, opts.CachedManifest)
 	if err != nil {
@@ -124,32 +135,46 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 	return versionToInstall, m, true, refreshErr
 }
 
-// linkToSysext points the systemd-sysext link for transfer at its newest
-// staged image through the client's runner, in the client's link directory
-// when the runner supports one.
-func (c *Client) linkToSysext(transfer *config.Transfer) error {
-	var linkErr error
-	if runner, ok := c.runner.(sysext.PathSysextRunner); ok {
-		linkErr = runner.LinkToSysextAt(transfer, c.sysextLinkDirForRunner())
-	} else {
-		// Preserve compatibility with injected runners that implement the
-		// original SysextRunner interface.
-		linkErr = c.runner.LinkToSysext(transfer)
+// ErrLegacySysextRunner reports a ClientConfig.SysextRunner that implements
+// only the original [sysext.SysextRunner] interface and not
+// [sysext.PathSysextRunner]. Such a runner cannot be told which directory to
+// link into, so it can only link into the mutable package-global
+// sysext.SysextDir — which would silently ignore
+// RuntimePaths.SysextLinkDir and break the ADR-0011 capture-at-construction
+// invariant. Operations that may link refuse with this error before touching
+// the filesystem instead. Callers can test for it with errors.Is.
+var ErrLegacySysextRunner = errors.New("sysext runner does not implement sysext.PathSysextRunner, so it cannot honor the client's SysextLinkDir")
+
+// pathRunner returns the client's runner as a sysext.PathSysextRunner, or
+// ErrLegacySysextRunner when the injected runner predates that interface.
+func (c *Client) pathRunner() (sysext.PathSysextRunner, error) {
+	runner, ok := c.runner.(sysext.PathSysextRunner)
+	if !ok {
+		return nil, fmt.Errorf("%w: %T must add LinkToSysextAt(*config.Transfer, string) error", ErrLegacySysextRunner, c.runner)
 	}
-	if linkErr != nil {
-		return fmt.Errorf("failed to link to sysext: %w", linkErr)
-	}
-	return nil
+	return runner, nil
 }
 
-// sysextLinkDirForRunner returns the directory that linkToSysext will
-// actually mutate. Legacy runners use the package default because their
-// interface cannot accept a client-specific path.
-func (c *Client) sysextLinkDirForRunner() string {
-	if _, ok := c.runner.(sysext.PathSysextRunner); ok {
-		return c.paths.sysextLinkDir
+// requireLinkableRunner is the precondition every non-dry-run operation that
+// may end up linking checks before it mutates anything, so a legacy runner
+// fails cleanly rather than part-way through an install.
+func (c *Client) requireLinkableRunner() error {
+	_, err := c.pathRunner()
+	return err
+}
+
+// linkToSysext points the systemd-sysext link for transfer at its newest
+// staged image through the client's runner, in the directory the client
+// captured at construction.
+func (c *Client) linkToSysext(transfer *config.Transfer) error {
+	runner, err := c.pathRunner()
+	if err != nil {
+		return fmt.Errorf("failed to link to sysext: %w", err)
 	}
-	return sysext.SysextDir
+	if err := runner.LinkToSysextAt(transfer, c.paths.sysextLinkDir); err != nil {
+		return fmt.Errorf("failed to link to sysext: %w", err)
+	}
+	return nil
 }
 
 // buildTargetFilename derives the installed filename for a version from the
