@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 
 	"gopkg.in/ini.v1"
 )
@@ -271,8 +272,28 @@ func RenderTransferTo(conf []byte, repo Repo, name string, targetPath string) ([
 
 	section := ""
 	inserted := false
+	// gopkg.in/ini.v1 lets a value span several lines when it opens with `"""`
+	// or a backtick whose match is not on the same line. Every line until the
+	// closing quote is value body, not a key, comment, or section header, so
+	// it must be passed through verbatim — the keyless-line guard below would
+	// otherwise delete it and leave an unterminated value in the rendered
+	// .transfer. When the key that opened the value is one we strip
+	// (Features/Verify) or lives in a rewritten section, the whole block is
+	// dropped instead, so no body line survives as stray top-level text.
+	multilineQuote := ""
+	multilineDropped := false
 	for line := range strings.Lines(string(conf)) {
 		trimmed := strings.TrimSpace(line)
+		if multilineQuote != "" {
+			if iniMultilineCloses(line, multilineQuote) {
+				multilineQuote = ""
+			}
+			if multilineDropped {
+				continue
+			}
+			out.WriteString(line)
+			continue
+		}
 		if parsedSection, ok, err := parseSectionHeader(trimmed); err != nil {
 			return nil, err
 		} else if ok {
@@ -302,21 +323,29 @@ func RenderTransferTo(conf []byte, repo Repo, name string, targetPath string) ([
 			}
 			continue
 		}
-		if section == "source" || section == "target" {
-			continue
-		}
 		key := strings.ToLower(iniKeyOf(trimmed))
+		drop := false
 		switch section {
+		case "source", "target":
+			drop = true // rewritten wholesale above
 		case "transfer":
-			if key == "features" {
-				continue // replaced by the injected line
+			switch {
+			case key == "features":
+				drop = true // replaced by the injected line
+			case key == "verify":
+				drop = true // catalog input must not disable GPG verification; the absent-key default (true) applies
+			case key == "" && trimmed != "" && !strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, ";"):
+				drop = true // key could not be unambiguously parsed; drop rather than risk a disguised Verify/Features override
 			}
-			if key == "verify" {
-				continue // catalog input must not disable GPG verification; the absent-key default (true) applies
-			}
-			if key == "" && trimmed != "" && !strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, ";") {
-				continue // key could not be unambiguously parsed; drop rather than risk a disguised Verify/Features override
-			}
+		}
+		// Track an opened multiline value even in a dropped section, so its
+		// body cannot be mistaken for a section header or a top-level key.
+		if quote := iniMultilineOpen(line); quote != "" {
+			multilineQuote = quote
+			multilineDropped = drop
+		}
+		if drop {
+			continue
 		}
 		out.WriteString(line)
 	}
@@ -476,6 +505,95 @@ func iniKeyOf(trimmedLine string) string {
 		return ""
 	}
 	return strings.TrimSpace(trimmedLine[:idx])
+}
+
+// iniMultilineOpen reports the quote that leaves a gopkg.in/ini.v1 value open
+// past the end of this line, or "" when the line closes (or never opens) one.
+// It mirrors ini.v1's readValue: a value beginning with `"""` or a backtick
+// runs until the next occurrence of that same quote, which may be several
+// lines later.
+//
+// It takes the raw line, newline included, because that is what ini.v1's
+// parser sees, and the length tests below are sensitive to it: a bare `"""`
+// as a value opens a multiline only when a newline follows it.
+func iniMultilineOpen(rawLine string) string {
+	value, ok := iniValueOf(rawLine)
+	if !ok {
+		return ""
+	}
+	value = strings.TrimLeftFunc(value, unicode.IsSpace)
+
+	var valQuote string
+	switch {
+	case len(value) > 3 && value[0:3] == `"""`:
+		valQuote = `"""`
+	case value != "" && value[0] == '`':
+		valQuote = "`"
+	default:
+		return ""
+	}
+	if strings.Contains(value[len(valQuote):], valQuote) {
+		return "" // closed on the same line
+	}
+	return valQuote
+}
+
+// iniMultilineCloses reports whether rawLine ends the open multiline value
+// quoted by valQuote. It mirrors ini.v1's readMultilines, including its
+// backslash-continuation escape, so a line this function calls closing is a
+// line ini.v1 also treats as closing.
+func iniMultilineCloses(rawLine, valQuote string) bool {
+	pos := strings.LastIndex(rawLine, valQuote)
+	if pos < 0 {
+		return false
+	}
+	rest := strings.TrimRight(rawLine[pos+len(valQuote):], "\r\n")
+	return !strings.HasSuffix(strings.TrimSpace(rest), `\`)
+}
+
+// iniValueOf returns the raw value portion of an INI "Key=value" line —
+// everything after the delimiter, newline included — and whether the line has
+// one at all. It mirrors gopkg.in/ini.v1's readKeyName offset so the value
+// this reports is the value ini.v1 would parse. It is kept separate from
+// iniKeyOf, which answers the different question of what the key is named and
+// whose exact behavior the Verify/Features strip guard depends on.
+func iniValueOf(rawLine string) (string, bool) {
+	line := strings.TrimLeftFunc(rawLine, unicode.IsSpace)
+	if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+		return "", false
+	}
+
+	var keyQuote string
+	switch {
+	case line[0] == '"' && len(line) > 6 && line[0:3] == `"""`:
+		keyQuote = `"""`
+	case line[0] == '"':
+		keyQuote = `"`
+	case line[0] == '`':
+		keyQuote = "`"
+	}
+	if keyQuote != "" {
+		startIdx := len(keyQuote)
+		closeIdx := strings.Index(line[startIdx:], keyQuote)
+		if closeIdx < 0 {
+			return "", false
+		}
+		afterKey := startIdx + closeIdx + startIdx
+		if afterKey > len(line) {
+			return "", false
+		}
+		i := strings.IndexAny(line[afterKey:], "=:")
+		if i < 0 {
+			return "", false
+		}
+		return line[afterKey+i+1:], true
+	}
+
+	idx := strings.IndexAny(line, "=:")
+	if idx <= 0 {
+		return "", false
+	}
+	return line[idx+1:], true
 }
 
 // RenderFeature builds the .feature content for a catalog sysext, headed
