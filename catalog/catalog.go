@@ -273,15 +273,17 @@ func RenderTransferTo(conf []byte, repo Repo, name string, targetPath string) ([
 	section := ""
 	inserted := false
 	// gopkg.in/ini.v1 lets a value span several lines when it opens with `"""`
-	// or a backtick whose match is not on the same line. Every line until the
-	// closing quote is value body, not a key, comment, or section header, so
-	// it must be passed through verbatim — the keyless-line guard below would
-	// otherwise delete it and leave an unterminated value in the rendered
-	// .transfer. When the key that opened the value is one we strip
-	// (Features/Verify) or lives in a rewritten section, the whole block is
-	// dropped instead, so no body line survives as stray top-level text.
+	// or a backtick whose match is not on the same line, or when its trimmed
+	// value ends in a backslash. Every line in one of those blocks is value
+	// body, not a key, comment, or section header, so it must be passed through
+	// verbatim — the keyless-line guard below would otherwise delete it and
+	// leave a value incomplete. When the key that opened the value is one we
+	// strip (Features/Verify) or lives in a rewritten section, the whole block
+	// is dropped instead, so no body line survives as stray top-level text.
 	multilineQuote := ""
 	multilineDropped := false
+	continuationOpen := false
+	continuationDropped := false
 	for line := range strings.Lines(string(conf)) {
 		trimmed := strings.TrimSpace(line)
 		if multilineQuote != "" {
@@ -289,6 +291,18 @@ func RenderTransferTo(conf []byte, repo Repo, name string, targetPath string) ([
 				multilineQuote = ""
 			}
 			if multilineDropped {
+				continue
+			}
+			out.WriteString(line)
+			continue
+		}
+		if continuationOpen {
+			dropped := continuationDropped
+			if iniContinuationCloses(line) {
+				continuationOpen = false
+				continuationDropped = false
+			}
+			if dropped {
 				continue
 			}
 			out.WriteString(line)
@@ -343,6 +357,9 @@ func RenderTransferTo(conf []byte, repo Repo, name string, targetPath string) ([
 		if quote := iniMultilineOpen(line); quote != "" {
 			multilineQuote = quote
 			multilineDropped = drop
+		} else if iniContinuationOpen(line) {
+			continuationOpen = true
+			continuationDropped = drop
 		}
 		if drop {
 			continue
@@ -549,6 +566,30 @@ func iniMultilineCloses(rawLine, valQuote string) bool {
 	}
 	rest := strings.TrimRight(rawLine[pos+len(valQuote):], "\r\n")
 	return !strings.HasSuffix(strings.TrimSpace(rest), `\`)
+}
+
+// iniContinuationOpen reports whether gopkg.in/ini.v1 treats the value on
+// rawLine as opening a backslash continuation. Quoted values are excluded:
+// readValue handles its triple-quote/backtick case before considering an
+// ordinary continuation, even when text after a closing quote ends in `\`.
+func iniContinuationOpen(rawLine string) bool {
+	value, ok := iniValueOf(rawLine)
+	if !ok {
+		return false
+	}
+	value = strings.TrimSpace(value)
+	if value == "" || strings.HasPrefix(value, `"""`) || strings.HasPrefix(value, "`") {
+		return false
+	}
+	return strings.HasSuffix(value, `\`)
+}
+
+// iniContinuationCloses reports whether rawLine ends an open backslash
+// continuation. ini.v1 consumes the line and stops when its trimmed form is
+// empty or does not itself end in a backslash.
+func iniContinuationCloses(rawLine string) bool {
+	trimmed := strings.TrimSpace(rawLine)
+	return trimmed == "" || !strings.HasSuffix(trimmed, `\`)
 }
 
 // iniValueOf returns the raw value portion of an INI "Key=value" line —

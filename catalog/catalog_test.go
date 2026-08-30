@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/frostyard/updex/config"
+	"gopkg.in/ini.v1"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -448,6 +449,116 @@ func TestRenderTransferStripsMultilineVerifyAndFeatures(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRenderTransferContinuationCannotSmuggleVerify(t *testing.T) {
+	block := "Dummy=value\\\n[Other]\nVerify=no"
+	conf := strings.Replace(zoxideConf, "Verify=false", block, 1)
+	out, err := RenderTransfer([]byte(conf), testRepo, "zoxide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "Dummy=value\\\n[Other]\n") {
+		t.Fatalf("legitimate continuation block was not preserved byte-for-byte:\n%s", out)
+	}
+
+	transfer := loadRenderedTransfer(t, out)
+	if !transfer.Transfer.Verify {
+		t.Errorf("continuation-carried section header smuggled Verify=no: %+v", transfer.Transfer)
+	}
+}
+
+func TestRenderTransferContinuationCannotSmuggleFeatures(t *testing.T) {
+	block := "Dummy=value\\\n[Other]\nFeatures=evil"
+	conf := strings.Replace(zoxideConf, "Verify=false", block, 1)
+	out, err := RenderTransfer([]byte(conf), testRepo, "zoxide")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	transfer := loadRenderedTransfer(t, out)
+	if got := transfer.Transfer.Features; len(got) != 1 || got[0] != "zoxide" {
+		t.Errorf("continuation-carried section header smuggled Features override: got %v, want [zoxide]", got)
+	}
+}
+
+func TestRenderTransferStripsContinuationBodies(t *testing.T) {
+	tests := []struct {
+		name string
+		conf string
+		gone []string
+	}{
+		{
+			name: "stripped Verify cannot inject Path",
+			conf: strings.Replace(zoxideConf, "Verify=false", "Verify=x\\\nPath=/etc/evil", 1),
+			gone: []string{"Verify=x", "Path=/etc/evil"},
+		},
+		{
+			name: "stripped Features cannot inject a requisite",
+			conf: strings.Replace(zoxideConf, "Verify=false", "Features=evil\\\nRequisiteFeatures=bad", 1),
+			gone: []string{"Features=evil", "RequisiteFeatures=bad"},
+		},
+		{
+			name: "rewritten section drops the whole continuation",
+			conf: strings.Replace(zoxideConf, "MatchPattern=zoxide-@v-%w-%a.raw\n\n[Target]", "MatchPattern=zoxide-@v-%w-%a.raw\nSourceNote=value\\\n[Other]\nLeaked=value\n\n[Target]", 1),
+			gone: []string{"SourceNote", "[Other]", "Leaked=value"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := RenderTransfer([]byte(tt.conf), testRepo, "zoxide")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, gone := range tt.gone {
+				if strings.Contains(string(out), gone) {
+					t.Errorf("stripped continuation block leaked %q:\n%s", gone, out)
+				}
+			}
+			_ = loadRenderedTransfer(t, out)
+		})
+	}
+}
+
+func TestRenderTransferPreservesContinuationValue(t *testing.T) {
+	block := "ProtectVersion=1.2\\\n3"
+	conf := strings.Replace(zoxideConf, "Verify=false", block, 1)
+	wantConfig, err := ini.Load([]byte(conf))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := wantConfig.Section("Transfer").Key("ProtectVersion").String()
+
+	out, err := RenderTransfer([]byte(conf), testRepo, "zoxide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), block) {
+		t.Fatalf("legitimate continuation block was not preserved byte-for-byte:\n%s", out)
+	}
+	renderedConfig, err := ini.Load(out)
+	if err != nil {
+		t.Fatalf("rendered .transfer no longer parses: %v\n%s", err, out)
+	}
+	if got := renderedConfig.Section("Transfer").Key("ProtectVersion").String(); got != want {
+		t.Errorf("rendered continuation value = %q, want ini.v1 catalog value %q", got, want)
+	}
+}
+
+func loadRenderedTransfer(t *testing.T, out []byte) *config.Transfer {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "zoxide.transfer"), out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	transfers, err := config.LoadTransfers(dir)
+	if err != nil {
+		t.Fatalf("rendered .transfer no longer parses: %v\n%s", err, out)
+	}
+	if len(transfers) != 1 {
+		t.Fatalf("expected exactly one transfer, got %d", len(transfers))
+	}
+	return transfers[0]
 }
 
 func TestRenderTransferToRewritesProductionTarget(t *testing.T) {
