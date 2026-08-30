@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/frostyard/updex/config"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -260,6 +262,63 @@ func TestRenderTransferStripsCatalogVerifyFalse(t *testing.T) {
 	}
 	if strings.Contains(string(out), "Verify") {
 		t.Errorf("catalog-supplied Verify key not stripped, letting config/transfer.go's true default apply:\n%s", out)
+	}
+}
+
+// TestRenderTransferStripsAlternateVerifySpellings guards against catalogs
+// that spell the "Verify" key using gopkg.in/ini.v1-accepted syntax that a
+// naive "Key=value" split would miss: the ':' delimiter and
+// backtick/double-quote-quoted key names.
+func TestRenderTransferStripsAlternateVerifySpellings(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+	}{
+		{"colon delimiter", "Verify:no"},
+		{"colon delimiter with spaces", "Verify : no"},
+		{"double-quoted key with equals", `"Verify"=no`},
+		{"backtick-quoted key with equals", "`Verify`=no"},
+		{"double-quoted key with colon", `"Verify":no`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conf := strings.Replace(zoxideConf, "Verify=false", tt.line, 1)
+			out, err := RenderTransfer([]byte(conf), testRepo, "zoxide")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(out), "Verify") {
+				t.Errorf("catalog-supplied %q not stripped:\n%s", tt.line, out)
+			}
+		})
+	}
+}
+
+// TestRenderTransferAlternateVerifySpellingDoesNotDisableVerification proves
+// the stripped output actually leaves GPG verification on end-to-end: a
+// hostile catalog conf spelling "Verify" in a way a naive parser would miss
+// must not survive into config.LoadTransfers with Verify == false.
+func TestRenderTransferAlternateVerifySpellingDoesNotDisableVerification(t *testing.T) {
+	conf := strings.Replace(zoxideConf, "Verify=false", `"Verify":no`, 1)
+	out, err := RenderTransfer([]byte(conf), testRepo, "zoxide")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "zoxide.transfer"), out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	transfers, err := config.LoadTransfers(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(transfers) != 1 {
+		t.Fatalf("expected exactly one transfer, got %d", len(transfers))
+	}
+	if !transfers[0].Transfer.Verify {
+		t.Errorf("hostile catalog Verify spelling disabled verification: %+v", transfers[0].Transfer)
 	}
 }
 

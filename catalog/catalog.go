@@ -441,16 +441,36 @@ func validateCatalogPatterns(section *ini.Section, sectionName string) error {
 }
 
 // iniKeyOf returns the key name of an INI "Key=value" line (whitespace
-// around '=' tolerated), or "" for comments, section headers, and blanks.
+// around the delimiter tolerated), or "" for comments, section headers, and
+// blanks. It mirrors gopkg.in/ini.v1's default key parsing so a key spelling
+// the ini parser accepts cannot slip past a stricter check here: both
+// default key/value delimiters ('=' and ':', whichever comes first) and a
+// key name wrapped in matching backticks or double quotes.
 func iniKeyOf(trimmedLine string) string {
 	if trimmedLine == "" || strings.HasPrefix(trimmedLine, "#") || strings.HasPrefix(trimmedLine, ";") {
 		return ""
 	}
-	key, _, found := strings.Cut(trimmedLine, "=")
-	if !found {
+
+	var keyQuote string
+	switch trimmedLine[0] {
+	case '"':
+		keyQuote = `"`
+	case '`':
+		keyQuote = "`"
+	}
+	if keyQuote != "" {
+		closeIdx := strings.Index(trimmedLine[len(keyQuote):], keyQuote)
+		if closeIdx < 0 {
+			return ""
+		}
+		return strings.TrimSpace(trimmedLine[len(keyQuote) : len(keyQuote)+closeIdx])
+	}
+
+	idx := strings.IndexAny(trimmedLine, "=:")
+	if idx <= 0 {
 		return ""
 	}
-	return strings.TrimSpace(key)
+	return strings.TrimSpace(trimmedLine[:idx])
 }
 
 // RenderFeature builds the .feature content for a catalog sysext, headed
