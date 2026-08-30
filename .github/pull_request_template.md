@@ -27,6 +27,7 @@ rationale. -->
 - [ ] Tier 1: Low
 - [ ] Tier 2: Moderate
 - [ ] Tier 3: High
+- [ ] Tier 4: Critical
 
 **Rationale:**
 
