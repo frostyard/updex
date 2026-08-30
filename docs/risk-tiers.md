@@ -67,6 +67,29 @@ failure-path tests. The author or generating agent must not self-approve,
 auto-merge, weaken required checks, or disclose vulnerability details in a
 public pull request.
 
+## Tier 4: Critical
+
+Changes touching a protected boundary in
+[`policies/agent-governance.json`](../policies/agent-governance.json) — the
+file paths the repository's agent governance policy marks review-required
+at a minimum risk tier of `high` or above.
+
+Examples include:
+
+- the `workflow-and-permissions` boundary: anything under
+  `.github/workflows/**`;
+- the `release-and-publication` boundary: `.goreleaser.yaml` and
+  `.svu.yaml`; and
+- the `installation-and-update` boundary: `sysext/**`, `systemd/**`, and
+  `download/**`.
+
+**Required evidence:** Provide a threat and abuse analysis naming the trust
+boundary crossed, in addition to everything Tier 3 requires. Obtain explicit
+maintainer security review beyond standard review. Include adversarial or
+end-to-end evidence that the boundary holds. State an explicit rollback plan.
+The author or generating agent must not self-approve, auto-merge, weaken
+required checks, or disclose vulnerability details in a public pull request.
+
 ## Classification workflow
 
 1. The author selects one tier and gives a short rationale in the pull request
