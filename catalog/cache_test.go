@@ -1,12 +1,15 @@
 package catalog
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -324,6 +327,56 @@ func TestCachedList_DisabledCacheDir(t *testing.T) {
 	}
 	if got := server.requests.Load(); got != 2 {
 		t.Errorf("expected 2 live requests, got %d", got)
+	}
+}
+
+func TestSaveListCache_ReturnsErrorOnWriteFailure(t *testing.T) {
+	dir := t.TempDir()
+	blocked := filepath.Join(dir, "blocked")
+	if err := os.WriteFile(blocked, []byte("not a directory"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// blocked is a file, so MkdirAll(filepath.Dir(path), ...) below it fails
+	// regardless of the effective user's permissions.
+	path := filepath.Join(blocked, "list-fedora.json")
+
+	err := saveListCache(path, &listCacheEntry{
+		ListURL:   "https://example.com",
+		FetchedAt: time.Now(),
+		Names:     []string{"a"},
+	})
+	if err == nil {
+		t.Fatal("expected error when the cache directory path is blocked by a file")
+	}
+}
+
+func TestCachedListIn_WriteFailureIsLoggedNotFatal(t *testing.T) {
+	dir := t.TempDir()
+	blocked := filepath.Join(dir, "blocked")
+	if err := os.WriteFile(blocked, []byte("not a directory"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	original := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(original) })
+
+	server := newListServer(t)
+	repo := server.repo()
+
+	names, res, err := CachedListIn(t.Context(), server.Client(), repo, CachedListOptions{}, blocked)
+	if err != nil {
+		t.Fatalf("expected the list operation to succeed despite the cache write failure, got: %v", err)
+	}
+	if len(names) == 0 {
+		t.Fatal("expected a non-empty listing despite the cache write failure")
+	}
+	if res.FromCache {
+		t.Errorf("expected a live result, got %+v", res)
+	}
+	if !strings.Contains(buf.String(), "failed to write list cache") {
+		t.Errorf("expected the cache write failure to be logged, got log output: %q", buf.String())
 	}
 }
 
