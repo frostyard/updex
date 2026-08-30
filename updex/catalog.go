@@ -97,7 +97,7 @@ func (c *Client) CatalogList(ctx context.Context, opts CatalogListOptions) ([]Ca
 				repo.Name, cacheRes.Age.Round(time.Minute))
 		}
 		if cacheRes.WriteErr != nil {
-			c.warn("failed to persist listing cache for %q: %v", repo.Name, cacheRes.WriteErr)
+			c.warn("failed to persist listing cache for %q", repo.Name)
 		}
 
 		features, err := config.LoadComponentFeaturesIn(repo.Component, c.paths.definitionRoots)

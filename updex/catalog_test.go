@@ -1746,4 +1746,12 @@ func TestCatalogList_CacheWriteFailureIsReportedNotFatal(t *testing.T) {
 	if !reporter.hasWarningContaining("failed to persist listing cache") {
 		t.Errorf("expected a warning referencing the cache write failure, got warnings: %v", reporter.warnings)
 	}
+	for label, path := range map[string]string{
+		"cache directory": cacheDir,
+		"cache path":      cachePath,
+	} {
+		if reporter.hasWarningContaining(path) {
+			t.Errorf("expected warning to omit the absolute %s %q, got warnings: %v", label, path, reporter.warnings)
+		}
+	}
 }
