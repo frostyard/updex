@@ -3,10 +3,12 @@ package catalog
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -30,6 +32,10 @@ type listServer struct {
 	notModified atomic.Int64
 	etag        atomic.Value // string
 	body        atomic.Value // string
+	// beforeNotModified, when set, runs just before a 304 response is
+	// written. It gives a test a deterministic point between the cache
+	// read and the revalidation save at which to change the filesystem.
+	beforeNotModified atomic.Value // func()
 }
 
 func newListServer(t *testing.T) *listServer {
@@ -42,6 +48,9 @@ func newListServer(t *testing.T) *listServer {
 		etag := s.etag.Load().(string)
 		if r.Header.Get("If-None-Match") == etag {
 			s.notModified.Add(1)
+			if hook, ok := s.beforeNotModified.Load().(func()); ok && hook != nil {
+				hook()
+			}
 			w.WriteHeader(http.StatusNotModified)
 			return
 		}
@@ -324,6 +333,125 @@ func TestCachedList_DisabledCacheDir(t *testing.T) {
 	}
 	if got := server.requests.Load(); got != 2 {
 		t.Errorf("expected 2 live requests, got %d", got)
+	}
+}
+
+func TestSaveListCache_ReturnsErrorOnWriteFailure(t *testing.T) {
+	dir := t.TempDir()
+	// path is itself a pre-existing directory: MkdirAll(filepath.Dir(path))
+	// succeeds because the parent (dir) already exists, but the final
+	// os.WriteFile at path fails because path is a directory, not a file.
+	path := filepath.Join(dir, "list-fedora.json")
+	if err := os.Mkdir(path, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := saveListCache(path, &listCacheEntry{
+		ListURL:   "https://example.com",
+		FetchedAt: time.Now(),
+		Names:     []string{"a"},
+	})
+	if err == nil {
+		t.Fatal("expected error when the cache file path is itself a directory")
+	}
+	var pathErr *fs.PathError
+	if !errors.As(err, &pathErr) {
+		t.Fatalf("expected an *fs.PathError from os.WriteFile, got %v", err)
+	}
+	if pathErr.Path != path {
+		t.Fatalf("expected the failure to be for the cache file %s (os.WriteFile), got %s (an os.MkdirAll error would name the parent directory instead)", path, pathErr.Path)
+	}
+}
+
+func TestCachedListIn_WriteFailureIsReportedNotFatal(t *testing.T) {
+	dir := t.TempDir()
+	server := newListServer(t)
+	repo := server.repo()
+
+	// The cache file path itself is a pre-existing directory: MkdirAll on
+	// its parent (dir) succeeds, but the final os.WriteFile fails.
+	path := filepath.Join(dir, "list-"+repo.Name+".json")
+	if err := os.Mkdir(path, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	names, res, err := CachedListIn(t.Context(), server.Client(), repo, CachedListOptions{}, dir)
+	if err != nil {
+		t.Fatalf("expected the list operation to succeed despite the cache write failure, got: %v", err)
+	}
+	if len(names) == 0 {
+		t.Fatal("expected a non-empty listing despite the cache write failure")
+	}
+	if res.FromCache {
+		t.Errorf("expected a live result, got %+v", res)
+	}
+	if res.WriteErr == nil {
+		t.Fatal("expected CacheResult.WriteErr to report the cache write failure")
+	}
+	var pathErr *fs.PathError
+	if !errors.As(res.WriteErr, &pathErr) || pathErr.Path != path {
+		t.Errorf("expected WriteErr to wrap an os.WriteFile failure for %s, got %v", path, res.WriteErr)
+	}
+}
+
+// TestCachedListIn_RevalidationWriteFailureIsReportedNotFatal covers the 304
+// branch of CachedListIn: an expired-but-valid entry is revalidated, the
+// server answers 304, and persisting the refreshed entry fails. The listing
+// must still be served from the cache with the write failure reported via
+// CacheResult.WriteErr rather than discarded or turned into a hard error.
+func TestCachedListIn_RevalidationWriteFailureIsReportedNotFatal(t *testing.T) {
+	dir := t.TempDir()
+	server := newListServer(t)
+	repo := server.repo()
+	path := filepath.Join(dir, "list-"+repo.Name+".json")
+
+	// Seed a valid entry, then age it past the TTL so the next call
+	// revalidates conditionally instead of serving the cache outright.
+	seeded, _, err := CachedListIn(t.Context(), server.Client(), repo, CachedListOptions{}, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backdateCache(t, dir, repo, 2*time.Hour)
+
+	// Make the cache file path unwritable after the entry has been read but
+	// before the 304 save: replacing the file with a directory keeps
+	// MkdirAll on the parent succeeding, so the failure is the final
+	// os.WriteFile, and unlike a chmod it also fails when tests run as root.
+	server.beforeNotModified.Store(func() {
+		if err := os.Remove(path); err != nil {
+			t.Errorf("removing cache file: %v", err)
+			return
+		}
+		if err := os.Mkdir(path, 0755); err != nil {
+			t.Errorf("replacing cache file with a directory: %v", err)
+		}
+	})
+
+	names, res, err := CachedListIn(t.Context(), server.Client(), repo, CachedListOptions{}, dir)
+	if err != nil {
+		t.Fatalf("expected revalidation to succeed despite the cache write failure, got: %v", err)
+	}
+	if got := server.notModified.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 conditional 304, got %d", got)
+	}
+	if !slices.Equal(names, seeded) {
+		t.Errorf("expected the cached names %v to survive the write failure, got %v", seeded, names)
+	}
+	if len(names) == 0 {
+		t.Fatal("expected a non-empty listing despite the cache write failure")
+	}
+	if !res.FromCache {
+		t.Errorf("expected FromCache on a 304 revalidation, got %+v", res)
+	}
+	if res.Stale {
+		t.Errorf("a 304 revalidation is not a stale fallback, got %+v", res)
+	}
+	if res.WriteErr == nil {
+		t.Fatal("expected CacheResult.WriteErr to report the revalidation cache write failure")
+	}
+	var pathErr *fs.PathError
+	if !errors.As(res.WriteErr, &pathErr) || pathErr.Path != path {
+		t.Errorf("expected WriteErr to wrap an os.WriteFile failure for %s, got %v", path, res.WriteErr)
 	}
 }
 

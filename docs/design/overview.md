@@ -447,11 +447,22 @@ Design decisions (verified with the user, 2026-08):
   (`splitCatalogArg`, errors when both are given and conflict).
 - Catalog operations reject a `Definitions` override (component-scoped,
   same conflict as `--component` + `-C`).
-- **Listing cache** (`catalog/cache.go`): `CatalogList` uses
-  `catalog.CachedList`, a per-repo TTL+ETag cache stored as
-  `<catalog.CacheDir>/list-<repo>.json` (`CacheDir` defaults to
-  `os.UserCacheDir()/updex`; empty disables caching; package var,
-  test-overridable — the updex test helper always redirects it). Entry:
+- **Listing cache** (`catalog/cache.go`): `CatalogList` calls
+  `catalog.CachedListIn` with the per-client cache directory the `Client`
+  captured at construction (`c.paths.catalogCacheDir`), a per-repo
+  TTL+ETag cache stored as `<catalogCacheDir>/list-<repo>.json`.
+  `NewClient` resolves that directory once from
+  `RuntimePaths.CatalogCacheDir`: an explicit path wins, the
+  `DisableCatalogCache` sentinel disables caching (empty dir), and an
+  unset field falls back to the package-global `catalog.CacheDir` read at
+  that moment (default `os.UserCacheDir()/updex`; empty disables caching).
+  Because the value is captured, mutating `catalog.CacheDir` afterwards
+  does not redirect an existing client — a caller wanting a different
+  directory passes `RuntimePaths.CatalogCacheDir` or builds a new client
+  (the updex test helper redirects the global *before* constructing its
+  client). `catalog.CachedList` is only the process-global convenience
+  wrapper that forwards `catalog.CacheDir`; SDK internals do not use it.
+  Entry:
   `{list_url, etag, fetched_at, names}`; `list_url` mismatch invalidates.
   Flow: age < TTL (default 60 min, `DefaultListCacheTTL`) → serve cache,
   zero network; expired → conditional GET with `If-None-Match` (GitHub's
@@ -462,7 +473,8 @@ Design decisions (verified with the user, 2026-08):
   `NoCache` (CLI `--no-cache` on list/search; named to avoid colliding
   with the global `--no-refresh` sysext flag) always fetches live and
   rewrites the cache. Reads/writes are best-effort — corrupt entries are
-  misses, write failures ignored. Only the ListURL enumeration is cached;
+  misses, write failures never fail the list operation but are reported via
+  `CacheResult.WriteErr` (SDK warns). Only the ListURL enumeration is cached;
   `FetchConf` and Installed/Enabled state are always live.
 - `config.EtcComponentDir` now derives from `SearchRoots[0]` (still `/etc`
   in production) so catalog/drop-in write paths are exercisable in tests

@@ -1,6 +1,7 @@
 package updex
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -20,6 +21,32 @@ import (
 	"github.com/frostyard/updex/internal/testutil"
 	"github.com/frostyard/updex/sysext"
 )
+
+// recordingReporter is a minimal reporter.Reporter that only captures
+// Warning calls, for asserting a specific warning was surfaced.
+type recordingReporter struct {
+	warnings []string
+}
+
+func (r *recordingReporter) Step(int, int, string)       {}
+func (r *recordingReporter) Progress(int, string)        {}
+func (r *recordingReporter) Message(string, ...any)      {}
+func (r *recordingReporter) MessagePlain(string, ...any) {}
+func (r *recordingReporter) Warning(format string, args ...any) {
+	r.warnings = append(r.warnings, fmt.Sprintf(format, args...))
+}
+func (r *recordingReporter) Error(error, string)  {}
+func (r *recordingReporter) Complete(string, any) {}
+func (r *recordingReporter) IsJSON() bool         { return false }
+
+func (r *recordingReporter) hasWarningContaining(substr string) bool {
+	for _, w := range r.warnings {
+		if strings.Contains(w, substr) {
+			return true
+		}
+	}
+	return false
+}
 
 type catalogPathRunner struct {
 	refreshErr error
@@ -1661,5 +1688,70 @@ func TestCatalogAdd_ThenStandardLifecycle(t *testing.T) {
 	}
 	if !config.IsFeatureEnabled(features, "zoxide") {
 		t.Error("expected zoxide enabled after standard EnableFeature")
+	}
+}
+
+// TestCatalogList_CacheWriteFailureIsReportedNotFatal verifies that a
+// listing cache that cannot be written still yields a successful CatalogList
+// result, and that the write failure is surfaced through the Progress
+// reporter's warning path (c.warn in CatalogList) rather than silently
+// dropped — CacheResult.WriteErr alone is not visible to SDK/CLI users.
+func TestCatalogList_CacheWriteFailureIsReportedNotFatal(t *testing.T) {
+	withComponentSearchRoots(t)
+	catalogRoot := withCatalogConfigRoots(t)
+
+	names := []string{"zoxide", "btop"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		type contentsEntry struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		}
+		entries := make([]contentsEntry, 0, len(names))
+		for _, n := range names {
+			entries = append(entries, contentsEntry{Name: n, Type: "dir"})
+		}
+		_ = json.NewEncoder(w).Encode(entries)
+	}))
+	t.Cleanup(server.Close)
+	writeCatalogRepo(t, catalogRoot, "fedora", server.URL, server.URL)
+
+	// The cache file path itself is a pre-existing directory, so the
+	// listing cache write fails while the live listing still succeeds.
+	cacheDir := t.TempDir()
+	cachePath := filepath.Join(cacheDir, "list-fedora.json")
+	if err := os.Mkdir(cachePath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	reporter := &recordingReporter{}
+	client := NewClient(ClientConfig{
+		Progress: reporter,
+		Paths:    RuntimePaths{CatalogCacheDir: cacheDir},
+	})
+
+	entries, err := client.CatalogList(t.Context(), CatalogListOptions{})
+	if err != nil {
+		t.Fatalf("expected CatalogList to succeed despite the cache write failure, got: %v", err)
+	}
+	got := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		got[e.Name] = true
+	}
+	for _, name := range names {
+		if !got[name] {
+			t.Errorf("missing expected entry %q in listing %+v", name, entries)
+		}
+	}
+
+	if !reporter.hasWarningContaining("failed to persist listing cache") {
+		t.Errorf("expected a warning referencing the cache write failure, got warnings: %v", reporter.warnings)
+	}
+	for label, path := range map[string]string{
+		"cache directory": cacheDir,
+		"cache path":      cachePath,
+	} {
+		if reporter.hasWarningContaining(path) {
+			t.Errorf("expected warning to omit the absolute %s %q, got warnings: %v", label, path, reporter.warnings)
+		}
 	}
 }
