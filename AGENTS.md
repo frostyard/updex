@@ -50,6 +50,9 @@ repo-specific guidance belongs in this file or `docs/`:
   [`golangci-lint`](https://golangci-lint.run/) for `make lint` — `make ci`
   requires the exact release `mise.toml` pins (`mise install` provisions it;
   `make lint-version-check` fails with that instruction when it is absent),
+  [`govulncheck`](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck) for
+  `make security` (also pinned in `mise.toml`; `make ci` fails with the
+  install instruction when it is absent, never skips),
   [`svu`](https://github.com/caarlos0/svu) for release tagging, Node ≥ 20 for
   the docs-integrity gate
 
@@ -67,7 +70,7 @@ make test         # Run all tests
 make lint         # Run golangci-lint (.golangci.yml; fails if not installed)
 make check        # fmt + lint + test (mutating: fmt rewrites files)
 make verify       # Non-mutating, credential-free gate for read-only reviewers: tidy diff, vet, gofmt -l, exact-pin lint, non-E2E tests
-make ci           # Credential-free gate matching CI's fail-fast order (verify-static, then coverage, E2E, race, cross-build)
+make ci           # Credential-free gate matching CI's fail-fast order (verify-static, security scan, then coverage, E2E, race, cross-build)
 make test-cover   # Tests with HTML coverage report
 make coverage-check        # Enforce the absolute floor and committed coverage ratchet
 make test-coverage-check   # Self-test scripts/check-coverage.sh with fixture profiles
@@ -81,8 +84,11 @@ Run a single test: `go test -v -run TestName ./updex/`
 Build workflow: make code changes → `make fmt` → `make build` → smoke-test
 with `./build/updex --help`. Use `make check` for the quick development loop.
 Run `make ci` before opening a pull request. It checks module tidiness, vet,
-formatting, lint, non-E2E unit and race tests, the separate black-box E2E
-suite, and Linux amd64/arm64 builds, and requires `golangci-lint`. The lint
+formatting, lint, the `govulncheck` security scan (`make security`), non-E2E
+unit and race tests, the separate black-box E2E suite, and Linux amd64/arm64
+builds, and requires `golangci-lint` and `govulncheck` — both pinned in
+`mise.toml` and installed by `mise install`; neither is optional, and a
+missing binary fails the gate instead of skipping. The lint
 step first runs `make lint-version-check`, which fails unless the installed
 `golangci-lint` matches the pin in `mise.toml` (currently 2.13.1) and was
 built with a Go no older than `go.mod`'s toolchain — the CI Lint job installs
