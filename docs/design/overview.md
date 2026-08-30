@@ -462,7 +462,8 @@ Design decisions (verified with the user, 2026-08):
   `NoCache` (CLI `--no-cache` on list/search; named to avoid colliding
   with the global `--no-refresh` sysext flag) always fetches live and
   rewrites the cache. Reads/writes are best-effort — corrupt entries are
-  misses, write failures ignored. Only the ListURL enumeration is cached;
+  misses, write failures never fail the list operation but are reported via
+  `CacheResult.WriteErr` (SDK warns). Only the ListURL enumeration is cached;
   `FetchConf` and Installed/Enabled state are always live.
 - `config.EtcComponentDir` now derives from `SearchRoots[0]` (still `/etc`
   in production) so catalog/drop-in write paths are exercisable in tests

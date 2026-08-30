@@ -1,15 +1,13 @@
 package catalog
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"log/slog"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -332,13 +330,13 @@ func TestCachedList_DisabledCacheDir(t *testing.T) {
 
 func TestSaveListCache_ReturnsErrorOnWriteFailure(t *testing.T) {
 	dir := t.TempDir()
-	blocked := filepath.Join(dir, "blocked")
-	if err := os.WriteFile(blocked, []byte("not a directory"), 0644); err != nil {
+	// path is itself a pre-existing directory: MkdirAll(filepath.Dir(path))
+	// succeeds because the parent (dir) already exists, but the final
+	// os.WriteFile at path fails because path is a directory, not a file.
+	path := filepath.Join(dir, "list-fedora.json")
+	if err := os.Mkdir(path, 0755); err != nil {
 		t.Fatal(err)
 	}
-	// blocked is a file, so MkdirAll(filepath.Dir(path), ...) below it fails
-	// regardless of the effective user's permissions.
-	path := filepath.Join(blocked, "list-fedora.json")
 
 	err := saveListCache(path, &listCacheEntry{
 		ListURL:   "https://example.com",
@@ -346,26 +344,30 @@ func TestSaveListCache_ReturnsErrorOnWriteFailure(t *testing.T) {
 		Names:     []string{"a"},
 	})
 	if err == nil {
-		t.Fatal("expected error when the cache directory path is blocked by a file")
+		t.Fatal("expected error when the cache file path is itself a directory")
+	}
+	var pathErr *fs.PathError
+	if !errors.As(err, &pathErr) {
+		t.Fatalf("expected an *fs.PathError from os.WriteFile, got %v", err)
+	}
+	if pathErr.Path != path {
+		t.Fatalf("expected the failure to be for the cache file %s (os.WriteFile), got %s (an os.MkdirAll error would name the parent directory instead)", path, pathErr.Path)
 	}
 }
 
-func TestCachedListIn_WriteFailureIsLoggedNotFatal(t *testing.T) {
+func TestCachedListIn_WriteFailureIsReportedNotFatal(t *testing.T) {
 	dir := t.TempDir()
-	blocked := filepath.Join(dir, "blocked")
-	if err := os.WriteFile(blocked, []byte("not a directory"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	var buf bytes.Buffer
-	original := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	t.Cleanup(func() { slog.SetDefault(original) })
-
 	server := newListServer(t)
 	repo := server.repo()
 
-	names, res, err := CachedListIn(t.Context(), server.Client(), repo, CachedListOptions{}, blocked)
+	// The cache file path itself is a pre-existing directory: MkdirAll on
+	// its parent (dir) succeeds, but the final os.WriteFile fails.
+	path := filepath.Join(dir, "list-"+repo.Name+".json")
+	if err := os.Mkdir(path, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	names, res, err := CachedListIn(t.Context(), server.Client(), repo, CachedListOptions{}, dir)
 	if err != nil {
 		t.Fatalf("expected the list operation to succeed despite the cache write failure, got: %v", err)
 	}
@@ -375,8 +377,12 @@ func TestCachedListIn_WriteFailureIsLoggedNotFatal(t *testing.T) {
 	if res.FromCache {
 		t.Errorf("expected a live result, got %+v", res)
 	}
-	if !strings.Contains(buf.String(), "failed to write list cache") {
-		t.Errorf("expected the cache write failure to be logged, got log output: %q", buf.String())
+	if res.WriteErr == nil {
+		t.Fatal("expected CacheResult.WriteErr to report the cache write failure")
+	}
+	var pathErr *fs.PathError
+	if !errors.As(res.WriteErr, &pathErr) || pathErr.Path != path {
+		t.Errorf("expected WriteErr to wrap an os.WriteFile failure for %s, got %v", path, res.WriteErr)
 	}
 }
 

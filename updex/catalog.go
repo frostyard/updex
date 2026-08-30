@@ -96,6 +96,9 @@ func (c *Client) CatalogList(ctx context.Context, opts CatalogListOptions) ([]Ca
 			c.msg("Using cached listing for %q (age %s); use --no-cache to refresh",
 				repo.Name, cacheRes.Age.Round(time.Minute))
 		}
+		if cacheRes.WriteErr != nil {
+			c.warn("failed to persist listing cache for %q: %v", repo.Name, cacheRes.WriteErr)
+		}
 
 		features, err := config.LoadComponentFeaturesIn(repo.Component, c.paths.definitionRoots)
 		if err != nil {
