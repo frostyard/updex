@@ -24,6 +24,8 @@ The ones that bind updex:
 - [ADR-0034 — Cancel stale rolling dev releases](https://github.com/frostyard/core/blob/main/docs/adr/0034-cancel-stale-rolling-dev-releases.md) — snapshot.yml's `goreleaser-nightly` concurrency group with `cancel-in-progress: true`, `workflow_run` on Tests/main, and the success guard; pinned by `updex/snapshot_workflow_contract_test.go`
 - [ADR-0038 — make ci stays canonical; the test-name filter is chairlift-only](https://github.com/frostyard/core/blob/main/docs/adr/0038-scope-the-test-name-filter-to-chairlift.md) — `make ci` mirrors updex's credential-free CI jobs while all hermetic tests run without name filtering
 - [ADR-0042 — A merge queue on the default branch](https://github.com/frostyard/core/blob/main/docs/adr/0042-adopt-a-merge-queue-on-the-default-branch.md) — every workflow producing a required check also triggers on `merge_group`; `pr-title.yml` skips its lint step there rather than excluding the job
+- [ADR-0043 — Pin repository tools in mise](https://github.com/frostyard/core/blob/main/docs/adr/0043-pin-repository-tools-in-mise.md) — `mise.toml`/`mise.lock` pin and verify `golangci-lint`; the Makefile derives `GOLANGCI_LINT_VERSION` from `mise.toml` for `make lint-version-check`
+- [ADR-0044 — Expose the make gate triad in every repository](https://github.com/frostyard/core/blob/main/docs/adr/0044-expose-the-make-gate-triad-in-every-repository.md) — the Makefile's `verify`, `check`, and `ci` targets
 
 When changing behavior covered by one of these, update or supersede the ADR
 in frostyard/core first, then change this repo in the same effort.
