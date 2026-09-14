@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/frostyard/updex/internal/testutil"
-	"github.com/frostyard/updex/sysext"
-	"github.com/frostyard/updex/version"
+	"github.com/frostyard/updex/v2/internal/testutil"
+	"github.com/frostyard/updex/v2/sysext"
+	"github.com/frostyard/updex/v2/version"
 	"github.com/klauspost/compress/zstd"
 )
 

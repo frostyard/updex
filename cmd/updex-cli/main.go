@@ -4,7 +4,7 @@ import (
 	"os"
 
 	"github.com/frostyard/clix"
-	"github.com/frostyard/updex/cmd/updex"
+	"github.com/frostyard/updex/v2/cmd/updex"
 )
 
 var (

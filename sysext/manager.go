@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/frostyard/updex/config"
-	"github.com/frostyard/updex/version"
+	"github.com/frostyard/updex/v2/config"
+	"github.com/frostyard/updex/v2/version"
 )
 
 // parseTargetPatterns extracts and parses the version patterns from a transfer's

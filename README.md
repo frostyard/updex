@@ -13,7 +13,7 @@ review, and automation signals.
 
 **updex** provides two ways to manage system extensions:
 
-1. **Go Library (SDK)**: Import `github.com/frostyard/updex/updex` in your Go applications for programmatic control
+1. **Go Library (SDK)**: Import `github.com/frostyard/updex/v2/updex` in your Go applications for programmatic control
 2. **CLI Tool**: Use the `updex` command-line tool as a thin wrapper around the SDK
 
 Designed for systems like Debian Trixie that don't ship with `systemd-sysupdate`.
@@ -85,7 +85,7 @@ make install
 Using updex as a Go library requires Go 1.26.6 or newer:
 
 ```bash
-go get github.com/frostyard/updex/updex
+go get github.com/frostyard/updex/v2/updex
 ```
 
 ## Library (SDK) Usage
@@ -96,7 +96,7 @@ Create a module for the example:
 mkdir updex-quickstart
 cd updex-quickstart
 go mod init example.com/updex-quickstart
-go get github.com/frostyard/updex/updex
+go get github.com/frostyard/updex/v2/updex
 ```
 
 Save the following as `main.go`. The SDK is built around a `Client` struct
@@ -110,7 +110,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/frostyard/updex/updex"
+    "github.com/frostyard/updex/v2/updex"
 )
 
 func main() {

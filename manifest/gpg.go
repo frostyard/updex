@@ -10,7 +10,7 @@ import (
 
 	"github.com/ProtonMail/go-crypto/openpgp"
 
-	"github.com/frostyard/updex/internal/retry"
+	"github.com/frostyard/updex/v2/internal/retry"
 )
 
 // KeyringPaths are the filesystem locations checked, in order, for the GPG

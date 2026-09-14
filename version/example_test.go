@@ -3,7 +3,7 @@ package version_test
 import (
 	"fmt"
 
-	"github.com/frostyard/updex/version"
+	"github.com/frostyard/updex/v2/version"
 )
 
 func ExampleParsePattern() {

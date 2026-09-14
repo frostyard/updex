@@ -16,10 +16,10 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/frostyard/updex/catalog"
-	"github.com/frostyard/updex/config"
-	"github.com/frostyard/updex/internal/testutil"
-	"github.com/frostyard/updex/sysext"
+	"github.com/frostyard/updex/v2/catalog"
+	"github.com/frostyard/updex/v2/config"
+	"github.com/frostyard/updex/v2/internal/testutil"
+	"github.com/frostyard/updex/v2/sysext"
 )
 
 // recordingReporter is a minimal reporter.Reporter that only captures

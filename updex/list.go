@@ -6,9 +6,9 @@ import (
 	"maps"
 	"slices"
 
-	"github.com/frostyard/updex/config"
-	"github.com/frostyard/updex/manifest"
-	"github.com/frostyard/updex/version"
+	"github.com/frostyard/updex/v2/config"
+	"github.com/frostyard/updex/v2/manifest"
+	"github.com/frostyard/updex/v2/version"
 )
 
 // getAvailableVersions retrieves available versions for a transfer from remote manifest.

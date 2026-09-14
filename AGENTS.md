@@ -322,7 +322,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/frostyard/updex/updex"
+    "github.com/frostyard/updex/v2/updex"
 )
 
 func main() {

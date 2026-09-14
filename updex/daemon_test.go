@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/frostyard/updex/systemd"
+	"github.com/frostyard/updex/v2/systemd"
 )
 
 func newDaemonTestClient(t *testing.T, runner systemd.SystemctlRunner) (*Client, string) {
