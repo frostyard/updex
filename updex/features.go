@@ -195,6 +195,17 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 		DryRun:  opts.DryRun,
 	}
 
+	// --now installs, and every install ends in a link. Refuse a runner
+	// that cannot be told where to link before the drop-in is written, so
+	// the feature is not left enabled with nothing staged.
+	if opts.Now && !opts.DryRun {
+		if err := c.requireLinkableRunner(); err != nil {
+			result.Error = err.Error()
+			c.warn("%s", result.Error)
+			return result, err
+		}
+	}
+
 	features, transfers, err := c.loadDomain(opts.Component)
 	if err != nil {
 		result.Error = err.Error()

@@ -48,6 +48,21 @@ directory. `sysext.GetActiveVersionIn` additionally receives the captured
 merged-image directory. The original package functions remain compatibility
 wrappers over their package variables or production constants.
 
+An injected `SysextRunner` is the one place that invariant depends on the
+caller. The client links through `sysext.PathSysextRunner`
+(`SysextRunner` plus `LinkToSysextAt(*config.Transfer, string) error`),
+handing it the captured `SysextLinkDir`. A runner that implements only the
+original four-method `SysextRunner` cannot be told a directory, so the client
+does **not** fall back to `sysext.SysextDir` for it: every operation that may
+link refuses such a runner with `updex.ErrLegacySysextRunner` (testable with
+`errors.Is`) **before** it mutates anything —
+`CatalogAdd` before it writes a definition, `EnableFeature` with `Now` before
+it writes the drop-in, and `installTransfer` before it removes a legacy
+symlink or downloads. Dry runs never link and stay available to any runner.
+The `SysextRunner` interface itself is unchanged, so existing implementations
+still compile; adding `LinkToSysextAt` is what makes one usable for a real
+install. `sysext.DefaultRunner` and `sysext.MockRunner` both implement it.
+
 Other fields: if `SysextRunner` is nil it defaults to `&sysext.DefaultRunner{}`; if `SystemdManager` is nil it defaults to `systemd.NewManager()` for `/etc/systemd/system` and the real `systemctl`; if `Progress` is nil it defaults to `reporter.NoopReporter{}`; if `HTTPClient` is nil a default `http.Client` with a 10-minute timeout, the standard 10-redirect limit, and an HTTPS-to-HTTP downgrade refusal is created via `internal/httpclient.New` — the same constructor `manifest.Fetch` and `download.Download` fall back to when their own `httpClient` parameter is nil, so the refusal is enforced consistently everywhere a caller supplies no client. HTTP-to-HTTP and HTTPS-to-HTTPS redirects remain allowed. A caller-supplied `HTTPClient` is stored unchanged, including its redirect policy. `OnDownloadProgress` is called with the HTTP response content length (-1 if unknown) and must return a fresh `io.Writer` per attempt to avoid double-counting retried downloads.
 
 ## Methods
@@ -467,6 +482,7 @@ recorded in [ADR-0008](../adr/0008-bounded-retry-no-resume.md).
 ### `sysext`
 
 - `SysextRunner` interface — `Refresh()`, `Merge()`, `Unmerge()`, `LinkToSysext(*config.Transfer)` methods executed via `DefaultRunner` (real commands) or `MockRunner` (tests)
+- `PathSysextRunner` interface — `SysextRunner` plus `LinkToSysextAt(*config.Transfer, sysextDir string) error`. `updex.Client` links only through this interface, with the `SysextLinkDir` it captured at construction; a runner implementing only `SysextRunner` is refused with `updex.ErrLegacySysextRunner` rather than redirected to the package-global `SysextDir`. `DefaultRunner` and `MockRunner` both implement it; `MockRunner.LinkToSysextAtDir` records the directory it was given (and `LinkToSysextCalled` is set by either entry point)
 - `GetInstalledVersions(t *config.Transfer) ([]string, string, error)` — List installed + current version
 - `GetActiveVersion(t *config.Transfer) (string, error)` — Get the version considered active by updex: first a legacy `CurrentSymlink`, then an image name in `RunExtensionsDir` (`/run/extensions`)
 - `GetActiveVersionIn(t *config.Transfer, defaultDir, runExtensionsDir string) (string, error)` — Explicit-directory variant used by `updex.Client`; the sysext link directory (`/var/lib/extensions`) is only the fallback for locating a legacy `CurrentSymlink`, not evidence that an image is merged
