@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/frostyard/updex/catalog"
+	"github.com/frostyard/updex/v2/catalog"
 )
 
 func TestDefaultHTTPClientRejectsRedirectDowngrade(t *testing.T) {

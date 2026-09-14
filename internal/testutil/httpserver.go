@@ -14,7 +14,7 @@ import (
 
 	"github.com/ProtonMail/go-crypto/openpgp"
 
-	"github.com/frostyard/updex/manifest"
+	"github.com/frostyard/updex/v2/manifest"
 )
 
 // TestServerFiles configures the test HTTP server's responses.

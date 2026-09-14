@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/frostyard/updex/catalog"
-	"github.com/frostyard/updex/config"
-	"github.com/frostyard/updex/download"
-	"github.com/frostyard/updex/sysext"
-	"github.com/frostyard/updex/version"
+	"github.com/frostyard/updex/v2/catalog"
+	"github.com/frostyard/updex/v2/config"
+	"github.com/frostyard/updex/v2/download"
+	"github.com/frostyard/updex/v2/sysext"
+	"github.com/frostyard/updex/v2/version"
 )
 
 // catalogRepos loads the configured catalog repos, translating the empty

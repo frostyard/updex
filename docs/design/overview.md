@@ -131,7 +131,7 @@ CLI (cmd/daemon.go) ─┘                version, sysext, systemd
 
 ### Public API (Issue #13)
 
-All core packages (`config`, `version`, `download`, `manifest`, `sysext`, `systemd`) are exported as public API at `github.com/frostyard/updex/<package>`. This was an intentional decision: the types in these packages (e.g., `Transfer`, `Feature`, `Pattern`, `Manifest`) were designed with exported fields and are suitable for external consumption. Three packages stay module-internal: `internal/retry`, the bounded retry policy shared by `download` and `manifest` ([ADR-0008](../adr/0008-bounded-retry-no-resume.md)); `internal/httpclient`, the shared default `*http.Client` constructor (timeout plus HTTPS-to-HTTP downgrade refusal) that `updex.NewClient`, `manifest.Fetch`, and `download.Download` each fall back to when their caller supplies no client; and `internal/testutil`, the HTTP test server helpers.
+All core packages (`config`, `version`, `download`, `manifest`, `sysext`, `systemd`) are exported as public API at `github.com/frostyard/updex/v2/<package>`. This was an intentional decision: the types in these packages (e.g., `Transfer`, `Feature`, `Pattern`, `Manifest`) were designed with exported fields and are suitable for external consumption. Three packages stay module-internal: `internal/retry`, the bounded retry policy shared by `download` and `manifest` ([ADR-0008](../adr/0008-bounded-retry-no-resume.md)); `internal/httpclient`, the shared default `*http.Client` constructor (timeout plus HTTPS-to-HTTP downgrade refusal) that `updex.NewClient`, `manifest.Fetch`, and `download.Download` each fall back to when their caller supplies no client; and `internal/testutil`, the HTTP test server helpers.
 
 ### Version and pattern conventions
 

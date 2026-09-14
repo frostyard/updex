@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/frostyard/updex/config"
+	"github.com/frostyard/updex/v2/config"
 )
 
 // FeaturesOptions configures the Features listing operation.

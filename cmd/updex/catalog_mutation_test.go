@@ -12,11 +12,11 @@ import (
 	"testing"
 
 	"github.com/frostyard/clix"
-	"github.com/frostyard/updex/catalog"
-	"github.com/frostyard/updex/config"
-	"github.com/frostyard/updex/internal/testutil"
-	"github.com/frostyard/updex/sysext"
-	"github.com/frostyard/updex/updex"
+	"github.com/frostyard/updex/v2/catalog"
+	"github.com/frostyard/updex/v2/config"
+	"github.com/frostyard/updex/v2/internal/testutil"
+	"github.com/frostyard/updex/v2/sysext"
+	"github.com/frostyard/updex/v2/updex"
 	"github.com/spf13/cobra"
 )
 

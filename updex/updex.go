@@ -22,12 +22,12 @@ import (
 	"time"
 
 	"github.com/frostyard/std/reporter"
-	"github.com/frostyard/updex/catalog"
-	"github.com/frostyard/updex/config"
-	"github.com/frostyard/updex/download"
-	"github.com/frostyard/updex/internal/httpclient"
-	"github.com/frostyard/updex/sysext"
-	"github.com/frostyard/updex/systemd"
+	"github.com/frostyard/updex/v2/catalog"
+	"github.com/frostyard/updex/v2/config"
+	"github.com/frostyard/updex/v2/download"
+	"github.com/frostyard/updex/v2/internal/httpclient"
+	"github.com/frostyard/updex/v2/sysext"
+	"github.com/frostyard/updex/v2/systemd"
 )
 
 // RuntimePaths holds the filesystem paths an updex.Client consults at

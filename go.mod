@@ -1,4 +1,4 @@
-module github.com/frostyard/updex
+module github.com/frostyard/updex/v2
 
 go 1.26.6
 

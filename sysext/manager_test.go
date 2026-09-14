@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/frostyard/updex/config"
+	"github.com/frostyard/updex/v2/config"
 )
 
 func TestGetInstalledVersions(t *testing.T) {

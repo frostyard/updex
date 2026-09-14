@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/frostyard/clix"
-	"github.com/frostyard/updex/updex"
+	"github.com/frostyard/updex/v2/updex"
 	"github.com/spf13/cobra"
 )
 

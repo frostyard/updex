@@ -17,7 +17,7 @@ import (
 	"github.com/ProtonMail/go-crypto/openpgp"
 	"github.com/ProtonMail/go-crypto/openpgp/armor"
 
-	"github.com/frostyard/updex/internal/retry"
+	"github.com/frostyard/updex/v2/internal/retry"
 )
 
 func TestVerifySignature(t *testing.T) {

@@ -1,6 +1,6 @@
 # SDK API Reference
 
-The `updex` package (`github.com/frostyard/updex/updex`) is the primary public API. All operations go through the `Client` struct.
+The `updex` package (`github.com/frostyard/updex/v2/updex`) is the primary public API. All operations go through the `Client` struct.
 
 ## Client
 

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/frostyard/updex/config"
+	"github.com/frostyard/updex/v2/config"
 	"gopkg.in/ini.v1"
 )
 
