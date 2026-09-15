@@ -67,7 +67,7 @@ make test         # Run all tests
 make lint         # Run golangci-lint (.golangci.yml; fails if not installed)
 make check        # fmt + lint + test (mutating: fmt rewrites files)
 make verify       # Non-mutating, credential-free gate for read-only reviewers: tidy diff, vet, gofmt -l, exact-pin lint, non-E2E tests
-make ci           # Credential-free gate matching CI's fail-fast order (verify-static, then coverage, E2E, race, cross-build)
+make ci           # Credential-free gate matching CI's fail-fast order (verify-static, docs integrity, then coverage, E2E, race, cross-build)
 make test-cover   # Tests with HTML coverage report
 make coverage-check        # Enforce the absolute floor and committed coverage ratchet
 make test-coverage-check   # Self-test scripts/check-coverage.sh with fixture profiles
@@ -81,7 +81,9 @@ Run a single test: `go test -v -run TestName ./updex/`
 Build workflow: make code changes → `make fmt` → `make build` → smoke-test
 with `./build/updex --help`. Use `make check` for the quick development loop.
 Run `make ci` before opening a pull request. It checks module tidiness, vet,
-formatting, lint, non-E2E unit and race tests, the separate black-box E2E
+formatting, lint, docs integrity (the same `make test-docs-check` and
+`node scripts/check-docs.mjs` the `docs-gate` CI job runs, so it needs Node.js
+too), non-E2E unit and race tests, the separate black-box E2E
 suite, and Linux amd64/arm64 builds, and requires `golangci-lint`. The lint
 step first runs `make lint-version-check`, which fails unless the installed
 `golangci-lint` matches the pin in `mise.toml` (currently 2.13.1) and was
@@ -648,8 +650,8 @@ their canonical targets, never the aliases. `docs/review-rubric.md`,
 2. Keep changes focused; unrelated fixes belong in a separate PR.
 3. Use Conventional Commits for commit messages **and the pull request
    title** (see [Commits & Pull Requests](#commits--pull-requests)).
-4. Run `make fmt`, `make ci`, and `node scripts/check-docs.mjs` and make
-   sure they pass.
+4. Run `make fmt` and `make ci` (which now includes the docs-integrity
+   gate) and make sure they pass.
 5. Update the documentation and add tests for your change.
 6. Classify the change using the [risk tier guide](docs/risk-tiers.md) and
    include the tier rationale in the pull request
