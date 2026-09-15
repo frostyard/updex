@@ -131,8 +131,18 @@ uploading identically named assets. Checkout is pinned to the triggering
 Tests run succeeded. The newest successful test run supersedes older snapshot
 work.
 
-`.github/workflows/release.yml` runs only for tag pushes. After publishing the
-tagged release and packages, it must dispatch `event-type: build` to
+`.github/workflows/release.yml` runs only for tag pushes. Its `CI gate` job
+(`gate`) runs `make ci` — the same credential-free gate a developer runs and
+the pull-request jobs give `main` — with `permissions: contents: read`, and the
+publishing `goreleaser` job declares `needs: gate`. A tag can point at any
+commit, including one the Tests workflow never saw green, so without that
+dependency a failing commit could publish an attested release; with it,
+GoReleaser, the provenance attestation, the R2 publish, and the snosi dispatch
+are all skipped when the gate fails. The gate installs only what the Tests
+workflow already installs (`actions/setup-go` from `go.mod`, and
+`jdx/mise-action` for the `mise.lock`-verified `golangci-lint`).
+After publishing the tagged release and packages, it must dispatch
+`event-type: build` to
 `frostyard/snosi` without a default-branch ref guard: a tag run's ref is
 `refs/tags/<tag>`, never `refs/heads/<default>`.
 The `Release config` job in `.github/workflows/test.yml` runs the same
@@ -150,7 +160,11 @@ and (`TestReleaseWorkflowAttestsBuildProvenance`) that the workflow grants
 `id-token: write` + `attestations: write` and runs a SHA-pinned
 `actions/attest-build-provenance` over `checksums.txt` and the release assets,
 so every tag release carries GitHub build provenance
-(`gh attestation verify <artifact> --repo frostyard/updex`).
+(`gh attestation verify <artifact> --repo frostyard/updex`), and
+(`TestReleaseWorkflowGatesPublishOnCI`) that the `goreleaser` job `needs:` a
+job which checks the tree out, sets Go up from `go.mod`, runs `make ci`, and
+holds only `contents: read` — the tag workflow never runs on a pull request,
+so these tests are its only pre-merge gate.
 `updex/workflow_pins_contract_test.go` pins the core ADR-0021 shape of every
 workflow under `.github/workflows/`: each external `uses:` is a full
 40-character commit SHA with a `# <version>` comment, the same SHA carries
