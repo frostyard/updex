@@ -21,6 +21,16 @@ directories (systemd-sysupdate "components", sysupdate.d(5) "Components"),
 with the same priority order per component: e.g.
 `/etc/sysupdate.docker.d/` overrides `/usr/lib/sysupdate.docker.d/`. `<name>`
 must match `[a-zA-Z0-9_-]+`.
+Moving a sysext's files from `/usr/lib/sysupdate.d/` to a named directory
+gives it an independent versioning scope, for example:
+
+```
+/usr/lib/sysupdate.docker.d/docker.transfer
+/usr/lib/sysupdate.docker.d/docker.feature
+```
+
+`updex components` lists discovered component names, source directories and
+feature counts.
 
 By default (no `-C`/`--definitions`, no `--component`), updex's config
 domain is the **union** of the legacy default `sysupdate.d/` directory above
@@ -33,19 +43,25 @@ component discovery entirely and behaves exactly as before components
 existed. See [design/overview.md — Components](../design/overview.md#components-configcomponentgo)
 for the full design; the scope-resolution contract is pinned by
 [ADR-0001](../adr/0001-read-domain-resolution-via-loaddomain.md).
+Enabling or disabling a named-component feature writes
+`/etc/sysupdate.<name>.d/<feature>.feature.d/00-updex.conf`; a legacy default
+or `-C`-loaded feature writes
+`/etc/sysupdate.d/<feature>.feature.d/00-updex.conf`.
 
 ## Feature Files (`.feature`)
 
 Define a named feature that groups one or more transfers.
 
 **Filename**: `<name>.feature` (e.g., `devel.feature`)
+For a packaged optional feature, `/usr/lib/sysupdate.d/devel.feature` can
+start disabled and be enabled by a local drop-in:
 
 ```ini
 [Feature]
 Description=Developer tools and headers
 Documentation=https://example.com/docs/devel
 AppStream=https://example.com/appstream/devel.xml
-Enabled=true
+Enabled=false
 ```
 
 | Key | Type | Description |
@@ -53,7 +69,7 @@ Enabled=true
 | `Description` | string | Human-readable description |
 | `Documentation` | string | URL to documentation |
 | `AppStream` | string | AppStream catalog XML URL (parsed by `config` package but not surfaced in the SDK's `FeatureInfo` result) |
-| `Enabled` | bool | Whether the feature is active (`true`/`false`) |
+| `Enabled` | bool | Whether the feature is active (`true`/`false`); default `false` |
 
 ### Masked features
 
@@ -62,6 +78,9 @@ A feature is **masked** when its file is a symlink to `/dev/null`. `LoadFeatures
 ### Drop-in files
 
 Features support drop-in overrides in `<name>.feature.d/*.conf` directories alongside the feature file. Drop-ins are applied in alphabetical order and can override any `[Feature]` setting. updex itself writes exactly one drop-in, `00-updex.conf`, which sorts first so administrator drop-ins always override it (see [ADR-0004](../adr/0004-single-updex-drop-in.md)).
+Use `sudo updex features enable devel` to enable a feature; add `--now` to
+download its extensions immediately. A manual drop-in with `[Feature]` and
+`Enabled=true` can also enable it.
 
 Example: `/etc/sysupdate.d/devel.feature.d/99-override.conf`
 ```ini
@@ -74,6 +93,11 @@ Enabled=false
 Define how a single component (e.g., a kernel image, extension image) is downloaded, verified, and installed.
 
 **Filename**: `<component>.transfer` (e.g., `kernel.transfer`)
+For example, `/etc/sysupdate.d/myext.transfer` can use
+`Source.Path=https://example.com/sysexts` and
+`MatchPattern=myext_@v.raw.xz` to install decompressed
+`myext_@v.raw` files under `/var/lib/extensions.d` (the sections and keys
+are shown below).
 
 ### Masked transfers
 
@@ -101,7 +125,7 @@ MatchPattern=component_@v.raw
 Mode=0644
 ```
 
-### `[Transfer]` section
+### [Transfer] Section
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -113,6 +137,10 @@ Mode=0644
 | `RequisiteFeatures` | string list | — | AND logic: transfer activates only if *all* listed features are enabled |
 
 `config.FilterTransfersByFeatures` implements the full active-transfer rules: standalone transfers are included when no feature requirements are set, `Features` is OR, `RequisiteFeatures` is AND, and both conditions must pass if both fields are set. Current feature-oriented SDK methods use `config.GetTransfersForFeature` instead, which treats a transfer as associated with a feature if the feature name appears in either list.
+For example, `Features=devel` associates the transfer with `devel.feature`.
+Omitting `Verify=` requires a GPG signature;
+`Verify=no` explicitly opts out, but the CLI `--verify` flag forces verification
+even for that transfer.
 
 ### `[Source]` section
 
@@ -122,17 +150,17 @@ Mode=0644
 | `Path` | string | Base URL for downloads; trailing slashes are trimmed during parsing |
 | `MatchPattern` | string | Filename pattern(s) with `@v` placeholder. Space-separated values define compression variants tried in order |
 
-### `[Target]` section
+### [Target] Section
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `Type` | string | — | Target type; must be empty or `regular-file` to be treated as a sysext transfer. Any other value — including `directory` and native OS images' `partition` — is silently skipped, see below |
+| Option | Type | Default | Description |
+| ------ | ---- | ------- | ----------- |
+| `Type` | string | (none) | May be omitted (implicit `regular-file`); non-`regular-file` values are silently skipped by sysext filtering |
 | `Path` | string | `/var/lib/extensions.d` | Staging directory for downloaded versioned files |
-| `PathRelativeTo` | string | — | Base directory `Path` is relative to (e.g. `boot`, used by the UKI's `/EFI/Linux` target); parsed but only meaningful for non-sysext OS transfers, see below |
+| `PathRelativeTo` | string | (none) | Base directory `Path` is relative to (e.g. `boot` for a UKI); when set, the non-sysext transfer is skipped entirely |
 | `MatchPattern` | string | — | Filename pattern with `@v` for installed files |
 | `CurrentSymlink` | string | — | Optional legacy staging symlink name; if configured and present, updex removes it during update |
-| `Mode` | uint32 | `0644` | File permissions |
-| `ReadOnly` | bool | `false` | Whether target should be read-only |
+| `Mode` | uint32 | `0644` | File permissions (octal) |
+| `ReadOnly` | bool | `false` | Parsed for sysupdate.d(5) compatibility; updex does not currently act on it |
 
 ### Non-sysext transfers (skipped, not errored)
 
@@ -163,6 +191,9 @@ In Go code, the `Transfer` struct stores both `MatchPattern` (first pattern, for
 ## Pattern Placeholders
 
 The `@v` placeholder is required in every `MatchPattern`. Additional placeholders are available:
+
+For example, `myext_@v.raw.xz` matches `myext_1.2.3.raw.xz` and
+`myext_2.0.0-rc1.raw.xz`; `kernel_@v.efi` matches `kernel_6.1.0.efi`.
 
 | Placeholder | Captures | Description |
 |-------------|----------|-------------|
@@ -258,3 +289,22 @@ Version candidates extracted from the manifest are deduplicated in a set and ret
 `InstancesMax` controls how many installed versions are normally retained. During `sysext.VacuumWithDetails`, a legacy active version pointed to by `CurrentSymlink` is always kept even if it would otherwise sort outside the retention window, and `ProtectVersion` is always kept as well. If `InstancesMax <= 0`, vacuum falls back to the default of `2`.
 
 Dry-run updates call `sysext.PlanVacuumAfterInstall` with the would-install version as the active-version override, which lets the SDK report `RemovedVersions` without touching disk. Real installs call `sysext.Vacuum`, so the update result currently does not include removed-version details for non-dry-run runs.
+
+## Remote Manifest Format
+
+The source base URL must contain `SHA256SUMS` with a SHA256 hash and filename
+per entry. Two spaces between the hash and filename are the standard format
+illustrated below, but the parser accepts any whitespace as a separator,
+including the `hash *filename` binary form (the leading `*` is removed):
+
+```
+0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  myext_1.0.0.raw.xz
+abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789  myext_1.1.0.raw.xz
+```
+
+When verification is enabled, provide a detached `SHA256SUMS.gpg` signature
+too. The manifest and detached signature fetches retry transient network
+failures and HTTP 5xx/429 with exponential backoff; response bodies are
+limited to 4 MiB and 1 MiB respectively. Oversized responses are rejected
+before parsing or signature verification. Signature verification follows the
+manifest fetch.

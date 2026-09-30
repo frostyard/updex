@@ -2,13 +2,110 @@
 
 The `updex` package (`github.com/frostyard/updex/v2/updex`) is the primary public API. All operations go through the `Client` struct.
 
+## Library (SDK) Usage
+
+Create a module for this example:
+
+```bash
+mkdir updex-quickstart
+cd updex-quickstart
+go mod init example.com/updex-quickstart
+go get github.com/frostyard/updex/v2/updex
+```
+
+Save as `main.go`:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    "github.com/frostyard/updex/v2/updex"
+)
+
+func main() {
+    client := updex.NewClient(updex.ClientConfig{Verify: true})
+    ctx := context.Background()
+
+    // List all features (union of the legacy default directory and every
+    // discovered systemd-sysupdate component). Use FeaturesOptions{Component: "docker"}
+    // to scope to one component instead.
+    features, err := client.Features(ctx)
+    if err != nil {
+        log.Fatal(err)
+    }
+    for _, feature := range features {
+        fmt.Printf("%s: enabled=%v (%s)\n", feature.Name, feature.Enabled, feature.Description)
+    }
+
+    components, err := client.Components(ctx)
+    if err != nil {
+        log.Fatal(err)
+    }
+    for _, component := range components {
+        fmt.Printf("%s: %s (%d features)\n", component.Name, component.SourceDir, component.FeatureCount)
+    }
+
+    daemon, err := client.DaemonStatus(ctx, updex.DaemonStatusOptions{})
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("daemon installed=%v active=%v\n", daemon.Installed, daemon.Active)
+
+    enabled, err := client.EnableFeature(ctx, "docker", updex.EnableFeatureOptions{Now: true})
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Println(enabled.NextActionMessage)
+
+    // A failed check still returns partial results with per-component errors.
+    checks, err := client.CheckFeatures(ctx, updex.CheckFeaturesOptions{})
+    if err != nil {
+        log.Printf("check incomplete: %v", err)
+    }
+    for _, feature := range checks {
+        for _, check := range feature.Results {
+            if check.Error != "" {
+                fmt.Printf("%s: could not check: %s\n", check.Component, check.Error)
+                continue
+            }
+            if check.UpdateAvailable {
+                fmt.Printf("%s: %s → %s\n", check.Component, check.CurrentVersion, check.NewestVersion)
+            }
+        }
+    }
+
+    updates, err := client.UpdateFeatures(ctx, updex.UpdateFeaturesOptions{})
+    if err != nil {
+        log.Fatal(err)
+    }
+    for _, feature := range updates {
+        for _, update := range feature.Results {
+            fmt.Printf("%s: version %s (downloaded=%v)\n", update.Component, update.Version, update.Downloaded)
+        }
+    }
+
+    _, err = client.DisableFeature(ctx, "docker", updex.DisableFeatureOptions{Now: true, Force: true})
+    if err != nil {
+        log.Fatal(err)
+    }
+}
+```
+
+Run `go run .` from the module directory. Enable, update and disable change
+system state: run the full example only on a configured test system with
+permission to manage extensions.
+
 ## Client
 
 ```go
 type Client struct { /* unexported fields */ }
 
 type ClientConfig struct {
-    Definitions        string                // Custom config file path (overrides search paths)
+    Definitions        string                // Custom directory of .transfer/.feature files (overrides search paths)
     Verify             bool                  // Enable GPG signature verification
     Verbose            bool                  // Enable debug output
     Progress           reporter.Reporter     // Progress reporter (optional)
@@ -23,9 +120,9 @@ type ClientConfig struct {
 // Zero values resolve to current production defaults at NewClient time.
 type RuntimePaths struct {
     DefinitionRoots    []string // Roots for sysupdate.d directories; default: config.SearchRoots
-    OSReleasePaths     []string // os-release files for specifier expansion; default: config.OSReleasePaths
+    OSReleasePaths     []string // os-release files for specifier expansion and image naming; default: config.OSReleasePaths
     CatalogConfigRoots []string // Dirs for *.catalog files; default: catalog.ConfigRoots
-    CatalogCacheDir    string   // Cache dir for catalog listings; default: catalog.CacheDir
+    CatalogCacheDir    string   // Cache dir for catalog listings; "" = default catalog.CacheDir; DisableCatalogCache = off
     CatalogTargetPath  string   // Staging dir for catalog transfers; default: catalog.TargetPath
     SysextLinkDir      string   // Dir for systemd-sysext image links; default: sysext.SysextDir
     RunExtensionsDir   string   // Dir for merged sysext images; default: sysext.RunExtensionsDir
@@ -39,6 +136,7 @@ func NewClient(cfg ClientConfig) *Client
 ```
 
 `NewClient` resolves `cfg.Paths` once at construction: each zero field reads its corresponding package-level compatibility variable or production constant exactly once and takes a defensive copy of slices. After construction the client never consults those package variables again, so mutating `config.SearchRoots`, `catalog.ConfigRoots`, `catalog.CacheDir`, or `sysext.SysextDir` cannot redirect the client. This is the ADR-0011 invariant: all runtime dependencies, including merged sysext state, are captured immutably at construction.
+Use `Paths` to give two clients different filesystem trees safely in one process.
 
 Path-dependent supporting-package APIs have explicit variants for SDK use:
 `config.Load*In` receives definition roots and, for transfers, os-release

@@ -102,6 +102,10 @@ same pull request.
 
 End-to-end tests live in `tests/e2e/` (entry point:
 [tests/e2e/README.md](tests/e2e/README.md)): black-box tests that build the real `updex` binary and run it as a subprocess against fake files and HTTP sources. Successful operations are read-only (no root required); mutating command variants are covered at the argument-validation boundary. CLI integration tests in `cmd/updex/` additionally override package search roots to exercise default component discovery and fake catalogs safely. Run both with `go test -v ./cmd/updex ./tests/e2e/...`.
+The E2E suite covers help, version, shell completion, argument and exit-code
+handling across command variants, configuration errors, and text/JSON feature
+listing and update checks. CLI integration tests also exercise `GITHUB_TOKEN`
+request authentication using a fake catalog server.
 
 ## Commits & Pull Requests
 
@@ -594,7 +598,7 @@ issue. Report it privately by emailing the maintainer at
   OR of the flag and the transfer setting, and omitting `Verify=` defaults the
   transfer setting to `yes`. Consequently, `--verify=false` cannot disable
   verification for a transfer that enables it. See the
-  [README transfer configuration](README.md#transfer-section) for the
+  [transfer configuration reference](docs/specs/config-reference.md#transfer-section) for the
   operator-facing reference.
 - **Build issues:** `make build` failing → check `go version` is 1.26.6+;
   dependency download failures → `make tidy`; a missing `golangci-lint`
