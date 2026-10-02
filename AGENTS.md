@@ -136,9 +136,13 @@ Tests run succeeded. The newest successful test run supersedes older snapshot
 work.
 
 `.github/workflows/release.yml` runs only for tag pushes. After publishing the
-tagged release and packages, it must dispatch `event-type: build` to
-`frostyard/snosi` without a default-branch ref guard: a tag run's ref is
-`refs/tags/<tag>`, never `refs/heads/<default>`.
+tagged release, it must request APT publication: a `repository_dispatch` of
+type `publish-deb` to `frostyard/apt-publisher` with the repository and tag,
+authenticated by `APT_PUBLISH_TOKEN`. The request has no ref guard (a tag run's
+ref is `refs/tags/<tag>`, never `refs/heads/<default>`) and is not
+`continue-on-error`. apt-publisher publishes the `.deb` files, then dispatches
+`build` to `frostyard/snosi` once they are installable, so this workflow
+neither publishes packages nor dispatches to snosi itself.
 The `Release config` job in `.github/workflows/test.yml` runs the same
 SHA-pinned GoReleaser Pro v2 action with `args: check` on pull requests, pushes
 to `main`, and merge-queue branches. Trusted runs fail when the Pro key is
@@ -148,8 +152,11 @@ run before merge. `updex/release_config_workflow_contract_test.go` pins the
 event coverage, least privileges, secret handling, and release/snapshot action
 parity.
 `updex/release_workflow_contract_test.go` pins the tag-only trigger and
-unguarded snosi dispatch required by
-[frostyard/core ADR-0013](https://github.com/frostyard/core/blob/main/docs/adr/0013-release-fanout-via-repository-dispatch.md),
+unguarded publication request required by
+[frostyard/core ADR-0055](https://github.com/frostyard/core/blob/main/docs/adr/0055-publish-debian-packages-through-the-apt-publisher.md)
+and
+[ADR-0056](https://github.com/frostyard/core/blob/main/docs/adr/0056-rebuild-images-after-apt-publication.md)
+(and that the workflow neither uses repogen nor dispatches to snosi),
 and (`TestReleaseWorkflowAttestsBuildProvenance`) that the workflow grants
 `id-token: write` + `attestations: write` and runs a SHA-pinned
 `actions/attest-build-provenance` over `checksums.txt` and the release assets,
