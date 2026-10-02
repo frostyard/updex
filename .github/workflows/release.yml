@@ -18,7 +18,48 @@ permissions:
   attestations: write
 
 jobs:
+  # A tag push is the only trigger that publishes, and it does not have to
+  # point at a commit the Tests workflow ever saw green (a tag on an old
+  # commit, on a branch, or on a `main` whose checks failed). This job runs
+  # the same credential-free gate `make ci` gives a developer and the pull
+  # request jobs give `main` — verify-static (tidy, vet, gofmt, pinned
+  # golangci-lint), unit tests with the coverage floor, e2e, the race
+  # detector, and the linux amd64/arm64 cross-builds — so a tag that fails
+  # them cannot reach GoReleaser, the provenance attestation, the R2
+  # publish, or the snosi dispatch below. It introduces no tooling the
+  # Tests workflow does not already install.
+  gate:
+    name: CI gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # Same mise.toml/mise.lock-pinned golangci-lint the Tests workflow's
+      # Lint job installs (core ADR-0043), so the gate's lint step cannot
+      # drift from the pull request's.
+      - name: Install pinned tools
+        uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        with:
+          install: true
+          install_args: golangci-lint
+          cache: true
+
+      - name: Run the CI gate
+        run: make ci
+
   goreleaser:
+    needs: gate
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
