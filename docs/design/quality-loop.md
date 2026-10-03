@@ -63,7 +63,9 @@ PR template ──► review rubric ──► CI gates ──► corrections ─
     *E2E Tests* ([tests/e2e/README.md](../../tests/e2e/README.md)), *Race
     Detection*, *Verify* (tidy, `go vet`, gofmt), and *Build* for linux
     amd64/arm64 — `make ci` reproduces that credential-free subset locally,
-    including the E2E suite as its own non-coverage step, in the same fail-fast
+    including the security scan (`make security`, the same pinned
+    `govulncheck` run between lint and the unit tests) and the E2E suite as
+    its own non-coverage step, in the same fail-fast
     order.
   - *Docs integrity* (`docs-gate`): `node scripts/check-docs.mjs` checks
     docs-index coverage, relative-link integrity, and symlink resolution
