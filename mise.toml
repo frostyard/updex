@@ -6,4 +6,9 @@ idiomatic_version_file_enable_tools = ["go"]
 lockfile = true
 
 [tools]
+# govulncheck has no released binaries, so it is pinned through mise's go
+# backend (built from the module at this exact tag); .github/workflows/test.yml
+# installs the same v1.7.0 and updex/makefile_security_gate_contract_test.go
+# fails if the two pins ever drift.
+"go:golang.org/x/vuln/cmd/govulncheck" = "1.7.0"
 golangci-lint = "2.13.1"
