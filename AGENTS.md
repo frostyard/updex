@@ -40,7 +40,7 @@ repo-specific guidance belongs in this file or `docs/`:
 
 ### Prerequisites
 
-- **Go 1.26.7** (`go.mod`'s `toolchain go1.26.7` line is the only Go build
+- **Go 1.26.9** (`go.mod`'s `toolchain go1.26.9` line is the only Go build
   pin; CI, `mise`, and Snowcat workers all read it — the module's minimum is
   `go 1.26.6`)
 - `make`
