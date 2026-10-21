@@ -3,6 +3,7 @@ package manifest
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,7 +11,7 @@ import (
 
 	"github.com/ProtonMail/go-crypto/openpgp"
 
-	"github.com/frostyard/updex/internal/retry"
+	"github.com/frostyard/updex/v2/internal/retry"
 )
 
 // KeyringPaths are the filesystem locations checked, in order, for the GPG
@@ -21,6 +22,11 @@ var KeyringPaths = []string{
 	"/etc/systemd/import-pubring.gpg",
 	"/usr/lib/systemd/import-pubring.gpg",
 }
+
+// ErrSignatureNotFound is wrapped into Fetch's error when verification was
+// requested but the source publishes no SHA256SUMS.gpg (HTTP 404), letting
+// callers explain the applicable verification policy.
+var ErrSignatureNotFound = errors.New("signature not found")
 
 // maxSigSize bounds detached-signature reads at 1 MiB to prevent memory
 // exhaustion from a malicious or misbehaving server returning an unbounded
@@ -78,6 +84,9 @@ func fetchSignature(ctx context.Context, client *http.Client, sigURL string, rs 
 
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError {
 			return retry.Transient(fmt.Errorf("signature fetch failed with status: %s", resp.Status))
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			return fmt.Errorf("%w: signature fetch failed with status: %s", ErrSignatureNotFound, resp.Status)
 		}
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("signature fetch failed with status: %s", resp.Status)

@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/frostyard/clix"
-	"github.com/frostyard/updex/sysext"
-	"github.com/frostyard/updex/systemd"
-	"github.com/frostyard/updex/updex"
+	"github.com/frostyard/updex/v2/sysext"
+	"github.com/frostyard/updex/v2/systemd"
+	"github.com/frostyard/updex/v2/updex"
 	"github.com/schollz/progressbar/v3"
 )
 

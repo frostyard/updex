@@ -9,9 +9,9 @@ import (
 	"testing"
 
 	"github.com/frostyard/std/reporter"
-	"github.com/frostyard/updex/config"
-	"github.com/frostyard/updex/internal/testutil"
-	"github.com/frostyard/updex/sysext"
+	"github.com/frostyard/updex/v2/config"
+	"github.com/frostyard/updex/v2/internal/testutil"
+	"github.com/frostyard/updex/v2/sysext"
 )
 
 // stagedCurrentFixture stages testext_1.0.0.raw as the only (and therefore

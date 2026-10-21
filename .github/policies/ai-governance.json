@@ -62,7 +62,8 @@
       "allowed_tiers": [
         1,
         2,
-        3
+        3,
+        4
       ]
     },
     "policy_changes": {

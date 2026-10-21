@@ -4,8 +4,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/frostyard/updex/config"
-	"github.com/frostyard/updex/manifest"
+	"github.com/frostyard/updex/v2/config"
+	"github.com/frostyard/updex/v2/manifest"
 )
 
 // TestGetAvailableVersions_DeterministicOrder verifies that getAvailableVersions

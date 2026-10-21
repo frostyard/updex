@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/frostyard/updex/systemd"
+	"github.com/frostyard/updex/v2/systemd"
 )
 
 const (

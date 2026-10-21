@@ -3,12 +3,10 @@ package updex
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/frostyard/clix"
-	"github.com/frostyard/updex/updex"
+	"github.com/frostyard/updex/v2/updex"
 	"github.com/spf13/cobra"
 )
 
@@ -38,6 +36,7 @@ For example, for the fedora-sysexts "fedora" repo:
   SiteURL=https://extensions.fcos.fr/fedora
   ListURL=https://api.github.com/repos/fedora-sysexts/fedora/contents/
   # AllowInsecure=no
+  # AllowUnsigned=no
 
 'catalog add' fetches the catalog's published transfer definition and
 writes standard .transfer/.feature files into the catalog's own
@@ -221,13 +220,14 @@ func runCatalogList(cmd *cobra.Command, search string) error {
 		return err
 	}
 
+	out := cmd.OutOrStdout()
+
 	if len(entries) == 0 {
-		fmt.Println("No sysexts found.")
-		return nil
+		return writeLine(out, "No sysexts found.")
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "REPO\tNAME\tINSTALLED\tENABLED")
+	table := newTextTable(out)
+	table.Rowf("REPO\tNAME\tINSTALLED\tENABLED\n")
 	for _, e := range entries {
 		installed, enabled := "no", "no"
 		if e.Installed {
@@ -236,11 +236,10 @@ func runCatalogList(cmd *cobra.Command, search string) error {
 		if e.Enabled {
 			enabled = "yes"
 		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", e.Repo, e.Name, installed, enabled)
+		table.Rowf("%s\t%s\t%s\t%s\n", e.Repo, e.Name, installed, enabled)
 	}
-	_ = w.Flush()
 
-	return nil
+	return table.Flush()
 }
 
 func runCatalogAdd(cmd *cobra.Command, args []string) error {

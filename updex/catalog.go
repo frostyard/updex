@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/frostyard/updex/catalog"
-	"github.com/frostyard/updex/config"
-	"github.com/frostyard/updex/download"
-	"github.com/frostyard/updex/sysext"
-	"github.com/frostyard/updex/version"
+	"github.com/frostyard/updex/v2/catalog"
+	"github.com/frostyard/updex/v2/config"
+	"github.com/frostyard/updex/v2/download"
+	"github.com/frostyard/updex/v2/sysext"
+	"github.com/frostyard/updex/v2/version"
 )
 
 // catalogRepos loads the configured catalog repos, translating the empty
@@ -95,6 +95,9 @@ func (c *Client) CatalogList(ctx context.Context, opts CatalogListOptions) ([]Ca
 		case cacheRes.FromCache && cacheRes.Age > 0:
 			c.msg("Using cached listing for %q (age %s); use --no-cache to refresh",
 				repo.Name, cacheRes.Age.Round(time.Minute))
+		}
+		if cacheRes.WriteErr != nil {
+			c.warn("failed to persist listing cache for %q", repo.Name)
 		}
 
 		features, err := config.LoadComponentFeaturesIn(repo.Component, c.paths.definitionRoots)
