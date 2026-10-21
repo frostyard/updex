@@ -69,6 +69,9 @@ type catalogCLIFixture struct {
 	targetDir   string
 	sysextDir   string
 	siteURL     string
+	// unsigned makes the site publish no SHA256SUMS.gpg, like the Fedora
+	// and community catalogs.
+	unsigned bool
 }
 
 const (
@@ -125,6 +128,10 @@ CurrentSymlink=/var/lib/extensions/%s.raw
 		case "/" + catalogTestSysext + "/SHA256SUMS":
 			_, _ = w.Write(manifestContent)
 		case "/" + catalogTestSysext + "/SHA256SUMS.gpg":
+			if fx.unsigned {
+				http.NotFound(w, r)
+				return
+			}
 			_, _ = w.Write(manifestSig)
 		case "/" + catalogTestSysext + "/" + rawName:
 			_, _ = w.Write(rawContent)
@@ -143,6 +150,40 @@ func (fx *catalogCLIFixture) addRepo(t *testing.T, name string) {
 	content := "[Catalog]\nSiteURL=" + fx.siteURL + "\nAllowInsecure=yes\n"
 	if err := os.WriteFile(filepath.Join(fx.catalogRoot, name+".catalog"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestRunCatalogAdd_UnsignedCatalogNeedsLocalOptIn verifies the CLI refuses
+// an unsigned catalog with AllowUnsigned guidance and leaves nothing behind,
+// then installs it once the local .catalog opts in.
+func TestRunCatalogAdd_UnsignedCatalogNeedsLocalOptIn(t *testing.T) {
+	fx := newCatalogCLIFixture(t)
+	fx.unsigned = true
+	fx.addRepo(t, "fedora")
+	setCatalogCLIFlags(t, catalogCLIFlags{runner: &sysext.MockRunner{}})
+
+	out, err := runCatalogHandler(t, runCatalogAdd, catalogTestSysext)
+	if err == nil || !strings.Contains(err.Error(), "AllowUnsigned=yes in fedora.catalog") {
+		t.Fatalf("expected AllowUnsigned guidance, got %v\noutput:\n%s", err, out)
+	}
+	fx.assertUntouched(t, "fedora")
+
+	path := filepath.Join(fx.catalogRoot, "fedora.catalog")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, "AllowUnsigned=yes\n"...), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err = runCatalogHandler(t, runCatalogAdd, catalogTestSysext)
+	if err != nil {
+		t.Fatalf("add with AllowUnsigned=yes failed: %v\noutput:\n%s", err, out)
+	}
+	fx.assertInstalled(t, "fedora")
+	if data, err := os.ReadFile(fx.transferFile("fedora")); err != nil || !strings.Contains(string(data), "\nVerify=no\n") {
+		t.Errorf("generated transfer does not honor the catalog's Verify=false (%v):\n%s", err, data)
 	}
 }
 

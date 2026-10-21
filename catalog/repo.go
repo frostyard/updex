@@ -100,6 +100,7 @@ func LoadRepos() ([]Repo, error) {
 //	ListURL=https://api.github.com/repos/fedora-sysexts/fedora/contents/
 //	# Component=catalog-fedora   (optional; default catalog-<name>)
 //	# AllowInsecure=no           (optional; permits non-HTTPS URLs when yes)
+//	# AllowUnsigned=no           (optional; honors the catalog's Verify= when yes)
 type Repo struct {
 	// Name is the repo name, derived from the .catalog filename stem.
 	Name string
@@ -120,6 +121,12 @@ type Repo struct {
 	// AllowInsecure permits non-HTTPS SiteURL and ListURL values. It is
 	// intended only for explicitly trusted development and test endpoints.
 	AllowInsecure bool
+	// AllowUnsigned lets the catalog's published Verify= value decide whether
+	// its SHA256SUMS must carry a GPG signature. Without it, verification is
+	// always required for this repo's transfers regardless of what the
+	// catalog or the generated .transfer says. It is independent of
+	// AllowInsecure: HTTPS and SHA256 checks still apply.
+	AllowUnsigned bool
 }
 
 // repoNamePattern matches valid repo and component names, mirroring the
@@ -169,6 +176,12 @@ func parseRepoFile(name, path string) (Repo, error) {
 		repo.AllowInsecure, err = key.Bool()
 		if err != nil {
 			return Repo{}, fmt.Errorf("invalid AllowInsecure value: %w", err)
+		}
+	}
+	if key, err := sec.GetKey("AllowUnsigned"); err == nil {
+		repo.AllowUnsigned, err = key.Bool()
+		if err != nil {
+			return Repo{}, fmt.Errorf("invalid AllowUnsigned value: %w", err)
 		}
 	}
 

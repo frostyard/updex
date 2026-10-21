@@ -422,7 +422,10 @@ catalog roots (production defaults: `/etc/updex/catalogs.d`, `/run/...`,
 (required; artifacts resolve under `<SiteURL>/<sysext>/`), optional
 `ListURL` (GitHub contents API endpoint, only used by list/search;
 `GITHUB_TOKEN` honored), optional `Component` (default `catalog-<name>`), the
-component the generated files land in, and optional `AllowInsecure=yes`.
+component the generated files land in, optional `AllowInsecure=yes`, and
+optional `AllowUnsigned=yes` (lets the catalog's own `Verify=` decide whether
+`SHA256SUMS` must be signed; without it signatures are always required —
+see the signature-policy bullet below).
 `SiteURL` and `ListURL` require HTTPS by default. `AllowInsecure=yes` is an
 explicit development/test escape hatch; it does not widen token attachment,
 which remains restricted to the trusted `https://api.github.com` origin. The
@@ -444,6 +447,18 @@ Key design points:
   must be basename-only, and the target is always a regular `0644` file under
   trusted `catalog.TargetPath` (default `/var/lib/extensions.d`); alternate
   paths and target shapes are rejected.
+- **Signature policy is local** (#439,
+  [ADR-0014](docs/adr/0014-local-catalog-signature-policy.md)):
+  `RenderTransferTo` always drops the catalog's `Verify=` lines and, only for
+  an `AllowUnsigned` repo, re-emits the value as canonical `Verify=yes|no`
+  (ini.v1 `MustBool(true)`). `Client.verifyPolicy` (`updex/list.go`)
+  recomputes the decision on every `getAvailableVersions` call: a
+  marker-bearing transfer requires a signature unless its owning repo is
+  *currently* configured with `AllowUnsigned=yes`; `ClientConfig.Verify`
+  overrides everything; missing or unloadable catalog config fails closed.
+  A 404 on `SHA256SUMS.gpg` wraps `manifest.ErrSignatureNotFound` and is
+  prefixed with the rule that applied. Never add a fallback that retries
+  unverified after a signature failure.
 - **Ownership and safety** (added after PR #137 review): the marker
   header names its generating repo, and that pair is the ownership
   signal — `catalog.GeneratedFileRepo(path)` must return *this* repo.

@@ -204,6 +204,44 @@ func TestParseRepoHTTPSPolicy(t *testing.T) {
 	}
 }
 
+func TestParseRepoAllowUnsigned(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+		wantErr string
+	}{
+		{name: "default denies", content: "[Catalog]\nSiteURL=https://extensions.example.com\n"},
+		{name: "yes allows", content: "[Catalog]\nSiteURL=https://extensions.example.com\nAllowUnsigned=yes\n", want: true},
+		{name: "no denies", content: "[Catalog]\nSiteURL=https://extensions.example.com\nAllowUnsigned=no\n"},
+		{name: "invalid rejected", content: "[Catalog]\nSiteURL=https://extensions.example.com\nAllowUnsigned=maybe\n", wantErr: "invalid AllowUnsigned value"},
+		{name: "does not permit http", content: "[Catalog]\nSiteURL=http://extensions.example.com\nAllowUnsigned=yes\n", wantErr: "AllowInsecure"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "test.catalog")
+			if err := os.WriteFile(path, []byte(tt.content), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			repo, err := parseRepoFile("test", path)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("parseRepoFile() error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseRepoFile() error = %v", err)
+			}
+			if repo.AllowUnsigned != tt.want {
+				t.Errorf("AllowUnsigned = %v, want %v", repo.AllowUnsigned, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadReposInvalidName(t *testing.T) {
 	root := t.TempDir()
 	withConfigRoots(t, root)

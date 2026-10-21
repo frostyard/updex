@@ -137,8 +137,11 @@ func TestFetchDoesNotRetrySignatureNotFound(t *testing.T) {
 	})
 
 	_, err := Fetch(t.Context(), server.Client(), server.URL, true, WithRetryConfig(3, time.Millisecond))
-	if err == nil || !strings.Contains(err.Error(), "signature verification failed: signature fetch failed with status: 404") {
+	if err == nil || !strings.Contains(err.Error(), "signature verification failed: signature not found: signature fetch failed with status: 404") {
 		t.Fatalf("Fetch() error = %v, want signature 404", err)
+	}
+	if !errors.Is(err, ErrSignatureNotFound) {
+		t.Fatalf("Fetch() error = %v, want ErrSignatureNotFound", err)
 	}
 	if sigRequests.Load() != 1 {
 		t.Fatalf("signature requests = %d, want 1", sigRequests.Load())
@@ -155,6 +158,9 @@ func TestFetchDoesNotRetryInvalidSignature(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "signature verification failed: invalid signature") {
 		t.Fatalf("Fetch() error = %v, want invalid signature", err)
 	}
+	if errors.Is(err, ErrSignatureNotFound) {
+		t.Fatalf("Fetch() error = %v, must not be ErrSignatureNotFound", err)
+	}
 	if sigRequests.Load() != 1 {
 		t.Fatalf("signature requests = %d, want 1", sigRequests.Load())
 	}
@@ -169,6 +175,9 @@ func TestFetchSignatureRetriesExhausted(t *testing.T) {
 	_, err := Fetch(t.Context(), server.Client(), server.URL, true, WithRetryConfig(3, time.Millisecond))
 	if err == nil || !strings.Contains(err.Error(), "signature fetch failed with status: 503") {
 		t.Fatalf("Fetch() error = %v, want signature 503", err)
+	}
+	if errors.Is(err, ErrSignatureNotFound) {
+		t.Fatalf("Fetch() error = %v, must not be ErrSignatureNotFound", err)
 	}
 	if sigRequests.Load() != 3 {
 		t.Fatalf("signature requests = %d, want 3", sigRequests.Load())

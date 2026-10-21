@@ -263,11 +263,18 @@ func RenderTransferTo(conf []byte, repo Repo, name string, targetPath string) ([
 		return nil, err
 	}
 
-	featuresLine := "Features=" + name
+	transferLines := "Features=" + name
+	// The catalog's own Verify= never survives verbatim. Only a repo whose
+	// local .catalog sets AllowUnsigned=yes gets the catalog's value, parsed
+	// exactly as config parses the rendered file (absent or invalid → yes)
+	// and re-emitted canonically so no disguised spelling can disagree with it.
+	if repo.AllowUnsigned {
+		transferLines += "\nVerify=" + formatBool(catalogVerify(cfg))
+	}
 	sourcePattern := source.Key("MatchPattern").String()
 	targetPattern := target.Key("MatchPattern").String()
 	var out bytes.Buffer
-	out.Grow(len(conf) + len(featuresLine) + 64)
+	out.Grow(len(conf) + len(transferLines) + 64)
 	out.WriteString(markerLine(repo))
 
 	section := ""
@@ -319,7 +326,7 @@ func RenderTransferTo(conf []byte, repo Repo, name string, targetPath string) ([
 					out.WriteByte('\n')
 				}
 				if !inserted {
-					out.WriteString(featuresLine + "\n")
+					out.WriteString(transferLines + "\n")
 					inserted = true
 				}
 			case "source":
@@ -347,7 +354,7 @@ func RenderTransferTo(conf []byte, repo Repo, name string, targetPath string) ([
 			case key == "features":
 				drop = true // replaced by the injected line
 			case key == "verify":
-				drop = true // catalog input must not disable GPG verification; the absent-key default (true) applies
+				drop = true // never passed through; re-emitted canonically above only when the repo sets AllowUnsigned
 			case key == "" && trimmed != "" && !strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, ";"):
 				drop = true // key could not be unambiguously parsed; drop rather than risk a disguised Verify/Features override
 			}
@@ -370,10 +377,32 @@ func RenderTransferTo(conf []byte, repo Repo, name string, targetPath string) ([
 		if !bytes.HasSuffix(out.Bytes(), []byte("\n")) {
 			out.WriteByte('\n')
 		}
-		out.WriteString("\n[Transfer]\n" + featuresLine + "\n")
+		out.WriteString("\n[Transfer]\n" + transferLines + "\n")
 	}
 
 	return out.Bytes(), nil
+}
+
+// catalogVerify reports the catalog conf's [Transfer] Verify= value with the
+// same parser and default (true, as in systemd-sysupdate) config uses when
+// loading the rendered .transfer.
+func catalogVerify(cfg *ini.File) bool {
+	sec, err := cfg.GetSection("Transfer")
+	if err != nil {
+		return true
+	}
+	key, err := sec.GetKey("Verify")
+	if err != nil {
+		return true
+	}
+	return key.MustBool(true)
+}
+
+func formatBool(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
 }
 
 // RenderTransfer turns a catalog-published .conf into the .transfer content
@@ -381,8 +410,10 @@ func RenderTransferTo(conf []byte, repo Repo, name string, targetPath string) ([
 // ownership header, injects Features=<name> so the transfer is tied to its
 // generated feature. Security-sensitive fields are validated and rewritten:
 // the source stays under the configured catalog, and the target is a regular
-// 0644 file under /var/lib/extensions.d. Other content, including %w/%a
-// specifiers, is preserved byte-for-byte.
+// 0644 file under /var/lib/extensions.d. The catalog's Verify= is dropped
+// unless repo.AllowUnsigned is set, in which case it is re-emitted as a
+// canonical Verify=yes|no. Other content, including %w/%a specifiers, is
+// preserved byte-for-byte.
 func RenderTransfer(conf []byte, repo Repo, name string) ([]byte, error) {
 	return RenderTransferTo(conf, repo, name, TargetPath)
 }
