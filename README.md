@@ -193,7 +193,10 @@ signatures, HTTPS is the only check on where an image came from.
 
 **Upgrading from v2.0.0:** sysexts added with v2.0.0 kept the catalog's
 `Verify=false` and stop updating with a signature error until their catalog
-sets `AllowUnsigned=yes`. No re-add is needed.
+sets `AllowUnsigned=yes`. No re-add is needed unless the catalog's `SiteURL`
+has changed since (for example from `http://` to `https://`): the opt-in
+only covers sysexts whose transfer still fetches from the current `SiteURL`,
+so re-run `sudo updex catalog add <repo>/<name>` for those.
 
 **Upgrading from v2.0.1 or v2.0.2:** these releases dropped the catalog's
 `Verify=` from generated transfers, so sysexts added with them keep requiring

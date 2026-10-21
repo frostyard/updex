@@ -432,6 +432,71 @@ func TestCatalogSignaturePolicy_UpdateFeatures(t *testing.T) {
 	}
 }
 
+// TestCatalogSignaturePolicy_StaleHTTPSource verifies the v2.0.0 migration
+// case: a transfer rendered from an AllowInsecure http:// catalog kept its
+// http:// source and Verify=false. Once that catalog moves to HTTPS with
+// AllowUnsigned=yes, the old transfer must not be fetched unsigned over
+// cleartext; it requires a signature until it is re-added.
+func TestCatalogSignaturePolicy_StaleHTTPSource(t *testing.T) {
+	env := newSignaturePolicyEnv(t, signaturePolicyCatalog{verifyLine: "Verify=false"})
+	env.writeRepo(t, "AllowUnsigned=yes\n")
+
+	rawName := signaturePolicySysext + "-1.0.0.raw"
+	rawContent := []byte("cleartext image")
+	var imageFetched bool
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/" + signaturePolicySysext + "/SHA256SUMS":
+			_, _ = fmt.Fprintf(w, "%s  %s\n", hashContent(rawContent), rawName)
+		case "/" + signaturePolicySysext + "/" + rawName:
+			imageFetched = true
+			_, _ = w.Write(rawContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(plain.Close)
+
+	legacyRepo := catalog.Repo{Name: "fedora", SiteURL: plain.URL, AllowInsecure: true}
+	conf := fmt.Sprintf("[Transfer]\nVerify=false\n\n[Source]\nType=url-file\nPath=%s/%s/\nMatchPattern=%s-@v.raw\n\n[Target]\nType=regular-file\nPath=/var/lib/extensions.d/\nMatchPattern=%s-@v.raw\n",
+		plain.URL, signaturePolicySysext, signaturePolicySysext, signaturePolicySysext)
+	rendered, err := catalog.RenderTransferTo([]byte(conf), legacyRepo, signaturePolicySysext, env.targetDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// v2.0.0 kept the catalog's Verify=false.
+	legacy := strings.Replace(string(rendered), "Features="+signaturePolicySysext+"\n", "Features="+signaturePolicySysext+"\nVerify=false\n", 1)
+	if err := os.MkdirAll(env.componentDir(), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(env.componentDir(), signaturePolicySysext+".transfer"), []byte(legacy), 0644); err != nil {
+		t.Fatal(err)
+	}
+	writeGeneratedFeature(t, env.componentDir(), "fedora", signaturePolicySysext)
+	writeEnableDropIn(t, env.componentDir(), signaturePolicySysext, true)
+
+	client := env.client(false)
+	got := checkError(t, client)
+	for _, want := range []string{"no longer fetches from catalog \"fedora\"'s SiteURL", "re-run 'updex catalog add fedora/git-lfs'", "signature not found"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("check of stale http transfer error = %q, want substring %q", got, want)
+		}
+	}
+	if _, err := client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true}); err != nil {
+		t.Logf("UpdateFeatures() error = %v", err)
+	}
+	if imageFetched {
+		t.Error("an unsigned image was downloaded over cleartext")
+	}
+
+	if _, err := client.CatalogAdd(t.Context(), signaturePolicySysext, CatalogAddOptions{NoRefresh: true}); err != nil {
+		t.Fatalf("re-add error = %v", err)
+	}
+	if got := checkError(t, client); got != "" {
+		t.Errorf("check after re-add error = %q, want none", got)
+	}
+}
+
 // TestCatalogSignaturePolicy_MigratesV201Transfer verifies a transfer
 // rendered before AllowUnsigned existed (catalog Verify dropped) keeps
 // requiring a signature after the opt-in, and works once re-added.
@@ -484,6 +549,9 @@ func TestVerifyPolicy(t *testing.T) {
 	repoDenied := catalog.Repo{Name: "denied", SiteURL: "https://example.com/denied"}
 	repoGone := catalog.Repo{Name: "gone", SiteURL: "https://example.com/gone"}
 	repoBroken := catalog.Repo{Name: "broken", SiteURL: "https://example.com/broken"}
+	// Renders made under earlier configuration of the opted-in repo.
+	repoAllowedHTTP := catalog.Repo{Name: "allowed", SiteURL: "http://example.com/allowed", AllowInsecure: true}
+	repoAllowedMoved := catalog.Repo{Name: "allowed", SiteURL: "https://old.example.com/allowed"}
 
 	tests := []struct {
 		name       string
@@ -502,6 +570,8 @@ func TestVerifyPolicy(t *testing.T) {
 		{"owning catalog no longer configured", strings.Replace(renderForTest(t, repoGone), "Features=x\n", "Features=x\nVerify=no\n", 1), false, "", true, verifyCatalogNotAllowed},
 		{"no catalogs configured at all", renderForTest(t, repoAllowed), false, "none", true, verifyCatalogNotAllowed},
 		{"unrelated malformed catalog keeps the opt-in", renderForTest(t, repoAllowed), false, "malformed", false, verifyByCatalog},
+		{"opt-in ignores a stale http:// source", strings.Replace(renderForTest(t, repoAllowedHTTP), "Features=x\n", "Features=x\nVerify=no\n", 1), false, "", true, verifyCatalogStaleSource},
+		{"opt-in ignores a source on a former SiteURL", strings.Replace(renderForTest(t, repoAllowedMoved), "Features=x\n", "Features=x\nVerify=no\n", 1), false, "", true, verifyCatalogStaleSource},
 		{"malformed owning catalog fails closed", renderForTest(t, repoBroken), false, "malformed", true, verifyCatalogNotAllowed},
 		{"unattributable marker fails closed", catalog.GeneratedMarker + " (repo: not.a.repo)\n[Transfer]\nVerify=no\n" + handWrittenBody, false, "", true, verifyUnknownOwner},
 	}
@@ -561,6 +631,7 @@ func TestVerifyPolicyExplain(t *testing.T) {
 		{"generated transfer", verifyPolicy{reason: verifyByCatalog, repo: "fedora"}, []string{"re-run 'updex catalog add fedora/x'"}, nil},
 		{"forced", verifyPolicy{reason: verifyForced}, []string{"--verify"}, nil},
 		{"unknown owner", verifyPolicy{reason: verifyUnknownOwner}, []string{"without a recognizable catalog"}, nil},
+		{"stale source", verifyPolicy{reason: verifyCatalogStaleSource, repo: "fedora"}, []string{`no longer fetches from catalog "fedora"'s SiteURL`, "re-run 'updex catalog add fedora/x'"}, []string{"set AllowUnsigned=yes"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

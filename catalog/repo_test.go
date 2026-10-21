@@ -303,3 +303,22 @@ func TestLoadRepoFrom(t *testing.T) {
 		t.Errorf("LoadRepoFrom(../fedora) error = %v, want invalid name", err)
 	}
 }
+
+// TestLoadRepoFromDanglingOverride verifies a dangling higher-priority
+// symlink is selected, as LoadReposFrom selects it, so an unloadable /etc
+// override cannot be skipped in favor of a lower root's opt-in.
+func TestLoadRepoFromDanglingOverride(t *testing.T) {
+	etc, lib := t.TempDir(), t.TempDir()
+	if err := os.Symlink(filepath.Join(t.TempDir(), "gone.catalog"), filepath.Join(etc, "fedora.catalog")); err != nil {
+		t.Fatal(err)
+	}
+	writeCatalogFile(t, lib, "fedora", "[Catalog]\nSiteURL=https://lib.example.com\nAllowUnsigned=yes\n")
+	roots := []string{etc, lib}
+
+	if repo, err := LoadRepoFrom(roots, "fedora"); err == nil || errors.Is(err, ErrRepoNotFound) {
+		t.Errorf("LoadRepoFrom() = %+v, %v; want a load error for the dangling override", repo, err)
+	}
+	if _, err := LoadReposFrom(roots); err == nil {
+		t.Error("LoadReposFrom() error = nil; the two loaders must agree on the dangling override")
+	}
+}

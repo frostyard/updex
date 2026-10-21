@@ -294,6 +294,7 @@ effective setting is recomputed from local configuration
 | `ClientConfig.Verify` / `--verify` | always |
 | Owning repo lacks `AllowUnsigned=yes`, is no longer configured, or its `.catalog` fails to load | always, whatever the transfer says |
 | Transfer starts with the catalog marker but names no parseable repo, or its header cannot be read | always |
+| Owning repo sets `AllowUnsigned=yes`, but the transfer's `Source.Path` is not `<SiteURL>/<name>` for its current `SiteURL` | always (re-run `catalog add`) |
 | Owning repo sets `AllowUnsigned=yes` | the transfer's `Verify=` (default `yes`) |
 
 A missing `SHA256SUMS.gpg` on a transfer that requires one fails with an

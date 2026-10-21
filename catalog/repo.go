@@ -90,22 +90,26 @@ func LoadReposFrom(configRoots []string) ([]Repo, error) {
 var ErrRepoNotFound = errors.New("catalog not configured")
 
 // LoadRepoFrom loads the single repo name from the first of configRoots that
-// holds <name>.catalog, the same file LoadReposFrom would pick. Unlike
-// LoadReposFrom, an invalid file for another repo cannot make it fail. It
-// returns ErrRepoNotFound when no root holds the file.
+// holds <name>.catalog, the same file LoadReposFrom would pick: entries are
+// found with os.Lstat, so a dangling or otherwise unloadable higher-priority
+// symlink is selected and fails to parse rather than letting a lower root
+// win. Unlike LoadReposFrom, an invalid file for another repo cannot make it
+// fail. It returns ErrRepoNotFound when no root holds the file.
 func LoadRepoFrom(configRoots []string, name string) (Repo, error) {
 	if !repoNamePattern.MatchString(name) {
 		return Repo{}, fmt.Errorf("invalid catalog name %q (allowed: [a-zA-Z0-9_-]+)", name)
 	}
 	for _, dir := range configRoots {
 		path := filepath.Join(dir, name+catalogSuffix)
-		info, err := os.Stat(path)
+		info, err := os.Lstat(path)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
 			return Repo{}, fmt.Errorf("failed to stat %s: %w", path, err)
 		}
+		// Mirror LoadReposFrom, whose os.ReadDir entries skip only real
+		// directories.
 		if info.IsDir() {
 			continue
 		}

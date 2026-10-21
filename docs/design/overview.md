@@ -342,8 +342,14 @@ Design decisions (verified with the user, 2026-08):
   is loaded (`catalog.LoadRepoFrom`, same first-root-wins precedence), so an
   unrelated broken `.catalog` cannot revoke another repo's opt-in. The
   transfer header is read once (`catalog.GeneratedFileHeader`); a read error
-  or an unattributable marker requires a signature. `AllowUnsigned=yes` is
-  refused alongside `AllowInsecure=yes`. `ClientConfig.Verify` overrides
+  or an unattributable marker requires a signature. The opt-in also applies
+  only while the transfer's `Source.Path` is still `<SiteURL>/<name>` for
+  the repo's current `SiteURL`, so a v2.0.0 render of an `AllowInsecure`
+  `http://` catalog is not fetched unsigned over cleartext after the catalog
+  moves to HTTPS. `LoadRepoFrom` finds files with `os.Lstat`, so a dangling
+  higher-priority symlink fails to load instead of yielding to a lower
+  root, as in `LoadReposFrom`. `AllowUnsigned=yes` is refused alongside
+  `AllowInsecure=yes`. `ClientConfig.Verify` overrides
   everything. Transfers rendered by v2.0.1 or v2.0.2 carry no `Verify=` and
   need a re-add after opting in; v2.0.0 renders kept `Verify=false` and work
   again once the repo opts in.

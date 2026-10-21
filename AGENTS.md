@@ -458,7 +458,11 @@ Key design points:
   overrides everything; only the owning repo's `.catalog` is loaded
   (`catalog.LoadRepoFrom`), and a missing or unloadable one fails closed, as
   does a transfer whose header is unreadable or carries the marker with no
-  parseable repo (`catalog.GeneratedFileHeader`, read once). `GeneratedFileRepo`'s bounded read
+  parseable repo (`catalog.GeneratedFileHeader`, read once). The opt-in
+  also requires `Source.Path == <SiteURL>/<name>` for the repo's current
+  `SiteURL` (HTTPS whenever `AllowUnsigned` is set), so a stale render never
+  inherits it. `LoadRepoFrom` must use `os.Lstat` to keep `LoadReposFrom`'s
+  precedence for dangling symlinks. `GeneratedFileRepo`'s bounded read
   (`maxMarkerLen`) must fit the header for a 255-byte repo name; never
   shrink it below that.
   A 404 on `SHA256SUMS.gpg` wraps `manifest.ErrSignatureNotFound` and is

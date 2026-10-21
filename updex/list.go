@@ -87,11 +87,12 @@ func (c *Client) getAvailableVersions(ctx context.Context, transfer *config.Tran
 type verifyReason int
 
 const (
-	verifyByTransfer        verifyReason = iota // non-catalog transfer: its own Verify= decides
-	verifyForced                                // ClientConfig.Verify (--verify)
-	verifyCatalogNotAllowed                     // catalog transfer, repo lacks AllowUnsigned=yes (or is not configured)
-	verifyByCatalog                             // catalog transfer, AllowUnsigned=yes: the generated transfer's Verify= decides
-	verifyUnknownOwner                          // catalog marker present but its repo cannot be parsed, or the header is unreadable
+	verifyByTransfer         verifyReason = iota // non-catalog transfer: its own Verify= decides
+	verifyForced                                 // ClientConfig.Verify (--verify)
+	verifyCatalogNotAllowed                      // catalog transfer, repo lacks AllowUnsigned=yes (or is not configured)
+	verifyByCatalog                              // catalog transfer, AllowUnsigned=yes: the generated transfer's Verify= decides
+	verifyUnknownOwner                           // catalog marker present but its repo cannot be parsed, or the header is unreadable
+	verifyCatalogStaleSource                     // catalog transfer, AllowUnsigned=yes, but its source is not under the repo's current SiteURL
 )
 
 type verifyPolicy struct {
@@ -141,6 +142,14 @@ func (c *Client) verifyPolicy(transfer *config.Transfer) verifyPolicy {
 	if !repo.AllowUnsigned {
 		return verifyPolicy{required: true, reason: verifyCatalogNotAllowed, repo: owner}
 	}
+	// The opt-in covers the catalog as configured now. catalog add always
+	// writes Source.Path=<SiteURL>/<name>/, and SiteURL is HTTPS whenever
+	// AllowUnsigned is set, so a transfer pointing elsewhere was rendered
+	// under older configuration (e.g. a v2.0.0 render of an AllowInsecure
+	// http:// catalog) and must not inherit the permission.
+	if transfer.Source.Path != repo.SiteURL+"/"+transfer.Component {
+		return verifyPolicy{required: true, reason: verifyCatalogStaleSource, repo: owner}
+	}
 	return verifyPolicy{required: transfer.Transfer.Verify, reason: verifyByCatalog, repo: owner}
 }
 
@@ -164,6 +173,9 @@ func (p verifyPolicy) explain(transfer *config.Transfer) string {
 		// transfer rendered before the opt-in (or by v2.0.1/v2.0.2, which
 		// dropped Verify=) requires a signature even if the catalog now says no.
 		return fmt.Sprintf("the generated transfer for %s requires a signed SHA256SUMS: if catalog %q declares Verify=no, re-run 'updex catalog add %s/%s' to regenerate it under AllowUnsigned=yes",
+			transfer.Component, p.repo, p.repo, transfer.Component)
+	case verifyCatalogStaleSource:
+		return fmt.Sprintf("the generated transfer for %s no longer fetches from catalog %q's SiteURL, so a signed SHA256SUMS is required: re-run 'updex catalog add %s/%s' to regenerate it",
 			transfer.Component, p.repo, p.repo, transfer.Component)
 	case verifyUnknownOwner:
 		return fmt.Sprintf("transfer %s carries an updex catalog marker without a recognizable catalog, so a signed SHA256SUMS is required", transfer.Component)
