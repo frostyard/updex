@@ -169,10 +169,11 @@ func (e *signaturePolicyEnv) imagePath() string {
 	return filepath.Join(e.targetDir, signaturePolicySysext+"-1.0.0.raw")
 }
 
-// checkError runs CheckFeatures and returns the sysext's per-transfer error.
-func (e *signaturePolicyEnv) checkError(t *testing.T) string {
+// checkError runs CheckFeatures on client and returns the sysext's
+// per-transfer error.
+func checkError(t *testing.T, client *Client) string {
 	t.Helper()
-	results, _ := e.client(false).CheckFeatures(t.Context(), CheckFeaturesOptions{})
+	results, _ := client.CheckFeatures(t.Context(), CheckFeaturesOptions{})
 	for _, r := range results {
 		for _, cr := range r.Results {
 			if cr.Component == signaturePolicySysext {
@@ -215,14 +216,14 @@ func TestCatalogAdd_SignaturePolicy(t *testing.T) {
 			name:          "opt-in with catalog Verify=yes still requires a signature",
 			spec:          signaturePolicyCatalog{verifyLine: "Verify=yes"},
 			allowUnsigned: true,
-			wantErr:       []string{`catalog "fedora" declares Verify=yes`},
+			wantErr:       []string{"the generated transfer for git-lfs requires a signed SHA256SUMS"},
 			wantNotFound:  true,
 		},
 		{
 			name:          "opt-in with no catalog Verify defaults to required",
 			spec:          signaturePolicyCatalog{},
 			allowUnsigned: true,
-			wantErr:       []string{`catalog "fedora" declares Verify=yes`},
+			wantErr:       []string{"the generated transfer for git-lfs requires a signed SHA256SUMS"},
 			wantNotFound:  true,
 		},
 		{
@@ -321,21 +322,42 @@ func TestCatalogAdd_SignaturePolicy(t *testing.T) {
 }
 
 // TestCatalogSignaturePolicy_RevokingOptInRequiresSignature verifies the
-// policy is re-read on every use: removing AllowUnsigned after an add makes
-// the next check require a signature without re-adding.
+// policy is re-read on every use by one long-lived client (as the daemon or
+// an SDK consumer would hold): removing AllowUnsigned, or breaking the
+// catalog configuration, makes the next check require a signature without
+// re-adding or reconstructing the client.
 func TestCatalogSignaturePolicy_RevokingOptInRequiresSignature(t *testing.T) {
 	env := newSignaturePolicyEnv(t, signaturePolicyCatalog{verifyLine: "Verify=false"})
 	env.writeRepo(t, "AllowUnsigned=yes\n")
-	if _, err := env.client(false).CatalogAdd(t.Context(), signaturePolicySysext, CatalogAddOptions{}); err != nil {
+	client := env.client(false)
+	if _, err := client.CatalogAdd(t.Context(), signaturePolicySysext, CatalogAddOptions{}); err != nil {
 		t.Fatalf("CatalogAdd() error = %v", err)
 	}
-	if got := env.checkError(t); got != "" {
+	if got := checkError(t, client); got != "" {
 		t.Fatalf("check with opt-in error = %q, want none", got)
 	}
 
-	env.writeRepo(t, "")
-	if got := env.checkError(t); !strings.Contains(got, "AllowUnsigned=yes") || !strings.Contains(got, "signature not found") {
-		t.Errorf("check after revoking opt-in error = %q, want signature requirement", got)
+	steps := []struct {
+		name         string
+		extra        string
+		wantRequired bool
+	}{
+		{"opt-in removed", "", true},
+		{"opt-in restored", "AllowUnsigned=yes\n", false},
+		{"malformed configuration fails closed", "AllowUnsigned=maybe\n", true},
+	}
+	for _, step := range steps {
+		env.writeRepo(t, step.extra)
+		got := checkError(t, client)
+		if !step.wantRequired {
+			if got != "" {
+				t.Errorf("%s: check error = %q, want none", step.name, got)
+			}
+			continue
+		}
+		if !strings.Contains(got, "AllowUnsigned=yes") || !strings.Contains(got, "signature not found") {
+			t.Errorf("%s: check error = %q, want signature requirement", step.name, got)
+		}
 	}
 }
 
@@ -366,14 +388,21 @@ func TestCatalogSignaturePolicy_MigratesV201Transfer(t *testing.T) {
 	writeGeneratedFeature(t, env.componentDir(), "fedora", signaturePolicySysext)
 	writeEnableDropIn(t, env.componentDir(), signaturePolicySysext, true)
 
-	if got := env.checkError(t); !strings.Contains(got, `declares Verify=yes`) {
-		t.Fatalf("check of legacy transfer error = %q, want signature requirement", got)
+	client := env.client(false)
+	got := checkError(t, client)
+	for _, want := range []string{"the generated transfer for git-lfs requires a signed SHA256SUMS", "re-run 'updex catalog add fedora/git-lfs'"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("check of legacy transfer error = %q, want substring %q", got, want)
+		}
+	}
+	if strings.Contains(got, "declares Verify=yes") {
+		t.Errorf("legacy transfer error claims the catalog declares Verify=yes: %q", got)
 	}
 
-	if _, err := env.client(false).CatalogAdd(t.Context(), signaturePolicySysext, CatalogAddOptions{}); err != nil {
+	if _, err := client.CatalogAdd(t.Context(), signaturePolicySysext, CatalogAddOptions{}); err != nil {
 		t.Fatalf("re-add error = %v", err)
 	}
-	if got := env.checkError(t); got != "" {
+	if got := checkError(t, client); got != "" {
 		t.Errorf("check after re-add error = %q, want none", got)
 	}
 }
@@ -388,7 +417,7 @@ func TestVerifyPolicy(t *testing.T) {
 		name       string
 		file       string // .transfer content
 		force      bool
-		catalogs   string // "none" omits every .catalog file
+		catalogs   string // "none" omits every .catalog file; "malformed" adds an invalid one
 		wantVerify bool
 		wantReason verifyReason
 	}{
@@ -400,6 +429,7 @@ func TestVerifyPolicy(t *testing.T) {
 		{"hand-edited Verify=no without opt-in", strings.Replace(renderForTest(t, repoDenied), "Features=x\n", "Features=x\nVerify=no\n", 1), false, "", true, verifyCatalogNotAllowed},
 		{"owning catalog no longer configured", strings.Replace(renderForTest(t, repoGone), "Features=x\n", "Features=x\nVerify=no\n", 1), false, "", true, verifyCatalogNotAllowed},
 		{"no catalogs configured at all", renderForTest(t, repoAllowed), false, "none", true, verifyCatalogNotAllowed},
+		{"malformed catalog configuration fails closed", renderForTest(t, repoAllowed), false, "malformed", true, verifyCatalogNotAllowed},
 	}
 
 	for _, tt := range tests {
@@ -408,6 +438,9 @@ func TestVerifyPolicy(t *testing.T) {
 			if tt.catalogs != "none" {
 				writeCatalogFileContent(t, catalogRoot, "allowed", "[Catalog]\nSiteURL=https://example.com/allowed\nAllowUnsigned=yes\n")
 				writeCatalogFileContent(t, catalogRoot, "denied", "[Catalog]\nSiteURL=https://example.com/denied\n")
+			}
+			if tt.catalogs == "malformed" {
+				writeCatalogFileContent(t, catalogRoot, "broken", "[Catalog]\nAllowUnsigned=yes\n")
 			}
 			dir := t.TempDir()
 			path := filepath.Join(dir, "x.transfer")

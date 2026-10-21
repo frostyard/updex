@@ -279,8 +279,11 @@ The main `SHA256SUMS` fetch and the detached `.gpg` signature fetch share the sa
 
 A 404 on `SHA256SUMS.gpg` wraps `manifest.ErrSignatureNotFound`;
 `getAvailableVersions` then prefixes the error with the policy rule that
-required the signature (forced, catalog not opted in, catalog declares
-`Verify=yes`, or the transfer's own setting). Nothing ever retries without
+required the signature (forced, catalog not opted in, or the transfer's own
+`Verify=yes`). For an opted-in catalog transfer the message says the
+*generated transfer* requires it and suggests re-running `catalog add`,
+because a v2.0.1-rendered file lacks `Verify=` even when the catalog declares
+`Verify=no`. Nothing ever retries without
 verification after a signature failure.
 
 When a transfer's effective setting is `Verify=false`, checksum authenticity depends

@@ -51,8 +51,10 @@ permission, not an override: it lets the catalog's own `Verify=` decide.
   signature.
 - **Errors.** `manifest.Fetch` wraps `manifest.ErrSignatureNotFound` for a
   404 on `SHA256SUMS.gpg`. `getAvailableVersions` prefixes that error with
-  the rule that required the signature (forced, repo not opted in, catalog
-  declares `Verify=yes`, or a non-catalog transfer's own setting) and, for a
+  the rule that required the signature (forced, repo not opted in, the
+  generated transfer's own `Verify=yes` with a hint to re-run `catalog add`
+  if the catalog now declares `Verify=no`, or a non-catalog transfer's own
+  setting) and, for a
   repo that is not opted in, names `AllowUnsigned=yes` and the trust it gives
   up.
 

@@ -90,7 +90,7 @@ const (
 	verifyByTransfer        verifyReason = iota // non-catalog transfer: its own Verify= decides
 	verifyForced                                // ClientConfig.Verify (--verify)
 	verifyCatalogNotAllowed                     // catalog transfer, repo lacks AllowUnsigned=yes (or is not configured)
-	verifyByCatalog                             // catalog transfer, AllowUnsigned=yes: catalog's Verify= decides
+	verifyByCatalog                             // catalog transfer, AllowUnsigned=yes: the generated transfer's Verify= decides
 )
 
 type verifyPolicy struct {
@@ -142,7 +142,11 @@ func (p verifyPolicy) explain(transfer *config.Transfer) string {
 		return fmt.Sprintf("catalog %q must publish a signed SHA256SUMS for %s: set AllowUnsigned=yes in %s.catalog to honor the catalog's Verify= setting, accepting HTTPS and SHA256 integrity checks without publisher authentication",
 			p.repo, transfer.Component, p.repo)
 	case verifyByCatalog:
-		return fmt.Sprintf("catalog %q declares Verify=yes for %s, so a signed SHA256SUMS is required", p.repo, transfer.Component)
+		// The generated file, not the live catalog, is what was consulted: a
+		// transfer rendered before the opt-in (or by v2.0.1, which dropped
+		// Verify=) requires a signature even if the catalog now says no.
+		return fmt.Sprintf("the generated transfer for %s requires a signed SHA256SUMS: if catalog %q declares Verify=no, re-run 'updex catalog add %s/%s' to regenerate it under AllowUnsigned=yes",
+			transfer.Component, p.repo, p.repo, transfer.Component)
 	default:
 		return fmt.Sprintf("transfer %s requires a signed SHA256SUMS (Verify=yes is the default; set Verify=no to opt out)", transfer.Component)
 	}
