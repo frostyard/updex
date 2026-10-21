@@ -130,7 +130,9 @@ active after a later refresh or reboot.
 | `-s, --silent`      | Suppress progress/reporting noise; with `--json`, still emit the final machine-readable result |
 
 `--verify` only forces verification: without it, signatures are still
-verified unless a transfer explicitly sets `Verify=no`. CLI dry runs of
+verified unless a transfer explicitly sets `Verify=no` (for catalog-added
+sysexts, only when the catalog also sets `AllowUnsigned=yes`; see
+[Unsigned catalogs](#unsigned-catalogs)). CLI dry runs of
 mutating feature commands still require root.
 
 ## Sysext Catalogs
@@ -152,6 +154,55 @@ ListURL=https://api.github.com/repos/fedora-sysexts/fedora/contents/
 manage it. See the [configuration reference](docs/specs/config-reference.md#catalog-files-catalog)
 for catalog keys and the [SDK API reference](docs/specs/sdk-api.md#cataloglist--catalogadd--catalogremove)
 for ownership and rollback behavior.
+
+### Unsigned catalogs
+
+By default every catalog sysext must have a GPG-signed `SHA256SUMS`,
+whatever `Verify=` the catalog's own `.conf` declares. Some catalogs,
+including the [Fedora and community catalogs](https://fedora-sysexts.github.io/),
+publish `SHA256SUMS` without a `SHA256SUMS.gpg` and set `Verify=false`.
+Adding one of their sysexts fails with an error suggesting `AllowUnsigned=yes`.
+
+To accept such a catalog, opt in for that catalog only:
+
+```ini
+# /etc/updex/catalogs.d/fedora.catalog
+[Catalog]
+SiteURL=https://extensions.fcos.fr/fedora
+ListURL=https://api.github.com/repos/fedora-sysexts/fedora/contents/
+AllowUnsigned=yes
+```
+
+`AllowUnsigned=yes` lets the catalog's `Verify=` decide. A catalog sysext
+that declares `Verify=yes`, or omits it, still requires a signature, and
+`--verify` still forces one. updex never falls back to an unsigned download
+after a signature turns out to be missing or invalid. The policy is read from
+the local `.catalog` file every time a sysext is checked or updated, so
+removing `AllowUnsigned` requires signatures again on the next run.
+
+What still protects an unsigned catalog: HTTPS authenticates the server and
+protects transport (redirects from HTTPS to HTTP are refused, and
+`AllowUnsigned` does not relax the HTTPS requirement), and every image must
+match its `SHA256SUMS` entry before it is installed. What is lost: an
+unsigned checksum does not authenticate the publisher, so anyone able to
+replace both the image and `SHA256SUMS` on the hosting infrastructure can
+serve a different image.
+
+`AllowUnsigned=yes` cannot be combined with `AllowInsecure=yes`: without
+signatures, HTTPS is the only check on where an image came from.
+
+**Upgrading from v2.0.0:** sysexts added with v2.0.0 kept the catalog's
+`Verify=false` and stop updating with a signature error until their catalog
+sets `AllowUnsigned=yes`. No re-add is needed unless the catalog's `SiteURL`
+has changed since (for example from `http://` to `https://`): the opt-in
+only covers sysexts whose transfer still fetches from the current `SiteURL`,
+so re-run `sudo updex catalog add <repo>/<name>` for those.
+
+**Upgrading from v2.0.1 or v2.0.2:** these releases dropped the catalog's
+`Verify=` from generated transfers, so sysexts added with them keep requiring
+a signature. Add `AllowUnsigned=yes`, then re-run
+`sudo updex catalog add <repo>/<name>` for each affected sysext to regenerate
+its transfer.
 
 ## JSON output
 
