@@ -24,9 +24,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/frostyard/updex/catalog"
-	"github.com/frostyard/updex/config"
-	"github.com/frostyard/updex/internal/testutil"
+	"github.com/frostyard/updex/v2/catalog"
+	"github.com/frostyard/updex/v2/config"
+	"github.com/frostyard/updex/v2/internal/testutil"
 )
 
 // TestClientIsolation_DefinitionRoots proves two clients each see only their

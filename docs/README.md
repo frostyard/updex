@@ -61,6 +61,10 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
   temp files instead of memory, rollback errors join with the original
   failure, and `writeFeatureDropIn` shares the Lstat-only guard and
   temp-file-plus-rename writer (`updex/fsguard.go`)
+- [ADR-0014](adr/0014-local-catalog-signature-policy.md) — a catalog's
+  `Verify=` is honored only while its local `.catalog` sets
+  `AllowUnsigned=yes`, re-checked on every use; `--verify` and missing
+  configuration require signatures, and nothing falls back to unsigned
 
 ### Design
 

@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/frostyard/updex/config"
-	"github.com/frostyard/updex/sysext"
+	"github.com/frostyard/updex/v2/config"
+	"github.com/frostyard/updex/v2/sysext"
 )
 
 // withComponentSearchRoots points config.SearchRoots at four fresh temp

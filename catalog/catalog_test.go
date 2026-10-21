@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/frostyard/updex/v2/config"
+	"gopkg.in/ini.v1"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -253,6 +257,59 @@ func TestRenderTransfer(t *testing.T) {
 	}
 }
 
+// TestGeneratedFileRepoLongNames verifies the bounded marker read covers
+// every repo name a .catalog filename can carry, including names whose
+// header no longer fits the original 256-byte read.
+func TestGeneratedFileRepoLongNames(t *testing.T) {
+	for _, n := range []int{1, 219, 220, 235, 255 - len(".catalog"), maxRepoNameLen} {
+		t.Run(fmt.Sprint(n), func(t *testing.T) {
+			repo := Repo{Name: strings.Repeat("a", n), SiteURL: "https://example.com/r"}
+			path := filepath.Join(t.TempDir(), "x.feature")
+			if err := os.WriteFile(path, RenderFeature(repo, "x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if got, ok := GeneratedFileRepo(path); !ok || got != repo.Name {
+				t.Errorf("GeneratedFileRepo() = %d chars, %v; want %d chars, true", len(got), ok, n)
+			}
+			if got, marked, err := GeneratedFileHeader(path); err != nil || !marked || got != repo.Name {
+				t.Errorf("GeneratedFileHeader() = %d chars, %v, %v; want %d chars, true, nil", len(got), marked, err, n)
+			}
+		})
+	}
+}
+
+func TestGeneratedFileHeader(t *testing.T) {
+	dir := t.TempDir()
+	for name, content := range map[string]string{
+		"owned":    GeneratedMarker + " (repo: fedora); managed by 'updex catalog'\n",
+		"marked":   GeneratedMarker + " (repo: not.a.repo)\n",
+		"unmarked": "[Transfer]\n",
+		"short":    "# Gen",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tests := []struct {
+		name       string
+		wantRepo   string
+		wantMarked bool
+		wantErr    bool
+	}{
+		{"owned", "fedora", true, false},
+		{"marked", "", true, false},
+		{"unmarked", "", false, false},
+		{"short", "", false, false},
+		{"missing", "", false, true},
+	}
+	for _, tt := range tests {
+		repo, marked, err := GeneratedFileHeader(filepath.Join(dir, tt.name))
+		if repo != tt.wantRepo || marked != tt.wantMarked || (err != nil) != tt.wantErr {
+			t.Errorf("GeneratedFileHeader(%s) = %q, %v, %v; want %q, %v, err=%v", tt.name, repo, marked, err, tt.wantRepo, tt.wantMarked, tt.wantErr)
+		}
+	}
+}
+
 func TestRenderTransferStripsCatalogVerifyFalse(t *testing.T) {
 	out, err := RenderTransfer([]byte(zoxideConf), testRepo, "zoxide")
 	if err != nil {
@@ -261,6 +318,364 @@ func TestRenderTransferStripsCatalogVerifyFalse(t *testing.T) {
 	if strings.Contains(string(out), "Verify") {
 		t.Errorf("catalog-supplied Verify key not stripped, letting config/transfer.go's true default apply:\n%s", out)
 	}
+}
+
+// TestRenderTransferAllowUnsignedVerify verifies the catalog's Verify= only
+// reaches the rendered transfer for an AllowUnsigned repo, and then only as a
+// canonical line carrying the value config would parse from the catalog conf.
+func TestRenderTransferAllowUnsignedVerify(t *testing.T) {
+	tests := []struct {
+		name  string
+		line  string // replaces the conf's Verify=false line ("" removes it)
+		allow bool
+		want  string // rendered Verify line ("" = none)
+	}{
+		{"denied false", "Verify=false", false, ""},
+		{"denied true", "Verify=true", false, ""},
+		{"denied absent", "", false, ""},
+		{"allowed false", "Verify=false", true, "Verify=no"},
+		{"allowed no", "Verify=no", true, "Verify=no"},
+		{"allowed true", "Verify=true", true, "Verify=yes"},
+		{"allowed absent defaults to yes", "", true, "Verify=yes"},
+		{"allowed invalid defaults to yes", "Verify=maybe", true, "Verify=yes"},
+		{"allowed colon spelling", "Verify : no", true, "Verify=no"},
+		{"allowed multiline value is not a boolean", "Verify=\"\"\"\nno\n\"\"\"", true, "Verify=yes"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conf := strings.Replace(zoxideConf, "Verify=false\n", tt.line+"\n", 1)
+			repo := testRepo
+			repo.AllowUnsigned = tt.allow
+			out, err := RenderTransfer([]byte(conf), repo, "zoxide")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var verifyLines []string
+			for line := range strings.Lines(string(out)) {
+				if strings.Contains(strings.ToLower(line), "verify") {
+					verifyLines = append(verifyLines, strings.TrimSpace(line))
+				}
+			}
+			switch {
+			case tt.want == "" && len(verifyLines) != 0:
+				t.Errorf("rendered Verify lines = %q, want none:\n%s", verifyLines, out)
+			case tt.want != "" && (len(verifyLines) != 1 || verifyLines[0] != tt.want):
+				t.Errorf("rendered Verify lines = %q, want [%q]:\n%s", verifyLines, tt.want, out)
+			}
+
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "zoxide.transfer"), out, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			transfers, err := config.LoadTransfers(dir)
+			if err != nil || len(transfers) != 1 {
+				t.Fatalf("LoadTransfers() = %v, %v", transfers, err)
+			}
+			if wantVerify := tt.want != "Verify=no"; transfers[0].Transfer.Verify != wantVerify {
+				t.Errorf("loaded Verify = %v, want %v", transfers[0].Transfer.Verify, wantVerify)
+			}
+			if got := transfers[0].Transfer.Features; len(got) != 1 || got[0] != "zoxide" {
+				t.Errorf("Features = %v, want [zoxide]", got)
+			}
+		})
+	}
+}
+
+// TestRenderTransferStripsAlternateVerifySpellings guards against catalogs
+// that spell the "Verify" key using gopkg.in/ini.v1-accepted syntax that a
+// naive "Key=value" split would miss: the ':' delimiter and
+// backtick/double-quote-quoted key names.
+func TestRenderTransferStripsAlternateVerifySpellings(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+	}{
+		{"colon delimiter", "Verify:no"},
+		{"colon delimiter with spaces", "Verify : no"},
+		{"double-quoted key with equals", `"Verify"=no`},
+		{"backtick-quoted key with equals", "`Verify`=no"},
+		{"double-quoted key with colon", `"Verify":no`},
+		{"triple-quoted key with equals", `"""Verify"""=no`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conf := strings.Replace(zoxideConf, "Verify=false", tt.line, 1)
+			out, err := RenderTransfer([]byte(conf), testRepo, "zoxide")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(out), "Verify") {
+				t.Errorf("catalog-supplied %q not stripped:\n%s", tt.line, out)
+			}
+		})
+	}
+}
+
+// TestRenderTransferAlternateVerifySpellingDoesNotDisableVerification proves
+// the stripped output actually leaves GPG verification on end-to-end: a
+// hostile catalog conf spelling "Verify" in a way a naive parser would miss
+// must not survive into config.LoadTransfers with Verify == false.
+func TestRenderTransferAlternateVerifySpellingDoesNotDisableVerification(t *testing.T) {
+	conf := strings.Replace(zoxideConf, "Verify=false", `"""Verify"""=no`+"\n"+`"""Features"""=evil`, 1)
+	out, err := RenderTransfer([]byte(conf), testRepo, "zoxide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "Verify") {
+		t.Errorf("catalog-supplied triple-quoted Verify not stripped:\n%s", out)
+	}
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "zoxide.transfer"), out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	transfers, err := config.LoadTransfers(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(transfers) != 1 {
+		t.Fatalf("expected exactly one transfer, got %d", len(transfers))
+	}
+	if !transfers[0].Transfer.Verify {
+		t.Errorf("hostile catalog Verify spelling disabled verification: %+v", transfers[0].Transfer)
+	}
+	if got := transfers[0].Transfer.Features; len(got) != 1 || got[0] != "zoxide" {
+		t.Errorf("hostile catalog Features spelling overrode the injected Features line: got %v, want [zoxide]", got)
+	}
+}
+
+// TestRenderTransferPreservesMultilineValues proves the keyless-line guard
+// added for alternate Verify spellings does not eat the body of a legitimate
+// gopkg.in/ini.v1 multiline value. Continuation lines carry no key/value
+// delimiter, so a blanket keyless drop deletes them and leaves the rendered
+// .transfer holding an unterminated value.
+func TestRenderTransferPreservesMultilineValues(t *testing.T) {
+	tests := []struct {
+		name string
+		// block replaces the catalog conf's "Verify=false" line.
+		block string
+		// want are substrings the rendered output must still contain.
+		want []string
+	}{
+		{
+			name:  "triple-quoted multiline",
+			block: "ProtectVersion=\"\"\"\n1.2\n\"\"\"",
+			want:  []string{"ProtectVersion=\"\"\"", "\n1.2\n", "\"\"\""},
+		},
+		{
+			name:  "backtick multiline",
+			block: "ProtectVersion=`\n1.2\n`",
+			want:  []string{"ProtectVersion=`", "\n1.2\n", "`"},
+		},
+		{
+			name:  "multiline body that looks like a section header",
+			block: "ProtectVersion=\"\"\"\n[Source]\n\"\"\"",
+			want:  []string{"ProtectVersion=\"\"\"", "\n[Source]\n", "\"\"\""},
+		},
+		{
+			name:  "multiline body that looks like a bare word",
+			block: "ProtectVersion=\"\"\"\nnot a key at all\n\"\"\"",
+			want:  []string{"\nnot a key at all\n"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conf := strings.Replace(zoxideConf, "Verify=false", tt.block, 1)
+			out, err := RenderTransfer([]byte(conf), testRepo, "zoxide")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(string(out), want) {
+					t.Errorf("rendered .transfer dropped %q from a multiline value:\n%s", want, out)
+				}
+			}
+
+			// The rendered file must still parse, and the multiline value must
+			// survive with the value ini.v1 read from the catalog conf.
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "zoxide.transfer"), out, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			transfers, err := config.LoadTransfers(dir)
+			if err != nil {
+				t.Fatalf("rendered .transfer no longer parses: %v\n%s", err, out)
+			}
+			if len(transfers) != 1 {
+				t.Fatalf("expected exactly one transfer, got %d", len(transfers))
+			}
+			if !transfers[0].Transfer.Verify {
+				t.Errorf("multiline passthrough disabled verification: %+v", transfers[0].Transfer)
+			}
+			if got := transfers[0].Transfer.Features; len(got) != 1 || got[0] != "zoxide" {
+				t.Errorf("Features = %v, want [zoxide]", got)
+			}
+		})
+	}
+}
+
+// TestRenderTransferStripsMultilineVerifyAndFeatures is the non-vacuity guard
+// for TestRenderTransferPreservesMultilineValues: passing continuation lines
+// through must not become a way to smuggle a Verify or Features override in.
+// When the key that opens the multiline is one this renderer strips, the whole
+// block goes, not just its first line.
+func TestRenderTransferStripsMultilineVerifyAndFeatures(t *testing.T) {
+	tests := []struct {
+		name  string
+		block string
+	}{
+		{"multiline Verify", "Verify=\"\"\"\nno\n\"\"\""},
+		{"multiline Features", "Features=\"\"\"\nevil\n\"\"\""},
+		{"backtick multiline Verify", "Verify=`\nno\n`"},
+		{"triple-quoted key opening a multiline Verify", "\"\"\"Verify\"\"\"=\"\"\"\nno\n\"\"\""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conf := strings.Replace(zoxideConf, "Verify=false", tt.block, 1)
+			out, err := RenderTransfer([]byte(conf), testRepo, "zoxide")
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Neither the opening line nor any body line may survive: a
+			// leftover body line would be stray text in the rendered file.
+			for _, gone := range []string{"Verify", "no\n", "evil"} {
+				if strings.Contains(string(out), gone) {
+					t.Errorf("stripped multiline block leaked %q:\n%s", gone, out)
+				}
+			}
+
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "zoxide.transfer"), out, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			transfers, err := config.LoadTransfers(dir)
+			if err != nil {
+				t.Fatalf("rendered .transfer no longer parses: %v\n%s", err, out)
+			}
+			if len(transfers) != 1 {
+				t.Fatalf("expected exactly one transfer, got %d", len(transfers))
+			}
+			if !transfers[0].Transfer.Verify {
+				t.Errorf("multiline catalog override disabled verification: %+v", transfers[0].Transfer)
+			}
+			if got := transfers[0].Transfer.Features; len(got) != 1 || got[0] != "zoxide" {
+				t.Errorf("multiline catalog override changed Features: got %v, want [zoxide]", got)
+			}
+		})
+	}
+}
+
+func TestRenderTransferContinuationCannotSmuggleVerify(t *testing.T) {
+	block := "Dummy=value\\\n[Other]\nVerify=no"
+	conf := strings.Replace(zoxideConf, "Verify=false", block, 1)
+	out, err := RenderTransfer([]byte(conf), testRepo, "zoxide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "Dummy=value\\\n[Other]\n") {
+		t.Fatalf("legitimate continuation block was not preserved byte-for-byte:\n%s", out)
+	}
+
+	transfer := loadRenderedTransfer(t, out)
+	if !transfer.Transfer.Verify {
+		t.Errorf("continuation-carried section header smuggled Verify=no: %+v", transfer.Transfer)
+	}
+}
+
+func TestRenderTransferContinuationCannotSmuggleFeatures(t *testing.T) {
+	block := "Dummy=value\\\n[Other]\nFeatures=evil"
+	conf := strings.Replace(zoxideConf, "Verify=false", block, 1)
+	out, err := RenderTransfer([]byte(conf), testRepo, "zoxide")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	transfer := loadRenderedTransfer(t, out)
+	if got := transfer.Transfer.Features; len(got) != 1 || got[0] != "zoxide" {
+		t.Errorf("continuation-carried section header smuggled Features override: got %v, want [zoxide]", got)
+	}
+}
+
+func TestRenderTransferStripsContinuationBodies(t *testing.T) {
+	tests := []struct {
+		name string
+		conf string
+		gone []string
+	}{
+		{
+			name: "stripped Verify cannot inject Path",
+			conf: strings.Replace(zoxideConf, "Verify=false", "Verify=x\\\nPath=/etc/evil", 1),
+			gone: []string{"Verify=x", "Path=/etc/evil"},
+		},
+		{
+			name: "stripped Features cannot inject a requisite",
+			conf: strings.Replace(zoxideConf, "Verify=false", "Features=evil\\\nRequisiteFeatures=bad", 1),
+			gone: []string{"Features=evil", "RequisiteFeatures=bad"},
+		},
+		{
+			name: "rewritten section drops the whole continuation",
+			conf: strings.Replace(zoxideConf, "MatchPattern=zoxide-@v-%w-%a.raw\n\n[Target]", "MatchPattern=zoxide-@v-%w-%a.raw\nSourceNote=value\\\n[Other]\nLeaked=value\n\n[Target]", 1),
+			gone: []string{"SourceNote", "[Other]", "Leaked=value"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := RenderTransfer([]byte(tt.conf), testRepo, "zoxide")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, gone := range tt.gone {
+				if strings.Contains(string(out), gone) {
+					t.Errorf("stripped continuation block leaked %q:\n%s", gone, out)
+				}
+			}
+			_ = loadRenderedTransfer(t, out)
+		})
+	}
+}
+
+func TestRenderTransferPreservesContinuationValue(t *testing.T) {
+	block := "ProtectVersion=1.2\\\n3"
+	conf := strings.Replace(zoxideConf, "Verify=false", block, 1)
+	wantConfig, err := ini.Load([]byte(conf))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := wantConfig.Section("Transfer").Key("ProtectVersion").String()
+
+	out, err := RenderTransfer([]byte(conf), testRepo, "zoxide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), block) {
+		t.Fatalf("legitimate continuation block was not preserved byte-for-byte:\n%s", out)
+	}
+	renderedConfig, err := ini.Load(out)
+	if err != nil {
+		t.Fatalf("rendered .transfer no longer parses: %v\n%s", err, out)
+	}
+	if got := renderedConfig.Section("Transfer").Key("ProtectVersion").String(); got != want {
+		t.Errorf("rendered continuation value = %q, want ini.v1 catalog value %q", got, want)
+	}
+}
+
+func loadRenderedTransfer(t *testing.T, out []byte) *config.Transfer {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "zoxide.transfer"), out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	transfers, err := config.LoadTransfers(dir)
+	if err != nil {
+		t.Fatalf("rendered .transfer no longer parses: %v\n%s", err, out)
+	}
+	if len(transfers) != 1 {
+		t.Fatalf("expected exactly one transfer, got %d", len(transfers))
+	}
+	return transfers[0]
 }
 
 func TestRenderTransferToRewritesProductionTarget(t *testing.T) {

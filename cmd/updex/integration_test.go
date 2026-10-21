@@ -10,9 +10,9 @@ import (
 	"testing"
 
 	"github.com/frostyard/clix"
-	"github.com/frostyard/updex/catalog"
-	"github.com/frostyard/updex/config"
-	sdk "github.com/frostyard/updex/updex"
+	"github.com/frostyard/updex/v2/catalog"
+	"github.com/frostyard/updex/v2/config"
+	sdk "github.com/frostyard/updex/v2/updex"
 )
 
 func runCLI(t *testing.T, args ...string) (stdout, stderr string, runErr error) {
