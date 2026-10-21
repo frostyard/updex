@@ -45,7 +45,7 @@ with `systemd-sysext`; commands that modify system state require root.
 
 ### Build from source
 
-With [Go 1.26.9](https://go.dev/doc/install) and `make`, run `make build` to
+With [Go 1.26.10](https://go.dev/doc/install) and `make`, run `make build` to
 create `build/updex`, or `make install` to put the binary in `GOPATH/bin`.
 Building and unit testing do not require systemd. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and the
