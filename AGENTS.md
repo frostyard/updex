@@ -423,7 +423,7 @@ catalog roots (production defaults: `/etc/updex/catalogs.d`, `/run/...`,
 `ListURL` (GitHub contents API endpoint, only used by list/search;
 `GITHUB_TOKEN` honored), optional `Component` (default `catalog-<name>`), the
 component the generated files land in, optional `AllowInsecure=yes`, and
-optional `AllowUnsigned=yes` (lets the catalog's own `Verify=` decide whether
+optional `AllowUnsigned=yes` (refused with `AllowInsecure=yes`; lets the catalog's own `Verify=` decide whether
 `SHA256SUMS` must be signed; without it signatures are always required —
 see the signature-policy bullet below).
 `SiteURL` and `ListURL` require HTTPS by default. `AllowInsecure=yes` is an
@@ -455,7 +455,12 @@ Key design points:
   recomputes the decision on every `getAvailableVersions` call: a
   marker-bearing transfer requires a signature unless its owning repo is
   *currently* configured with `AllowUnsigned=yes`; `ClientConfig.Verify`
-  overrides everything; missing or unloadable catalog config fails closed.
+  overrides everything; only the owning repo's `.catalog` is loaded
+  (`catalog.LoadRepoFrom`), and a missing or unloadable one fails closed, as
+  does a transfer whose header is unreadable or carries the marker with no
+  parseable repo (`catalog.GeneratedFileHeader`, read once). `GeneratedFileRepo`'s bounded read
+  (`maxMarkerLen`) must fit the header for a 255-byte repo name; never
+  shrink it below that.
   A 404 on `SHA256SUMS.gpg` wraps `manifest.ErrSignatureNotFound` and is
   prefixed with the rule that applied. Never add a fallback that retries
   unverified after a signature failure.

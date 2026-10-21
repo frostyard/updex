@@ -85,6 +85,39 @@ func LoadReposFrom(configRoots []string) ([]Repo, error) {
 	return repos, nil
 }
 
+// ErrRepoNotFound is returned by LoadRepoFrom when no root holds a
+// <name>.catalog file.
+var ErrRepoNotFound = errors.New("catalog not configured")
+
+// LoadRepoFrom loads the single repo name from the first of configRoots that
+// holds <name>.catalog, the same file LoadReposFrom would pick. Unlike
+// LoadReposFrom, an invalid file for another repo cannot make it fail. It
+// returns ErrRepoNotFound when no root holds the file.
+func LoadRepoFrom(configRoots []string, name string) (Repo, error) {
+	if !repoNamePattern.MatchString(name) {
+		return Repo{}, fmt.Errorf("invalid catalog name %q (allowed: [a-zA-Z0-9_-]+)", name)
+	}
+	for _, dir := range configRoots {
+		path := filepath.Join(dir, name+catalogSuffix)
+		info, err := os.Stat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return Repo{}, fmt.Errorf("failed to stat %s: %w", path, err)
+		}
+		if info.IsDir() {
+			continue
+		}
+		repo, err := parseRepoFile(name, path)
+		if err != nil {
+			return Repo{}, fmt.Errorf("failed to parse %s: %w", path, err)
+		}
+		return repo, nil
+	}
+	return Repo{}, ErrRepoNotFound
+}
+
 // LoadRepos loads all configured catalog repos from ConfigRoots, earlier
 // roots winning per filename, sorted by name. It returns ErrNoCatalogs when
 // no .catalog file exists anywhere.
@@ -125,7 +158,8 @@ type Repo struct {
 	// its SHA256SUMS must carry a GPG signature. Without it, verification is
 	// always required for this repo's transfers regardless of what the
 	// catalog or the generated .transfer says. It is independent of
-	// AllowInsecure: HTTPS and SHA256 checks still apply.
+	// AllowInsecure, and cannot be combined with it: HTTPS is the only origin
+	// authentication an unsigned catalog has left. SHA256 checks still apply.
 	AllowUnsigned bool
 }
 
@@ -187,6 +221,9 @@ func parseRepoFile(name, path string) (Repo, error) {
 
 	if repo.SiteURL == "" {
 		return Repo{}, fmt.Errorf("SiteURL is required")
+	}
+	if repo.AllowUnsigned && repo.AllowInsecure {
+		return Repo{}, fmt.Errorf("AllowUnsigned=yes cannot be combined with AllowInsecure=yes: an unsigned catalog relies on HTTPS to authenticate its origin")
 	}
 	if err := validateRepoURL("SiteURL", repo.SiteURL, repo.AllowInsecure); err != nil {
 		return Repo{}, err

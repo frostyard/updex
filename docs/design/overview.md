@@ -279,10 +279,11 @@ The main `SHA256SUMS` fetch and the detached `.gpg` signature fetch share the sa
 
 A 404 on `SHA256SUMS.gpg` wraps `manifest.ErrSignatureNotFound`;
 `getAvailableVersions` then prefixes the error with the policy rule that
-required the signature (forced, catalog not opted in, or the transfer's own
-`Verify=yes`). For an opted-in catalog transfer the message says the
+required the signature (forced, catalog not opted in, not configured, or
+unloadable, or the transfer's own `Verify=yes`, which says the publisher must
+provide `SHA256SUMS.gpg`). For an opted-in catalog transfer the message says the
 *generated transfer* requires it and suggests re-running `catalog add`,
-because a v2.0.1-rendered file lacks `Verify=` even when the catalog declares
+because a v2.0.1- or v2.0.2-rendered file lacks `Verify=` even when the catalog declares
 `Verify=no`. Nothing ever retries without
 verification after a signature failure.
 
@@ -337,9 +338,15 @@ Design decisions (verified with the user, 2026-08):
   its owning repo and requires a signature unless that repo is currently
   configured with `AllowUnsigned=yes`, so revoking the opt-in takes effect
   on the next run, a hand-added `Verify=no` is ignored, and a deleted or
-  unparseable catalog configuration fails closed. `ClientConfig.Verify`
-  overrides everything. Transfers rendered by v2.0.1 carry no `Verify=`
-  and need a re-add after opting in.
+  unparseable owning `.catalog` fails closed. Only the owning repo's file
+  is loaded (`catalog.LoadRepoFrom`, same first-root-wins precedence), so an
+  unrelated broken `.catalog` cannot revoke another repo's opt-in. The
+  transfer header is read once (`catalog.GeneratedFileHeader`); a read error
+  or an unattributable marker requires a signature. `AllowUnsigned=yes` is
+  refused alongside `AllowInsecure=yes`. `ClientConfig.Verify` overrides
+  everything. Transfers rendered by v2.0.1 or v2.0.2 carry no `Verify=` and
+  need a re-add after opting in; v2.0.0 renders kept `Verify=false` and work
+  again once the repo opts in.
 - **Catalog transport is an integrity boundary.** A catalog whose repo sets
   `AllowUnsigned=yes` may declare `Verify=false`; in that case the HTTPS transport protecting
   the `.conf`, `SHA256SUMS`, and image is the only remote integrity boundary.

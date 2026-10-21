@@ -19,7 +19,8 @@ import (
 // signaturePolicyCatalog describes the HTTPS catalog served by
 // newSignaturePolicyServer for one sysext.
 type signaturePolicyCatalog struct {
-	// verifyLine is the catalog conf's [Transfer] Verify line; empty omits it.
+	// verifyLine is the catalog conf's [Transfer] Verify line (plus any
+	// further lines it embeds); empty omits it.
 	verifyLine string
 	// signed serves a valid SHA256SUMS.gpg; otherwise it is a 404.
 	signed bool
@@ -113,6 +114,7 @@ MatchPattern=%s-@v.raw
 }
 
 type signaturePolicyEnv struct {
+	repo           string // catalog repo name; "fedora" unless overridden
 	server         *httptest.Server
 	definitionRoot string
 	catalogRoot    string
@@ -130,6 +132,7 @@ func newSignaturePolicyEnv(t *testing.T, spec signaturePolicyCatalog) *signature
 		t.Cleanup(func() { manifest.KeyringPaths = original })
 	}
 	return &signaturePolicyEnv{
+		repo:           "fedora",
 		server:         newSignaturePolicyServer(t, spec),
 		definitionRoot: t.TempDir(),
 		catalogRoot:    t.TempDir(),
@@ -138,10 +141,10 @@ func newSignaturePolicyEnv(t *testing.T, spec signaturePolicyCatalog) *signature
 	}
 }
 
-// writeRepo writes fedora.catalog for the env's server with extra lines.
+// writeRepo writes <repo>.catalog for the env's server with extra lines.
 func (e *signaturePolicyEnv) writeRepo(t *testing.T, extra string) {
 	t.Helper()
-	writeCatalogFileContent(t, e.catalogRoot, "fedora", "[Catalog]\nSiteURL="+e.server.URL+"\n"+extra)
+	writeCatalogFileContent(t, e.catalogRoot, e.repo, "[Catalog]\nSiteURL="+e.server.URL+"\n"+extra)
 }
 
 func (e *signaturePolicyEnv) client(forceVerify bool) *Client {
@@ -162,7 +165,7 @@ func (e *signaturePolicyEnv) client(forceVerify bool) *Client {
 }
 
 func (e *signaturePolicyEnv) componentDir() string {
-	return filepath.Join(e.definitionRoot, "sysupdate.catalog-fedora.d")
+	return filepath.Join(e.definitionRoot, "sysupdate.catalog-"+e.repo+".d")
 }
 
 func (e *signaturePolicyEnv) imagePath() string {
@@ -200,6 +203,18 @@ func TestCatalogAdd_SignaturePolicy(t *testing.T) {
 			name:         "unsigned catalog without opt-in fails with guidance",
 			spec:         signaturePolicyCatalog{verifyLine: "Verify=false"},
 			wantErr:      []string{`catalog "fedora" must publish a signed SHA256SUMS`, "AllowUnsigned=yes in fedora.catalog"},
+			wantNotFound: true,
+		},
+		{
+			name:         "AllowUnsigned in the catalog conf grants nothing",
+			spec:         signaturePolicyCatalog{verifyLine: "Verify=false\nAllowUnsigned=yes"},
+			wantErr:      []string{`catalog "fedora" must publish a signed SHA256SUMS`},
+			wantNotFound: true,
+		},
+		{
+			name:         "a [Catalog] section in the catalog conf grants nothing",
+			spec:         signaturePolicyCatalog{verifyLine: "Verify=false\n\n[Catalog]\nAllowUnsigned=yes"},
+			wantErr:      []string{`catalog "fedora" must publish a signed SHA256SUMS`},
 			wantNotFound: true,
 		},
 		{
@@ -326,8 +341,23 @@ func TestCatalogAdd_SignaturePolicy(t *testing.T) {
 // an SDK consumer would hold): removing AllowUnsigned, or breaking the
 // catalog configuration, makes the next check require a signature without
 // re-adding or reconstructing the client.
+//
+// The longest repo name a default component directory admits
+// ("sysupdate.catalog-<name>.d" within NAME_MAX) produces an ownership
+// header well past 256 bytes; it must still be attributed to its repo rather
+// than read as a hand-written transfer whose own Verify=no is trusted.
 func TestCatalogSignaturePolicy_RevokingOptInRequiresSignature(t *testing.T) {
+	longest := strings.Repeat("a", 255-len("sysupdate.catalog-.d"))
+	for _, repo := range []string{"fedora", longest} {
+		t.Run(fmt.Sprintf("repo name length %d", len(repo)), func(t *testing.T) {
+			testRevokingOptIn(t, repo)
+		})
+	}
+}
+
+func testRevokingOptIn(t *testing.T, repo string) {
 	env := newSignaturePolicyEnv(t, signaturePolicyCatalog{verifyLine: "Verify=false"})
+	env.repo = repo
 	env.writeRepo(t, "AllowUnsigned=yes\n")
 	client := env.client(false)
 	if _, err := client.CatalogAdd(t.Context(), signaturePolicySysext, CatalogAddOptions{}); err != nil {
@@ -338,26 +368,67 @@ func TestCatalogSignaturePolicy_RevokingOptInRequiresSignature(t *testing.T) {
 	}
 
 	steps := []struct {
-		name         string
-		extra        string
-		wantRequired bool
+		name  string
+		extra string
+		// want is a substring of the check error; empty means success.
+		want string
 	}{
-		{"opt-in removed", "", true},
-		{"opt-in restored", "AllowUnsigned=yes\n", false},
-		{"malformed configuration fails closed", "AllowUnsigned=maybe\n", true},
+		{"opt-in removed", "", "set AllowUnsigned=yes in " + repo + ".catalog"},
+		{"opt-in restored", "AllowUnsigned=yes\n", ""},
+		{"malformed configuration fails closed", "AllowUnsigned=maybe\n", "configuration could not be loaded"},
 	}
 	for _, step := range steps {
 		env.writeRepo(t, step.extra)
 		got := checkError(t, client)
-		if !step.wantRequired {
+		if step.want == "" {
 			if got != "" {
 				t.Errorf("%s: check error = %q, want none", step.name, got)
 			}
 			continue
 		}
-		if !strings.Contains(got, "AllowUnsigned=yes") || !strings.Contains(got, "signature not found") {
-			t.Errorf("%s: check error = %q, want signature requirement", step.name, got)
+		if !strings.Contains(got, step.want) || !strings.Contains(got, "signature not found") {
+			t.Errorf("%s: check error = %q, want signature requirement with %q", step.name, got, step.want)
 		}
+	}
+	if err := os.Remove(filepath.Join(env.catalogRoot, repo+".catalog")); err != nil {
+		t.Fatal(err)
+	}
+	if got := checkError(t, client); !strings.Contains(got, "is not configured") || !strings.Contains(got, "signature not found") {
+		t.Errorf("catalog removed: check error = %q, want not-configured signature requirement", got)
+	}
+}
+
+// TestCatalogSignaturePolicy_UpdateFeatures verifies UpdateFeatures (the
+// daemon's path) applies the same policy as CheckFeatures: it accepts an
+// unsigned catalog under the opt-in and refuses once it is revoked.
+func TestCatalogSignaturePolicy_UpdateFeatures(t *testing.T) {
+	env := newSignaturePolicyEnv(t, signaturePolicyCatalog{verifyLine: "Verify=false"})
+	env.writeRepo(t, "AllowUnsigned=yes\n")
+	client := env.client(false)
+	if _, err := client.CatalogAdd(t.Context(), signaturePolicySysext, CatalogAddOptions{NoRefresh: true}); err != nil {
+		t.Fatalf("CatalogAdd() error = %v", err)
+	}
+
+	updateError := func() string {
+		t.Helper()
+		results, _ := client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true})
+		for _, r := range results {
+			for _, ur := range r.Results {
+				if ur.Component == signaturePolicySysext {
+					return ur.Error
+				}
+			}
+		}
+		t.Fatalf("no update result for %s: %+v", signaturePolicySysext, results)
+		return ""
+	}
+
+	if got := updateError(); got != "" {
+		t.Fatalf("update with opt-in error = %q, want none", got)
+	}
+	env.writeRepo(t, "")
+	if got := updateError(); !strings.Contains(got, "AllowUnsigned=yes in fedora.catalog") || !strings.Contains(got, "signature not found") {
+		t.Errorf("update after revocation error = %q, want signature requirement", got)
 	}
 }
 
@@ -412,6 +483,7 @@ func TestVerifyPolicy(t *testing.T) {
 	repoAllowed := catalog.Repo{Name: "allowed", SiteURL: "https://example.com/allowed", AllowUnsigned: true}
 	repoDenied := catalog.Repo{Name: "denied", SiteURL: "https://example.com/denied"}
 	repoGone := catalog.Repo{Name: "gone", SiteURL: "https://example.com/gone"}
+	repoBroken := catalog.Repo{Name: "broken", SiteURL: "https://example.com/broken"}
 
 	tests := []struct {
 		name       string
@@ -429,7 +501,9 @@ func TestVerifyPolicy(t *testing.T) {
 		{"hand-edited Verify=no without opt-in", strings.Replace(renderForTest(t, repoDenied), "Features=x\n", "Features=x\nVerify=no\n", 1), false, "", true, verifyCatalogNotAllowed},
 		{"owning catalog no longer configured", strings.Replace(renderForTest(t, repoGone), "Features=x\n", "Features=x\nVerify=no\n", 1), false, "", true, verifyCatalogNotAllowed},
 		{"no catalogs configured at all", renderForTest(t, repoAllowed), false, "none", true, verifyCatalogNotAllowed},
-		{"malformed catalog configuration fails closed", renderForTest(t, repoAllowed), false, "malformed", true, verifyCatalogNotAllowed},
+		{"unrelated malformed catalog keeps the opt-in", renderForTest(t, repoAllowed), false, "malformed", false, verifyByCatalog},
+		{"malformed owning catalog fails closed", renderForTest(t, repoBroken), false, "malformed", true, verifyCatalogNotAllowed},
+		{"unattributable marker fails closed", catalog.GeneratedMarker + " (repo: not.a.repo)\n[Transfer]\nVerify=no\n" + handWrittenBody, false, "", true, verifyUnknownOwner},
 	}
 
 	for _, tt := range tests {
@@ -456,6 +530,50 @@ func TestVerifyPolicy(t *testing.T) {
 			got := client.verifyPolicy(transfers[0])
 			if got.required != tt.wantVerify || got.reason != tt.wantReason {
 				t.Errorf("verifyPolicy() = %+v, want required=%v reason=%v", got, tt.wantVerify, tt.wantReason)
+			}
+		})
+	}
+
+	t.Run("unreadable header fails closed", func(t *testing.T) {
+		transfer := &config.Transfer{FilePath: filepath.Join(t.TempDir(), "gone.transfer")}
+		transfer.Transfer.Verify = false
+		got := NewClient(ClientConfig{}).verifyPolicy(transfer)
+		if !got.required || got.reason != verifyUnknownOwner {
+			t.Errorf("verifyPolicy() = %+v, want required by unknown owner", got)
+		}
+	})
+}
+
+// TestVerifyPolicyExplain pins the guidance attached to a missing signature,
+// so each rule points the administrator at the right fix.
+func TestVerifyPolicyExplain(t *testing.T) {
+	transfer := &config.Transfer{Component: "x"}
+	tests := []struct {
+		name    string
+		policy  verifyPolicy
+		want    []string
+		notWant []string
+	}{
+		{"hand-written default", verifyPolicy{reason: verifyByTransfer}, []string{"the publisher must provide SHA256SUMS.gpg"}, []string{"Verify=no"}},
+		{"not opted in", verifyPolicy{reason: verifyCatalogNotAllowed, repo: "fedora"}, []string{"set AllowUnsigned=yes in fedora.catalog"}, nil},
+		{"not configured", verifyPolicy{reason: verifyCatalogNotAllowed, repo: "fedora", loadErr: fmt.Errorf("wrapped: %w", catalog.ErrRepoNotFound)}, []string{`catalog "fedora" that generated x is not configured`}, []string{"AllowUnsigned"}},
+		{"load failure", verifyPolicy{reason: verifyCatalogNotAllowed, repo: "fedora", loadErr: errors.New("invalid AllowUnsigned value")}, []string{"configuration could not be loaded (invalid AllowUnsigned value)"}, []string{"set AllowUnsigned=yes"}},
+		{"generated transfer", verifyPolicy{reason: verifyByCatalog, repo: "fedora"}, []string{"re-run 'updex catalog add fedora/x'"}, nil},
+		{"forced", verifyPolicy{reason: verifyForced}, []string{"--verify"}, nil},
+		{"unknown owner", verifyPolicy{reason: verifyUnknownOwner}, []string{"without a recognizable catalog"}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.policy.explain(transfer)
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("explain() = %q, want substring %q", got, want)
+				}
+			}
+			for _, notWant := range tt.notWant {
+				if strings.Contains(got, notWant) {
+					t.Errorf("explain() = %q, must not contain %q", got, notWant)
+				}
 			}
 		})
 	}

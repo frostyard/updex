@@ -188,10 +188,18 @@ unsigned checksum does not authenticate the publisher, so anyone able to
 replace both the image and `SHA256SUMS` on the hosting infrastructure can
 serve a different image.
 
-**Upgrading from v2.0.1:** v2.0.1 dropped the catalog's `Verify=` from
-generated transfers, so sysexts added with it keep requiring a signature.
-Add `AllowUnsigned=yes`, then re-run `sudo updex catalog add <repo>/<name>`
-for each affected sysext to regenerate its transfer.
+`AllowUnsigned=yes` cannot be combined with `AllowInsecure=yes`: without
+signatures, HTTPS is the only check on where an image came from.
+
+**Upgrading from v2.0.0:** sysexts added with v2.0.0 kept the catalog's
+`Verify=false` and stop updating with a signature error until their catalog
+sets `AllowUnsigned=yes`. No re-add is needed.
+
+**Upgrading from v2.0.1 or v2.0.2:** these releases dropped the catalog's
+`Verify=` from generated transfers, so sysexts added with them keep requiring
+a signature. Add `AllowUnsigned=yes`, then re-run
+`sudo updex catalog add <repo>/<name>` for each affected sysext to regenerate
+its transfer.
 
 ## JSON output
 

@@ -275,7 +275,7 @@ ListURL=https://api.github.com/repos/fedora-sysexts/fedora/contents/
 | `ListURL` | no | GitHub contents API endpoint for `catalog list`/`search`; without it the repo is skipped in listings (add/remove unaffected) |
 | `Component` | no | systemd-sysupdate component for generated files; default `catalog-<name>`, validated against `[a-zA-Z0-9_-]+` |
 | `AllowInsecure` | no | bool, default `no`; permits non-HTTPS `SiteURL`/`ListURL` values for explicitly trusted development/test endpoints. Does not affect `GITHUB_TOKEN` transmission |
-| `AllowUnsigned` | no | bool, default `no`; lets this catalog's published `Verify=` decide whether its `SHA256SUMS` must be GPG-signed. Without it, signatures are always required for this repo's sysexts. Independent of `AllowInsecure`: HTTPS and SHA256 checks still apply |
+| `AllowUnsigned` | no | bool, default `no`; lets this catalog's published `Verify=` decide whether its `SHA256SUMS` must be GPG-signed. Without it, signatures are always required for this repo's sysexts. Cannot be combined with `AllowInsecure=yes` (the file fails to load): HTTPS and SHA256 checks still apply |
 
 ### Signature policy for catalog sysexts
 
@@ -292,7 +292,8 @@ effective setting is recomputed from local configuration
 | Condition | Signature required |
 |-----------|--------------------|
 | `ClientConfig.Verify` / `--verify` | always |
-| Owning repo lacks `AllowUnsigned=yes`, is no longer configured, or catalog configuration fails to load | always, whatever the transfer says |
+| Owning repo lacks `AllowUnsigned=yes`, is no longer configured, or its `.catalog` fails to load | always, whatever the transfer says |
+| Transfer starts with the catalog marker but names no parseable repo, or its header cannot be read | always |
 | Owning repo sets `AllowUnsigned=yes` | the transfer's `Verify=` (default `yes`) |
 
 A missing `SHA256SUMS.gpg` on a transfer that requires one fails with an

@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -253,6 +254,59 @@ func TestRenderTransfer(t *testing.T) {
 	}
 	if !strings.Contains(got, "Path=/var/lib/extensions.d\nMatchPattern=zoxide-@v-%w-%a.raw\nMode=0644\n") {
 		t.Errorf("target path and mode not canonicalized:\n%s", got)
+	}
+}
+
+// TestGeneratedFileRepoLongNames verifies the bounded marker read covers
+// every repo name a .catalog filename can carry, including names whose
+// header no longer fits the original 256-byte read.
+func TestGeneratedFileRepoLongNames(t *testing.T) {
+	for _, n := range []int{1, 219, 220, 235, 255 - len(".catalog"), maxRepoNameLen} {
+		t.Run(fmt.Sprint(n), func(t *testing.T) {
+			repo := Repo{Name: strings.Repeat("a", n), SiteURL: "https://example.com/r"}
+			path := filepath.Join(t.TempDir(), "x.feature")
+			if err := os.WriteFile(path, RenderFeature(repo, "x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if got, ok := GeneratedFileRepo(path); !ok || got != repo.Name {
+				t.Errorf("GeneratedFileRepo() = %d chars, %v; want %d chars, true", len(got), ok, n)
+			}
+			if got, marked, err := GeneratedFileHeader(path); err != nil || !marked || got != repo.Name {
+				t.Errorf("GeneratedFileHeader() = %d chars, %v, %v; want %d chars, true, nil", len(got), marked, err, n)
+			}
+		})
+	}
+}
+
+func TestGeneratedFileHeader(t *testing.T) {
+	dir := t.TempDir()
+	for name, content := range map[string]string{
+		"owned":    GeneratedMarker + " (repo: fedora); managed by 'updex catalog'\n",
+		"marked":   GeneratedMarker + " (repo: not.a.repo)\n",
+		"unmarked": "[Transfer]\n",
+		"short":    "# Gen",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tests := []struct {
+		name       string
+		wantRepo   string
+		wantMarked bool
+		wantErr    bool
+	}{
+		{"owned", "fedora", true, false},
+		{"marked", "", true, false},
+		{"unmarked", "", false, false},
+		{"short", "", false, false},
+		{"missing", "", false, true},
+	}
+	for _, tt := range tests {
+		repo, marked, err := GeneratedFileHeader(filepath.Join(dir, tt.name))
+		if repo != tt.wantRepo || marked != tt.wantMarked || (err != nil) != tt.wantErr {
+			t.Errorf("GeneratedFileHeader(%s) = %q, %v, %v; want %q, %v, err=%v", tt.name, repo, marked, err, tt.wantRepo, tt.wantMarked, tt.wantErr)
+		}
 	}
 }
 

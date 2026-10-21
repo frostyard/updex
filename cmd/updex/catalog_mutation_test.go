@@ -105,7 +105,7 @@ func newCatalogCLIFixture(t *testing.T) *catalogCLIFixture {
 	manifestContent := []byte(fmt.Sprintf("%s  %s\n", sha256Hex(rawContent), rawName))
 	manifestSig := testutil.SignManifest(t, manifestContent)
 	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/" + catalogTestSysext + "/" + catalogTestSysext + ".conf":
 			// A genuine catalog-published transfer: CurrentSymlink is
@@ -140,6 +140,13 @@ CurrentSymlink=/var/lib/extensions/%s.raw
 		}
 	}))
 	t.Cleanup(server.Close)
+	// The CLI's default HTTP client uses http.DefaultTransport; trust the
+	// fake site's certificate so repos need no AllowInsecure (which
+	// AllowUnsigned refuses). Safe because this package's parallel tests
+	// make no HTTP requests.
+	oldTransport := http.DefaultTransport
+	http.DefaultTransport = server.Client().Transport
+	t.Cleanup(func() { http.DefaultTransport = oldTransport })
 	fx.siteURL = server.URL
 	return fx
 }
@@ -147,7 +154,7 @@ CurrentSymlink=/var/lib/extensions/%s.raw
 // addRepo configures a <name>.catalog pointing at the fake site.
 func (fx *catalogCLIFixture) addRepo(t *testing.T, name string) {
 	t.Helper()
-	content := "[Catalog]\nSiteURL=" + fx.siteURL + "\nAllowInsecure=yes\n"
+	content := "[Catalog]\nSiteURL=" + fx.siteURL + "\n"
 	if err := os.WriteFile(filepath.Join(fx.catalogRoot, name+".catalog"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -185,6 +192,25 @@ func TestRunCatalogAdd_UnsignedCatalogNeedsLocalOptIn(t *testing.T) {
 	if data, err := os.ReadFile(fx.transferFile("fedora")); err != nil || !strings.Contains(string(data), "\nVerify=no\n") {
 		t.Errorf("generated transfer does not honor the catalog's Verify=false (%v):\n%s", err, data)
 	}
+}
+
+// TestRunCatalogAdd_RefusesUnsignedOverInsecure verifies a catalog cannot
+// combine AllowUnsigned=yes with AllowInsecure=yes: without signatures,
+// HTTPS is the only origin authentication left.
+func TestRunCatalogAdd_RefusesUnsignedOverInsecure(t *testing.T) {
+	fx := newCatalogCLIFixture(t)
+	fx.unsigned = true
+	content := "[Catalog]\nSiteURL=" + fx.siteURL + "\nAllowInsecure=yes\nAllowUnsigned=yes\n"
+	if err := os.WriteFile(filepath.Join(fx.catalogRoot, "fedora.catalog"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	setCatalogCLIFlags(t, catalogCLIFlags{runner: &sysext.MockRunner{}})
+
+	out, err := runCatalogHandler(t, runCatalogAdd, catalogTestSysext)
+	if err == nil || !strings.Contains(err.Error(), "cannot be combined with AllowInsecure=yes") {
+		t.Fatalf("expected AllowUnsigned/AllowInsecure refusal, got %v\noutput:\n%s", err, out)
+	}
+	fx.assertUntouched(t, "fedora")
 }
 
 // componentDir is where CatalogAdd writes repo's generated definitions.
