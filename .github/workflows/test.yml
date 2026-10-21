@@ -37,7 +37,7 @@ jobs:
       # Snowcat worker's target preparation do, so the three cannot drift.
       # Go still comes from actions/setup-go above (go.mod's toolchain line).
       - name: Install pinned tools
-        uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           install: true
           install_args: golangci-lint
@@ -223,7 +223,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "20"
 
@@ -254,7 +254,7 @@ jobs:
 
       - name: Validate GoReleaser Pro configuration
         if: env.HAS_GORELEASER_KEY == 'true'
-        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         env:
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
         with:
