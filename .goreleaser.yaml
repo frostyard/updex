@@ -85,8 +85,11 @@ changelog:
       - Merge branch
       - go mod tidy
   groups:
+    # Dependabot titles are build(deps): (Go modules) and ci(deps): (Actions);
+    # feat(deps): stays for PRs opened before that prefix. This group must
+    # stay before "New Features", which also matches feat(deps):.
     - title: Dependency updates
-      regexp: "^.*feat\\(deps\\)*:+.*$"
+      regexp: "^.*(build|ci|feat)\\(deps(-dev)?\\):+.*$"
       order: 300
     - title: "New Features"
       regexp: "^.*feat[(\\w)]*:+.*$"
