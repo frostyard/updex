@@ -7,7 +7,7 @@ toolchain go1.26.10
 require (
 	github.com/ProtonMail/go-crypto v1.5.2
 	github.com/frostyard/clix v0.4.0
-	github.com/frostyard/std v0.2.2
+	github.com/frostyard/std v0.3.0
 	github.com/hashicorp/go-version v1.9.0
 	github.com/klauspost/compress v1.20.1
 	github.com/schollz/progressbar/v3 v3.19.1
