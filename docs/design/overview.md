@@ -653,7 +653,7 @@ the remaining pre-merge release-surface gap: on pull requests, pushes to
 action as the publishing workflows, with `args: check`, read-only repository
 permission, and checkout credentials disabled. Trusted runs fail if
 `GORELEASER_KEY` is unavailable, rather than passing without validation. Fork
-pull requests cannot receive that secret, so their job explicitly records that
+and Dependabot pull requests cannot receive that secret, so their job explicitly records that
 the configuration was not validated; the trusted merge-queue run supplies the
 enforced pre-merge result.
 
