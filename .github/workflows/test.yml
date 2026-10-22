@@ -37,7 +37,7 @@ jobs:
       # Snowcat worker's target preparation do, so the three cannot drift.
       # Go still comes from actions/setup-go above (go.mod's toolchain line).
       - name: Install pinned tools
-        uses: jdx/mise-action@3c2e0cf82a5b2e5249f0d3635a4d83d0ae861518 # v4.2.5
+        uses: jdx/mise-action@08ae2a091c038e1e05ec6f5115dc5c69d5a2a6b8 # v5.1.2
         with:
           install: true
           install_args: golangci-lint
@@ -223,7 +223,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "20"
 
@@ -254,7 +254,7 @@ jobs:
 
       - name: Validate GoReleaser Pro configuration
         if: env.HAS_GORELEASER_KEY == 'true'
-        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         env:
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
         with:
@@ -262,15 +262,19 @@ jobs:
           version: "~> v2"
           args: check
 
+      # GitHub gives Dependabot-triggered runs only Dependabot secrets, so
+      # GORELEASER_KEY is absent for them, as for fork PRs. When the key is
+      # missing, the two conditions below are exact complements. merge_group
+      # and push runs always take the fail path.
       - name: Fail when trusted runs cannot validate the release configuration
-        if: env.HAS_GORELEASER_KEY != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        if: env.HAS_GORELEASER_KEY != 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'))
         run: |
           echo "::error::GORELEASER_KEY is unavailable; the GoReleaser Pro configuration was not validated."
           exit 1
 
-      - name: Report unvalidated fork pull request
-        if: env.HAS_GORELEASER_KEY != 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+      - name: Report unvalidated fork or Dependabot pull request
+        if: env.HAS_GORELEASER_KEY != 'true' && github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor == 'dependabot[bot]')
         run: |
-          echo "::warning::GoReleaser Pro configuration was not validated because secrets are unavailable to fork pull requests."
+          echo "::warning::GoReleaser Pro configuration was not validated because secrets are unavailable to fork and Dependabot pull requests."
           echo "### Release configuration not validated" >> "$GITHUB_STEP_SUMMARY"
-          echo "GORELEASER_KEY is unavailable to this fork pull request; a trusted merge-queue run must validate .goreleaser.yaml before merge." >> "$GITHUB_STEP_SUMMARY"
+          echo "GORELEASER_KEY is unavailable to fork and Dependabot pull requests; a trusted merge-queue run must validate .goreleaser.yaml before merge." >> "$GITHUB_STEP_SUMMARY"

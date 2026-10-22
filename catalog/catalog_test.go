@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -256,6 +257,59 @@ func TestRenderTransfer(t *testing.T) {
 	}
 }
 
+// TestGeneratedFileRepoLongNames verifies the bounded marker read covers
+// every repo name a .catalog filename can carry, including names whose
+// header no longer fits the original 256-byte read.
+func TestGeneratedFileRepoLongNames(t *testing.T) {
+	for _, n := range []int{1, 219, 220, 235, 255 - len(".catalog"), maxRepoNameLen} {
+		t.Run(fmt.Sprint(n), func(t *testing.T) {
+			repo := Repo{Name: strings.Repeat("a", n), SiteURL: "https://example.com/r"}
+			path := filepath.Join(t.TempDir(), "x.feature")
+			if err := os.WriteFile(path, RenderFeature(repo, "x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if got, ok := GeneratedFileRepo(path); !ok || got != repo.Name {
+				t.Errorf("GeneratedFileRepo() = %d chars, %v; want %d chars, true", len(got), ok, n)
+			}
+			if got, marked, err := GeneratedFileHeader(path); err != nil || !marked || got != repo.Name {
+				t.Errorf("GeneratedFileHeader() = %d chars, %v, %v; want %d chars, true, nil", len(got), marked, err, n)
+			}
+		})
+	}
+}
+
+func TestGeneratedFileHeader(t *testing.T) {
+	dir := t.TempDir()
+	for name, content := range map[string]string{
+		"owned":    GeneratedMarker + " (repo: fedora); managed by 'updex catalog'\n",
+		"marked":   GeneratedMarker + " (repo: not.a.repo)\n",
+		"unmarked": "[Transfer]\n",
+		"short":    "# Gen",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tests := []struct {
+		name       string
+		wantRepo   string
+		wantMarked bool
+		wantErr    bool
+	}{
+		{"owned", "fedora", true, false},
+		{"marked", "", true, false},
+		{"unmarked", "", false, false},
+		{"short", "", false, false},
+		{"missing", "", false, true},
+	}
+	for _, tt := range tests {
+		repo, marked, err := GeneratedFileHeader(filepath.Join(dir, tt.name))
+		if repo != tt.wantRepo || marked != tt.wantMarked || (err != nil) != tt.wantErr {
+			t.Errorf("GeneratedFileHeader(%s) = %q, %v, %v; want %q, %v, err=%v", tt.name, repo, marked, err, tt.wantRepo, tt.wantMarked, tt.wantErr)
+		}
+	}
+}
+
 func TestRenderTransferStripsCatalogVerifyFalse(t *testing.T) {
 	out, err := RenderTransfer([]byte(zoxideConf), testRepo, "zoxide")
 	if err != nil {
@@ -263,6 +317,69 @@ func TestRenderTransferStripsCatalogVerifyFalse(t *testing.T) {
 	}
 	if strings.Contains(string(out), "Verify") {
 		t.Errorf("catalog-supplied Verify key not stripped, letting config/transfer.go's true default apply:\n%s", out)
+	}
+}
+
+// TestRenderTransferAllowUnsignedVerify verifies the catalog's Verify= only
+// reaches the rendered transfer for an AllowUnsigned repo, and then only as a
+// canonical line carrying the value config would parse from the catalog conf.
+func TestRenderTransferAllowUnsignedVerify(t *testing.T) {
+	tests := []struct {
+		name  string
+		line  string // replaces the conf's Verify=false line ("" removes it)
+		allow bool
+		want  string // rendered Verify line ("" = none)
+	}{
+		{"denied false", "Verify=false", false, ""},
+		{"denied true", "Verify=true", false, ""},
+		{"denied absent", "", false, ""},
+		{"allowed false", "Verify=false", true, "Verify=no"},
+		{"allowed no", "Verify=no", true, "Verify=no"},
+		{"allowed true", "Verify=true", true, "Verify=yes"},
+		{"allowed absent defaults to yes", "", true, "Verify=yes"},
+		{"allowed invalid defaults to yes", "Verify=maybe", true, "Verify=yes"},
+		{"allowed colon spelling", "Verify : no", true, "Verify=no"},
+		{"allowed multiline value is not a boolean", "Verify=\"\"\"\nno\n\"\"\"", true, "Verify=yes"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conf := strings.Replace(zoxideConf, "Verify=false\n", tt.line+"\n", 1)
+			repo := testRepo
+			repo.AllowUnsigned = tt.allow
+			out, err := RenderTransfer([]byte(conf), repo, "zoxide")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var verifyLines []string
+			for line := range strings.Lines(string(out)) {
+				if strings.Contains(strings.ToLower(line), "verify") {
+					verifyLines = append(verifyLines, strings.TrimSpace(line))
+				}
+			}
+			switch {
+			case tt.want == "" && len(verifyLines) != 0:
+				t.Errorf("rendered Verify lines = %q, want none:\n%s", verifyLines, out)
+			case tt.want != "" && (len(verifyLines) != 1 || verifyLines[0] != tt.want):
+				t.Errorf("rendered Verify lines = %q, want [%q]:\n%s", verifyLines, tt.want, out)
+			}
+
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "zoxide.transfer"), out, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			transfers, err := config.LoadTransfers(dir)
+			if err != nil || len(transfers) != 1 {
+				t.Fatalf("LoadTransfers() = %v, %v", transfers, err)
+			}
+			if wantVerify := tt.want != "Verify=no"; transfers[0].Transfer.Verify != wantVerify {
+				t.Errorf("loaded Verify = %v, want %v", transfers[0].Transfer.Verify, wantVerify)
+			}
+			if got := transfers[0].Transfer.Features; len(got) != 1 || got[0] != "zoxide" {
+				t.Errorf("Features = %v, want [zoxide]", got)
+			}
+		})
 	}
 }
 

@@ -71,9 +71,9 @@ PR template ──► review rubric ──► CI gates ──► corrections ─
     all 1.0, `never_relax: true` (the loop may tighten, never loosen).
   - *Release config* runs the same SHA-pinned GoReleaser Pro v2 action as the
     release and snapshot workflows with `args: check`, read-only contents
-    permission, and no persisted checkout credentials. Same-repository PR,
+    permission, and no persisted checkout credentials. Same-repository non-Dependabot PR,
     push, and merge-queue runs fail if the Pro key is unavailable or the
-    configuration is invalid. Fork PRs cannot receive repository secrets and
+    configuration is invalid. Fork and Dependabot PRs cannot receive repository secrets and
     therefore report explicitly that validation did not occur; a trusted
     merge-queue run must validate before merge.
   - Codecov is best-effort, not a gate today: the Unit Tests job uploads

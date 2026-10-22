@@ -62,6 +62,9 @@ func TestReleaseConfigWorkflowValidatesBeforeMerge(t *testing.T) {
 		t.Errorf("release-config HAS_GORELEASER_KEY = %q, want non-secret availability indicator", got)
 	}
 
+	const failIf = "env.HAS_GORELEASER_KEY != 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'))"
+	const warnIf = "env.HAS_GORELEASER_KEY != 'true' && github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor == 'dependabot[bot]')"
+
 	var checkout, validate, trustedMissingKey, forkWithoutKey bool
 	for _, step := range job.Steps {
 		if strings.HasPrefix(step.Uses, "actions/checkout@") {
@@ -86,13 +89,11 @@ func TestReleaseConfigWorkflowValidatesBeforeMerge(t *testing.T) {
 		} else if _, ok := step.Env["GORELEASER_KEY"]; ok {
 			t.Errorf("%q step env must not expose GORELEASER_KEY", step.Name)
 		}
-		if strings.Contains(step.If, "env.HAS_GORELEASER_KEY != 'true'") &&
-			strings.Contains(step.If, "github.event.pull_request.head.repo.full_name == github.repository") &&
+		if strings.TrimSpace(step.If) == failIf &&
 			strings.Contains(step.Run, "not validated") && strings.Contains(step.Run, "exit 1") {
 			trustedMissingKey = true
 		}
-		if strings.Contains(step.If, "env.HAS_GORELEASER_KEY != 'true'") &&
-			strings.Contains(step.If, "github.event.pull_request.head.repo.full_name != github.repository") &&
+		if strings.TrimSpace(step.If) == warnIf &&
 			strings.Contains(step.Run, "not validated") && strings.Contains(step.Run, "GITHUB_STEP_SUMMARY") {
 			forkWithoutKey = true
 		}
@@ -104,10 +105,10 @@ func TestReleaseConfigWorkflowValidatesBeforeMerge(t *testing.T) {
 		t.Error("release-config job must run goreleaser/goreleaser-action")
 	}
 	if !trustedMissingKey {
-		t.Error("release-config job must fail trusted runs when GORELEASER_KEY is unavailable")
+		t.Error("release-config job must fail push, merge-queue, and same-repository non-Dependabot PR runs when GORELEASER_KEY is unavailable")
 	}
 	if !forkWithoutKey {
-		t.Error("release-config job must explicitly report that fork PRs were not validated")
+		t.Error("release-config job must explicitly report that fork and Dependabot PRs were not validated")
 	}
 }
 
