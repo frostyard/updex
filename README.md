@@ -65,7 +65,7 @@ for file formats, search precedence, and examples.
 updex features list                       # Show features and their origins
 sudo updex features enable docker         # Enable for the next update
 sudo updex features enable docker --now   # Enable and download now
-sudo updex features disable docker        # Stop future updates
+sudo updex features disable docker        # Stop future updates; stays merged until --now
 sudo updex features disable docker --now  # Unmerge and remove images now
 sudo updex features disable docker --now --force # If currently merged; reboot required
 sudo updex features update                # Install newest versions

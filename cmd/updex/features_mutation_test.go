@@ -732,8 +732,8 @@ func TestRunFeaturesDisable(t *testing.T) {
 			scope:     "definitions",
 			staged:    true,
 			flags:     featureCLIFlags{},
-			wantOut:   []string{"Feature 'testfeature' disabled.\n", "Run 'updex features update' to apply changes.\n"},
-			wantNoOut: []string{"unmerged", "Removed", "Warning:"},
+			wantOut:   []string{"Feature 'testfeature' disabled.\n", "Its extensions stay installed and merged. Run 'updex features disable testfeature --now' to remove them.\n"},
+			wantNoOut: []string{"unmerged", "Removed", "Warning:", "features update"},
 			check: func(t *testing.T, fx *featureCLIFixture, _ string, runner *sysext.MockRunner) {
 				content, err := os.ReadFile(fx.dropInPath(""))
 				if err != nil {
@@ -746,6 +746,17 @@ func TestRunFeaturesDisable(t *testing.T) {
 				if runner.UnmergeCalled || runner.RefreshCalled {
 					t.Error("disable without --now must not touch the sysext runner")
 				}
+			},
+		},
+		{
+			name:      "--force without --now keeps files and prints the true hint",
+			scope:     "definitions",
+			staged:    true,
+			flags:     featureCLIFlags{force: true},
+			wantOut:   []string{"Feature 'testfeature' disabled.\n", "Its extensions stay installed and merged. Run 'updex features disable testfeature --now' to remove them.\n"},
+			wantNoOut: []string{"Reboot required", "features update"},
+			check: func(t *testing.T, fx *featureCLIFixture, _ string, _ *sysext.MockRunner) {
+				assertExists(t, fx.stagedImage(), "staged image")
 			},
 		},
 		{

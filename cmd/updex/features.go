@@ -144,6 +144,9 @@ legacy default directory (or a -C/--definitions override), or
 /etc/sysupdate.<component>.d/<feature>.feature.d/00-updex.conf for a feature
 discovered under a systemd-sysupdate component.
 
+Without --now, the feature's extensions stay installed and merged; only
+future updates stop. Use --now to unmerge and remove them.
+
 OPTIONS:
   --now      Immediately unmerge AND remove extension files
   --force    Allow removal of merged extensions (requires reboot)
@@ -151,7 +154,7 @@ OPTIONS:
 Use --dry-run (global flag) to preview changes without modifying filesystem.
 
 Requires root privileges.`,
-		Example: `  # Disable a feature (stops future updates)
+		Example: `  # Disable a feature (stops future updates; extensions stay installed and merged)
   sudo updex features disable docker
 
   # Disable and remove files immediately

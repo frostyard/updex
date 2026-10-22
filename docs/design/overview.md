@@ -575,7 +575,8 @@ updex features list                     List all features with status (alias: up
                                          name, image:<id>, local:etc|usr|run, or unknown
 updex features enable <name>            Enable a feature
   --now                                 Download extensions immediately
-updex features disable <name>           Disable a feature
+updex features disable <name>           Disable a feature (without --now the
+                                         extensions stay installed and merged)
   --now                                 Unmerge and remove files immediately
   --force                               Allow removal of merged extensions
 updex features update                   Download and install new versions
