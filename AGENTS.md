@@ -50,7 +50,11 @@ repo-specific guidance belongs in this file or `docs/`:
   [`golangci-lint`](https://golangci-lint.run/) for `make lint` — `make ci`
   requires the exact release `mise.toml` pins (`mise install` provisions it;
   `make lint-version-check` fails with that instruction when it is absent),
-  [`svu`](https://github.com/caarlos0/svu) for release tagging, Node 24 (pinned in `mise.toml`, the
+  [`svu`](https://github.com/caarlos0/svu) for release tagging — `mise.toml`
+  pins `svu = "3.4.1"` and `mise.lock` verifies that release, so `mise install`
+  provisions exactly 3.4.1 and `make svu-version-check` fails with that
+  instruction when svu is missing or is not the pin (`make bump` runs it
+  first) — Node 24 (pinned in `mise.toml`, the
   same major the `docs-gate` CI job uses) for the docs-integrity gate
 
 updex manages [systemd-sysext](https://www.freedesktop.org/software/systemd/man/latest/systemd-sysext.html)
@@ -65,6 +69,7 @@ make fmt          # Format code (run after every change)
 make build        # Build binary to build/updex
 make test         # Run all tests
 make lint         # Run golangci-lint (.golangci.yml; fails if not installed)
+make svu-version-check  # Fail unless svu is the mise.toml pin (make bump runs it first)
 make check        # fmt + lint + test (mutating: fmt rewrites files)
 make verify       # Non-mutating, credential-free gate for read-only reviewers: tidy diff, vet, gofmt -l, exact-pin lint, non-E2E tests
 make ci           # Credential-free gate matching CI's fail-fast order (verify-static, docs integrity, then coverage, E2E, race, cross-build)
@@ -189,9 +194,15 @@ renames the fang-injected hidden `man` subcommand fails the Unit Tests job on
 the pull request instead of GoReleaser at tag time (skipped under `-short`).
 
 Releases are tagged with semantic versions (`vMAJOR.MINOR.PATCH`) and built by
-GoReleaser. Maintainers run `make bump`, which builds, tests, formats, lints,
-and then tags the next version with `svu` from a clean working tree. Build
-metadata (version, build time) is embedded via ldflags; `--version` prints it.
+GoReleaser. Maintainers run `make bump`, which first runs
+`make svu-version-check` — it fails with the install command (`mise install`)
+when svu is missing or is not the `mise.toml` pin — then builds, tests,
+formats, lints, and tags the next version with `$(SVU) next` from a clean
+working tree. Build metadata (version, build time) is embedded via ldflags;
+`--version` prints it. `updex/makefile_bump_svu_contract_test.go` pins the
+svu pin, its `mise.lock` checksums for linux-x64 and linux-arm64, the check's
+placement before `$(SVU) next`, and its failure modes (missing binary,
+wrong release, and an svu build with no `GitVersion:` line).
 
 ## Architecture
 
@@ -646,7 +657,11 @@ issue. Report it privately by emailing the maintainer at
   fails `make lint`, `make verify`, and `make ci`; `make lint`/`make ci` also
   fail with `expected golangci-lint <pinned>, found <installed>` when the
   installed release differs from the pin in `mise.toml` — run `mise install`
-  to provision the pinned release.
+  to provision the pinned release; `make bump` failing with
+  `svu <pinned> is required for make bump (not installed; run: mise install)` or
+  `expected svu <pinned>, found <installed> (run: mise install)` → run
+  `mise install` (`found unknown` means an svu build that prints no
+  `GitVersion:` line).
 - **Runtime issues:** "configuration not found" → ensure `.transfer` files
   exist under the standard search paths; "permission denied" → most mutating
   operations require root; download failures → check network connectivity

@@ -1,4 +1,4 @@
-.PHONY: all build clean fmt lint lint-version-check test test-cover coverage-check test-coverage-check test-docs-check tidy check verify-static verify ci install help
+.PHONY: all build clean fmt lint lint-version-check svu-version-check test test-cover coverage-check test-coverage-check test-docs-check tidy check verify-static verify ci install help
 
 # Build variables
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -16,6 +16,12 @@ GOFMT := gofmt
 # Bump it there in a dedicated commit; never edit this line. Compared against
 # `golangci-lint version --short`, which prints the bare "MAJOR.MINOR.PATCH".
 GOLANGCI_LINT_VERSION := $(strip $(shell sed -n 's/^golangci-lint = "\(.*\)"/\1/p' mise.toml))
+# Pinned svu release, read from the same mise.toml pin (core ADR-0043); it tags
+# releases in `make bump`. Bump it there in a dedicated commit. Compared
+# against `svu --version`, which prints a "GitVersion:    MAJOR.MINOR.PATCH"
+# line; override SVU to point the check at another binary.
+SVU_VERSION := $(strip $(shell sed -n 's/^svu = "\(.*\)"/\1/p' mise.toml))
+SVU ?= svu
 # The Go release this module is built with, from go.mod's toolchain line —
 # the only Go pin (mise reads the same line). golangci-lint must be built
 # with a Go at least this new, or its embedded gofmt and typechecker disagree
@@ -65,6 +71,20 @@ lint-version-check:
 	built="$$(golangci-lint version 2>/dev/null | sed -n 's/.*built with go\([0-9.]*\).*/\1/p')"; \
 	if [ -n "$$built" ] && [ "$$(printf '%s\n%s\n' "$(GO_TOOLCHAIN)" "$$built" | sort -V | head -1)" != "$(GO_TOOLCHAIN)" ]; then \
 		echo "golangci-lint $(GOLANGCI_LINT_VERSION) was built with go$$built, older than go.mod's toolchain go$(GO_TOOLCHAIN): bump golangci-lint first (core ADR-0043)"; \
+		exit 1; \
+	fi
+
+## svu-version-check: Fail unless the installed svu is the mise.toml pin (make bump needs it to tag releases)
+svu-version-check:
+	@test -n "$(SVU_VERSION)" || { echo "mise.toml pins no svu"; exit 1; }
+	@if ! command -v "$(SVU)" >/dev/null 2>&1; then \
+		echo "svu $(SVU_VERSION) is required for make bump (not installed; run: mise install)"; \
+		exit 1; \
+	fi; \
+	installed="$$($(SVU) --version 2>&1 | sed -n 's/^GitVersion:[[:space:]]*//p' | head -1)"; \
+	if [ -z "$$installed" ]; then installed=unknown; fi; \
+	if [ "$$installed" != "$(SVU_VERSION)" ]; then \
+		echo "expected svu $(SVU_VERSION), found $$installed (run: mise install)"; \
 		exit 1; \
 	fi
 
@@ -141,6 +161,7 @@ help:
 	@sed -n 's/^## //p' $(MAKEFILE_LIST) | column -t -s ':'
 
 bump: ## generate a new version with svu
+	@$(MAKE) --no-print-directory svu-version-check
 	@$(MAKE) build
 	@$(MAKE) test
 	@$(MAKE) fmt
@@ -150,7 +171,7 @@ bump: ## generate a new version with svu
 		exit 1; \
 	fi
 	@echo "Creating new tag..."
-	@version=$$(svu next); \
+	@version=$$($(SVU) next); \
 		git tag -a $$version -m "Version $$version"; \
 		echo "Tagged version $$version"; \
 		echo "Pushing tag $$version to origin..."; \
