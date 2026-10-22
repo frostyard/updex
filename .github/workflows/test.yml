@@ -104,7 +104,7 @@ jobs:
         run: make coverage-check
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           use_oidc: true
           files: ./coverage.out
@@ -262,15 +262,19 @@ jobs:
           version: "~> v2"
           args: check
 
+      # GitHub gives Dependabot-triggered runs only Dependabot secrets, so
+      # GORELEASER_KEY is absent for them, as for fork PRs. When the key is
+      # missing, the two conditions below are exact complements. merge_group
+      # and push runs always take the fail path.
       - name: Fail when trusted runs cannot validate the release configuration
-        if: env.HAS_GORELEASER_KEY != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        if: env.HAS_GORELEASER_KEY != 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'))
         run: |
           echo "::error::GORELEASER_KEY is unavailable; the GoReleaser Pro configuration was not validated."
           exit 1
 
-      - name: Report unvalidated fork pull request
-        if: env.HAS_GORELEASER_KEY != 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+      - name: Report unvalidated fork or Dependabot pull request
+        if: env.HAS_GORELEASER_KEY != 'true' && github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.actor == 'dependabot[bot]')
         run: |
-          echo "::warning::GoReleaser Pro configuration was not validated because secrets are unavailable to fork pull requests."
+          echo "::warning::GoReleaser Pro configuration was not validated because secrets are unavailable to fork and Dependabot pull requests."
           echo "### Release configuration not validated" >> "$GITHUB_STEP_SUMMARY"
-          echo "GORELEASER_KEY is unavailable to this fork pull request; a trusted merge-queue run must validate .goreleaser.yaml before merge." >> "$GITHUB_STEP_SUMMARY"
+          echo "GORELEASER_KEY is unavailable to fork and Dependabot pull requests; a trusted merge-queue run must validate .goreleaser.yaml before merge." >> "$GITHUB_STEP_SUMMARY"

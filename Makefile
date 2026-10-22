@@ -113,8 +113,12 @@ verify: verify-static
 	@echo "==> unit tests"
 	$(GO) test $$($(GO) list ./... | grep -v '/tests/e2e$$')
 
-## ci: Run the credential-free CI gate (verify-static, then coverage, race, and cross-build)
+## ci: Run the credential-free CI gate (verify-static, docs integrity, then coverage, race, and cross-build)
 ci: verify-static
+	@echo "==> docs-integrity checker self-test"
+	$(MAKE) test-docs-check
+	@echo "==> docs integrity"
+	node scripts/check-docs.mjs
 	@echo "==> unit tests with coverage"
 	$(GO) test -v $$($(GO) list ./... | grep -v '/tests/e2e$$') -coverprofile=coverage.out -covermode=atomic
 	@echo "==> coverage floor"
