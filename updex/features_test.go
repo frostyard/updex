@@ -259,7 +259,15 @@ func TestDisableFeature_DryRun_ShowsRemovals(t *testing.T) {
 	}
 
 	// Act
-	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
+	client := NewClient(ClientConfig{
+		Definitions:  configDir,
+		SysextRunner: mockRunner,
+		// Keep the merged-state check off the host's /usr and /opt.
+		Paths: RuntimePaths{
+			RunExtensionsDir:  t.TempDir(),
+			SysextHierarchies: []string{t.TempDir()},
+		},
+	})
 	result, err := client.DisableFeature(t.Context(), "testfeature", DisableFeatureOptions{
 		Now:    true,
 		DryRun: true,
@@ -392,7 +400,15 @@ Path=` + targetDir + `
 	}
 
 	// Act with Force=false and DryRun=false (but we'll get blocked by merge check before /etc write)
-	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
+	client := NewClient(ClientConfig{
+		Definitions:  configDir,
+		SysextRunner: mockRunner,
+		// Keep the merged-state check off the host's /usr and /opt.
+		Paths: RuntimePaths{
+			RunExtensionsDir:  t.TempDir(),
+			SysextHierarchies: []string{t.TempDir()},
+		},
+	})
 	result, err := client.DisableFeature(t.Context(), "testfeature", DisableFeatureOptions{
 		Now:   true,
 		Force: false,
@@ -457,9 +473,10 @@ Path=` + targetDir + `
 		Definitions:  configDir,
 		SysextRunner: mockRunner,
 		Paths: RuntimePaths{
-			DefinitionRoots:  []string{definitionRoot},
-			SysextLinkDir:    sysextLinkDir,
-			RunExtensionsDir: runExtensionsDir,
+			DefinitionRoots:   []string{definitionRoot},
+			SysextLinkDir:     sysextLinkDir,
+			RunExtensionsDir:  runExtensionsDir,
+			SysextHierarchies: []string{t.TempDir()},
 		},
 	})
 
@@ -497,6 +514,194 @@ Path=` + targetDir + `
 	}
 	if _, err := os.Stat(extPath); !os.IsNotExist(err) {
 		t.Errorf("installed image still exists after forced disable: %v", err)
+	}
+}
+
+// snosiMergedImage is the image name a snosi host merges through a transfer
+// generated from a catalog.
+const snosiMergedImage = "docker_5+29.9.1-1~debian.13~trixie_13_x86-64.raw"
+
+// snosiFixture is a snosi-like host layout for #444: systemd-sysext records the
+// merged image only in <hierarchy>/.systemd-sysext, no CurrentSymlink exists,
+// and /run/extensions does not exist.
+type snosiFixture struct {
+	client     *Client
+	runner     *sysext.MockRunner
+	imagePath  string
+	linkPath   string
+	originPath string
+}
+
+func newSnosiFixture(t *testing.T) *snosiFixture {
+	t.Helper()
+
+	configDir := t.TempDir()
+	targetDir := t.TempDir()
+	sysextLinkDir := t.TempDir()
+	hierarchy := t.TempDir()
+
+	createFeatureFile(t, configDir, "docker", true)
+
+	content := `[Transfer]
+Features=docker
+Verify=false
+
+[Source]
+Type=url-file
+Path=http://localhost
+MatchPattern=docker_@v_13_x86-64.raw
+
+[Target]
+Path=` + targetDir + `
+MatchPattern=docker_@v_13_x86-64.raw
+`
+	if err := os.WriteFile(filepath.Join(configDir, "docker.transfer"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write transfer: %v", err)
+	}
+
+	imagePath := filepath.Join(targetDir, snosiMergedImage)
+	if err := os.WriteFile(imagePath, []byte("image content"), 0o644); err != nil {
+		t.Fatalf("write installed image: %v", err)
+	}
+
+	// The /var/lib/extensions link only makes the image available; it is not
+	// merged state.
+	linkPath := filepath.Join(sysextLinkDir, "docker.raw")
+	if err := os.Symlink(imagePath, linkPath); err != nil {
+		t.Fatalf("link installed image: %v", err)
+	}
+
+	stateDir := filepath.Join(hierarchy, sysext.MergedStateDirName)
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("create merged-state directory: %v", err)
+	}
+	originPath := filepath.Join(stateDir, "origin")
+	origin := `{
+  "mutable" : { "mode" : "no" },
+  "extensions" : {
+    "docker" : {
+      "path" : "` + imagePath + `",
+      "onMountId" : 2147483764
+    }
+  }
+}`
+	if err := os.WriteFile(originPath, []byte(origin), 0o644); err != nil {
+		t.Fatalf("write merged-state origin: %v", err)
+	}
+
+	runner := &sysext.MockRunner{}
+	client := NewClient(ClientConfig{
+		Definitions:  configDir,
+		SysextRunner: runner,
+		Paths: RuntimePaths{
+			DefinitionRoots:   []string{t.TempDir()},
+			SysextLinkDir:     sysextLinkDir,
+			RunExtensionsDir:  filepath.Join(t.TempDir(), "run-extensions"),
+			SysextHierarchies: []string{hierarchy},
+		},
+	})
+
+	return &snosiFixture{
+		client:     client,
+		runner:     runner,
+		imagePath:  imagePath,
+		linkPath:   linkPath,
+		originPath: originPath,
+	}
+}
+
+// TestDisableFeature_MergedStateMetadataRequiresForce reproduces #444 through
+// the SDK: a merged image recorded only in hierarchy metadata must refuse
+// --now removal without --force.
+func TestDisableFeature_MergedStateMetadataRequiresForce(t *testing.T) {
+	tests := []struct {
+		name   string
+		dryRun bool
+	}{
+		{name: "real removal", dryRun: false},
+		{name: "dry run", dryRun: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newSnosiFixture(t)
+
+			result, err := f.client.DisableFeature(t.Context(), "docker", DisableFeatureOptions{
+				Now:    true,
+				DryRun: tt.dryRun,
+			})
+			if err == nil {
+				t.Fatal("expected merged image removal without force to fail")
+			}
+			if !strings.Contains(result.Error, "--force") {
+				t.Errorf("blocked error = %q, want --force guidance", result.Error)
+			}
+			if f.runner.UnmergeCalled {
+				t.Error("unmerge ran before force approval")
+			}
+			if _, statErr := os.Stat(f.imagePath); statErr != nil {
+				t.Errorf("installed image changed after refusal: %v", statErr)
+			}
+			if _, statErr := os.Lstat(f.linkPath); statErr != nil {
+				t.Errorf("sysext link changed after refusal: %v", statErr)
+			}
+		})
+	}
+}
+
+// TestDisableFeature_MergedStateMetadataWithForceProceeds verifies that --force
+// still removes a merged image recorded in hierarchy metadata.
+func TestDisableFeature_MergedStateMetadataWithForceProceeds(t *testing.T) {
+	f := newSnosiFixture(t)
+
+	result, err := f.client.DisableFeature(t.Context(), "docker", DisableFeatureOptions{
+		Now:   true,
+		Force: true,
+	})
+	if err != nil {
+		t.Fatalf("DisableFeature with force: %v", err)
+	}
+	if !result.Success {
+		t.Errorf("result.Success = false, error = %q", result.Error)
+	}
+	if !f.runner.UnmergeCalled {
+		t.Error("expected forced disable to unmerge")
+	}
+	if _, statErr := os.Stat(f.imagePath); !os.IsNotExist(statErr) {
+		t.Errorf("installed image still exists after forced disable: %v", statErr)
+	}
+}
+
+// TestDisableFeature_UnreadableMergedStateRequiresForce verifies that the merge
+// state check fails closed: a read error requires --force instead of allowing
+// removal.
+func TestDisableFeature_UnreadableMergedStateRequiresForce(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses file read permissions")
+	}
+
+	f := newSnosiFixture(t)
+	if err := os.Chmod(f.originPath, 0o000); err != nil {
+		t.Fatalf("make merged-state origin unreadable: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(f.originPath, 0o644); err != nil {
+			t.Errorf("restore merged-state origin permissions: %v", err)
+		}
+	})
+
+	result, err := f.client.DisableFeature(t.Context(), "docker", DisableFeatureOptions{Now: true})
+	if err == nil {
+		t.Fatal("expected unreadable merge state to refuse removal without force")
+	}
+	if !strings.Contains(result.Error, "--force") {
+		t.Errorf("blocked error = %q, want --force guidance", result.Error)
+	}
+	if f.runner.UnmergeCalled {
+		t.Error("unmerge ran before force approval")
+	}
+	if _, statErr := os.Stat(f.imagePath); statErr != nil {
+		t.Errorf("installed image changed after refusal: %v", statErr)
 	}
 }
 
@@ -543,7 +748,15 @@ Path=` + targetDir + `
 	}
 
 	// Act with Force=true and DryRun=true
-	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: mockRunner})
+	client := NewClient(ClientConfig{
+		Definitions:  configDir,
+		SysextRunner: mockRunner,
+		// Keep the merged-state check off the host's /usr and /opt.
+		Paths: RuntimePaths{
+			RunExtensionsDir:  t.TempDir(),
+			SysextHierarchies: []string{t.TempDir()},
+		},
+	})
 	result, err := client.DisableFeature(t.Context(), "testfeature", DisableFeatureOptions{
 		Now:    true,
 		Force:  true,
@@ -1353,9 +1566,10 @@ func refreshFailureFixture(t *testing.T, enabled bool) (*Client, *sysext.MockRun
 		Definitions:  configDir,
 		SysextRunner: mockRunner,
 		Paths: RuntimePaths{
-			DefinitionRoots:  []string{definitionRoot},
-			SysextLinkDir:    sysextLinkDir,
-			RunExtensionsDir: runExtensionsDir,
+			DefinitionRoots:   []string{definitionRoot},
+			SysextLinkDir:     sysextLinkDir,
+			RunExtensionsDir:  runExtensionsDir,
+			SysextHierarchies: []string{t.TempDir()},
 		},
 	})
 	return client, mockRunner, targetDir
@@ -2242,9 +2456,10 @@ func TestUpdateFeatures_SharedSource_VerifyTrueNeverUsesUnverifiedCache(t *testi
 				Definitions:  configDir,
 				SysextRunner: &sysext.MockRunner{},
 				Paths: RuntimePaths{
-					DefinitionRoots:  []string{t.TempDir()},
-					SysextLinkDir:    t.TempDir(),
-					RunExtensionsDir: t.TempDir(),
+					DefinitionRoots:   []string{t.TempDir()},
+					SysextLinkDir:     t.TempDir(),
+					RunExtensionsDir:  t.TempDir(),
+					SysextHierarchies: []string{t.TempDir()},
 				},
 			})
 			results, err := client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true})

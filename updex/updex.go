@@ -73,10 +73,16 @@ type RuntimePaths struct {
 	// (/var/lib/extensions).
 	SysextLinkDir string
 
-	// RunExtensionsDir is the directory containing images merged by
-	// systemd-sysext. Zero value uses sysext.RunExtensionsDir
+	// RunExtensionsDir is systemd-sysext's runtime image search directory.
+	// An image there is merged on the next refresh; it does not record which
+	// images are merged now. Zero value uses sysext.RunExtensionsDir
 	// (/run/extensions).
 	RunExtensionsDir string
+
+	// SysextHierarchies are the hierarchies whose .systemd-sysext metadata
+	// records the extensions merged by systemd-sysext. Zero value uses
+	// sysext.MergedHierarchies (/usr, /opt).
+	SysextHierarchies []string
 }
 
 // DisableCatalogCache is a sentinel value for RuntimePaths.CatalogCacheDir
@@ -94,6 +100,7 @@ type runtimePaths struct {
 	catalogTargetPath  string
 	sysextLinkDir      string
 	runExtensionsDir   string
+	sysextHierarchies  []string
 }
 
 // resolveRuntimePaths converts a RuntimePaths (zero = default) to a fully
@@ -146,6 +153,12 @@ func resolveRuntimePaths(rp RuntimePaths) runtimePaths {
 		p.runExtensionsDir = rp.RunExtensionsDir
 	} else {
 		p.runExtensionsDir = sysext.RunExtensionsDir
+	}
+
+	if len(rp.SysextHierarchies) > 0 {
+		p.sysextHierarchies = slices.Clone(rp.SysextHierarchies)
+	} else {
+		p.sysextHierarchies = slices.Clone(sysext.MergedHierarchies)
 	}
 
 	return p

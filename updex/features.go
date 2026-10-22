@@ -336,13 +336,15 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 	if willRemoveFiles && len(featureTransfers) > 0 {
 		var mergedExtensions []string
 		for _, t := range featureTransfers {
-			activeVersion, err := sysext.GetActiveVersionIn(
-				t,
-				c.paths.sysextLinkDir,
-				c.paths.runExtensionsDir,
-			)
+			activeVersion, err := sysext.GetActiveVersionWith(t, sysext.ActiveStatePaths{
+				DefaultDir:       c.paths.sysextLinkDir,
+				RunExtensionsDir: c.paths.runExtensionsDir,
+				Hierarchies:      c.paths.sysextHierarchies,
+			})
 			if err != nil {
 				c.warn("could not check merge state for %s: %v", t.Component, err)
+				// Fail closed: an unknown merge state still requires --force.
+				mergedExtensions = append(mergedExtensions, fmt.Sprintf("%s (merge state unknown)", t.Component))
 				continue
 			}
 			if activeVersion != "" {

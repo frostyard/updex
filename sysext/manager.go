@@ -1,7 +1,11 @@
 package sysext
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -96,21 +100,60 @@ func GetInstalledVersionsAt(t *config.Transfer, defaultDir string) ([]string, st
 }
 
 // GetActiveVersion returns the version currently active in systemd-sysext.
-// It checks the legacy current symlink and the production merged-image
-// directory.
+// It checks the legacy current symlink, the merged-state metadata under the
+// production hierarchies, and the production runtime image search directory.
 func GetActiveVersion(t *config.Transfer) (string, error) {
-	return GetActiveVersionIn(t, SysextDir, RunExtensionsDir)
+	return GetActiveVersionWith(t, ActiveStatePaths{
+		DefaultDir:       SysextDir,
+		RunExtensionsDir: RunExtensionsDir,
+		Hierarchies:      slices.Clone(MergedHierarchies),
+	})
 }
 
 // GetActiveVersionAt is GetActiveVersion with an explicit fallback directory
 // for transfers that omit Target.Path.
 func GetActiveVersionAt(t *config.Transfer, defaultDir string) (string, error) {
-	return GetActiveVersionIn(t, defaultDir, RunExtensionsDir)
+	return GetActiveVersionWith(t, ActiveStatePaths{
+		DefaultDir:       defaultDir,
+		RunExtensionsDir: RunExtensionsDir,
+		Hierarchies:      slices.Clone(MergedHierarchies),
+	})
 }
 
 // GetActiveVersionIn is GetActiveVersion with explicit target fallback and
-// merged-image directories.
+// runtime image search directories. It does not read the merged-state metadata
+// under systemd-sysext hierarchies; prefer GetActiveVersionWith.
 func GetActiveVersionIn(t *config.Transfer, defaultDir, runExtensionsDir string) (string, error) {
+	return GetActiveVersionWith(t, ActiveStatePaths{
+		DefaultDir:       defaultDir,
+		RunExtensionsDir: runExtensionsDir,
+	})
+}
+
+// ActiveStatePaths names the places GetActiveVersionWith reads to decide
+// whether a transfer's image is merged into the running system.
+type ActiveStatePaths struct {
+	// DefaultDir is the fallback directory for a transfer that omits
+	// Target.Path. It only locates a legacy CurrentSymlink.
+	DefaultDir string
+
+	// RunExtensionsDir is systemd-sysext's runtime image search directory.
+	// An image there is merged on the next refresh, so it counts as active.
+	// An empty value skips this check.
+	RunExtensionsDir string
+
+	// Hierarchies are the hierarchies whose .systemd-sysext directory records
+	// the images systemd-sysext merged into them. An empty slice skips this
+	// check.
+	Hierarchies []string
+}
+
+// GetActiveVersionWith reports the version of the transfer's image that is
+// active in systemd-sysext, or "" when it is not merged. It checks, in order:
+// a legacy CurrentSymlink, the merged-state metadata under each hierarchy, and
+// the runtime image search directory. UnknownVersion reports a merged image
+// whose merged-state metadata does not record a version.
+func GetActiveVersionWith(t *config.Transfer, p ActiveStatePaths) (string, error) {
 	patterns, err := parseTargetPatterns(t)
 	if err != nil {
 		return "", err
@@ -118,7 +161,7 @@ func GetActiveVersionIn(t *config.Transfer, defaultDir, runExtensionsDir string)
 
 	// First try the current symlink in the target directory
 	if t.Target.CurrentSymlink != "" {
-		symlinkPath := filepath.Join(targetDirAt(t, defaultDir), t.Target.CurrentSymlink)
+		symlinkPath := filepath.Join(targetDirAt(t, p.DefaultDir), t.Target.CurrentSymlink)
 		if target, err := os.Readlink(symlinkPath); err == nil {
 			if v, _, ok := version.ExtractVersionParsed(filepath.Base(target), patterns); ok {
 				return v, nil
@@ -126,7 +169,25 @@ func GetActiveVersionIn(t *config.Transfer, defaultDir, runExtensionsDir string)
 		}
 	}
 
-	entries, err := os.ReadDir(runExtensionsDir)
+	// Then read the merged-state metadata systemd-sysext records in each
+	// hierarchy. The first hierarchy that names this image wins.
+	for _, hierarchy := range p.Hierarchies {
+		v, err := mergedVersionInHierarchy(t, patterns, hierarchy)
+		if err != nil {
+			return "", err
+		}
+		if v != "" {
+			return v, nil
+		}
+	}
+
+	// Finally, an image in the runtime search directory is merged on the next
+	// refresh, so it remains a conservative active signal.
+	if p.RunExtensionsDir == "" {
+		return "", nil
+	}
+
+	entries, err := os.ReadDir(p.RunExtensionsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
@@ -141,6 +202,98 @@ func GetActiveVersionIn(t *config.Transfer, defaultDir, runExtensionsDir string)
 	}
 
 	return "", nil
+}
+
+// mergedExtensionEntry is the part of a systemd-sysext origin entry that
+// records the merged image's path.
+type mergedExtensionEntry struct {
+	Path string `json:"path"`
+}
+
+// mergedExtensionOrigin is the part of a systemd-sysext origin file that
+// records the images merged into one hierarchy.
+type mergedExtensionOrigin struct {
+	Extensions map[string]mergedExtensionEntry `json:"extensions"`
+}
+
+// mergedVersionInHierarchy reports the version of the transfer's image that
+// the merged-state metadata under hierarchy records. It first reads origin; a
+// match there returns its version. When origin is absent, does not parse, or
+// does not name the image, it also reads the older extensions list, and a
+// match there returns UnknownVersion. It returns "" when the hierarchy does
+// not record the image.
+func mergedVersionInHierarchy(t *config.Transfer, patterns []*version.Pattern, hierarchy string) (string, error) {
+	stateDir := filepath.Join(hierarchy, MergedStateDirName)
+
+	data, err := readLimitedFile(filepath.Join(stateDir, "origin"), 1<<20)
+	switch {
+	case err == nil:
+		var origin mergedExtensionOrigin
+		if json.Unmarshal(data, &origin) == nil {
+			if v, ok := mergedVersionFromOrigin(t, patterns, origin); ok {
+				return v, nil
+			}
+		}
+		// origin is malformed or does not name the image: the extensions list
+		// can still record it, so do not report "not merged" yet.
+	case !errors.Is(err, fs.ErrNotExist):
+		return "", fmt.Errorf("read merged state: %w", err)
+	}
+
+	data, err = readLimitedFile(filepath.Join(stateDir, "extensions"), 64<<10)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", nil
+		}
+		return "", fmt.Errorf("read merged state: %w", err)
+	}
+
+	for line := range strings.SplitSeq(string(data), "\n") {
+		name := strings.TrimSpace(line)
+		if name == "" {
+			continue
+		}
+		if t.Component != "" && name == t.Component {
+			return UnknownVersion, nil
+		}
+		if _, _, ok := version.ExtractVersionParsed(name+targetExtension(t), patterns); ok {
+			return UnknownVersion, nil
+		}
+	}
+
+	return "", nil
+}
+
+// mergedVersionFromOrigin reports whether an origin file records the transfer's
+// image, and the version its source path yields.
+func mergedVersionFromOrigin(t *config.Transfer, patterns []*version.Pattern, origin mergedExtensionOrigin) (string, bool) {
+	if t.Component != "" {
+		if entry, ok := origin.Extensions[t.Component]; ok {
+			if v, _, matched := version.ExtractVersionParsed(filepath.Base(entry.Path), patterns); matched {
+				return v, true
+			}
+			return UnknownVersion, true
+		}
+	}
+
+	for _, entry := range origin.Extensions {
+		if v, _, ok := version.ExtractVersionParsed(filepath.Base(entry.Path), patterns); ok {
+			return v, true
+		}
+	}
+
+	return "", false
+}
+
+// readLimitedFile reads at most limit bytes from path.
+func readLimitedFile(path string, limit int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	return io.ReadAll(io.LimitReader(f, limit))
 }
 
 type versionFile struct {
@@ -315,8 +468,24 @@ func GetExtensionName(filename string) string {
 // that have not yet migrated.
 var SysextDir = "/var/lib/extensions"
 
-// RunExtensionsDir is systemd-sysext's merged-image state directory.
+// RunExtensionsDir is systemd-sysext's runtime image search directory. An
+// image there is merged on the next refresh; it does not record which images
+// are merged now.
 const RunExtensionsDir = "/run/extensions"
+
+// MergedHierarchies lists the hierarchies whose .systemd-sysext metadata
+// records the images systemd-sysext merged into them. It is the production
+// default of systemd-sysext's hierarchies, and a compatibility default: inject
+// a client's own value through updex.RuntimePaths.SysextHierarchies.
+var MergedHierarchies = []string{"/usr", "/opt"}
+
+// MergedStateDirName is the directory inside each hierarchy in which
+// systemd-sysext records its merged extension state.
+const MergedStateDirName = ".systemd-sysext"
+
+// UnknownVersion reports that an image is merged although its merged-state
+// metadata does not record the version of the source image.
+const UnknownVersion = "unknown"
 
 // SysextLinkName returns the /var/lib/extensions link name for a transfer.
 func SysextLinkName(t *config.Transfer) string {

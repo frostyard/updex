@@ -125,7 +125,8 @@ type RuntimePaths struct {
     CatalogCacheDir    string   // Cache dir for catalog listings; "" = default catalog.CacheDir; DisableCatalogCache = off
     CatalogTargetPath  string   // Staging dir for catalog transfers; default: catalog.TargetPath
     SysextLinkDir      string   // Dir for systemd-sysext image links; default: sysext.SysextDir
-    RunExtensionsDir   string   // Dir for merged sysext images; default: sysext.RunExtensionsDir
+    RunExtensionsDir   string   // systemd-sysext runtime image search dir (merged on next refresh); default: sysext.RunExtensionsDir
+    SysextHierarchies  []string // Hierarchies whose .systemd-sysext metadata records merged images; default: sysext.MergedHierarchies
 }
 
 // DisableCatalogCache is a RuntimePaths.CatalogCacheDir sentinel that
@@ -135,15 +136,14 @@ const DisableCatalogCache = "\x00"
 func NewClient(cfg ClientConfig) *Client
 ```
 
-`NewClient` resolves `cfg.Paths` once at construction: each zero field reads its corresponding package-level compatibility variable or production constant exactly once and takes a defensive copy of slices. After construction the client never consults those package variables again, so mutating `config.SearchRoots`, `catalog.ConfigRoots`, `catalog.CacheDir`, or `sysext.SysextDir` cannot redirect the client. This is the ADR-0011 invariant: all runtime dependencies, including merged sysext state, are captured immutably at construction.
+`NewClient` resolves `cfg.Paths` once at construction: each zero field reads its corresponding package-level compatibility variable or production constant exactly once and takes a defensive copy of slices. After construction the client never consults those package variables again, so mutating `config.SearchRoots`, `catalog.ConfigRoots`, `catalog.CacheDir`, or `sysext.SysextDir` cannot redirect the client. This is the ADR-0011 invariant as extended by ADR-0015: all runtime dependencies, including merged sysext state, are captured immutably at construction.
 Use `Paths` to give two clients different filesystem trees safely in one process.
 
 Path-dependent supporting-package APIs have explicit variants for SDK use:
 `config.Load*In` receives definition roots and, for transfers, os-release
 paths; `catalog.LoadReposFrom`, `CachedListIn`, and `RenderTransferTo` receive
 their paths directly; and sysext `*At` operations receive the captured sysext
-directory. `sysext.GetActiveVersionIn` additionally receives the captured
-merged-image directory. The original package functions remain compatibility
+directory. `sysext.GetActiveVersionWith` receives the captured default directory, runtime image search directory, and merged-state hierarchies (`ActiveStatePaths`); `sysext.GetActiveVersionIn` remains for the two-signal case without hierarchy metadata. The original package functions remain compatibility
 wrappers over their package variables or production constants.
 
 An injected `SysextRunner` is the one place that invariant depends on the
@@ -585,8 +585,12 @@ recorded in [ADR-0008](../adr/0008-bounded-retry-no-resume.md).
 - `SysextRunner` interface — `Refresh()`, `Merge()`, `Unmerge()`, `LinkToSysext(*config.Transfer)` methods executed via `DefaultRunner` (real commands) or `MockRunner` (tests)
 - `PathSysextRunner` interface — `SysextRunner` plus `LinkToSysextAt(*config.Transfer, sysextDir string) error`. `updex.Client` links only through this interface, with the `SysextLinkDir` it captured at construction; a runner implementing only `SysextRunner` is refused with `updex.ErrLegacySysextRunner` rather than redirected to the package-global `SysextDir`. `DefaultRunner` and `MockRunner` both implement it; `MockRunner.LinkToSysextAtDir` records the directory it was given (and `LinkToSysextCalled` is set by either entry point)
 - `GetInstalledVersions(t *config.Transfer) ([]string, string, error)` — List installed + current version
-- `GetActiveVersion(t *config.Transfer) (string, error)` — Get the version considered active by updex: first a legacy `CurrentSymlink`, then an image name in `RunExtensionsDir` (`/run/extensions`)
-- `GetActiveVersionIn(t *config.Transfer, defaultDir, runExtensionsDir string) (string, error)` — Explicit-directory variant used by `updex.Client`; the sysext link directory (`/var/lib/extensions`) is only the fallback for locating a legacy `CurrentSymlink`, not evidence that an image is merged
+- `GetActiveVersion(t *config.Transfer) (string, error)` — Get the version considered active by updex: first a legacy `CurrentSymlink`, then an image name under each `MergedHierarchies` entry's `.systemd-sysext` metadata, then an image name in `RunExtensionsDir` (`/run/extensions`, the runtime image search directory)
+- `GetActiveVersionWith(t *config.Transfer, p ActiveStatePaths) (string, error)` — Explicit-path variant used by `updex.Client`; `p.Hierarchies` are the hierarchies whose `.systemd-sysext/origin` JSON records merged images. An `origin` entry match returns the version from the recorded source path. When `origin` is absent, malformed, or does not name the image, the older `.systemd-sysext/extensions` name list is also checked, and a match there returns `UnknownVersion` (`"unknown"`) because it records no version. A read error returns `read merged state: …`
+- `ActiveStatePaths` — `DefaultDir` (fallback for `Target.Path`; used only to locate a legacy `CurrentSymlink`), `RunExtensionsDir` (image search directory; empty skips the check), `Hierarchies` (merged-state hierarchies; empty skips the check)
+- `GetActiveVersionIn(t *config.Transfer, defaultDir, runExtensionsDir string) (string, error)` — Compatibility variant with explicit directories that does not read hierarchy metadata; the sysext link directory (`/var/lib/extensions`) is only the fallback for locating a legacy `CurrentSymlink`, not evidence that an image is merged
+- `MergedHierarchies` — Package variable: production default merged-state hierarchies `/usr` and `/opt`; inject a client's own value through `updex.RuntimePaths.SysextHierarchies`
+- `MergedStateDirName` (`".systemd-sysext"`) and `UnknownVersion` (`"unknown"`) — Production constants for the per-hierarchy metadata directory and for a merged image whose metadata records no version
 - `SysextLinkName(t *config.Transfer) string` — Derive the sysext-visible link name from `Transfer.Component` plus the target pattern extension after stripping compression suffixes, e.g. `foo.transfer` and `foo_@v.raw.xz` produce `foo.raw`
 - `RemoveLegacyCurrentSymlink(t *config.Transfer) error` — Remove a staging `CurrentSymlink` only when the transfer defines one; absent directives and missing symlink files are no-ops
 - `LinkToSysext(t *config.Transfer) / UnlinkFromSysext(t *config.Transfer)` — Manage `/var/lib/extensions/<component>.<ext>` symlinks without requiring `CurrentSymlink`. `LinkToSysext` scans staged versioned files, selects the newest by `version.Compare`, and points the sysext-visible link at that file
@@ -595,7 +599,7 @@ recorded in [ADR-0008](../adr/0008-bounded-retry-no-resume.md).
 - `RemoveAllVersions(t *config.Transfer) ([]string, error)` — Remove all versions and current symlink for a component
 - `GetExtensionName(filename string) string` — Extract extension name from filename (strips version and compression suffixes)
 - `SysextDir` — Package variable: `/var/lib/extensions`
-- `RunExtensionsDir` — Production merged-image state directory constant: `/run/extensions`
+- `RunExtensionsDir` — Production constant for systemd-sysext's runtime image search directory: `/run/extensions`. An image there is merged on the next refresh; it is not a record of current merged state
 
 ### `systemd`
 
