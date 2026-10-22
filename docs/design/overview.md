@@ -100,7 +100,7 @@ CLI (cmd/daemon.go) ─┘                version, sysext, systemd
 ### Testing patterns
 
 - Mock interfaces for system commands: `sysext.SysextRunner`, `systemd.SystemctlRunner`
-- `ClientConfig.SysextRunner` field for injecting mocks into the SDK client — `NewClient` stores the runner directly on the `Client` struct (does not mutate global state)
+- `ClientConfig.SysextRunner` field for injecting mocks into the SDK client — `NewClient` stores the runner directly on the `Client` struct (does not mutate global state). An injected runner must implement `sysext.PathSysextRunner` (`SysextRunner` plus `LinkToSysextAt`) to be usable for a real install: the client links only through that method with its captured `SysextLinkDir`, and refuses a `SysextRunner`-only runner with `updex.ErrLegacySysextRunner` before mutating anything rather than falling back to the package-global `sysext.SysextDir`. `sysext.MockRunner` implements it and records the directory it was given in `LinkToSysextAtDir`; `updex/install_link_test.go` pins the refusal.
 - `ClientConfig.SystemdManager` for injecting a `systemd.NewTestManager`
   rooted at `t.TempDir()` with a mock `SystemctlRunner`; daemon SDK tests use
   this instead of touching real units or invoking `systemctl`
