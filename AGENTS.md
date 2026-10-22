@@ -50,8 +50,8 @@ repo-specific guidance belongs in this file or `docs/`:
   [`golangci-lint`](https://golangci-lint.run/) for `make lint` — `make ci`
   requires the exact release `mise.toml` pins (`mise install` provisions it;
   `make lint-version-check` fails with that instruction when it is absent),
-  [`svu`](https://github.com/caarlos0/svu) for release tagging, Node ≥ 20 for
-  the docs-integrity gate
+  [`svu`](https://github.com/caarlos0/svu) for release tagging, Node 24 (pinned in `mise.toml`, the
+  same major the `docs-gate` CI job uses) for the docs-integrity gate
 
 updex manages [systemd-sysext](https://www.freedesktop.org/software/systemd/man/latest/systemd-sysext.html)
 images, so end-to-end use requires a systemd-based Linux system and root
