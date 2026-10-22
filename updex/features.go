@@ -7,11 +7,11 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/frostyard/updex/catalog"
-	"github.com/frostyard/updex/config"
-	"github.com/frostyard/updex/manifest"
-	"github.com/frostyard/updex/sysext"
-	"github.com/frostyard/updex/version"
+	"github.com/frostyard/updex/v2/catalog"
+	"github.com/frostyard/updex/v2/config"
+	"github.com/frostyard/updex/v2/manifest"
+	"github.com/frostyard/updex/v2/sysext"
+	"github.com/frostyard/updex/v2/version"
 )
 
 // Features returns all configured features with their status.

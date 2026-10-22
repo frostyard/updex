@@ -25,7 +25,7 @@
       "minimum_risk_tier": "high",
       "paths": [
         ".goreleaser.yaml",
-        ".svu.yaml"
+        ".svu.yml"
       ],
       "detectors": []
     },

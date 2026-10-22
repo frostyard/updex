@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/frostyard/updex/config"
+	"github.com/frostyard/updex/v2/config"
 )
 
 // linkTransfer returns a transfer whose staging directory is stagingDir and

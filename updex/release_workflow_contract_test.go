@@ -9,7 +9,14 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-func TestReleaseWorkflowDispatchesSnosiBuildForTags(t *testing.T) {
+// TestReleaseWorkflowRequestsAptPublicationForTags pins the publication
+// contract of frostyard/core ADR-0055 and ADR-0056: a tag release asks
+// frostyard/apt-publisher to publish its .deb files with an unguarded
+// `publish-deb` repository_dispatch that may not continue on error (if it
+// fails, nothing was published). The publisher, not this workflow, dispatches
+// `build` to frostyard/snosi once the packages are installable, so a direct
+// snosi dispatch or a repogen publish step here would race the publish queue.
+func TestReleaseWorkflowRequestsAptPublicationForTags(t *testing.T) {
 	data, err := os.ReadFile("../.github/workflows/release.yml")
 	if err != nil {
 		t.Fatalf("read release workflow: %v", err)
@@ -25,9 +32,10 @@ func TestReleaseWorkflowDispatchesSnosiBuildForTags(t *testing.T) {
 		Jobs map[string]struct {
 			If    string `yaml:"if"`
 			Steps []struct {
-				If   string            `yaml:"if"`
-				Uses string            `yaml:"uses"`
-				With map[string]string `yaml:"with"`
+				If              string            `yaml:"if"`
+				Uses            string            `yaml:"uses"`
+				With            map[string]string `yaml:"with"`
+				ContinueOnError yaml.Node         `yaml:"continue-on-error"`
 			} `yaml:"steps"`
 		} `yaml:"jobs"`
 	}
@@ -47,24 +55,42 @@ func TestReleaseWorkflowDispatchesSnosiBuildForTags(t *testing.T) {
 		t.Fatal("release workflow is missing goreleaser job")
 	}
 	if job.If != "" {
-		t.Fatalf("goreleaser job has guard %q; tag releases must reach the snosi dispatch", job.If)
+		t.Fatalf("goreleaser job has guard %q; tag releases must reach the publication request", job.If)
 	}
 
+	requests := 0
 	for _, step := range job.Steps {
+		if strings.HasPrefix(step.Uses, "frostyard/repogen/") {
+			t.Fatalf("release workflow uses %s; .deb files are published by frostyard/apt-publisher", step.Uses)
+		}
 		if !strings.HasPrefix(step.Uses, "peter-evans/repository-dispatch@") {
 			continue
 		}
-		if step.With["repository"] != "frostyard/snosi" ||
-			step.With["event-type"] != "build" {
-			continue
+		switch step.With["repository"] {
+		case "frostyard/snosi":
+			t.Fatal("release workflow dispatches to frostyard/snosi; frostyard/apt-publisher does after publishing")
+		case "frostyard/apt-publisher":
+			if step.With["event-type"] != "publish-deb" {
+				t.Fatalf("apt-publisher dispatch event-type = %q, want publish-deb", step.With["event-type"])
+			}
+			if step.If != "" {
+				t.Fatalf("publication request has guard %q; tag releases must reach it", step.If)
+			}
+			if !step.ContinueOnError.IsZero() {
+				t.Fatal("publication request sets continue-on-error; a failed request must fail the release")
+			}
+			payload := step.With["client-payload"]
+			for _, want := range []string{`"repo": "${{ github.repository }}"`, `"tag": "${{ github.ref_name }}"`} {
+				if !strings.Contains(payload, want) {
+					t.Fatalf("publication request client-payload %q lacks %s", payload, want)
+				}
+			}
+			requests++
 		}
-		if step.If != "" {
-			t.Fatalf("snosi dispatch has guard %q; tag releases must reach it", step.If)
-		}
-		return
 	}
-
-	t.Fatal("release workflow must dispatch event-type build to frostyard/snosi")
+	if requests != 1 {
+		t.Fatalf("release workflow has %d publish-deb requests to frostyard/apt-publisher, want 1", requests)
+	}
 }
 
 // TestReleaseWorkflowAttestsBuildProvenance pins the provenance contract:

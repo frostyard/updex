@@ -14,9 +14,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/frostyard/updex/config"
-	"github.com/frostyard/updex/internal/testutil"
-	"github.com/frostyard/updex/sysext"
+	"github.com/frostyard/updex/v2/config"
+	"github.com/frostyard/updex/v2/internal/testutil"
+	"github.com/frostyard/updex/v2/sysext"
 )
 
 // createFeatureFile creates a .feature file in the config directory

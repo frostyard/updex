@@ -1,6 +1,103 @@
 # SDK API Reference
 
-The `updex` package (`github.com/frostyard/updex/updex`) is the primary public API. All operations go through the `Client` struct.
+The `updex` package (`github.com/frostyard/updex/v2/updex`) is the primary public API. All operations go through the `Client` struct.
+
+## Library (SDK) Usage
+
+Create a module for this example:
+
+```bash
+mkdir updex-quickstart
+cd updex-quickstart
+go mod init example.com/updex-quickstart
+go get github.com/frostyard/updex/v2/updex
+```
+
+Save as `main.go`:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    "github.com/frostyard/updex/v2/updex"
+)
+
+func main() {
+    client := updex.NewClient(updex.ClientConfig{Verify: true})
+    ctx := context.Background()
+
+    // List all features (union of the legacy default directory and every
+    // discovered systemd-sysupdate component). Use FeaturesOptions{Component: "docker"}
+    // to scope to one component instead.
+    features, err := client.Features(ctx)
+    if err != nil {
+        log.Fatal(err)
+    }
+    for _, feature := range features {
+        fmt.Printf("%s: enabled=%v (%s)\n", feature.Name, feature.Enabled, feature.Description)
+    }
+
+    components, err := client.Components(ctx)
+    if err != nil {
+        log.Fatal(err)
+    }
+    for _, component := range components {
+        fmt.Printf("%s: %s (%d features)\n", component.Name, component.SourceDir, component.FeatureCount)
+    }
+
+    daemon, err := client.DaemonStatus(ctx, updex.DaemonStatusOptions{})
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("daemon installed=%v active=%v\n", daemon.Installed, daemon.Active)
+
+    enabled, err := client.EnableFeature(ctx, "docker", updex.EnableFeatureOptions{Now: true})
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Println(enabled.NextActionMessage)
+
+    // A failed check still returns partial results with per-component errors.
+    checks, err := client.CheckFeatures(ctx, updex.CheckFeaturesOptions{})
+    if err != nil {
+        log.Printf("check incomplete: %v", err)
+    }
+    for _, feature := range checks {
+        for _, check := range feature.Results {
+            if check.Error != "" {
+                fmt.Printf("%s: could not check: %s\n", check.Component, check.Error)
+                continue
+            }
+            if check.UpdateAvailable {
+                fmt.Printf("%s: %s → %s\n", check.Component, check.CurrentVersion, check.NewestVersion)
+            }
+        }
+    }
+
+    updates, err := client.UpdateFeatures(ctx, updex.UpdateFeaturesOptions{})
+    if err != nil {
+        log.Fatal(err)
+    }
+    for _, feature := range updates {
+        for _, update := range feature.Results {
+            fmt.Printf("%s: version %s (downloaded=%v)\n", update.Component, update.Version, update.Downloaded)
+        }
+    }
+
+    _, err = client.DisableFeature(ctx, "docker", updex.DisableFeatureOptions{Now: true, Force: true})
+    if err != nil {
+        log.Fatal(err)
+    }
+}
+```
+
+Run `go run .` from the module directory. Enable, update and disable change
+system state: run the full example only on a configured test system with
+permission to manage extensions.
 
 ## Client
 
@@ -8,7 +105,7 @@ The `updex` package (`github.com/frostyard/updex/updex`) is the primary public A
 type Client struct { /* unexported fields */ }
 
 type ClientConfig struct {
-    Definitions        string                // Custom config file path (overrides search paths)
+    Definitions        string                // Custom directory of .transfer/.feature files (overrides search paths)
     Verify             bool                  // Enable GPG signature verification
     Verbose            bool                  // Enable debug output
     Progress           reporter.Reporter     // Progress reporter (optional)
@@ -23,9 +120,9 @@ type ClientConfig struct {
 // Zero values resolve to current production defaults at NewClient time.
 type RuntimePaths struct {
     DefinitionRoots    []string // Roots for sysupdate.d directories; default: config.SearchRoots
-    OSReleasePaths     []string // os-release files for specifier expansion; default: config.OSReleasePaths
+    OSReleasePaths     []string // os-release files for specifier expansion and image naming; default: config.OSReleasePaths
     CatalogConfigRoots []string // Dirs for *.catalog files; default: catalog.ConfigRoots
-    CatalogCacheDir    string   // Cache dir for catalog listings; default: catalog.CacheDir
+    CatalogCacheDir    string   // Cache dir for catalog listings; "" = default catalog.CacheDir; DisableCatalogCache = off
     CatalogTargetPath  string   // Staging dir for catalog transfers; default: catalog.TargetPath
     SysextLinkDir      string   // Dir for systemd-sysext image links; default: sysext.SysextDir
     RunExtensionsDir   string   // Dir for merged sysext images; default: sysext.RunExtensionsDir
@@ -39,6 +136,7 @@ func NewClient(cfg ClientConfig) *Client
 ```
 
 `NewClient` resolves `cfg.Paths` once at construction: each zero field reads its corresponding package-level compatibility variable or production constant exactly once and takes a defensive copy of slices. After construction the client never consults those package variables again, so mutating `config.SearchRoots`, `catalog.ConfigRoots`, `catalog.CacheDir`, or `sysext.SysextDir` cannot redirect the client. This is the ADR-0011 invariant: all runtime dependencies, including merged sysext state, are captured immutably at construction.
+Use `Paths` to give two clients different filesystem trees safely in one process.
 
 Path-dependent supporting-package APIs have explicit variants for SDK use:
 `config.Load*In` receives definition roots and, for transfers, os-release
@@ -190,7 +288,7 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 
 Downloads and installs the newest available version for each enabled feature's transfers. Delegates per-component work to the internal `installTransfer` pipeline (which handles download, legacy staging-symlink cleanup, sysext linking, and vacuum). Manifests are cached by source URL — transfers sharing the same source avoid redundant HTTP requests. Parsed source patterns are returned from version listing and reused by the install pipeline to avoid redundant pattern compilation. Refresh is batched — a single `systemd-sysext refresh` runs after all components are processed. If that final refresh fails, the per-feature results are still returned as recorded (a component that was downloaded and linked keeps `Installed=true`; it is staged but not activated) and the method returns `sysext refresh failed: …` — joined with `one or more components failed to update` when a component also failed — so callers and the CLI (non-zero exit, `--json` still emits the array) never mistake an unactivated update for a completed one. With `NoRefresh: true` (the daemon path) no refresh is attempted. With `DryRun: true`, manifests are fetched and versions are selected, but download, legacy cleanup, sysext linking, refresh, and vacuum deletion are skipped. Returns per-feature results with per-component status.
 
-The manifest cache key is `Transfer.Source.Path` only, but verification is a property of the transfer, not of load order: `manifest.Manifest.Verified` records whether a cached entry passed GPG verification, and `getAvailableVersions` (shared with `CheckFeatures`) never lets a transfer that requires verification (`ClientConfig.Verify` or `Verify=true`) consume an unverified cached manifest — it refetches with verification and the verified manifest replaces the cache entry. A verified manifest may serve unverified transfers, never the reverse. Two transfers sharing a source with the same verification requirement still make one HTTP request. Changes that require different auth behavior per transfer must still change the cache key or bypass caching.
+The manifest cache key is `Transfer.Source.Path` only, but verification is a property of the transfer, not of load order: `manifest.Manifest.Verified` records whether a cached entry passed GPG verification, and `getAvailableVersions` (shared with `CheckFeatures`) never lets a transfer that requires verification (per `Client.verifyPolicy`: `ClientConfig.Verify`, `Verify=true`, or a catalog-generated transfer whose repo lacks `AllowUnsigned=yes`) consume an unverified cached manifest — it refetches with verification and the verified manifest replaces the cache entry. A verified manifest may serve unverified transfers, never the reverse. Two transfers sharing a source with the same verification requirement still make one HTTP request. Changes that require different auth behavior per transfer must still change the cache key or bypass caching.
 
 Dry-run update results use the normal `UpdateResult` shape: `Downloaded=true` means the component would be downloaded, `Installed=false` means no install happened, and `RemovedVersions` is populated from `sysext.PlanVacuumAfterInstall` unless `NoVacuum` is true. The CLI still enforces root before calling this SDK method, but the SDK method itself is read-only in dry-run mode apart from remote manifest fetches.
 
@@ -422,20 +520,23 @@ Sysext catalog primitives; no built-in repos (see `docs/design/overview.md` "Cat
 
 - `ConfigRoots` — Package variable: the four `*/updex/catalogs.d` directories scanned for `<name>.catalog` files, earlier roots winning per filename. Overridable in tests.
 - `LoadRepos() ([]Repo, error)` — Load configured repos, sorted by name; returns `ErrNoCatalogs` when none exist.
+- `LoadRepoFrom(configRoots []string, name string) (Repo, error)` — Load one repo from the first root holding `<name>.catalog` (the file `LoadReposFrom` would pick; found with `os.Lstat`, so a dangling higher-priority symlink fails to load rather than yielding to a lower root), ignoring every other repo's file; returns `ErrRepoNotFound` when none holds it. `Client.verifyPolicy` uses it so an unrelated broken `.catalog` cannot revoke an opt-in.
 - `RepoByName(repos []Repo, name string) (Repo, bool)`
-- `type Repo struct { Name, SiteURL, ListURL, Component string; AllowInsecure bool }` — `Component` defaults to `catalog-<name>`; both names validated against `[a-zA-Z0-9_-]+`. Parsed `.catalog` files require absolute HTTPS `SiteURL`/`ListURL` values unless `AllowInsecure=yes`; the opt-in is intended only for trusted development and test endpoints.
+- `type Repo struct { Name, SiteURL, ListURL, Component string; AllowInsecure, AllowUnsigned bool }` — `Component` defaults to `catalog-<name>`; both names validated against `[a-zA-Z0-9_-]+`. Parsed `.catalog` files require absolute HTTPS `SiteURL`/`ListURL` values unless `AllowInsecure=yes`; the opt-in is intended only for trusted development and test endpoints. `AllowUnsigned=yes` lets the catalog's published `Verify=` decide whether its `SHA256SUMS` must be signed ([ADR-0014](../adr/0014-local-catalog-signature-policy.md)); it does not relax HTTPS or SHA256 checks, and a file combining it with `AllowInsecure=yes` fails to parse.
 - `List(ctx, *http.Client, Repo) ([]string, error)` — Enumerate sysexts via the repo's `ListURL` (GitHub contents API shape): top-level `dir` entries minus dotted names and `docs`/`LICENSES`. Sends `GITHUB_TOKEN` as a bearer token only to the `https://api.github.com` origin and strips authorization from redirects to other origins. Always live; no cache.
-- `CachedList(ctx, *http.Client, Repo, CachedListOptions) ([]string, CacheResult, error)` — `List` behind a per-repo TTL+ETag cache in `CacheDir` (default `os.UserCacheDir()/updex`, empty disables). `CachedListOptions{TTL /* 0 → DefaultListCacheTTL (60 min) */, NoCache}`; `CacheResult{FromCache, Stale, Age}`. Validates `Repo.Name` (public API: the name becomes a cache filename). Within TTL: cache, zero network. Expired: conditional GET (`If-None-Match`; 304 bumps the timestamp, rate-limit-free on GitHub). Fetch failure with an entry present: stale served, `Stale: true` — except `context.Canceled`/`DeadlineExceeded`, which propagate. Entries are invalidated when the repo's `ListURL` changes; corrupt files are misses; writes are best-effort.
+- `CachedList(ctx, *http.Client, Repo, CachedListOptions) ([]string, CacheResult, error)` — `List` behind a per-repo TTL+ETag cache in `CacheDir` (default `os.UserCacheDir()/updex`, empty disables). `CachedListOptions{TTL /* 0 → DefaultListCacheTTL (60 min) */, NoCache}`; `CacheResult{FromCache, Stale, Age, WriteErr}`. Validates `Repo.Name` (public API: the name becomes a cache filename). Within TTL: cache, zero network. Expired: conditional GET (`If-None-Match`; 304 bumps the timestamp, rate-limit-free on GitHub). Fetch failure with an entry present: stale served, `Stale: true` — except `context.Canceled`/`DeadlineExceeded`, which propagate. Entries are invalidated when the repo's `ListURL` changes; corrupt files are misses; writes are best-effort — a failed write never fails the listing but is reported via `CacheResult.WriteErr`.
 - `FetchConf(ctx, *http.Client, Repo, name) ([]byte, error)` — GET `<SiteURL>/<name>/<name>.conf`; 404 wraps `ErrNotFound`. Validates `name` first.
-- `RenderTransfer(conf []byte, repo Repo, name string) ([]byte, error)` — Byte-preserving line transform ([ADR-0006](../adr/0006-byte-preserving-render-transfer.md)): prepend the `GeneratedMarker` header, inject `Features=<name>` after `[Transfer]` (appending the section if missing, replacing an existing `Features` key), drop `Target CurrentSymlink`, keep `%w`/`%a` specifiers unexpanded. Validates `[Source]`/`[Target]` presence via `ini.Load`.
+- `RenderTransfer(conf []byte, repo Repo, name string) ([]byte, error)` — Byte-preserving line transform ([ADR-0006](../adr/0006-byte-preserving-render-transfer.md)): prepend the `GeneratedMarker` header, inject `Features=<name>` after `[Transfer]` (appending the section if missing, replacing an existing `Features` key), drop `Target CurrentSymlink`, keep `%w`/`%a` specifiers unexpanded. The catalog's `Verify=` is always dropped; when `repo.AllowUnsigned` is set, a canonical `Verify=yes|no` (parsed with `MustBool(true)`) is written after `Features=`. `RenderTransferTo` is the explicit-target-path variant. Validates `[Source]`/`[Target]` presence via `ini.Load`.
 - `RenderFeature(Repo, name) []byte` — `GeneratedMarker` header plus `[Feature]` stanza with `Description`, `Documentation=<SiteURL>/<name>/`, and `Enabled=false` (enabling goes through the standard drop-in).
 - `GeneratedMarker` / `IsGenerated(data []byte) bool` / `IsGeneratedFile(path string) bool` — Ownership signal for generated files: the header `# Generated by updex catalog (repo: <name>); ...` ([ADR-0003](../adr/0003-catalog-ownership-marker.md)).
-- `GeneratedRepo(data []byte) (repo string, ok bool)` / `GeneratedFileRepo(path string) (repo string, ok bool)` — Parse the generating repo out of the marker. `CatalogAdd`/`CatalogRemove` compare this against the acting repo, so neither a foreign file nor another catalog sharing the same `Component` can be overwritten or deleted.
+- `GeneratedRepo(data []byte) (repo string, ok bool)` / `GeneratedFileRepo(path string) (repo string, ok bool)` — Parse the generating repo out of the marker. `GeneratedFileRepo` reads enough bytes to fit the header for any repo name up to 255 bytes (the filename-stem limit), so long names are never misread as unmarked. `CatalogAdd`/`CatalogRemove` compare this against the acting repo, so neither a foreign file nor another catalog sharing the same `Component` can be overwritten or deleted.
+- `GeneratedFileHeader(path string) (repo string, marked bool, err error)` — One bounded read of the header: the repo its marker names (empty when none parses), whether it starts with the `GeneratedMarker` prefix at all, and any open/read error. `Client.verifyPolicy` requires a signature on an error or on a marked header without a parseable repo.
 - `ValidateSysextName(name string) error` — Rejects names that aren't a safe single filename/URL component (`^[a-zA-Z0-9_][a-zA-Z0-9._+-]*$`).
 
 ### `manifest`
 
 - `Fetch(ctx context.Context, httpClient *http.Client, baseURL string, verify bool, opts ...Option) (*Manifest, error)` — Fetch and parse `SHA256SUMS` from URL. If `httpClient` is nil, a default client with a 30-second timeout, the standard 10-redirect limit, and an HTTPS-to-HTTP downgrade refusal (`internal/httpclient`, shared with `updex.NewClient` and `download.Download`) is used; HTTP-to-HTTP and HTTPS-to-HTTPS redirects remain allowed. A caller-supplied `httpClient` keeps its own redirect policy. The `SHA256SUMS` GET and body read retry transient network failures and HTTP 5xx/429 up to 3 total attempts with exponential backoff; TLS/cert errors, unsupported protocols, and 4xx other than 429 fail immediately. The detached `SHA256SUMS.gpg` fetch used when `verify=true` shares that retry policy (same classification and the same `WithRetryConfig`/`WithRetryNotify` settings); keyring loading and signature checking are never retried. `WithRetryConfig(maxAttempts int, baseDelay time.Duration)` overrides retry bounds for tests or SDK consumers; `WithRetryNotify(func(attempt, maxAttempts int, reason error))` reports retry attempts
+- `ErrSignatureNotFound` — wrapped into `Fetch`'s error when `verify=true` and `SHA256SUMS.gpg` returns 404 (not retried); other signature failures do not wrap it. The SDK uses it to prefix the applicable verification policy
 - `Manifest.Verified bool` — true only when `Fetch` was called with `verify=true` and the detached signature check succeeded; false for `verify=false` fetches. Consumers that cache manifests across transfers must not serve an unverified manifest to a transfer that requires verification (see `UpdateFeatures`)
 - `VerifyHash(filePath string, expectedHash string) error` — Verify a file's SHA256
 - `VerifyHashReader(r io.Reader, expectedHash string) *HashVerifyReader` — Streaming hash verification
