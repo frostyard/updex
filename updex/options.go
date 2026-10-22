@@ -1,6 +1,6 @@
 package updex
 
-import "github.com/frostyard/updex/manifest"
+import "github.com/frostyard/updex/v2/manifest"
 
 // EnableDaemonOptions configures the EnableDaemon operation.
 type EnableDaemonOptions struct{}

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/frostyard/updex/internal/httpclient"
-	"github.com/frostyard/updex/internal/retry"
+	"github.com/frostyard/updex/v2/internal/httpclient"
+	"github.com/frostyard/updex/v2/internal/retry"
 )
 
 // ProgressFunc is called before downloading begins with the response content

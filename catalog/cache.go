@@ -64,6 +64,11 @@ type CacheResult struct {
 	Stale bool
 	// Age is the age of the served cache entry; zero for live results.
 	Age time.Duration
+	// WriteErr is non-nil when the listing was fetched or served
+	// successfully but persisting it to the local cache failed. The
+	// listing itself is always valid; callers with a Progress reporter
+	// should surface this rather than silently discarding it.
+	WriteErr error
 }
 
 // CachedListIn is List with a local TTL+ETag cache, using an explicit
@@ -113,17 +118,23 @@ func CachedListIn(ctx context.Context, client *http.Client, repo Repo, opts Cach
 			return nil, CacheResult{}, fmt.Errorf("catalog %q returned 304 to an unconditional request", repo.Name)
 		}
 		entry.FetchedAt = time.Now()
-		saveListCache(path, entry)
-		return entry.Names, CacheResult{FromCache: true, Age: 0}, nil
+		var writeErr error
+		if err := saveListCache(path, entry); err != nil {
+			writeErr = fmt.Errorf("failed to write list cache for %q at %s: %w", repo.Name, path, err)
+		}
+		return entry.Names, CacheResult{FromCache: true, Age: 0, WriteErr: writeErr}, nil
 	}
 
-	saveListCache(path, &listCacheEntry{
+	var writeErr error
+	if err := saveListCache(path, &listCacheEntry{
 		ListURL:   repo.ListURL,
 		ETag:      newETag,
 		FetchedAt: time.Now(),
 		Names:     names,
-	})
-	return names, CacheResult{}, nil
+	}); err != nil {
+		writeErr = fmt.Errorf("failed to write list cache for %q at %s: %w", repo.Name, path, err)
+	}
+	return names, CacheResult{WriteErr: writeErr}, nil
 }
 
 // CachedList is List with a local TTL+ETag cache. Within the TTL the
@@ -132,7 +143,8 @@ func CachedListIn(ctx context.Context, client *http.Client, repo Repo, opts Cach
 // no API rate limit and only bumps the cache timestamp. When a live fetch
 // fails but an expired entry exists, the stale listing is served with
 // Stale set so callers can warn. Cache reads and writes are best-effort:
-// corrupt entries are treated as misses and write failures are ignored.
+// corrupt entries are treated as misses and write failures are reported
+// via CacheResult.WriteErr rather than failing the list operation.
 func CachedList(ctx context.Context, client *http.Client, repo Repo, opts CachedListOptions) ([]string, CacheResult, error) {
 	return CachedListIn(ctx, client, repo, opts, CacheDir)
 }
@@ -165,17 +177,19 @@ func loadListCache(path string, repo Repo) *listCacheEntry {
 }
 
 // saveListCache writes a cache entry, best-effort: the listing is public
-// data and a failed write only costs a future refetch.
-func saveListCache(path string, entry *listCacheEntry) {
+// data and a failed write only costs a future refetch. The caller treats
+// a non-nil error as observability only, never as cause to fail the list
+// operation.
+func saveListCache(path string, entry *listCacheEntry) error {
 	if path == "" {
-		return
+		return nil
 	}
 	data, err := json.Marshal(entry)
 	if err != nil {
-		return
+		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return
+		return err
 	}
-	_ = os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0644)
 }

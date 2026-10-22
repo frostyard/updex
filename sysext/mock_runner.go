@@ -1,6 +1,6 @@
 package sysext
 
-import "github.com/frostyard/updex/config"
+import "github.com/frostyard/updex/v2/config"
 
 // MockRunner is a test double for SysextRunner
 type MockRunner struct {

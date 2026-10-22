@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/frostyard/clix"
-	"github.com/frostyard/updex/updex"
+	"github.com/frostyard/updex/v2/updex"
 	"github.com/spf13/cobra"
 )
 
@@ -36,6 +36,7 @@ For example, for the fedora-sysexts "fedora" repo:
   SiteURL=https://extensions.fcos.fr/fedora
   ListURL=https://api.github.com/repos/fedora-sysexts/fedora/contents/
   # AllowInsecure=no
+  # AllowUnsigned=no
 
 'catalog add' fetches the catalog's published transfer definition and
 writes standard .transfer/.feature files into the catalog's own

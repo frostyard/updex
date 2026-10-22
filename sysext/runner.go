@@ -5,7 +5,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/frostyard/updex/config"
+	"github.com/frostyard/updex/v2/config"
 )
 
 // SysextRunner executes systemd-sysext commands
