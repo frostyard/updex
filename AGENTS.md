@@ -148,8 +148,8 @@ neither publishes packages nor dispatches to snosi itself.
 The `Release config` job in `.github/workflows/test.yml` runs the same
 SHA-pinned GoReleaser Pro v2 action with `args: check` on pull requests, pushes
 to `main`, and merge-queue branches. Trusted runs fail when the Pro key is
-missing; fork pull requests, which cannot receive repository secrets, report
-explicitly that validation did not occur and rely on the trusted merge-queue
+missing; fork and Dependabot pull requests, which cannot receive repository
+secrets, report explicitly that validation did not occur and rely on the trusted merge-queue
 run before merge. `updex/release_config_workflow_contract_test.go` pins the
 event coverage, least privileges, secret handling, and release/snapshot action
 parity.
