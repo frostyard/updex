@@ -6,8 +6,10 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    # Conventional prefix that svu reads as a patch, not a feature: a
+    # feat(deps) title made `svu next` propose a minor release (v2.0.4).
     commit-message:
-      prefix: "feat"
+      prefix: "build"
       include: "scope"
 
   # Maintain GitHub Actions
@@ -17,5 +19,5 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 5
     commit-message:
-      prefix: "feat"
+      prefix: "ci"
       include: "scope"

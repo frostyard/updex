@@ -120,7 +120,12 @@ types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `ci`, `build`,
 version bumps from them. The
 repository squash-merges and its squash title default is "commit or PR
 title", so the PR title — or, for a single-commit PR, that commit's subject —
-becomes the `main` commit that svu versions and the changelog groups by. Make
+becomes the `main` commit that svu versions and the changelog groups by.
+Dependabot titles its PRs `build(deps): …` (Go modules) and `ci(deps): …`
+(GitHub Actions), never `feat`, so dependency bumps alone make `svu next`
+propose a patch release, not a minor one; `.goreleaser.yaml` groups those
+titles under "Dependency updates", and
+`updex/dependabot_prefix_contract_test.go` pins both. Make
 the first commit conventional too; do not carry an issue's `[quality] …` /
 `[scanner] …` / `[sec-check] …` title into the commit or PR. `.github/workflows/pr-title.yml`
 fails a PR whose title (or lone commit subject) is not conventional. See
