@@ -3,6 +3,7 @@ package updex
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/frostyard/updex/v2/systemd"
 )
@@ -12,13 +13,36 @@ const (
 	daemonSchedule = "daily"
 )
 
+// daemonUnitPaths returns the absolute paths of the daemon's timer and
+// service unit files in the client's systemd manager unit directory, in that
+// order.
+func (c *Client) daemonUnitPaths() []string {
+	return []string{
+		filepath.Join(c.systemd.UnitPath, daemonUnitName+".timer"),
+		filepath.Join(c.systemd.UnitPath, daemonUnitName+".service"),
+	}
+}
+
 // EnableDaemon installs, enables, and starts the automatic update timer.
-func (c *Client) EnableDaemon(ctx context.Context, _ EnableDaemonOptions) (*DaemonActionResult, error) {
+// With opts.DryRun it reports the unit files and actions without writing any
+// file or calling systemctl; the already-installed precondition still applies.
+func (c *Client) EnableDaemon(ctx context.Context, opts EnableDaemonOptions) (*DaemonActionResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("enable daemon: %w", err)
 	}
 	if c.systemd.Exists(daemonUnitName) {
 		return nil, fmt.Errorf("timer already installed; run 'updex daemon disable' first to reinstall")
+	}
+
+	unitFiles := c.daemonUnitPaths()
+	if opts.DryRun {
+		return &DaemonActionResult{
+			Success:   true,
+			DryRun:    true,
+			UnitFiles: unitFiles,
+			Message: fmt.Sprintf("Would install %s and %s, then enable and start %s.timer",
+				unitFiles[0], unitFiles[1], daemonUnitName),
+		}, nil
 	}
 
 	timer := &systemd.TimerConfig{
@@ -49,26 +73,42 @@ func (c *Client) EnableDaemon(ctx context.Context, _ EnableDaemonOptions) (*Daem
 	}
 
 	return &DaemonActionResult{
-		Success: true,
-		Message: "Auto-update daemon enabled",
+		Success:   true,
+		UnitFiles: unitFiles,
+		Message:   "Auto-update daemon enabled",
 	}, nil
 }
 
 // DisableDaemon stops, disables, and removes the automatic update timer.
-func (c *Client) DisableDaemon(ctx context.Context, _ DisableDaemonOptions) (*DaemonActionResult, error) {
+// With opts.DryRun it reports the unit files and actions without stopping,
+// disabling, or removing anything; the not-installed precondition still
+// applies.
+func (c *Client) DisableDaemon(ctx context.Context, opts DisableDaemonOptions) (*DaemonActionResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("disable daemon: %w", err)
 	}
 	if !c.systemd.Exists(daemonUnitName) {
 		return nil, fmt.Errorf("timer not installed; nothing to disable")
 	}
+
+	unitFiles := c.daemonUnitPaths()
+	if opts.DryRun {
+		return &DaemonActionResult{
+			Success:   true,
+			DryRun:    true,
+			UnitFiles: unitFiles,
+			Message: fmt.Sprintf("Would stop and disable %s.timer, remove %s and %s, and reload systemd",
+				daemonUnitName, unitFiles[0], unitFiles[1]),
+		}, nil
+	}
 	if err := c.systemd.Remove(ctx, daemonUnitName); err != nil {
 		return nil, fmt.Errorf("failed to remove timer: %w", err)
 	}
 
 	return &DaemonActionResult{
-		Success: true,
-		Message: "Auto-update daemon disabled",
+		Success:   true,
+		UnitFiles: unitFiles,
+		Message:   "Auto-update daemon disabled",
 	}, nil
 }
 

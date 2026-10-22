@@ -5,6 +5,13 @@ package updex
 type DaemonActionResult struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
+	// DryRun reports that the daemon units and their systemd state were not
+	// changed; Message describes the actions that a real run would take.
+	DryRun bool `json:"dry_run,omitempty"`
+	// UnitFiles holds the absolute paths of the timer and service unit files,
+	// in that order: written, removed, or that the operation would write or
+	// remove.
+	UnitFiles []string `json:"unit_files,omitzero"`
 }
 
 // DaemonStatusResult represents the automatic update daemon's current state.

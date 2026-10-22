@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -39,8 +40,11 @@ func TestEnableDaemon(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnableDaemon() error = %v", err)
 	}
-	if !result.Success || result.Message != "Auto-update daemon enabled" {
+	if !result.Success || result.Message != "Auto-update daemon enabled" || result.DryRun {
 		t.Fatalf("EnableDaemon() result = %+v", result)
+	}
+	if want := daemonTestUnitFiles(unitPath); !slices.Equal(result.UnitFiles, want) {
+		t.Errorf("EnableDaemon() UnitFiles = %v, want %v", result.UnitFiles, want)
 	}
 	if !runner.DaemonReloadCalled {
 		t.Error("EnableDaemon() did not reload systemd after installing units")
@@ -144,8 +148,11 @@ func TestDisableDaemon(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DisableDaemon() error = %v", err)
 	}
-	if !result.Success || result.Message != "Auto-update daemon disabled" {
+	if !result.Success || result.Message != "Auto-update daemon disabled" || result.DryRun {
 		t.Fatalf("DisableDaemon() result = %+v", result)
+	}
+	if want := daemonTestUnitFiles(unitPath); !slices.Equal(result.UnitFiles, want) {
+		t.Errorf("DisableDaemon() UnitFiles = %v, want %v", result.UnitFiles, want)
 	}
 	if !runner.StopCalled || runner.StopUnit != daemonUnitName+".timer" {
 		t.Errorf("DisableDaemon() stop = (%v, %q)", runner.StopCalled, runner.StopUnit)
@@ -434,6 +441,176 @@ func TestDaemonResultsMarshalToCLIShape(t *testing.T) {
 			}
 			if string(got) != test.want {
 				t.Fatalf("json.Marshal() = %s, want %s", got, test.want)
+			}
+		})
+	}
+}
+
+// daemonTestUnitFiles returns the expected timer and service unit paths under
+// unitPath, in that order.
+func daemonTestUnitFiles(unitPath string) []string {
+	return []string{
+		filepath.Join(unitPath, daemonUnitName+".timer"),
+		filepath.Join(unitPath, daemonUnitName+".service"),
+	}
+}
+
+func TestEnableDaemonDryRun(t *testing.T) {
+	t.Run("fresh install", func(t *testing.T) {
+		runner := &systemd.MockSystemctlRunner{}
+		client, unitPath := newDaemonTestClient(t, runner)
+
+		result, err := client.EnableDaemon(t.Context(), EnableDaemonOptions{DryRun: true})
+		if err != nil {
+			t.Fatalf("EnableDaemon() error = %v", err)
+		}
+		if !result.Success || !result.DryRun {
+			t.Fatalf("EnableDaemon() result = %+v", result)
+		}
+		if want := daemonTestUnitFiles(unitPath); !slices.Equal(result.UnitFiles, want) {
+			t.Errorf("EnableDaemon() UnitFiles = %v, want %v", result.UnitFiles, want)
+		}
+		if result.Message == "" {
+			t.Error("EnableDaemon() dry run has no message")
+		}
+		if runner.DaemonReloadCalled || runner.EnableCalled || runner.StartCalled {
+			t.Error("EnableDaemon() dry run touched systemd")
+		}
+		entries, err := os.ReadDir(unitPath)
+		if err != nil {
+			t.Fatalf("read unit dir: %v", err)
+		}
+		if len(entries) != 0 {
+			t.Errorf("EnableDaemon() dry run wrote %d entries to the unit dir", len(entries))
+		}
+	})
+
+	t.Run("already installed", func(t *testing.T) {
+		runner := &systemd.MockSystemctlRunner{}
+		client, unitPath := newDaemonTestClient(t, runner)
+		seedDaemonUnits(t, unitPath)
+
+		_, err := client.EnableDaemon(t.Context(), EnableDaemonOptions{DryRun: true})
+		if err == nil || !strings.Contains(err.Error(), "timer already installed") {
+			t.Fatalf("EnableDaemon() error = %v, want already-installed error", err)
+		}
+		if runner.DaemonReloadCalled || runner.EnableCalled || runner.StartCalled {
+			t.Error("EnableDaemon() dry run touched systemd")
+		}
+		for _, path := range daemonTestUnitFiles(unitPath) {
+			content, readErr := os.ReadFile(path)
+			if readErr != nil {
+				t.Fatalf("read seeded unit %s: %v", path, readErr)
+			}
+			if string(content) != "stub" {
+				t.Errorf("seeded unit %s content = %q, want %q", path, content, "stub")
+			}
+		}
+	})
+}
+
+func TestDisableDaemonDryRun(t *testing.T) {
+	t.Run("installed", func(t *testing.T) {
+		runner := &systemd.MockSystemctlRunner{}
+		client, unitPath := newDaemonTestClient(t, runner)
+		seedDaemonUnits(t, unitPath)
+
+		result, err := client.DisableDaemon(t.Context(), DisableDaemonOptions{DryRun: true})
+		if err != nil {
+			t.Fatalf("DisableDaemon() error = %v", err)
+		}
+		if !result.Success || !result.DryRun {
+			t.Fatalf("DisableDaemon() result = %+v", result)
+		}
+		if want := daemonTestUnitFiles(unitPath); !slices.Equal(result.UnitFiles, want) {
+			t.Errorf("DisableDaemon() UnitFiles = %v, want %v", result.UnitFiles, want)
+		}
+		if result.Message == "" {
+			t.Error("DisableDaemon() dry run has no message")
+		}
+		if runner.StopCalled || runner.DisableCalled || runner.DaemonReloadCalled {
+			t.Error("DisableDaemon() dry run touched systemd")
+		}
+		for _, path := range daemonTestUnitFiles(unitPath) {
+			content, readErr := os.ReadFile(path)
+			if readErr != nil {
+				t.Fatalf("unit %s removed by dry run: %v", path, readErr)
+			}
+			if string(content) != "stub" {
+				t.Errorf("unit %s content = %q, want %q", path, content, "stub")
+			}
+		}
+	})
+
+	t.Run("not installed", func(t *testing.T) {
+		runner := &systemd.MockSystemctlRunner{}
+		client, _ := newDaemonTestClient(t, runner)
+
+		_, err := client.DisableDaemon(t.Context(), DisableDaemonOptions{DryRun: true})
+		if err == nil || !strings.Contains(err.Error(), "timer not installed") {
+			t.Fatalf("DisableDaemon() error = %v, want not-installed error", err)
+		}
+		if runner.StopCalled || runner.DisableCalled || runner.DaemonReloadCalled {
+			t.Error("DisableDaemon() dry run touched systemd")
+		}
+	})
+}
+
+func TestDaemonActionResultJSON(t *testing.T) {
+	tests := []struct {
+		name        string
+		result      DaemonActionResult
+		wantDryRun  bool
+		wantUnitKey bool
+	}{
+		{
+			name: "dry run",
+			result: DaemonActionResult{
+				Success:   true,
+				Message:   "Would install timer",
+				DryRun:    true,
+				UnitFiles: []string{"/etc/systemd/system/updex-update.timer", "/etc/systemd/system/updex-update.service"},
+			},
+			wantDryRun:  true,
+			wantUnitKey: true,
+		},
+		{
+			name: "real run",
+			result: DaemonActionResult{
+				Success:   true,
+				Message:   "Auto-update daemon enabled",
+				UnitFiles: []string{"/etc/systemd/system/updex-update.timer", "/etc/systemd/system/updex-update.service"},
+			},
+			wantDryRun:  false,
+			wantUnitKey: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data, err := json.Marshal(test.result)
+			if err != nil {
+				t.Fatalf("marshal result: %v", err)
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(data, &payload); err != nil {
+				t.Fatalf("unmarshal result: %v", err)
+			}
+			_, hasDryRun := payload["dry_run"]
+			if hasDryRun != test.wantDryRun {
+				t.Errorf("JSON has dry_run = %v, want %v: %s", hasDryRun, test.wantDryRun, data)
+			}
+			if test.wantDryRun && payload["dry_run"] != true {
+				t.Errorf("JSON dry_run = %v, want true: %s", payload["dry_run"], data)
+			}
+			unitFiles, hasUnitFiles := payload["unit_files"]
+			if hasUnitFiles != test.wantUnitKey {
+				t.Errorf("JSON has unit_files = %v, want %v: %s", hasUnitFiles, test.wantUnitKey, data)
+			}
+			if hasUnitFiles {
+				paths, ok := unitFiles.([]any)
+				if !ok || len(paths) != 2 {
+					t.Errorf("JSON unit_files = %v, want 2 paths: %s", unitFiles, data)
+				}
 			}
 		})
 	}

@@ -56,9 +56,15 @@ WHAT IT DOES:
   2. Enables the timer to start on boot
   3. Starts the timer immediately
 
+With --dry-run, the command prints the unit files and actions and changes
+nothing.
+
 Requires root privileges.`,
 		Example: `  # Enable automatic updates
-  sudo updex daemon enable`,
+  sudo updex daemon enable
+
+  # Preview the timer install without changing anything
+  sudo updex --dry-run daemon enable`,
 		Args: cobra.NoArgs,
 		RunE: runDaemonEnable,
 	}
@@ -69,7 +75,9 @@ func runDaemonEnable(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	result, err := newClient().EnableDaemon(cmd.Context(), updex.EnableDaemonOptions{})
+	result, err := newClient().EnableDaemon(cmd.Context(), updex.EnableDaemonOptions{
+		DryRun: clix.DryRun,
+	})
 	if err != nil {
 		return err
 	}
@@ -77,6 +85,11 @@ func runDaemonEnable(cmd *cobra.Command, args []string) error {
 	if clix.JSONOutput {
 		_, err := clix.OutputJSON(result)
 		return err
+	}
+
+	if result.DryRun {
+		fmt.Printf("[DRY RUN] %s\n", result.Message)
+		return nil
 	}
 
 	fmt.Println("Auto-update daemon enabled.")
@@ -99,9 +112,15 @@ WHAT IT DOES:
   2. Disables the timer from starting on boot
   3. Removes the unit files
 
+With --dry-run, the command prints the unit files and actions and changes
+nothing.
+
 Requires root privileges.`,
 		Example: `  # Disable automatic updates
-  sudo updex daemon disable`,
+  sudo updex daemon disable
+
+  # Preview stopping and removing the timer without changing anything
+  sudo updex --dry-run daemon disable`,
 		Args: cobra.NoArgs,
 		RunE: runDaemonDisable,
 	}
@@ -112,7 +131,9 @@ func runDaemonDisable(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	result, err := newClient().DisableDaemon(cmd.Context(), updex.DisableDaemonOptions{})
+	result, err := newClient().DisableDaemon(cmd.Context(), updex.DisableDaemonOptions{
+		DryRun: clix.DryRun,
+	})
 	if err != nil {
 		return err
 	}
@@ -120,6 +141,11 @@ func runDaemonDisable(cmd *cobra.Command, args []string) error {
 	if clix.JSONOutput {
 		_, err := clix.OutputJSON(result)
 		return err
+	}
+
+	if result.DryRun {
+		fmt.Printf("[DRY RUN] %s\n", result.Message)
+		return nil
 	}
 
 	fmt.Println("Auto-update daemon disabled.")
