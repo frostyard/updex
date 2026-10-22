@@ -635,7 +635,10 @@ Mutating commands enforce root before reading `--dry-run`, so examples that prev
 `make ci` is the canonical credential-free local gate. It mirrors the
 host-independent pull-request checks in fail-fast order: the shared
 `make verify-static` checks (module tidiness, vet, formatting, golangci-lint
-at the exact pin), all non-E2E package tests (with `-coverprofile`),
+at the exact pin), the docs-integrity checker's fixture self-test
+(`make test-docs-check`) and the docs-integrity gate itself
+(`node scripts/check-docs.mjs`, the same two steps as the `docs-gate` job, so
+`make ci` needs Node.js), all non-E2E package tests (with `-coverprofile`),
 the `max(80.0, baseline - 0.5)` total statement-coverage gate
 (`make test-coverage-check` (`scripts/test-coverage-check.sh`) then
 `make coverage-check` (`scripts/check-coverage.sh`), with the committed
