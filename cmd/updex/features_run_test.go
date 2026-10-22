@@ -33,6 +33,18 @@ func writeFeatureFile(t *testing.T, configDir, name string, enabled bool) {
 
 func writeFeatureTransferFile(t *testing.T, configDir, targetDir, component, feature, baseURL string) {
 	t.Helper()
+	writeTransferFile(t, configDir, targetDir, component, feature, baseURL, component+".raw")
+}
+
+// writeTransferFile writes a transfer for component, optionally with a
+// CurrentSymlink. An empty currentSymlink omits the line, which is the layout
+// of an image merged straight out of its staging directory (as on snosi).
+func writeTransferFile(t *testing.T, configDir, targetDir, component, feature, baseURL, currentSymlink string) {
+	t.Helper()
+	currentSymlinkLine := ""
+	if currentSymlink != "" {
+		currentSymlinkLine = "CurrentSymlink=" + currentSymlink + "\n"
+	}
 	content := `[Transfer]
 Features=` + feature + `
 Verify=false
@@ -45,8 +57,7 @@ MatchPattern=` + component + `_@v.raw
 [Target]
 Path=` + targetDir + `
 MatchPattern=` + component + `_@v.raw
-CurrentSymlink=` + component + `.raw
-`
+` + currentSymlinkLine
 	if err := os.WriteFile(filepath.Join(configDir, component+".transfer"), []byte(content), 0644); err != nil {
 		t.Fatalf("failed to write transfer file: %v", err)
 	}
