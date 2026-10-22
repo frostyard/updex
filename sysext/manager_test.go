@@ -867,3 +867,284 @@ func TestGetExtensionName(t *testing.T) {
 		})
 	}
 }
+
+// writeMergedStateFile writes one systemd-sysext merged-state file under the
+// given hierarchy and returns its path.
+func writeMergedStateFile(t *testing.T, hierarchy, name, content string) string {
+	t.Helper()
+	stateDir := filepath.Join(hierarchy, MergedStateDirName)
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("create merged-state directory: %v", err)
+	}
+	path := filepath.Join(stateDir, name)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write merged-state file %s: %v", name, err)
+	}
+	return path
+}
+
+func TestGetActiveVersionWithMergedState(t *testing.T) {
+	const (
+		image       = "docker_5+29.9.1-1~debian.13~trixie_13_x86-64.raw"
+		imagePath   = "/var/lib/extensions.d/" + image
+		wantVersion = "5+29.9.1-1~debian.13~trixie"
+		pattern     = "docker_@v_13_x86-64.raw"
+	)
+
+	// originWith renders the shape systemd-sysext writes, including fields
+	// updex does not read.
+	originWith := func(name, path string) string {
+		return `{
+  "mutable" : { "mode" : "no" },
+  "extensions" : {
+    "` + name + `" : {
+      "path" : "` + path + `",
+      "onMountId" : 2147483764,
+      "fileHandle" : { "type" : 77, "handle" : "6a8d" },
+      "crtime" : 1791467316045655,
+      "mtime" : 1791467316149657
+    }
+  }
+}`
+	}
+
+	// statePaths returns paths whose runtime image search directory does not
+	// exist, as on a snosi host.
+	statePaths := func(t *testing.T, hierarchies ...string) ActiveStatePaths {
+		t.Helper()
+		return ActiveStatePaths{
+			DefaultDir:       t.TempDir(),
+			RunExtensionsDir: filepath.Join(t.TempDir(), "run-extensions"),
+			Hierarchies:      hierarchies,
+		}
+	}
+
+	tests := []struct {
+		name           string
+		component      string
+		currentSymlink string
+		setup          func(t *testing.T) ActiveStatePaths
+		want           string
+		wantErr        bool
+		skipAsRoot     bool
+	}{
+		{
+			name:      "snosi origin records the merged image",
+			component: "docker",
+			setup: func(t *testing.T) ActiveStatePaths {
+				hierarchy := t.TempDir()
+				writeMergedStateFile(t, hierarchy, "origin", originWith("docker", imagePath))
+				return statePaths(t, hierarchy)
+			},
+			want: wantVersion,
+		},
+		{
+			name:      "origin matches by source path only",
+			component: "renamed-service",
+			setup: func(t *testing.T) ActiveStatePaths {
+				hierarchy := t.TempDir()
+				writeMergedStateFile(t, hierarchy, "origin", originWith("renamed", imagePath))
+				return statePaths(t, hierarchy)
+			},
+			want: wantVersion,
+		},
+		{
+			name:      "origin matches by name with an unrecognized path",
+			component: "docker",
+			setup: func(t *testing.T) ActiveStatePaths {
+				hierarchy := t.TempDir()
+				writeMergedStateFile(t, hierarchy, "origin", originWith("docker", "/opt/images/unrelated.raw"))
+				return statePaths(t, hierarchy)
+			},
+			want: UnknownVersion,
+		},
+		{
+			name:      "extensions file only records the component name",
+			component: "docker",
+			setup: func(t *testing.T) ActiveStatePaths {
+				hierarchy := t.TempDir()
+				writeMergedStateFile(t, hierarchy, "extensions", "\n  bitwarden  \ndocker\nvscode\n")
+				return statePaths(t, hierarchy)
+			},
+			want: UnknownVersion,
+		},
+		{
+			name:      "malformed origin falls back to extensions",
+			component: "docker",
+			setup: func(t *testing.T) ActiveStatePaths {
+				hierarchy := t.TempDir()
+				writeMergedStateFile(t, hierarchy, "origin", "{not json")
+				writeMergedStateFile(t, hierarchy, "extensions", "docker\n")
+				return statePaths(t, hierarchy)
+			},
+			want: UnknownVersion,
+		},
+		{
+			name:      "parsed origin without the image still checks extensions",
+			component: "docker",
+			setup: func(t *testing.T) ActiveStatePaths {
+				hierarchy := t.TempDir()
+				writeMergedStateFile(t, hierarchy, "origin", originWith("dev", "/var/lib/extensions.d/dev_1.0.0.raw"))
+				writeMergedStateFile(t, hierarchy, "extensions", "bitwarden\ndocker\nvscode\n")
+				return statePaths(t, hierarchy)
+			},
+			want: UnknownVersion,
+		},
+		{
+			name:      "parsed origin without the image and extensions without it",
+			component: "docker",
+			setup: func(t *testing.T) ActiveStatePaths {
+				hierarchy := t.TempDir()
+				writeMergedStateFile(t, hierarchy, "origin", originWith("dev", "/var/lib/extensions.d/dev_1.0.0.raw"))
+				writeMergedStateFile(t, hierarchy, "extensions", "bitwarden\nvscode\n")
+				return statePaths(t, hierarchy)
+			},
+			want: "",
+		},
+		{
+			name:      "other merged images only",
+			component: "docker",
+			setup: func(t *testing.T) ActiveStatePaths {
+				hierarchy := t.TempDir()
+				writeMergedStateFile(t, hierarchy, "origin", originWith("dev", "/var/lib/extensions.d/dev_1.0.0.raw"))
+				return statePaths(t, hierarchy)
+			},
+			want: "",
+		},
+		{
+			name:      "no merged-state directory",
+			component: "docker",
+			setup: func(t *testing.T) ActiveStatePaths {
+				return statePaths(t, t.TempDir())
+			},
+			want: "",
+		},
+		{
+			name:      "second hierarchy records the image",
+			component: "docker",
+			setup: func(t *testing.T) ActiveStatePaths {
+				first := t.TempDir()
+				second := t.TempDir()
+				writeMergedStateFile(t, second, "origin", originWith("docker", imagePath))
+				return statePaths(t, first, second)
+			},
+			want: wantVersion,
+		},
+		{
+			name:      "unreadable origin fails",
+			component: "docker",
+			setup: func(t *testing.T) ActiveStatePaths {
+				hierarchy := t.TempDir()
+				origin := writeMergedStateFile(t, hierarchy, "origin", originWith("docker", imagePath))
+				if err := os.Chmod(origin, 0o000); err != nil {
+					t.Fatalf("make origin unreadable: %v", err)
+				}
+				t.Cleanup(func() {
+					if err := os.Chmod(origin, 0o644); err != nil {
+						t.Errorf("restore origin permissions: %v", err)
+					}
+				})
+				return statePaths(t, hierarchy)
+			},
+			wantErr:    true,
+			skipAsRoot: true,
+		},
+		{
+			name:      "runtime search directory still signals active",
+			component: "docker",
+			setup: func(t *testing.T) ActiveStatePaths {
+				runExtensionsDir := t.TempDir()
+				if err := os.WriteFile(filepath.Join(runExtensionsDir, image), []byte("image"), 0o644); err != nil {
+					t.Fatalf("write runtime search image: %v", err)
+				}
+				return ActiveStatePaths{
+					DefaultDir:       t.TempDir(),
+					RunExtensionsDir: runExtensionsDir,
+				}
+			},
+			want: wantVersion,
+		},
+		{
+			name:           "legacy current symlink still signals active",
+			component:      "docker",
+			currentSymlink: "docker.raw",
+			setup: func(t *testing.T) ActiveStatePaths {
+				defaultDir := t.TempDir()
+				if err := os.WriteFile(filepath.Join(defaultDir, image), []byte("image"), 0o644); err != nil {
+					t.Fatalf("write staged image: %v", err)
+				}
+				if err := os.Symlink(image, filepath.Join(defaultDir, "docker.raw")); err != nil {
+					t.Fatalf("create current symlink: %v", err)
+				}
+				return ActiveStatePaths{DefaultDir: defaultDir}
+			},
+			want: wantVersion,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.skipAsRoot && os.Geteuid() == 0 {
+				t.Skip("root bypasses file read permissions")
+			}
+
+			transfer := &config.Transfer{
+				Component: tt.component,
+				Target: config.TargetSection{
+					MatchPattern:   pattern,
+					CurrentSymlink: tt.currentSymlink,
+				},
+			}
+
+			got, err := GetActiveVersionWith(transfer, tt.setup(t))
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("GetActiveVersionWith() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				if err != nil && !strings.Contains(err.Error(), "read merged state") {
+					t.Errorf("error = %v, want read merged state context", err)
+				}
+				return
+			}
+			if got != tt.want {
+				t.Errorf("GetActiveVersionWith() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestGetActiveVersionWithEmptyRunExtensionsDir verifies that an empty runtime
+// search directory skips that signal instead of reading the current directory.
+func TestGetActiveVersionWithEmptyRunExtensionsDir(t *testing.T) {
+	transfer := &config.Transfer{
+		Target: config.TargetSection{MatchPattern: "myext_@v.raw"},
+	}
+
+	got, err := GetActiveVersionWith(transfer, ActiveStatePaths{DefaultDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("GetActiveVersionWith() error = %v", err)
+	}
+	if got != "" {
+		t.Errorf("GetActiveVersionWith() = %q, want empty", got)
+	}
+}
+
+// TestGetActiveVersionInIgnoresMergedState pins the compatibility wrapper to
+// its documented behaviour: it does not read hierarchy metadata.
+func TestGetActiveVersionInIgnoresMergedState(t *testing.T) {
+	hierarchy := t.TempDir()
+	writeMergedStateFile(t, hierarchy, "extensions", "myext\n")
+
+	transfer := &config.Transfer{
+		Component: "myext",
+		Target:    config.TargetSection{MatchPattern: "myext_@v.raw"},
+	}
+
+	got, err := GetActiveVersionIn(transfer, t.TempDir(), filepath.Join(t.TempDir(), "missing"))
+	if err != nil {
+		t.Fatalf("GetActiveVersionIn() error = %v", err)
+	}
+	if got != "" {
+		t.Errorf("GetActiveVersionIn() = %q, want empty", got)
+	}
+}

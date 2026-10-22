@@ -51,7 +51,7 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
   by ADR-0011
 - [ADR-0011](adr/0011-capture-merged-sysext-state-per-client.md) — extends
   client-scoped runtime paths to the merged sysext state directory and defines
-  the active signals used by `DisableFeature`
+  the active signals used by `DisableFeature`; superseded by ADR-0015
 - [ADR-0012](adr/0012-acmm-conformance-via-canonical-aliases.md) — Hive ACMM
   criteria are satisfied by committed relative symlinks to canonical content
   (`AGENTS.md`, `specs/`, `design/`) plus real trees for directory criteria;
@@ -65,6 +65,11 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
   `Verify=` is honored only while its local `.catalog` sets
   `AllowUnsigned=yes`, re-checked on every use; `--verify` and missing
   configuration require signatures, and nothing falls back to unsigned
+- [ADR-0015](adr/0015-detect-merged-sysexts-from-hierarchy-metadata.md) —
+  merged state comes from `<hierarchy>/.systemd-sysext/` (`origin`, then
+  `extensions`) under `/usr` and `/opt`; `/run/extensions` is an image search
+  directory, not merged state, and an unknown merge state now requires
+  `--force`
 
 ### Design
 

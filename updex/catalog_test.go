@@ -696,6 +696,7 @@ func TestCatalogAdd_RefreshFailureRollsBackManagedInstallState(t *testing.T) {
 				CatalogTargetPath:  targetDir,
 				SysextLinkDir:      linkDir,
 				RunExtensionsDir:   t.TempDir(),
+				SysextHierarchies:  []string{t.TempDir()},
 			},
 			SysextRunner: &catalogPathRunner{refreshErr: refreshErr},
 		})
@@ -784,6 +785,7 @@ MatchPattern=%s-@v.raw
 				CatalogTargetPath:  targetDir,
 				SysextLinkDir:      linkDir,
 				RunExtensionsDir:   t.TempDir(),
+				SysextHierarchies:  []string{t.TempDir()},
 			},
 			SysextRunner: runner,
 		})
@@ -861,6 +863,7 @@ func TestCatalogAdd_LinkFailureRemovesDownloadedImage(t *testing.T) {
 			CatalogTargetPath:  targetDir,
 			SysextLinkDir:      linkDir,
 			RunExtensionsDir:   t.TempDir(),
+			SysextHierarchies:  []string{t.TempDir()},
 		},
 		SysextRunner: &catalogPathRunner{linkErr: linkErr},
 	})
@@ -895,6 +898,7 @@ func TestCatalogAdd_CompressedTargetPatternRollback(t *testing.T) {
 			CatalogTargetPath:  targetDir,
 			SysextLinkDir:      linkDir,
 			RunExtensionsDir:   t.TempDir(),
+			SysextHierarchies:  []string{t.TempDir()},
 		},
 		SysextRunner: &catalogPathRunner{linkErr: linkErr},
 	})
@@ -939,6 +943,7 @@ func TestCatalogAdd_RollbackFailureJoinsOperationError(t *testing.T) {
 			CatalogTargetPath:  targetDir,
 			SysextLinkDir:      linkDir,
 			RunExtensionsDir:   t.TempDir(),
+			SysextHierarchies:  []string{t.TempDir()},
 		},
 		SysextRunner: runner,
 	})
@@ -1057,6 +1062,7 @@ func TestCatalogAdd_RefusesSpecialManagedInstallEntries(t *testing.T) {
 					CatalogTargetPath:  targetDir,
 					SysextLinkDir:      linkDir,
 					RunExtensionsDir:   t.TempDir(),
+					SysextHierarchies:  []string{t.TempDir()},
 				},
 				SysextRunner: &catalogPathRunner{refreshErr: errors.New("injected refresh failure")},
 			})

@@ -1,6 +1,6 @@
 # 0011 — Capture merged sysext state per SDK client
 
-- **Status:** Accepted
+- **Status:** Superseded by [0015](0015-detect-merged-sysexts-from-hierarchy-metadata.md)
 - **Date:** 2026-08-17
 
 ## Context

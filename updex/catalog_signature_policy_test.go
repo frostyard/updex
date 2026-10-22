@@ -157,6 +157,7 @@ func (e *signaturePolicyEnv) client(forceVerify bool) *Client {
 			CatalogTargetPath:  e.targetDir,
 			SysextLinkDir:      e.linkDir,
 			RunExtensionsDir:   filepath.Join(e.definitionRoot, "run-extensions"),
+			SysextHierarchies:  []string{filepath.Join(e.definitionRoot, "sysext-hierarchies")},
 		},
 		SysextRunner: &catalogPathRunner{},
 	})

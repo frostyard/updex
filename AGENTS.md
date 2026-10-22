@@ -582,10 +582,13 @@ Go 1.26. Use modern idioms: `any`, `slices`/`maps`/`cmp` packages, `t.Context()`
 - Use `ClientConfig.Paths` (`RuntimePaths`) to give a client its own temp
   trees rather than mutating package globals — independently configured
   clients can run in parallel without save/mutate/restore discipline (see
-  [ADR-0011](docs/adr/0011-capture-merged-sysext-state-per-client.md);
-  overriding package vars such as `config.SearchRoots` with `t.Cleanup`
-  restore, per [ADR-0009](docs/adr/0009-overridable-system-path-vars.md), is
-  the superseded compatibility path).
+  [ADR-0015](docs/adr/0015-detect-merged-sysexts-from-hierarchy-metadata.md);
+  any test that runs `DisableFeature` or `CatalogRemove` must also set
+  `SysextHierarchies` to a temp path so it never reads the host's merged
+  state under `/usr` and `/opt`; overriding package vars such as
+  `config.SearchRoots` with `t.Cleanup` restore, per
+  [ADR-0009](docs/adr/0009-overridable-system-path-vars.md), is the
+  superseded compatibility path).
 - Run `make fmt` before running tests; for verbose output use `go test -v ./...`.
 
 ## Security
