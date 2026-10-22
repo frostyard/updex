@@ -202,13 +202,21 @@ cancellation; `Manager` falls back to the legacy, non-cancelable
 `SystemctlRunner` methods for a runner that only implements those, so
 existing external `SystemctlRunner` implementations remain source-compatible.
 
-The option structs are intentionally empty for future compatible expansion.
+`EnableDaemonOptions.DryRun` and `DisableDaemonOptions.DryRun` preview the
+operation: the context check and the installed/not-installed precondition
+still run, so a dry run reports the same error as a real run, but no unit file
+is written or removed and no systemctl call is made. A dry-run result has
+`DryRun` set, `UnitFiles` populated, and a `Message` that describes the actions
+a real run would take; the CLI prints it with a `[DRY RUN] ` prefix. A real run
+also fills `UnitFiles`, so JSON consumers see the same paths either way.
 Actions return:
 
 ```go
 type DaemonActionResult struct {
-    Success bool   `json:"success"`
-    Message string `json:"message"`
+    Success   bool     `json:"success"`
+    Message   string   `json:"message"`
+    DryRun    bool     `json:"dry_run,omitempty"`
+    UnitFiles []string `json:"unit_files,omitzero"`
 }
 
 type DaemonStatusResult struct {

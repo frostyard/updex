@@ -48,16 +48,18 @@ func daemonTestEnv(t *testing.T, mock *systemd.MockSystemctlRunner) (unitDir str
 	unitDir = t.TempDir()
 
 	oldManager := systemdManager
-	oldGetEUID, oldJSON := getEUID, clix.JSONOutput
+	oldGetEUID, oldJSON, oldDryRun := getEUID, clix.JSONOutput, clix.DryRun
 	t.Cleanup(func() {
 		systemdManager = oldManager
 		getEUID = oldGetEUID
 		clix.JSONOutput = oldJSON
+		clix.DryRun = oldDryRun
 	})
 
 	systemdManager = systemd.NewTestManager(unitDir, mock)
 	getEUID = func() int { return 0 }
 	clix.JSONOutput = false
+	clix.DryRun = false
 	return unitDir
 }
 
@@ -312,5 +314,122 @@ func TestRunDaemonStatus_TextOutput(t *testing.T) {
 	if !strings.Contains(out, "installed") || !strings.Contains(out, "Enabled: true") ||
 		!strings.Contains(out, "Active: false") || !strings.Contains(out, "Schedule: daily") {
 		t.Errorf("unexpected text output:\n%s", out)
+	}
+}
+
+func TestRunDaemonEnable_DryRun(t *testing.T) {
+	tests := []struct {
+		name     string
+		json     bool
+		wantText []string
+	}{
+		{name: "text", wantText: []string{"[DRY RUN]", daemonTestUnitName + ".timer", daemonTestUnitName + ".service"}},
+		{name: "json", json: true, wantText: []string{`"dry_run": true`}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mock := &systemd.MockSystemctlRunner{}
+			dir := daemonTestEnv(t, mock)
+			clix.DryRun = true
+			clix.JSONOutput = test.json
+
+			out, err := captureStdout(t, func() error { return runDaemonEnable(daemonTestCommand(t), nil) })
+			if err != nil {
+				t.Fatalf("dry-run enable failed: %v", err)
+			}
+			for _, want := range test.wantText {
+				if !strings.Contains(out, want) {
+					t.Errorf("dry-run enable output missing %q:\n%s", want, out)
+				}
+			}
+			wantPaths := []string{
+				filepath.Join(dir, daemonTestUnitName+".timer"),
+				filepath.Join(dir, daemonTestUnitName+".service"),
+			}
+			for _, want := range wantPaths {
+				if !strings.Contains(out, want) {
+					t.Errorf("dry-run enable output missing unit path %q:\n%s", want, out)
+				}
+			}
+			if test.json {
+				var result sdk.DaemonActionResult
+				if jsonErr := json.Unmarshal([]byte(out), &result); jsonErr != nil {
+					t.Fatalf("dry-run enable JSON invalid: %v\n%s", jsonErr, out)
+				}
+				if !result.DryRun || len(result.UnitFiles) != 2 {
+					t.Errorf("dry-run enable result = %+v", result)
+				}
+			}
+			entries, readErr := os.ReadDir(dir)
+			if readErr != nil {
+				t.Fatalf("read unit dir: %v", readErr)
+			}
+			if len(entries) != 0 {
+				t.Errorf("dry-run enable wrote %d unit files", len(entries))
+			}
+			if mock.DaemonReloadCalled || mock.EnableCalled || mock.StartCalled {
+				t.Error("dry-run enable touched systemd")
+			}
+		})
+	}
+}
+
+func TestRunDaemonDisable_DryRun(t *testing.T) {
+	tests := []struct {
+		name     string
+		json     bool
+		wantText []string
+	}{
+		{name: "text", wantText: []string{"[DRY RUN]", daemonTestUnitName + ".timer", daemonTestUnitName + ".service"}},
+		{name: "json", json: true, wantText: []string{`"dry_run": true`}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mock := &systemd.MockSystemctlRunner{}
+			dir := daemonTestEnv(t, mock)
+			seedUnits(t, dir)
+			clix.DryRun = true
+			clix.JSONOutput = test.json
+
+			out, err := captureStdout(t, func() error { return runDaemonDisable(daemonTestCommand(t), nil) })
+			if err != nil {
+				t.Fatalf("dry-run disable failed: %v", err)
+			}
+			for _, want := range test.wantText {
+				if !strings.Contains(out, want) {
+					t.Errorf("dry-run disable output missing %q:\n%s", want, out)
+				}
+			}
+			wantPaths := []string{
+				filepath.Join(dir, daemonTestUnitName+".timer"),
+				filepath.Join(dir, daemonTestUnitName+".service"),
+			}
+			for _, want := range wantPaths {
+				if !strings.Contains(out, want) {
+					t.Errorf("dry-run disable output missing unit path %q:\n%s", want, out)
+				}
+			}
+			if test.json {
+				var result sdk.DaemonActionResult
+				if jsonErr := json.Unmarshal([]byte(out), &result); jsonErr != nil {
+					t.Fatalf("dry-run disable JSON invalid: %v\n%s", jsonErr, out)
+				}
+				if !result.DryRun || len(result.UnitFiles) != 2 {
+					t.Errorf("dry-run disable result = %+v", result)
+				}
+			}
+			for _, path := range wantPaths {
+				content, readErr := os.ReadFile(path)
+				if readErr != nil {
+					t.Fatalf("dry-run disable removed %s: %v", path, readErr)
+				}
+				if string(content) != "stub" {
+					t.Errorf("unit %s content = %q, want %q", path, content, "stub")
+				}
+			}
+			if mock.StopCalled || mock.DisableCalled || mock.DaemonReloadCalled {
+				t.Error("dry-run disable touched systemd")
+			}
+		})
 	}
 }

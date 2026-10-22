@@ -109,9 +109,10 @@ Use `REPO/NAME` to disambiguate; a bare `NAME` works when unambiguous.
 ### Automatic updates
 
 ```bash
-sudo updex daemon enable   # Install and start the daily systemd timer
-updex daemon status        # Inspect the timer
-sudo updex daemon disable  # Stop and remove it
+sudo updex daemon enable             # Install and start the daily systemd timer
+updex daemon status                  # Inspect the timer
+sudo updex --dry-run daemon enable   # Preview the timer install
+sudo updex daemon disable            # Stop and remove it
 ```
 
 The timer downloads and stages updates without activating them; they become

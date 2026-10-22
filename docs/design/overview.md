@@ -119,7 +119,7 @@ CLI (cmd/daemon.go) ─┘                version, sysext, systemd
 
 - Text tables by default, JSON with `--json` flag — both `--json` and `--dry-run` are provided by the `github.com/frostyard/clix` package, not defined in this repo
 - `cmd/updex/client.go` always wires `clix.NewReporter()`, but enables `newProgressBar` only outside JSON and silent modes. Interactive bars and their completion newline write to stderr, preserving stdout for command results.
-- Operations requiring filesystem changes call `requireRoot()` before entering the SDK. This currently includes dry-run variants of `features enable`, `features disable`, and `features update`, so dry-run is mutation-free but not rootless from the CLI.
+- Operations requiring filesystem changes call `requireRoot()` before entering the SDK. This currently includes dry-run variants of `features enable`, `features disable`, `features update`, `daemon enable`, and `daemon disable`, so dry-run is mutation-free but not rootless from the CLI.
 
 ### Dry-run behavior
 
@@ -556,6 +556,7 @@ The daemon stages updates but never activates them (decision recorded in
 [ADR-0007](../adr/0007-daemon-stages-never-activates.md)).
 
 - `updex daemon enable` installs `/etc/systemd/system/updex-update.timer` and `.service`, then enables and starts the timer
+- `--dry-run` on `daemon enable`/`daemon disable` passes `DryRun` into the SDK options: the context check and the installed/not-installed precondition still run, but no unit file is written or removed and no systemctl call is made. The `DaemonActionResult` carries `DryRun` and the absolute `UnitFiles` paths (timer then service), and the CLI prints the result's `Message` with a `[DRY RUN] ` prefix in text mode
 - `Client.EnableDaemon`, `Client.DisableDaemon`, and `Client.DaemonStatus`
   own unit construction and lifecycle sequencing; the daemon CLI retains only
   root authorization, SDK invocation, and text/JSON formatting
@@ -614,7 +615,7 @@ Global flags:
   --verbose                             Enable debug output (from clix)
 ```
 
-Mutating commands enforce root before reading `--dry-run`, so examples that preview `features enable`, `features disable`, or `features update` may still need `sudo` when run through the CLI.
+Mutating commands enforce root before reading `--dry-run`, so examples that preview `features enable`, `features disable`, `features update`, `daemon enable`, or `daemon disable` may still need `sudo` when run through the CLI.
 
 ## Dependencies
 
