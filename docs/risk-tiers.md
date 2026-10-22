@@ -79,7 +79,7 @@ Examples include:
 - the `workflow-and-permissions` boundary: anything under
   `.github/workflows/**`;
 - the `release-and-publication` boundary: `.goreleaser.yaml` and
-  `.svu.yaml`; and
+  `.svu.yml`; and
 - the `installation-and-update` boundary: `sysext/**`, `systemd/**`, and
   `download/**`.
 

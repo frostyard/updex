@@ -40,7 +40,7 @@ repo-specific guidance belongs in this file or `docs/`:
 
 ### Prerequisites
 
-- **Go 1.26.7** (`go.mod`'s `toolchain go1.26.7` line is the only Go build
+- **Go 1.26.10** (`go.mod`'s `toolchain go1.26.10` line is the only Go build
   pin; CI, `mise`, and Snowcat workers all read it — the module's minimum is
   `go 1.26.6`)
 - `make`
@@ -102,6 +102,10 @@ same pull request.
 
 End-to-end tests live in `tests/e2e/` (entry point:
 [tests/e2e/README.md](tests/e2e/README.md)): black-box tests that build the real `updex` binary and run it as a subprocess against fake files and HTTP sources. Successful operations are read-only (no root required); mutating command variants are covered at the argument-validation boundary. CLI integration tests in `cmd/updex/` additionally override package search roots to exercise default component discovery and fake catalogs safely. Run both with `go test -v ./cmd/updex ./tests/e2e/...`.
+The E2E suite covers help, version, shell completion, argument and exit-code
+handling across command variants, configuration errors, and text/JSON feature
+listing and update checks. CLI integration tests also exercise `GITHUB_TOKEN`
+request authentication using a fake catalog server.
 
 ## Commits & Pull Requests
 
@@ -132,9 +136,13 @@ Tests run succeeded. The newest successful test run supersedes older snapshot
 work.
 
 `.github/workflows/release.yml` runs only for tag pushes. After publishing the
-tagged release and packages, it must dispatch `event-type: build` to
-`frostyard/snosi` without a default-branch ref guard: a tag run's ref is
-`refs/tags/<tag>`, never `refs/heads/<default>`.
+tagged release, it must request APT publication: a `repository_dispatch` of
+type `publish-deb` to `frostyard/apt-publisher` with the repository and tag,
+authenticated by `APT_PUBLISH_TOKEN`. The request has no ref guard (a tag run's
+ref is `refs/tags/<tag>`, never `refs/heads/<default>`) and is not
+`continue-on-error`. apt-publisher publishes the `.deb` files, then dispatches
+`build` to `frostyard/snosi` once they are installable, so this workflow
+neither publishes packages nor dispatches to snosi itself.
 The `Release config` job in `.github/workflows/test.yml` runs the same
 SHA-pinned GoReleaser Pro v2 action with `args: check` on pull requests, pushes
 to `main`, and merge-queue branches. Trusted runs fail when the Pro key is
@@ -144,8 +152,11 @@ run before merge. `updex/release_config_workflow_contract_test.go` pins the
 event coverage, least privileges, secret handling, and release/snapshot action
 parity.
 `updex/release_workflow_contract_test.go` pins the tag-only trigger and
-unguarded snosi dispatch required by
-[frostyard/core ADR-0013](https://github.com/frostyard/core/blob/main/docs/adr/0013-release-fanout-via-repository-dispatch.md),
+unguarded publication request required by
+[frostyard/core ADR-0055](https://github.com/frostyard/core/blob/main/docs/adr/0055-publish-debian-packages-through-the-apt-publisher.md)
+and
+[ADR-0056](https://github.com/frostyard/core/blob/main/docs/adr/0056-rebuild-images-after-apt-publication.md)
+(and that the workflow neither uses repogen nor dispatches to snosi),
 and (`TestReleaseWorkflowAttestsBuildProvenance`) that the workflow grants
 `id-token: write` + `attestations: write` and runs a SHA-pinned
 `actions/attest-build-provenance` over `checksums.txt` and the release assets,
@@ -411,7 +422,10 @@ catalog roots (production defaults: `/etc/updex/catalogs.d`, `/run/...`,
 (required; artifacts resolve under `<SiteURL>/<sysext>/`), optional
 `ListURL` (GitHub contents API endpoint, only used by list/search;
 `GITHUB_TOKEN` honored), optional `Component` (default `catalog-<name>`), the
-component the generated files land in, and optional `AllowInsecure=yes`.
+component the generated files land in, optional `AllowInsecure=yes`, and
+optional `AllowUnsigned=yes` (refused with `AllowInsecure=yes`; lets the catalog's own `Verify=` decide whether
+`SHA256SUMS` must be signed; without it signatures are always required —
+see the signature-policy bullet below).
 `SiteURL` and `ListURL` require HTTPS by default. `AllowInsecure=yes` is an
 explicit development/test escape hatch; it does not widen token attachment,
 which remains restricted to the trusted `https://api.github.com` origin. The
@@ -433,6 +447,27 @@ Key design points:
   must be basename-only, and the target is always a regular `0644` file under
   trusted `catalog.TargetPath` (default `/var/lib/extensions.d`); alternate
   paths and target shapes are rejected.
+- **Signature policy is local** (#439,
+  [ADR-0014](docs/adr/0014-local-catalog-signature-policy.md)):
+  `RenderTransferTo` always drops the catalog's `Verify=` lines and, only for
+  an `AllowUnsigned` repo, re-emits the value as canonical `Verify=yes|no`
+  (ini.v1 `MustBool(true)`). `Client.verifyPolicy` (`updex/list.go`)
+  recomputes the decision on every `getAvailableVersions` call: a
+  marker-bearing transfer requires a signature unless its owning repo is
+  *currently* configured with `AllowUnsigned=yes`; `ClientConfig.Verify`
+  overrides everything; only the owning repo's `.catalog` is loaded
+  (`catalog.LoadRepoFrom`), and a missing or unloadable one fails closed, as
+  does a transfer whose header is unreadable or carries the marker with no
+  parseable repo (`catalog.GeneratedFileHeader`, read once). The opt-in
+  also requires `Source.Path == <SiteURL>/<name>` for the repo's current
+  `SiteURL` (HTTPS whenever `AllowUnsigned` is set), so a stale render never
+  inherits it. `LoadRepoFrom` must use `os.Lstat` to keep `LoadReposFrom`'s
+  precedence for dangling symlinks. `GeneratedFileRepo`'s bounded read
+  (`maxMarkerLen`) must fit the header for a 255-byte repo name; never
+  shrink it below that.
+  A 404 on `SHA256SUMS.gpg` wraps `manifest.ErrSignatureNotFound` and is
+  prefixed with the rule that applied. Never add a fallback that retries
+  unverified after a signature failure.
 - **Ownership and safety** (added after PR #137 review): the marker
   header names its generating repo, and that pair is the ownership
   signal — `catalog.GeneratedFileRepo(path)` must return *this* repo.
@@ -594,7 +629,7 @@ issue. Report it privately by emailing the maintainer at
   OR of the flag and the transfer setting, and omitting `Verify=` defaults the
   transfer setting to `yes`. Consequently, `--verify=false` cannot disable
   verification for a transfer that enables it. See the
-  [README transfer configuration](README.md#transfer-section) for the
+  [transfer configuration reference](docs/specs/config-reference.md#transfer-section) for the
   operator-facing reference.
 - **Build issues:** `make build` failing → check `go version` is 1.26.6+;
   dependency download failures → `make tidy`; a missing `golangci-lint`
