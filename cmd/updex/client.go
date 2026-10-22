@@ -24,6 +24,12 @@ var sysextRunner sysext.SysextRunner
 // daemon command tests inject a manager rooted at a temporary unit directory.
 var systemdManager *systemd.Manager
 
+// runtimePaths is the filesystem path set handed to every CLI-constructed
+// client. It stays zero in production so the SDK resolves its usual defaults;
+// tests point it at temporary hierarchies through TestMain (main_test.go) or
+// setRuntimePaths, so no handler test reads the host's merged-sysext state.
+var runtimePaths updex.RuntimePaths
+
 // newClient creates a new updex client with the appropriate progress reporter.
 func newClient() *updex.Client {
 	clientConfig := updex.ClientConfig{
@@ -33,6 +39,7 @@ func newClient() *updex.Client {
 		Progress:       clix.NewReporter(),
 		SysextRunner:   sysextRunner,
 		SystemdManager: systemdManager,
+		Paths:          runtimePaths,
 	}
 	if !clix.JSONOutput && !clix.Silent {
 		clientConfig.OnDownloadProgress = newProgressBar

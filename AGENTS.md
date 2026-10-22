@@ -594,6 +594,16 @@ Go 1.26. Use modern idioms: `any`, `slices`/`maps`/`cmp` packages, `t.Context()`
   `config.SearchRoots` with `t.Cleanup` restore, per
   [ADR-0009](docs/adr/0009-overridable-system-path-vars.md), is the
   superseded compatibility path).
+- Every `cmd/updex` handler test runs with the `runtimePaths` CLI seam
+  (`cmd/updex/client.go`), which `newClient()` passes as
+  `ClientConfig.Paths`. `TestMain` in `cmd/updex/main_test.go` points it at
+  temporary hierarchies in one `os.MkdirTemp` tree, so no CLI test reads the
+  host's `/usr/.systemd-sysext`, `/opt/.systemd-sysext` or
+  `/run/extensions`. A test that needs other paths calls
+  `setRuntimePaths(t, updex.RuntimePaths{...})`, which restores the previous
+  value with `t.Cleanup`. In production the seam stays the zero
+  `updex.RuntimePaths`, so behaviour is unchanged;
+  `TestHandlerTestsDoNotReadHostMergedState` guards it.
 - Run `make fmt` before running tests; for verbose output use `go test -v ./...`.
 
 ## Security
