@@ -531,6 +531,10 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 	// the CLI's `--json` output depend on an array being present.
 	allResults := make([]UpdateFeaturesResult, 0)
 	var hasErrors bool
+	// transferErrs carries each failed transfer's error into the returned
+	// error, so a caller that only logs the error still sees why (a link
+	// restore failure in particular, see linkStaged).
+	var transferErrs []error
 
 	// Cache manifests by source URL to avoid redundant HTTP requests
 	// when multiple transfers share the same source. getAvailableVersions
@@ -579,6 +583,7 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 				c.warn("%s", result.Error)
 				featureResult.Results = append(featureResult.Results, result)
 				hasErrors = true
+				transferErrs = append(transferErrs, fmt.Errorf("%s/%s: %w", f.Name, transfer.Component, in.err))
 				continue
 			}
 
@@ -647,7 +652,10 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 	}
 
 	if hasErrors {
-		return allResults, errors.Join(fmt.Errorf("one or more components failed to update"), refreshErr)
+		errs := []error{fmt.Errorf("one or more components failed to update")}
+		errs = append(errs, transferErrs...)
+		errs = append(errs, refreshErr)
+		return allResults, errors.Join(errs...)
 	}
 	return allResults, refreshErr
 }

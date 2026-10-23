@@ -559,11 +559,18 @@ in two steps:
    It never changes a link. Staging continues after a failure, so each
    transfer reports its own state.
 2. **Link.** Only when every transfer staged, `linkStaged` snapshots each
-   old link (`Lstat` + `Readlink`; an absent link is recorded as absent),
-   then links the transfers through the client's runner one by one. When a
-   link fails, it restores the links this call already moved with the same
-   atomic temp-symlink-plus-rename that `sysext.LinkToSysextAt` uses (an
-   absent link is removed again) and reports the failure.
+   old link (`Lstat` + `Readlink`; an absent link is recorded as absent; a
+   regular file at the link path is backed up as a hard link beside it,
+   `.<name>.raw.updex-backup-<pid>-<nanos>`, so its data can be put back; a
+   directory, FIFO or device there is refused, as is a regular file that
+   cannot be backed up, before any link moves), then links the transfers
+   through the client's runner one by one. When a link fails, it restores the
+   links this call already moved with the same atomic temp-symlink-plus-rename
+   that `sysext.LinkToSysextAt` uses (an absent link is removed again; a
+   backed-up regular file is renamed back over the link), reports the failure
+   joined with every restore failure (`errors.Join`), and keeps any backup a
+   failed restore could not put back. Backups are removed once the feature
+   linked.
 
 When a stage fails, no link is touched, the images already downloaded stay on
 disk (the next run finds them staged and current, and only relinks), and the
@@ -573,7 +580,10 @@ vacuum does not run. The failing transfer reports its own error (for example
 `Downloaded` set from what was staged and `Installed=false`. After a failed
 link step, all transfers report the failing transfer's error or the same
 `not linked` text. `UpdateFeatures` returns `one or more components failed to
-update`, and other features continue. `EnableFeature{Now}` uses the same
+update` joined with every failed transfer's error, and other features
+continue. A transfer whose link moved but whose restore failed reports
+`failed to restore sysext link for <component>: …; the link may point at the
+new version` instead of `not linked`. `EnableFeature{Now}` uses the same
 helper and returns the first own error as `failed to download <component>: …`.
 
 ### Retention (vacuum)
