@@ -296,17 +296,37 @@ func (c *Client) vacuumPaths() sysext.VacuumPaths {
 	}
 }
 
+// backupLink and restoreRename are os.Link and os.Rename, replaceable by
+// tests that inject a backup or a restore failure for a link path that is a
+// regular file.
+var (
+	backupLink    = os.Link
+	restoreRename = os.Rename
+)
+
 // linkSnapshot records what a sysext link was before the link step moved
 // it, so a later failure can put it back.
 type linkSnapshot struct {
 	path    string
-	exists  bool
 	symlink bool
 	target  string
+
+	// backup is the path of a hard link to the regular file that was at
+	// path, made during the snapshot pass. The link step replaces a regular
+	// file (rename replaces it), so restoring the record needs the file's
+	// data as well as its name. It is empty for a symlink or an absent path.
+	backup string
+
+	// keepBackup reports that a restore could not put the backup back, so
+	// the backup holds the only copy of the replaced file and must stay.
+	keepBackup bool
 }
 
 // snapshotLink records the entry at path with Lstat, so a symlink is seen as
-// itself and a dangling one is not mistaken for absent.
+// itself and a dangling one is not mistaken for absent. A regular file is
+// backed up as a hard link beside it (see backupLinkPath), so a later failed
+// link step can put the file itself back; any other entry is refused here,
+// before a link moves.
 func snapshotLink(path string) (linkSnapshot, error) {
 	snap := linkSnapshot{path: path}
 	info, err := os.Lstat(path)
@@ -316,54 +336,83 @@ func snapshotLink(path string) (linkSnapshot, error) {
 		}
 		return snap, fmt.Errorf("failed to inspect sysext link: %w", err)
 	}
-	snap.exists = true
 	if info.Mode()&os.ModeSymlink != 0 {
 		snap.symlink = true
 		snap.target, err = os.Readlink(path)
 		if err != nil {
 			return snap, fmt.Errorf("failed to read sysext link: %w", err)
 		}
+		return snap, nil
 	}
+	if !info.Mode().IsRegular() {
+		return snap, fmt.Errorf("%s is not a symlink or a regular file; updex will not replace it", path)
+	}
+	backup := backupLinkPath(path)
+	if err := backupLink(path, backup); err != nil {
+		return snap, fmt.Errorf("%s is a regular file that updex cannot back up: %w", path, err)
+	}
+	snap.backup = backup
 	return snap, nil
 }
 
-// restore puts the link back as snapshotLink saw it. A symlink is recreated
-// beside the link and renamed over it, so systemd-sysext never sees a moment
-// without a link (the way sysext.LinkToSysextAt replaces one); a link that
-// did not exist is removed. An entry that was not a symlink cannot be
-// restored from a snapshot and is reported.
-func (s linkSnapshot) restore() error {
-	switch {
-	case !s.exists:
-		info, err := os.Lstat(s.path)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
+// backupLinkPath is the hard link snapshotLink makes to a regular file at the
+// link path. The name starts with a dot and does not end in the image
+// extension, so systemd-sysext never reads it as an image.
+func backupLinkPath(path string) string {
+	return filepath.Join(filepath.Dir(path), fmt.Sprintf(".%s.updex-backup-%d-%d", filepath.Base(path), os.Getpid(), time.Now().UnixNano()))
+}
+
+// restore puts the link back as snapshotLink saw it. A backed-up regular file
+// is renamed back over the link, which atomically replaces it; a symlink is
+// recreated beside the link and renamed over it, so systemd-sysext never sees
+// a moment without a link (the way sysext.LinkToSysextAt replaces one); a link
+// that did not exist is removed.
+func (s *linkSnapshot) restore() error {
+	if s.backup != "" {
+		if err := restoreRename(s.backup, s.path); err != nil {
+			// The data is still in the backup: keep it so an operator can
+			// put the file back by hand.
+			s.keepBackup = true
 			return err
 		}
-		if info.Mode()&os.ModeSymlink == 0 {
-			return nil // not a link this run made
+		s.backup = ""
+		return nil
+	}
+	if s.symlink {
+		tmp := fmt.Sprintf("%s.tmp-%d-%d", s.path, os.Getpid(), time.Now().UnixNano())
+		if err := os.Symlink(s.target, tmp); err != nil {
+			return err
 		}
-		return os.Remove(s.path)
-	case !s.symlink:
-		return fmt.Errorf("%s was not a symlink and cannot be restored", s.path)
+		if err := os.Rename(tmp, s.path); err != nil {
+			_ = os.Remove(tmp)
+			return err
+		}
+		return nil
 	}
-	tmp := fmt.Sprintf("%s.tmp-%d-%d", s.path, os.Getpid(), time.Now().UnixNano())
-	if err := os.Symlink(s.target, tmp); err != nil {
+	// Nothing was recorded: remove the link this run made.
+	info, err := os.Lstat(s.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return err
 	}
-	if err := os.Rename(tmp, s.path); err != nil {
-		_ = os.Remove(tmp)
-		return err
+	if info.Mode()&os.ModeSymlink == 0 {
+		return nil // not a link this run made
 	}
-	return nil
+	return os.Remove(s.path)
 }
 
 // linkStaged is the link step: it points the systemd-sysext link of every
 // staged transfer that needs one at its newest image. When a link fails, it
 // restores the links this call already moved, records the failure on the
-// failing transfer and errNotLinked on the others, and returns the error.
+// failing transfer and errNotLinked on the others, and returns the error
+// joined with every restore failure.
+//
+// Everything that could refuse a link is checked in the snapshot pass, before
+// any link moves: a regular file at a link path is backed up as a hard link
+// and any other entry is refused. So a refused feature keeps every link (and
+// every regular file) exactly as it was.
 func (c *Client) linkStaged(feature string, transfers []*config.Transfer, staged []stagedTransfer, results []transferInstall) error {
 	snapshots := make([]linkSnapshot, len(transfers))
 	for i, transfer := range transfers {
@@ -372,7 +421,10 @@ func (c *Client) linkStaged(feature string, transfers []*config.Transfer, staged
 		}
 		snap, err := snapshotLink(filepath.Join(c.paths.sysextLinkDir, sysext.SysextLinkName(transfer)))
 		if err != nil {
-			// Nothing is linked yet, so there is nothing to undo.
+			// Nothing is linked yet, so there is nothing to undo. The
+			// backups taken so far are redundant: the files they stand for
+			// were never replaced.
+			c.removeLinkBackups(snapshots)
 			results[i].err = err
 			c.markNotLinked(feature, results)
 			return err
@@ -387,21 +439,50 @@ func (c *Client) linkStaged(feature string, transfers []*config.Transfer, staged
 		if err := c.linkToSysext(transfer); err != nil {
 			results[i].err = err
 			c.markNotLinked(feature, results)
+			errs := []error{err}
 			for j := 0; j <= i; j++ {
 				if !staged[j].link {
 					continue
 				}
-				if rerr := snapshots[j].restore(); rerr != nil {
-					c.warn("failed to restore sysext link for %s: %v", transfers[j].Component, rerr)
+				rerr := snapshots[j].restore()
+				if rerr == nil {
+					continue
+				}
+				rerr = fmt.Errorf("failed to restore sysext link for %s: %w", transfers[j].Component, rerr)
+				c.warn("%s", rerr)
+				errs = append(errs, rerr)
+				if j < i {
+					// This transfer's link had moved: it may still point at
+					// the new version, so it must not read as not linked.
+					results[j].err = fmt.Errorf("%w; the link may point at the new version", rerr)
+					results[j].notLinked = false
 				}
 			}
-			return err
+			c.removeLinkBackups(snapshots)
+			return errors.Join(errs...)
 		}
 		if staged[i].relink {
 			c.msg("restored sysext link for %s", transfer.Component)
 		}
 	}
+
+	c.removeLinkBackups(snapshots)
 	return nil
+}
+
+// removeLinkBackups removes the backup files the snapshot pass made, except a
+// backup that a failed restore still needs (see linkSnapshot.keepBackup). A
+// backup that cannot be removed is only reported: the feature is linked, and
+// a stray dot file in the link directory does not break it.
+func (c *Client) removeLinkBackups(snapshots []linkSnapshot) {
+	for _, snap := range snapshots {
+		if snap.backup == "" || snap.keepBackup {
+			continue
+		}
+		if err := os.Remove(snap.backup); err != nil && !os.IsNotExist(err) {
+			c.warn("failed to remove sysext link backup %s: %v", snap.backup, err)
+		}
+	}
 }
 
 // ErrLegacySysextRunner reports a ClientConfig.SysextRunner that implements
