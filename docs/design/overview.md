@@ -590,8 +590,9 @@ image whose link would move, between the stage step and the link step
 stage ──▶ for each transfer that would link: read the staged image
             (sysext.LinkTargetAt → imagecompat.ReadExtensionRelease)
           ├─ key absent ─────────────────────────────▶ link
-          ├─ ErrUnsupportedImage ────────────────────▶ link   (fail open)
-          ├─ other read error / bootc fails ─────────▶ error, link nothing (fail closed)
+          ├─ no EROFS filesystem found (ErrUnsupportedImage) ──▶ link   (fail open)
+          ├─ other read error / LinkTargetAt fails / bootc fails ──▶ error,
+          │                                 link nothing (fail closed)
           └─ key set ─ next-boot IMAGE_VERSION (once per operation)
                        ├─ new enough ────────────────▶ link
                        └─ too old / missing / not digits ▶ link nothing of the
@@ -612,18 +613,44 @@ revision needs at most the base the host already runs.
 - *Too old, or the version is missing or not numeric:* a normal outcome, not
   an error. The timer must not mark `updex-update.service` failed because a
   revision waits for a newer base; the feature stays on its old links.
-- *`ErrUnsupportedImage` (an image that is not GPT+EROFS or bare EROFS):
-  fail open.* Only snosi sets the key and snosi ships EROFS. Failing closed
-  would stop every sysext from another catalog (squashfs, say) from updating,
-  for a key it cannot carry.
-- *An image that opens as EROFS but has no usable extension-release file, or
-  bootc installed but failing:* fail closed (an error, nothing linked). Such an
-  image is snosi-shaped and cannot be judged; a silent fallback to the booted
-  os-release could be older than the staged image and link a revision that
-  breaks the next boot. A failing bootc stops only features whose image has the
-  key; bootc runs once per operation, and never when no image has the key.
+- *`ErrUnsupportedImage` (no EROFS filesystem at all: a squashfs sysext,
+  random bytes, an invalid GPT): fail open.* Only snosi sets the key and snosi
+  ships EROFS. Failing closed would stop every sysext from another catalog
+  (squashfs, say) from updating, for a key it cannot carry. Each candidate
+  region is classed by the EROFS superblock magic (`0xE0F5E1E2` at offset
+  1024) before go-erofs is asked, so "no EROFS found" is the only thing this
+  error means.
+- *An EROFS filesystem found, and anything else wrong with that candidate:*
+  fail closed (an error, nothing linked). Once a candidate has the magic,
+  every later problem is an error that does not match `ErrUnsupportedImage`:
+  a failed EROFS open, a missing `usr/lib/extension-release.d`
+  (`ErrNoExtensionRelease`), a release file that cannot be opened, inspected
+  or read or a recovered parser panic (`ErrUnreadableRelease`), a file over
+  64 KiB (`ErrReleaseFileTooLarge`). Such an image is snosi-shaped and cannot
+  be judged; a silent fallback to the booted os-release could be older than
+  the staged image and link a revision that breaks the next boot.
+- *A `sysext.LinkTargetAt` failure (no image the link step could link, for
+  example a target pattern with a compression suffix):* fail closed. The gate
+  must not depend on the link step failing later.
+- *bootc installed but failing:* fail closed, and only for features whose
+  image has the key. bootc runs once per operation, and never when no image
+  has the key.
 - *bootc not installed:* fall back to the booted `os-release` (not an
   image-based host).
+- *Next boot is a queued rollback (`bootc status --json` reports
+  `status.rollbackQueued: true`):* the rollback deployment's image version is
+  the next-boot version (`SourceRollback`), ahead of the staged deployment. A
+  queued rollback without a version is an error: the next boot is known to be
+  the rollback, its version is not.
+
+**Residual risks.** Two are accepted:
+
+- When the staged deployment fails to finalize at shutdown, the host boots the
+  old image, but the link is one the staged image allowed. The check cannot
+  see that.
+- While a feature is blocked, no vacuum runs for it, so each newer blocked
+  revision stays staged (about 1 GB for incus) until the host image catches
+  up.
 
 `features check` and `features list` run the same gate read-only
 (`stagedImageGate`) for a staged image that is newer than the linked one and

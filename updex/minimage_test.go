@@ -44,6 +44,12 @@ func bootcStaged(version string) *fakeBootc {
 	return &fakeBootc{out: `{"status":{"staged":{"image":{"version":"` + version + `"}},"booted":{"image":{"version":"20260101000000"}}}}`}
 }
 
+// bootcRollbackQueued reports a rollback deployment queued for the next boot,
+// with the given image version, and an older booted image.
+func bootcRollbackQueued(version string) *fakeBootc {
+	return &fakeBootc{out: `{"status":{"rollbackQueued":true,"rollback":{"image":{"version":"` + version + `"}},"booted":{"image":{"version":"20260101000000"}}}}`}
+}
+
 // sysextImage returns a snosi-shaped image whose extension-release file sets
 // UPDEX_MIN_IMAGE_VERSION=minValue; an empty minValue leaves the key out.
 func sysextImage(t *testing.T, name, minValue string) []byte {
@@ -53,6 +59,22 @@ func sysextImage(t *testing.T, name, minValue string) []byte {
 		release += "UPDEX_MIN_IMAGE_VERSION=" + minValue + "\n"
 	}
 	return testutil.SysextImage(t, name, release)
+}
+
+// unreadableReleaseImage returns a snosi-shaped image whose EROFS superblock
+// is corrupt after its magic. The image has an EROFS filesystem, so the gate
+// must fail closed instead of skipping the check.
+func unreadableReleaseImage(t *testing.T, name string) []byte {
+	t.Helper()
+	image := sysextImage(t, name, "")
+	magic := []byte{0xE2, 0xE1, 0xF5, 0xE0} // 0xE0F5E1E2, little-endian
+	off := bytes.Index(image, magic)
+	if off < 0 {
+		t.Fatal("fixture image has no EROFS magic")
+	}
+	out := bytes.Clone(image)
+	clear(out[off+len(magic) : off+128]) // the superblock is 128 bytes
+	return out
 }
 
 // minComp describes one transfer of a minImageHost: the images the server
@@ -219,6 +241,7 @@ func TestUpdateFeatures_MinImageVersion(t *testing.T) {
 		{name: "image too old: not linked, no error", image: sysextImage(t, "tool", "20270101000000"), osRelease: osRelease20261001, bootc: bootcNotInstalled(), wantNeeds: "needs image >= 20270101000000", wantBootc: 1},
 		{name: "staged deployment newer than booted: linked", image: sysextImage(t, "tool", "20261022021319"), osRelease: osRelease20261001, bootc: bootcStaged("20261101000000"), wantLinked: true, wantBootc: 1},
 		{name: "staged deployment still too old: not linked", image: sysextImage(t, "tool", "20261201000000"), osRelease: osRelease20261001, bootc: bootcStaged("20261101000000"), wantNeeds: "needs image >= 20261201000000", wantBootc: 1},
+		{name: "queued rollback is the next boot: not linked", image: sysextImage(t, "tool", "20261001000000"), osRelease: osRelease20261001, bootc: bootcRollbackQueued("20260901000000"), wantNeeds: "needs image >= 20261001000000", wantBootc: 1},
 		{name: "minimum not numeric: not linked", image: sysextImage(t, "tool", "soon"), osRelease: osRelease20261001, bootc: bootcNotInstalled(), wantNeeds: "needs image >= soon", wantBootc: 1},
 		{name: "no IMAGE_VERSION anywhere: not linked", image: sysextImage(t, "tool", "1"), osRelease: "ID=snow\n", bootc: bootcNotInstalled(), wantNeeds: "needs image >= 1", wantBootc: 1},
 		{name: "image version not numeric: not linked", image: sysextImage(t, "tool", "1"), osRelease: "IMAGE_VERSION=latest\n", bootc: bootcNotInstalled(), wantNeeds: "needs image >= 1", wantBootc: 1},
@@ -226,6 +249,7 @@ func TestUpdateFeatures_MinImageVersion(t *testing.T) {
 		{name: "bootc fails: not linked, error", image: sysextImage(t, "tool", "20260901000000"), osRelease: osRelease20261001, bootc: &fakeBootc{err: errors.New("exit status 1: no sysroot")}, wantErr: "no sysroot", wantBootc: 1},
 		{name: "bootc fails but the image has no key: linked", image: sysextImage(t, "tool", ""), osRelease: osRelease20261001, bootc: &fakeBootc{err: errors.New("exit status 1")}, wantLinked: true},
 		{name: "EROFS without extension-release: not linked, error", image: noRelease, osRelease: osRelease20261001, bootc: bootcNotInstalled(), wantErr: "extension-release"},
+		{name: "EROFS with an unreadable release file: not linked, error", image: unreadableReleaseImage(t, "tool"), osRelease: osRelease20261001, bootc: bootcStaged("1"), wantErr: "cannot read the extension-release file"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -602,6 +626,35 @@ func TestUpdateFeatures_MinImageVersion_ErrorStopsOnlyItsFeature(t *testing.T) {
 	}
 	if results["plain"].Error != "" || h.linked("plain") != newVersion {
 		t.Errorf("plain = %+v, linked %q; want it linked", results["plain"], h.linked("plain"))
+	}
+}
+
+// An image with an EROFS filesystem whose release file cannot be read is a
+// fail-closed error: the feature keeps its old link, the run fails, and
+// another feature still updates.
+func TestUpdateFeatures_MinImageVersion_UnreadableReleaseFailsClosed(t *testing.T) {
+	h := newMinImageHost(t, bootcStaged("20270101000000"), osRelease20261001,
+		minComp{name: "broken", feature: "brokenfeat", versions: map[string][]byte{newVersion: unreadableReleaseImage(t, "broken")}},
+		minComp{name: "plain", feature: "plainfeat", versions: map[string][]byte{newVersion: sysextImage(t, "plain", "")}},
+	)
+	h.preinstall("broken", oldVersion, true)
+	h.preinstall("plain", oldVersion, true)
+
+	results, err := h.update(UpdateFeaturesOptions{})
+	if err == nil {
+		t.Fatal("UpdateFeatures returned no error, want one for the unreadable image")
+	}
+	if r := results["broken"]; r.Error == "" || !strings.Contains(r.Error, "cannot read the extension-release file") {
+		t.Errorf("broken error = %q, want a read failure", r.Error)
+	}
+	if got := h.linked("broken"); got != oldVersion {
+		t.Errorf("broken linked = %q, want the old %q kept", got, oldVersion)
+	}
+	if r := results["plain"]; r.Error != "" || h.linked("plain") != newVersion {
+		t.Errorf("plain = %+v, linked %q; want it linked", results["plain"], h.linked("plain"))
+	}
+	if h.bootc.calls != 0 {
+		t.Errorf("bootc ran %d times; an unreadable image has no key to check", h.bootc.calls)
 	}
 }
 

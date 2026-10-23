@@ -32,6 +32,20 @@ func writeOSRelease(t *testing.T, content string) string {
 	return p
 }
 
+// rollbackQueuedJSON builds a "bootc status --json" answer. stagedVersion is
+// omitted from the staged entry when it is empty.
+func rollbackQueuedJSON(rollbackVersion, stagedVersion string, queued bool) string {
+	queuedField := "false"
+	if queued {
+		queuedField = "true"
+	}
+	out := `{"status":{"rollbackQueued":` + queuedField + `,"rollback":{"image":{"version":"` + rollbackVersion + `"}}`
+	if stagedVersion != "" {
+		out += `,"staged":{"image":{"version":"` + stagedVersion + `"}}`
+	}
+	return out + `}}`
+}
+
 func TestNextBootImageVersion(t *testing.T) {
 	booted := writeOSRelease(t, "ID=snow\nIMAGE_VERSION=20261001000000\n")
 	noVersion := writeOSRelease(t, "ID=snow\n")
@@ -51,6 +65,14 @@ func TestNextBootImageVersion(t *testing.T) {
 	}{
 		{name: "staged is newer than booted", runner: &fakeBootc{out: stagedJSON}, paths: []string{booted}, wantVer: "20261022021319", wantSource: SourceStaged},
 		{name: "no staged deployment", runner: &fakeBootc{out: `{"status":{"staged":null,"booted":{"image":{"version":"20261001000000"}}}}`}, paths: []string{booted}, wantVer: "20261001000000", wantSource: SourceBootedOSRelease},
+		{name: "queued rollback older than booted wins", runner: &fakeBootc{out: rollbackQueuedJSON("20260901000000", "", true)}, paths: []string{booted}, wantVer: "20260901000000", wantSource: SourceRollback},
+		{name: "queued rollback wins over a staged deployment", runner: &fakeBootc{out: rollbackQueuedJSON("20260901000000", "20270101000000", true)}, paths: []string{booted}, wantVer: "20260901000000", wantSource: SourceRollback},
+		{name: "queued rollback without an entry", runner: &fakeBootc{out: `{"status":{"rollbackQueued":true,"rollback":null}}`}, paths: []string{booted}, wantErr: "queued rollback without an image version"},
+		{name: "queued rollback without an image", runner: &fakeBootc{out: `{"status":{"rollbackQueued":true,"rollback":{"image":null}}}`}, paths: []string{booted}, wantErr: "queued rollback without an image version"},
+		{name: "queued rollback with a null version", runner: &fakeBootc{out: `{"status":{"rollbackQueued":true,"rollback":{"image":{"version":null}}}}`}, paths: []string{booted}, wantErr: "queued rollback without an image version"},
+		{name: "queued rollback with an empty version", runner: &fakeBootc{out: `{"status":{"rollbackQueued":true,"rollback":{"image":{"version":""}}}}`}, paths: []string{booted}, wantErr: "queued rollback without an image version"},
+		{name: "rollback entry not queued is ignored", runner: &fakeBootc{out: `{"status":{"rollbackQueued":false,"rollback":{"image":{"version":"20260901000000"}},"staged":{"image":{"version":"20270101000000"}}}}`}, paths: []string{booted}, wantVer: "20270101000000", wantSource: SourceStaged},
+		{name: "rollback entry not queued, no staged deployment", runner: &fakeBootc{out: `{"status":{"rollbackQueued":false,"rollback":{"image":{"version":"20260901000000"}}}}`}, paths: []string{booted}, wantVer: "20261001000000", wantSource: SourceBootedOSRelease},
 		{name: "staged key absent", runner: &fakeBootc{out: `{"status":{}}`}, paths: []string{booted}, wantVer: "20261001000000", wantSource: SourceBootedOSRelease},
 		{name: "staged version null", runner: &fakeBootc{out: `{"status":{"staged":{"image":{"version":null}}}}`}, paths: []string{booted}, wantVer: "20261001000000", wantSource: SourceBootedOSRelease},
 		{name: "staged version empty", runner: &fakeBootc{out: `{"status":{"staged":{"image":{"version":""}}}}`}, paths: []string{booted}, wantVer: "20261001000000", wantSource: SourceBootedOSRelease},

@@ -318,11 +318,14 @@ a bare EROFS image. `systemd-sysext` ignores the key.
 | `UPDEX_MIN_IMAGE_VERSION` | The lowest `IMAGE_VERSION` of the base image that this sysext revision works with ([ADR-0016](../adr/0016-automatic-sysext-updates-apply-at-next-boot.md), "Minimum image version"). Absent: no check. Digits only (`^[0-9]+$`, for example a 14-digit snosi timestamp `20261022021319`); no sign, no space, not empty |
 
 **The version that it is compared with** is the `IMAGE_VERSION` of the image
-that boots next: `.status.staged.image.version` of `bootc status --json` when
-bootc reports a staged deployment with a version, else `IMAGE_VERSION` from the
-first readable of the client's os-release files (`/etc/os-release`,
-`/usr/lib/os-release`; `RuntimePaths.OSReleasePaths`). A host without `bootc`
-uses the os-release. Both values are compared as numbers of any length
+that boots next: `.status.rollback.image.version` of `bootc status --json`
+when bootc reports `rollbackQueued: true` (the next boot is the rollback
+deployment; a queued rollback without that version is an error), else
+`.status.staged.image.version` when bootc reports a staged deployment with a
+version, else `IMAGE_VERSION` from the first readable of the client's
+os-release files (`/etc/os-release`, `/usr/lib/os-release`;
+`RuntimePaths.OSReleasePaths`). A host without `bootc` uses the os-release.
+Both values are compared as numbers of any length
 (leading zeros ignored). When the key is set and the image version is lower,
 missing or not digits only, or the key value itself is not digits only, the
 revision is not linked and updex reports `needs image >= <value>`; see
@@ -332,6 +335,15 @@ If several `extension-release.*` files exist, the one named after the transfer
 (its file name without `.transfer`), then the one named after the feature, is
 used; with no match the image cannot be judged and the feature is not linked
 (an error). A file larger than 64 KiB is refused.
+
+**Fail open or closed.** A candidate region counts as an EROFS filesystem only
+when its superblock at offset 1024 starts with the EROFS magic
+(`0xE0F5E1E2`). When no candidate has it (a squashfs sysext, random bytes, a
+broken GPT), `imagecompat.ErrUnsupportedImage` says so and the image is
+treated as having no key: it is linked. Once a candidate has the magic, every
+later problem is an error and the feature is not linked: a failed EROFS open,
+a release file that cannot be opened, inspected or read, no release file,
+several without a match, a file over 64 KiB, or a parser failure.
 
 ## Version Comparison
 

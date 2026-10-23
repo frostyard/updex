@@ -10,7 +10,8 @@
 //     it cannot mount, call systemd-dissect, or set up a loop device. The
 //     reader parses the GPT and the EROFS filesystem in pure Go instead.
 //   - NextBootImageVersion returns the IMAGE_VERSION of the image that boots
-//     next: the staged bootc deployment, else the booted os-release.
+//     next: the rollback deployment when bootc queues one, else the staged
+//     deployment, else the booted os-release.
 //   - CheckMinImageVersion compares the UPDEX_MIN_IMAGE_VERSION key of the
 //     extension-release file with that version.
 //

@@ -17,6 +17,11 @@ import (
 type Source string
 
 const (
+	// SourceRollback means the version is the rollback deployment's image
+	// version from "bootc status --json" (.status.rollback.image.version),
+	// used because bootc reports the rollback as queued for the next boot
+	// (.status.rollbackQueued).
+	SourceRollback Source = "rollback"
 	// SourceStaged means the version is the staged deployment's image
 	// version from "bootc status --json" (.status.staged.image.version).
 	SourceStaged Source = "staged"
@@ -106,13 +111,25 @@ type Options struct {
 
 // bootcHost is the part of the "bootc status --json" output that is used.
 // The shape is bootc's Host type (crates/lib/src/spec.rs, schema
-// docs/src/host-v1.schema.json): status.staged and status.booted are BootEntry
-// objects or null, and a BootEntry's image is an ImageStatus or null whose
-// version is a string or null.
+// docs/src/host-v1.schema.json): status.rollbackQueued is a boolean,
+// status.rollback and status.staged are BootEntry objects or null, and a
+// BootEntry's image is an ImageStatus or null whose version is a string or
+// null.
 type bootcHost struct {
 	Status struct {
-		Staged *bootcEntry `json:"staged"`
+		RollbackQueued bool        `json:"rollbackQueued"`
+		Rollback       *bootcEntry `json:"rollback"`
+		Staged         *bootcEntry `json:"staged"`
 	} `json:"status"`
+}
+
+// entryVersion returns the entry's image version, or "" when the entry, its
+// image, or the version is null or empty.
+func entryVersion(e *bootcEntry) string {
+	if e == nil || e.Image == nil || e.Image.Version == nil {
+		return ""
+	}
+	return *e.Image.Version
 }
 
 type bootcEntry struct {
@@ -124,12 +141,19 @@ type bootcEntry struct {
 // NextBootImageVersion returns the IMAGE_VERSION of the image that boots
 // next, and where it came from.
 //
-// It runs "bootc status --json". When bootc reports a staged deployment with
-// an image version, that version wins (SourceStaged). Otherwise it falls back
-// to IMAGE_VERSION in the first readable os-release file of
-// Options.OSReleasePaths (SourceBootedOSRelease). The fallback is used when
-// bootc is not installed, when there is no staged deployment, and when the
-// staged image has no version.
+// It runs "bootc status --json". When bootc reports that a rollback is queued
+// for the next boot (status.rollbackQueued), the next boot is the rollback
+// deployment, so its image version wins (SourceRollback). Otherwise, when
+// bootc reports a staged deployment with an image version, that version wins
+// (SourceStaged). Otherwise it falls back to IMAGE_VERSION in the first
+// readable os-release file of Options.OSReleasePaths
+// (SourceBootedOSRelease). The fallback is used when bootc is not installed,
+// when there is no staged deployment, and when the staged image has no
+// version.
+//
+// A queued rollback whose entry or version is missing is an error, not a
+// fallback: the next boot is known to be the rollback, but its version is
+// not, and failing closed is the only safe answer.
 //
 // An empty version with a nil error means the version is unknown: no
 // os-release file is readable or it has no IMAGE_VERSION. CheckMinImageVersion
@@ -163,8 +187,15 @@ func NextBootImageVersion(ctx context.Context, opts Options) (string, Source, er
 		if err := json.Unmarshal(out, &host); err != nil {
 			return "", "", fmt.Errorf("parse bootc status output: %w", err)
 		}
-		if e := host.Status.Staged; e != nil && e.Image != nil && e.Image.Version != nil && *e.Image.Version != "" {
-			return *e.Image.Version, SourceStaged, nil
+		if host.Status.RollbackQueued {
+			version := entryVersion(host.Status.Rollback)
+			if version == "" {
+				return "", "", errors.New("bootc reports a queued rollback without an image version")
+			}
+			return version, SourceRollback, nil
+		}
+		if v := entryVersion(host.Status.Staged); v != "" {
+			return v, SourceStaged, nil
 		}
 	case errors.Is(err, exec.ErrNotFound):
 		// bootc is not installed: not an image-based host.

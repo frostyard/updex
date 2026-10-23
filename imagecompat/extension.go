@@ -31,15 +31,37 @@ const (
 	maxPartitionsProbed = 16 // used partitions opened as EROFS
 	gptSignature        = "EFI PART"
 	gptMinHeaderSize    = 92
+
+	// The EROFS superblock starts at byte offset 1024 of a filesystem and
+	// begins with erofsSuperMagic as a little-endian uint32. It marks a
+	// candidate region as an EROFS filesystem without asking go-erofs.
+	erofsSuperOffset = 1024
+	erofsSuperMagic  = 0xE0F5E1E2
+	erofsMagicEnd    = erofsSuperOffset + 4
 )
 
+// openEROFS opens an EROFS filesystem. It is a variable so a test can
+// replace it, for example with one that panics like a parser bug.
+var openEROFS = func(r io.ReaderAt) (fs.FS, error) { return erofs.Open(r) }
+
 var (
-	// ErrUnsupportedImage means the image is neither a GPT disk image with an
-	// EROFS partition nor a bare EROFS image, or its GPT or EROFS structures
-	// are invalid or point outside the file. Examples are a squashfs sysext
-	// and an EROFS image that uses internal compression. The caller decides
-	// what to do; the image cannot be checked.
+	// ErrUnsupportedImage means the image has no EROFS filesystem at all:
+	// neither a GPT partition nor the bare image starts with the EROFS
+	// superblock magic. Examples are a squashfs sysext and random bytes.
+	// The image cannot be checked, and the caller decides what to do.
+	//
+	// Once an EROFS filesystem is found, no later failure wraps this error:
+	// every such failure fails closed instead (ErrUnreadableRelease,
+	// ErrNoExtensionRelease, ErrAmbiguousExtensionRelease or
+	// ErrReleaseFileTooLarge).
 	ErrUnsupportedImage = errors.New("unsupported sysext image")
+
+	// ErrUnreadableRelease means the image has an EROFS filesystem but its
+	// extension-release file cannot be read: the EROFS filesystem cannot be
+	// opened, the file cannot be opened, inspected or read, or the EROFS
+	// parser failed. Callers must fail closed: the image may carry a minimum
+	// image version they cannot honour.
+	ErrUnreadableRelease = errors.New("extension-release file in the image cannot be read")
 
 	// ErrNoExtensionRelease means the image has an EROFS filesystem but no
 	// usr/lib/extension-release.d/extension-release.* file.
@@ -59,9 +81,18 @@ var (
 //
 // The path must name a regular file: a symlink or other file type is refused
 // (the open uses O_NOFOLLOW, so a link planted after the check is refused
-// too). The image can be a GPT disk image (512 or 4096-byte sectors) whose
-// partitions are tried in table order until one holds an EROFS filesystem
-// with usr/lib/extension-release.d, or a bare EROFS image.
+// too). The image can be a GPT disk image (512 or 4096-byte sectors) or a
+// bare image. Its candidate regions are tried in table order, and a region
+// is an EROFS candidate only when its superblock at offset 1024 has the
+// EROFS magic; a region without the magic is skipped.
+//
+// The call fails closed once a candidate has the EROFS magic: such a
+// candidate that gives no release file yields ErrUnreadableRelease,
+// ErrNoExtensionRelease, ErrAmbiguousExtensionRelease or
+// ErrReleaseFileTooLarge, never ErrUnsupportedImage. When several candidates
+// have the magic, the first one that gives a release file is used; when none
+// does, the error of the first EROFS candidate is returned. Only when no
+// candidate has the magic is the error ErrUnsupportedImage.
 //
 // In usr/lib/extension-release.d, a single extension-release.* file is used.
 // When there are several, the file named extension-release.<name> is used;
@@ -71,15 +102,7 @@ var (
 // verified: every read is bounded, the GPT values must point inside the
 // file, at most 16 partitions are opened, and the extension-release file
 // must not be larger than MaxReleaseFileSize.
-func ReadExtensionRelease(path, name string) (release map[string]string, err error) {
-	// A parser panic on a crafted image must not stop the whole update run.
-	defer func() {
-		if r := recover(); r != nil {
-			release = nil
-			err = fmt.Errorf("%w: parser failure: %v", ErrUnsupportedImage, r)
-		}
-	}()
-
+func ReadExtensionRelease(path, name string) (map[string]string, error) {
 	f, size, err := openRegular(path)
 	if err != nil {
 		return nil, err
@@ -90,37 +113,71 @@ func ReadExtensionRelease(path, name string) (release map[string]string, err err
 	if err != nil {
 		return nil, err
 	}
-	var sawEROFS bool
-	var lastErr error
+	var firstErr error
 	for _, r := range regions {
-		fsys, err := erofs.Open(io.NewSectionReader(f, r.offset, r.length))
-		if err != nil {
-			lastErr = err
+		if !hasEROFSMagic(f, r) {
 			continue
 		}
-		sawEROFS = true
-		entries, err := fs.ReadDir(fsys, extensionReleaseDir)
-		if err != nil {
-			lastErr = err
-			continue
+		release, err := readCandidateRelease(f, r, name)
+		if err == nil {
+			return release, nil
 		}
-		file, err := pickReleaseFile(entries, name)
-		if err != nil {
-			return nil, err
+		if firstErr == nil {
+			firstErr = err
 		}
-		data, err := readBounded(fsys, extensionReleaseDir+"/"+file)
-		if err != nil {
-			return nil, err
-		}
-		return ParseOSRelease(data), nil
 	}
-	if sawEROFS {
-		return nil, fmt.Errorf("%w: %v", ErrNoExtensionRelease, lastErr)
-	}
-	if lastErr != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUnsupportedImage, lastErr)
+	if firstErr != nil {
+		return nil, firstErr
 	}
 	return nil, fmt.Errorf("%w: no EROFS filesystem found", ErrUnsupportedImage)
+}
+
+// hasEROFSMagic reports whether the region holds an EROFS filesystem, by the
+// EROFS superblock magic at offset 1024. A region too short to hold the magic
+// does not.
+func hasEROFSMagic(f io.ReaderAt, r region) bool {
+	if r.length < erofsMagicEnd {
+		return false
+	}
+	var magic [4]byte
+	if _, err := f.ReadAt(magic[:], r.offset+erofsSuperOffset); err != nil {
+		return false
+	}
+	return binary.LittleEndian.Uint32(magic[:]) == erofsSuperMagic
+}
+
+// readCandidateRelease reads and parses the extension-release file of one
+// candidate region that has the EROFS magic.
+//
+// The region is untrusted input and go-erofs parses it, so a parser panic is
+// caught here, per candidate, and becomes ErrUnreadableRelease. This is why
+// the recover is not in ReadExtensionRelease: past the magic check every
+// failure of a candidate is a fail-closed error.
+func readCandidateRelease(f io.ReaderAt, r region, name string) (release map[string]string, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			release = nil
+			err = fmt.Errorf("%w: EROFS parser failure: %v", ErrUnreadableRelease, p)
+		}
+	}()
+
+	fsys, err := openEROFS(io.NewSectionReader(f, r.offset, r.length))
+	if err != nil {
+		return nil, fmt.Errorf("%w: open EROFS filesystem: %v", ErrUnreadableRelease, err)
+	}
+	entries, err := fs.ReadDir(fsys, extensionReleaseDir)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrNoExtensionRelease, err)
+	}
+	file, err := pickReleaseFile(entries, name)
+	if err != nil {
+		return nil, err
+	}
+	data, err := readBounded(fsys, extensionReleaseDir+"/"+file)
+	if err != nil {
+		return nil, err
+	}
+	return ParseOSRelease(data), nil
 }
 
 // openRegular opens a regular file without following a symlink and returns
@@ -185,19 +242,19 @@ func pickReleaseFile(entries []fs.DirEntry, name string) (string, error) {
 func readBounded(fsys fs.FS, name string) ([]byte, error) {
 	f, err := fsys.Open(name)
 	if err != nil {
-		return nil, fmt.Errorf("%w: open %s: %v", ErrUnsupportedImage, name, err)
+		return nil, fmt.Errorf("%w: open %s: %v", ErrUnreadableRelease, name, err)
 	}
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("%w: stat %s: %v", ErrUnsupportedImage, name, err)
+		return nil, fmt.Errorf("%w: stat %s: %v", ErrUnreadableRelease, name, err)
 	}
 	if info.Size() > MaxReleaseFileSize {
 		return nil, fmt.Errorf("%w: %d bytes", ErrReleaseFileTooLarge, info.Size())
 	}
 	data, err := io.ReadAll(io.LimitReader(f, MaxReleaseFileSize+1))
 	if err != nil {
-		return nil, fmt.Errorf("%w: read %s: %v", ErrUnsupportedImage, name, err)
+		return nil, fmt.Errorf("%w: read %s: %v", ErrUnreadableRelease, name, err)
 	}
 	if len(data) > MaxReleaseFileSize {
 		return nil, ErrReleaseFileTooLarge

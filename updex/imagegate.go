@@ -65,16 +65,20 @@ type imageGate struct {
 // link step links, sysext.LinkTargetAt) and decides whether it may be linked.
 //
 //   - No key in the extension-release file: it may.
-//   - imagecompat.ErrUnsupportedImage (not GPT+EROFS or bare EROFS, for
-//     example a squashfs sysext from another catalog): it may. This fails
-//     open on purpose. Only snosi sets the key, and snosi ships EROFS, so
-//     an image that cannot be read has no key that updex could honour;
-//     refusing it would stop every non-snosi sysext from updating.
-//   - Any other read error on an image that does open (no extension-release
-//     file, several without a match, too large): an error. This fails closed,
-//     because such an image is a snosi-shaped image that cannot be judged.
-//   - No staged image that the link step could link: nothing to check; the
-//     link step fails on its own (it resolves the image the same way).
+//   - imagecompat.ErrUnsupportedImage (no EROFS filesystem at all: not GPT+EROFS
+//     and not a bare EROFS image, for example a squashfs sysext from another
+//     catalog): it may. This fails open on purpose. Only snosi sets the key,
+//     and snosi ships EROFS, so an image with no EROFS filesystem has no key
+//     that updex could honour; refusing it would stop every non-snosi sysext
+//     from updating.
+//   - Any other read error (an EROFS image whose release file cannot be read,
+//     no extension-release file, several without a match, too large): an
+//     error. This fails closed, because such an image has an EROFS filesystem
+//     and may carry a key updex cannot honour.
+//   - No staged image that the link step could link (sysext.LinkTargetAt
+//     fails, for example on a target pattern with a compression suffix): an
+//     error. This fails closed too: the gate never depends on the link step
+//     failing later.
 //   - Key set: the next-boot version is resolved (once per operation), and
 //     the two are compared with imagecompat.CheckMinImageVersion. When bootc
 //     is installed but fails, that is an error (fail closed): the booted
@@ -82,12 +86,10 @@ type imageGate struct {
 func (c *Client) minImageGate(ctx context.Context, feature string, t *config.Transfer, nb *nextBootImage) (imageGate, error) {
 	path, err := sysext.LinkTargetAt(t, c.paths.sysextLinkDir)
 	if err != nil {
-		// The link step asks the same question with the same function (a
-		// target pattern with a compression suffix never matches the
-		// decompressed file, for example) and fails with its own error, so
-		// nothing can be linked here that this gate did not see.
-		c.debug("%s: no staged image to check: %v", t.Component, err)
-		return imageGate{}, nil
+		// Fail closed: the link step asks the same question with the same
+		// function, so a link this gate cannot see is a link the run cannot
+		// check.
+		return imageGate{}, fmt.Errorf("cannot check the minimum image version of %s: no staged image: %w", t.Component, err)
 	}
 
 	// The transfer's component names the sysext in snosi's catalog; the

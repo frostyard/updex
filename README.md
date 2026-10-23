@@ -186,8 +186,9 @@ only on a revision that depends on a base change; `systemd-sysext` ignores the
 key). After the download and before the link, `features update` (and
 `features enable --now`) reads the key from the downloaded image, without
 mounting it, and compares it with the `IMAGE_VERSION` of the image that boots
-next: the staged `bootc` deployment (`bootc status --json`) when there is one,
-else the booted `/etc/os-release`. Both values must be digits only (snosi uses
+next: the rollback deployment when `bootc status --json` reports a queued
+rollback (`rollbackQueued`), else the staged deployment, else the booted
+`/etc/os-release`. Both values must be digits only (snosi uses
 14-digit timestamps) and are compared as numbers. When the host image is older
 than the minimum, or either value is missing or not a number, updex links
 **nothing** of that feature (its transfers link together), keeps the old links
@@ -201,11 +202,14 @@ the same for a staged image that is not linked: `needs image >= <value>` in the
 `UPDATE` column (JSON `needs_image`, `next_boot_image_version`) and a
 `NEEDS NEWER IMAGE:` line; `features list` ends with the same line. They never
 download, so they cannot tell about a newer image that is only published.
-Without the key nothing changes. An image updex cannot read (for example a
-squashfs sysext from another catalog) is treated as having no key. An image
-that opens but has no readable extension-release file, or a `bootc` that is
-installed but fails, is an error for the features concerned: nothing is linked
-for them.
+Without the key nothing changes. An image with no EROFS filesystem at all (for
+example a squashfs sysext from another catalog) is treated as having no key.
+An image that has an EROFS filesystem but whose extension-release file cannot
+be read (a failed EROFS open, a failed open, stat or read of the file, a
+missing file, several without a match, over 64 KiB), an image the link step
+could not resolve, or a `bootc` that is installed but fails, is an error for
+the features concerned: nothing is linked for them. A queued rollback whose
+version `bootc` does not report is an error too.
 
 **What the vacuum keeps:** after the links succeeded, `features update`
 removes old images but always keeps, per transfer, the image the link names
