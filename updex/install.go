@@ -451,12 +451,17 @@ func (c *Client) linkStaged(feature string, transfers []*config.Transfer, staged
 				rerr = fmt.Errorf("failed to restore sysext link for %s: %w", transfers[j].Component, rerr)
 				c.warn("%s", rerr)
 				errs = append(errs, rerr)
+				// This transfer's link may have moved (an earlier transfer
+				// always did; the failing one may have changed its link
+				// before it returned the error): it may still point at the
+				// new version, so it must not read as not linked.
+				rerr = fmt.Errorf("%w; the link may point at the new version", rerr)
 				if j < i {
-					// This transfer's link had moved: it may still point at
-					// the new version, so it must not read as not linked.
-					results[j].err = fmt.Errorf("%w; the link may point at the new version", rerr)
-					results[j].notLinked = false
+					results[j].err = rerr
+				} else {
+					results[j].err = errors.Join(err, rerr)
 				}
+				results[j].notLinked = false
 			}
 			c.removeLinkBackups(snapshots)
 			return errors.Join(errs...)

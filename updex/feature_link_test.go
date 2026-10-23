@@ -288,6 +288,70 @@ func (r failingLinkRunner) LinkToSysextAt(t *config.Transfer, dir string) error 
 	return r.PathSysextRunner.LinkToSysextAt(t, dir)
 }
 
+// linkThenFailRunner performs the real link for failComponent and then
+// returns an error, like a runner that changes the destination before it
+// fails.
+type linkThenFailRunner struct {
+	sysext.PathSysextRunner
+	failComponent string
+}
+
+func (r linkThenFailRunner) LinkToSysextAt(t *config.Transfer, dir string) error {
+	if err := r.PathSysextRunner.LinkToSysextAt(t, dir); err != nil {
+		return err
+	}
+	if t.Component == r.failComponent {
+		return errors.New("injected link failure after the link moved")
+	}
+	return nil
+}
+
+// A restore failure on the failing transfer itself (its link moved before
+// the runner returned an error) is part of the returned error and of that
+// transfer's result, and the result says the link may point at the new
+// version.
+func TestUpdateFeatures_RestoreFailureOfTheFailingTransferIsReported(t *testing.T) {
+	f := newFeatureLinkFixture(t, func(r sysext.PathSysextRunner) sysext.PathSysextRunner {
+		return linkThenFailRunner{PathSysextRunner: r, failComponent: "beta"}
+	}, "alpha", "beta")
+	f.makeRegularFileAtLink("beta", "original image")
+
+	old := restoreRename
+	restoreRename = func(_, _ string) error { return errors.New("injected restore failure") }
+	t.Cleanup(func() { restoreRename = old })
+
+	results, err := f.update()
+	if err == nil {
+		t.Fatal("expected an error: the link and its restore failed")
+	}
+	for _, want := range []string{"injected link failure after the link moved", "injected restore failure"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("UpdateFeatures error = %v, want %q", err, want)
+		}
+	}
+	beta := resultsByComponent(t, results)["beta"]
+	for _, want := range []string{"injected link failure after the link moved", "injected restore failure", "the link may point at the new version"} {
+		if !strings.Contains(beta.Error, want) {
+			t.Errorf("beta result error = %q, want %q", beta.Error, want)
+		}
+	}
+	if strings.Contains(beta.Error, "not linked:") || beta.Installed {
+		t.Errorf("beta's link moved; it must not report not linked, got %+v", beta)
+	}
+	if got := f.linkTarget("beta"); got != "beta_2.0.0.raw" {
+		t.Errorf("beta link = %s, want the new link that could not be restored", got)
+	}
+	backups := 0
+	for _, name := range f.linkDirNames() {
+		if strings.HasPrefix(name, ".beta.raw.updex-backup-") {
+			backups++
+		}
+	}
+	if backups != 1 {
+		t.Errorf("link dir = %v, want the backup of the original beta file kept", f.linkDirNames())
+	}
+}
+
 // A link that fails part-way restores the links this run already moved, and
 // no transfer reports success.
 func TestUpdateFeatures_LinkFailurePartWayRestoresLinks(t *testing.T) {
