@@ -182,6 +182,17 @@ the record exists. `features check` shows `held (rejected <version>)` in the
 `UPDATE` column (JSON `rollback_rejected`) and `features list` ends with a
 `HELD BY ROLLBACK:` line.
 
+A transfer can belong to more than one feature (`Features=` or
+`RequisiteFeatures=` in its `.transfer` file). The hold covers **every**
+feature that shares a transfer: `features update`, `features enable --now`,
+`features check` and `features list` read the rollback records of all of them,
+whether or not a feature is enabled, so updating through another feature
+cannot link the rejected version again. When several records reject the same
+transfer, the highest rejected version applies. If one of those records cannot
+be read, updates link nothing for every feature that shares the transfer and
+name the feature whose record failed. The record is deleted once every version
+it rejects is behind a link, whichever feature's update got there first.
+
 A publisher that bumps only one component of a multi-transfer feature keeps
 the hold, because every transfer must have a version newer than its rejected
 one. A rollback across an image update can need the older OS image too: an

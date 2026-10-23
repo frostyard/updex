@@ -877,6 +877,263 @@ func writeTestFile(t *testing.T, path, content string) {
 	}
 }
 
+// --- a shared transfer honours every applicable record ---
+
+// addSharedFeature makes every transfer of the fixture name an extra feature
+// (Features=grp <name>), so the two features share them.
+func (f *rollbackFixture) addSharedFeature(name string) {
+	f.t.Helper()
+	createFeatureFile(f.t, f.defDir, name, true)
+	for _, component := range f.components {
+		content := `[Transfer]
+Features=grp ` + name + `
+Verify=false
+
+[Source]
+Type=url-file
+Path=` + f.servers[component].URL + `
+MatchPattern=` + component + `_@v.raw
+
+[Target]
+Path=` + f.targetDir + `
+MatchPattern=` + component + `_@v.raw
+`
+		writeTestFile(f.t, filepath.Join(f.defDir, component+".transfer"), content)
+	}
+}
+
+// addUnrelatedFeature writes a second, enabled feature with its own component
+// and source, publishing 1.0.0 and 2.0.0.
+func (f *rollbackFixture) addUnrelatedFeature(name, component string) {
+	f.t.Helper()
+	server := newRevisionServer(f.t, component)
+	server.publish("1.0.0")
+	server.publish("2.0.0")
+	f.servers[component] = server
+	createFeatureFile(f.t, f.defDir, name, true)
+	createFeatureTransferFileWithoutCurrentSymlink(f.t, f.defDir, component, name, server.URL, f.targetDir)
+}
+
+// newSharedRollbackFixture: alpha has 1.0.0 and 2.0.0 staged and 2.0.0
+// linked, grp and other both name it, and grp is rolled back to 1.0.0,
+// rejecting 2.0.0. The source still publishes 2.0.0.
+func newSharedRollbackFixture(t *testing.T) *rollbackFixture {
+	t.Helper()
+	f := newRollbackFixture(t, "alpha")
+	f.addSharedFeature("other")
+	f.setup("alpha", "2.0.0", "1.0.0", "2.0.0")
+	if _, err := f.rollback(RollbackFeatureOptions{}); err != nil {
+		t.Fatalf("RollbackFeature: %v", err)
+	}
+	return f
+}
+
+// updateResultsByFeature indexes the per-transfer results by feature and
+// component.
+func updateResultsByFeature(t *testing.T, results []UpdateFeaturesResult) map[string]map[string]UpdateResult {
+	t.Helper()
+	by := make(map[string]map[string]UpdateResult, len(results))
+	for _, feature := range results {
+		m := make(map[string]UpdateResult, len(feature.Results))
+		for _, r := range feature.Results {
+			m[r.Component] = r
+		}
+		by[feature.Feature] = m
+	}
+	return by
+}
+
+// A rollback of grp must hold alpha for other too: updating through the other
+// feature must not link alpha_2.0.0.raw again (the blocking review finding).
+func TestUpdateFeatures_SharedTransferHeldByAnotherFeaturesRollback(t *testing.T) {
+	f := newSharedRollbackFixture(t)
+	f.wantLinks(map[string]string{"alpha": "1.0.0"})
+	// A rollback of grp records grp only; the hold reaches other through the
+	// shared transfer.
+	if rec := f.readRecord(); rec.Feature != "grp" || !maps_equal(rec.Rejected, map[string]string{"alpha": "2.0.0"}) {
+		t.Errorf("record = %+v, want grp rejecting alpha 2.0.0", rec)
+	}
+	if _, err := os.Lstat(filepath.Join(f.rollbackDir, "other")); !os.IsNotExist(err) {
+		t.Errorf("a record for other was written (err = %v)", err)
+	}
+
+	results, err := f.update()
+	if err != nil {
+		t.Fatalf("a held run must not fail: %v", err)
+	}
+	by := updateResultsByFeature(t, results)
+	for _, name := range []string{"grp", "other"} {
+		r, ok := by[name]["alpha"]
+		if !ok {
+			t.Fatalf("feature %s has no alpha result: %+v", name, results)
+		}
+		if !r.Held || r.RejectedVersion != "2.0.0" || r.Error != "" || r.Downloaded {
+			t.Errorf("%s result = %+v", name, r)
+		}
+		if r.Version != "1.0.0" {
+			t.Errorf("%s version = %q, want the linked 1.0.0", name, r.Version)
+		}
+	}
+	f.wantLinks(map[string]string{"alpha": "1.0.0"})
+	if got := f.gets(); got != 0 {
+		t.Errorf("%d image download(s); a held run downloads nothing", got)
+	}
+	f.readRecord()
+
+	// The record applies whether or not the rolled-back feature is enabled.
+	if _, err := f.client.DisableFeature(t.Context(), "grp", DisableFeatureOptions{}); err != nil {
+		t.Fatalf("DisableFeature: %v", err)
+	}
+	results, err = f.update()
+	if err != nil {
+		t.Fatalf("update with grp disabled: %v", err)
+	}
+	by = updateResultsByFeature(t, results)
+	if _, ok := by["grp"]; ok {
+		t.Error("grp is disabled but was updated")
+	}
+	if r := by["other"]["alpha"]; !r.Held || r.RejectedVersion != "2.0.0" || r.Error != "" {
+		t.Errorf("other result with grp disabled = %+v", r)
+	}
+	f.wantLinks(map[string]string{"alpha": "1.0.0"})
+	if got := f.gets(); got != 0 {
+		t.Errorf("%d image download(s) after grp was disabled; nothing may be downloaded", got)
+	}
+}
+
+// EnableFeature --now through a shared feature honours the record too.
+func TestEnableFeatureNow_SharedTransferHeldByAnotherFeaturesRollback(t *testing.T) {
+	f := newSharedRollbackFixture(t)
+
+	result, err := f.client.EnableFeature(t.Context(), "other", EnableFeatureOptions{Now: true, NoRefresh: true})
+	if err != nil || !result.Success {
+		t.Fatalf("EnableFeature = %+v, %v", result, err)
+	}
+	f.wantLinks(map[string]string{"alpha": "1.0.0"})
+	if len(result.DownloadedFiles) != 0 {
+		t.Errorf("downloaded = %v", result.DownloadedFiles)
+	}
+	if got := f.gets(); got != 0 {
+		t.Errorf("%d image download(s); a held run downloads nothing", got)
+	}
+	f.readRecord()
+}
+
+// A newer revision links once, whichever shared feature is processed first,
+// and deletes grp's record.
+func TestUpdateFeatures_SharedTransferNewerRevisionDeletesRecord(t *testing.T) {
+	f := newSharedRollbackFixture(t)
+	f.servers["alpha"].publish("3.0.0")
+
+	results, err := f.update()
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	by := updateResultsByFeature(t, results)
+	for _, name := range []string{"grp", "other"} {
+		r := by[name]["alpha"]
+		if r.Held || r.Error != "" || r.Version != "3.0.0" {
+			t.Errorf("%s result = %+v", name, r)
+		}
+	}
+	if by["grp"]["alpha"].Downloaded == by["other"]["alpha"].Downloaded {
+		t.Errorf("exactly one feature must download 3.0.0: %+v", by)
+	}
+	f.wantLinks(map[string]string{"alpha": "3.0.0"})
+	f.noRecord()
+	if got := f.gets(); got != 1 {
+		t.Errorf("%d image download(s), want 1: the new revision links once", got)
+	}
+}
+
+// A record of a feature that shares the transfer is malformed: the feature
+// being processed links nothing and names the feature whose record failed. A
+// third, unrelated feature still updates.
+func TestUpdateFeatures_MalformedSharedRecordFailsClosed(t *testing.T) {
+	f := newSharedRollbackFixture(t)
+	f.addUnrelatedFeature("third", "gamma")
+	writeTestFile(t, f.recordPath(), "{not json")
+
+	results, err := f.update()
+	if err == nil {
+		t.Fatal("expected an error for the features that share alpha")
+	}
+	by := updateResultsByFeature(t, results)
+	for _, name := range []string{"grp", "other"} {
+		r := by[name]["alpha"]
+		if !strings.Contains(r.Error, "rollback record of feature grp") || r.Downloaded || r.Held {
+			t.Errorf("%s result = %+v", name, r)
+		}
+	}
+	f.wantLinks(map[string]string{"alpha": "1.0.0"})
+	if got := f.servers["alpha"].fileGets.Load(); got != 0 {
+		t.Errorf("%d alpha image download(s); nothing may be downloaded", got)
+	}
+	g := by["third"]["gamma"]
+	if g.Error != "" || !g.Downloaded || g.Version != "2.0.0" {
+		t.Errorf("third result = %+v; an unrelated feature must still update", g)
+	}
+	if got := f.linkTarget("gamma"); got != "gamma_2.0.0.raw" {
+		t.Errorf("gamma link = %s, want gamma_2.0.0.raw", got)
+	}
+}
+
+// features list and features check report the hold for a shared transfer.
+func TestFeaturesAndCheck_SharedTransferShowsRollbackRejected(t *testing.T) {
+	f := newSharedRollbackFixture(t)
+
+	infos, err := f.client.Features(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 2 {
+		t.Fatalf("features = %+v, want grp and other", infos)
+	}
+	for _, info := range infos {
+		if len(info.TransferStatus) != 1 || info.TransferStatus[0].Component != "alpha" {
+			t.Fatalf("%s statuses = %+v", info.Name, info.TransferStatus)
+		}
+		if got := info.TransferStatus[0].RollbackRejected; got != "2.0.0" {
+			t.Errorf("features list %s: rollback_rejected = %q, want 2.0.0", info.Name, got)
+		}
+	}
+
+	check, err := f.client.CheckFeatures(t.Context(), CheckFeaturesOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(check) != 2 {
+		t.Fatalf("check = %+v, want grp and other", check)
+	}
+	for _, c := range check {
+		r := c.Results[0]
+		if r.RollbackRejected != "2.0.0" || r.UpdateAvailable || r.Error != "" {
+			t.Errorf("check %s = %+v; a held transfer has no update available", c.Feature, r)
+		}
+		if r.NewestVersion != "2.0.0" || r.LinkedVersion != "1.0.0" {
+			t.Errorf("check %s = %+v", c.Feature, r)
+		}
+	}
+}
+
+// The vacuum keeps the rejected version of a shared transfer while the hold
+// applies, even when a feature other than the rolled-back one is processed.
+func TestEnableFeatureNow_SharedTransferVacuumKeepsRejectedVersion(t *testing.T) {
+	f := newSharedRollbackFixture(t)
+	// Staged by hand: 4.0.0 and 5.0.0 (e.g. from a manual download).
+	f.setup("alpha", "1.0.0", "1.0.0", "2.0.0", "4.0.0", "5.0.0")
+	f.servers["alpha"].publish("6.0.0")
+
+	if _, err := f.client.EnableFeature(t.Context(), "other", EnableFeatureOptions{Now: true, NoRefresh: true}); err != nil {
+		t.Fatalf("EnableFeature: %v", err)
+	}
+	if got := f.stagedVersions("alpha"); !slices.Equal(got, []string{"2.0.0", "5.0.0", "6.0.0"}) {
+		t.Errorf("staged = %v, want 2.0.0 (rejected), 5.0.0 and 6.0.0", got)
+	}
+	f.wantLinks(map[string]string{"alpha": "6.0.0"})
+	f.noRecord()
+}
+
 // EnableFeature --now honours the record too.
 func TestEnableFeatureNow_HeldByRollbackLinksNothing(t *testing.T) {
 	f := newHeldFixture(t, "alpha")

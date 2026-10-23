@@ -185,12 +185,13 @@ type transferInstall struct {
 	// the version the link names.
 	held bool
 
-	// rejected is the version a rollback record rejected for this transfer,
-	// whether or not the feature is held; the dry-run vacuum plan keeps it.
+	// rejected is the highest version a rollback record that applies to this
+	// transfer rejects, whether or not the feature is held; the dry-run
+	// vacuum plan keeps it.
 	rejected string
 
-	// heldVersion is the version the record rejected for this transfer. It
-	// is empty when the record names no version for this component and the
+	// heldVersion is the version the applicable records reject for this
+	// transfer. It is empty when no record names this component and the
 	// transfer is held only because another transfer of its feature is.
 	heldVersion string
 }
@@ -220,6 +221,12 @@ type installFeatureOptions struct {
 	// minimum-image-version key. It may be nil, then the call resolves it
 	// itself.
 	NextBoot *nextBootImage
+
+	// Domain is every transfer the calling operation loaded. A rollback
+	// record can name a component that this feature's transfers do not
+	// cover; the record may then be deleted only when that component's own
+	// link is newer too, which needs its transfer.
+	Domain []*config.Transfer
 }
 
 // installTransfers installs the transfers of one feature so that they link
@@ -268,23 +275,28 @@ func (c *Client) installTransfers(ctx context.Context, feature string, transfers
 		manifests = make(map[string]*manifest.Manifest)
 	}
 
-	// A rollback record holds the feature at an older version (ADR-0016).
-	// When it cannot be read, nothing is linked: the update cannot tell what
-	// was rejected, and linking the newest version could undo the rollback.
-	rec, recErr := c.readRollbackRecord(feature)
-	if recErr != nil {
-		err := fmt.Errorf("not linking feature %s: %w", feature, recErr)
-		for i := range results {
-			results[i].err = err
+	// A rollback record holds the transfers at an older version (ADR-0016).
+	// A transfer can belong to several features, so the records of every
+	// feature that names one of these transfers apply, whether that feature
+	// is enabled or not: a rollback of one feature must not be undone by an
+	// update through another that shares the transfer. When an applicable
+	// record cannot be read, nothing is downloaded or linked for the
+	// feature: the update cannot tell what was rejected.
+	holds := c.collectRollbackHolds(transfers)
+	if len(holds.errs) > 0 {
+		for i, transfer := range transfers {
+			if err := holds.errs[transfer.Component]; err != nil {
+				results[i].err = fmt.Errorf("not linking feature %s: %w", feature, err)
+			}
 		}
+		c.markNotLinked(feature, results)
 		return results
 	}
-	rejected := rec.rejectedVersions()
 	for i, transfer := range transfers {
-		results[i].rejected = rejected[transfer.Component]
+		results[i].rejected = holds.rejected[transfer.Component]
 	}
-	if rec != nil {
-		if c.holdByRollback(ctx, feature, transfers, rejected, manifests, results) {
+	if len(holds.rejected) > 0 {
+		if c.holdByRollback(ctx, feature, transfers, holds.rejected, manifests, results) {
 			return results
 		}
 	}
@@ -348,31 +360,26 @@ func (c *Client) installTransfers(ctx context.Context, feature string, transfers
 	// exists it keeps the rejected version.
 	if !opts.NoVacuum {
 		for _, transfer := range transfers {
-			if _, _, err := sysext.VacuumWith(transfer, c.vacuumPaths(rejected[transfer.Component])); err != nil {
+			if _, _, err := sysext.VacuumWith(transfer, c.vacuumPaths(holds.rejected[transfer.Component])); err != nil {
 				c.warn("vacuum failed for %s: %v", transfer.Component, err)
 			}
 		}
 	}
 
-	// A newer version than the rejected one is linked: the rollback is over.
-	if rec != nil {
-		if _, err := c.deleteRollbackRecord(feature); err != nil {
-			c.warn("failed to delete the rollback record of %s: %v", feature, err)
-		} else {
-			c.msg("Linked a version newer than the one rolled back from; deleted the rollback record of %s", feature)
-		}
-	}
+	// A newer version than the one rejected is linked for every component an
+	// applicable record names: that rollback is over.
+	c.deleteFinishedRollbackRecords(transfers, opts.Domain, holds)
 
 	return results
 }
 
-// holdByRollback reports whether the rollback record holds the feature, and
-// fills results when it does. The feature is held when, for any transfer, the
-// newest available version is not newer than the version the record rejected
-// (compared with version.Compare). It then downloads and links nothing for
-// any transfer, so the feature never ends split between a new and an old
-// revision. A transfer whose versions cannot be listed gets its error and the
-// others errNotLinked, as in the stage step.
+// holdByRollback reports whether the rollback records that apply hold the
+// feature, and fills results when they do. The feature is held when, for any
+// transfer, the newest available version is not newer than the version the
+// records reject for it (compared with version.Compare). It then downloads and
+// links nothing for any transfer, so the feature never ends split between a
+// new and an old revision. A transfer whose versions cannot be listed gets its
+// error and the others errNotLinked, as in the stage step.
 func (c *Client) holdByRollback(ctx context.Context, feature string, transfers []*config.Transfer, rejected map[string]string, manifests map[string]*manifest.Manifest, results []transferInstall) bool {
 	held := false
 	failed := false

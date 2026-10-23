@@ -401,18 +401,27 @@ in the `config/` structs and parse functions. Always finish with
   `<RuntimePaths.RollbackDir>/<feature>` (default `/var/lib/updex/rollback`,
   `updex.DefaultRollbackDir`): JSON `format` 1 with one rejected version per
   transfer, written with a temp file plus rename after `Lstat` checks, feature
-  name validated with `catalog.ValidateSysextName`. **Every path that links
-  honours it**: `installTransfers` reads the record first, fails closed for that
-  feature when it is unreadable (nothing linked), holds the whole feature (no
-  download, no link, `UpdateResult.Held`) when any transfer's newest available
-  version is `<=` its rejected version (`version.Compare`), and otherwise
-  stages, links, vacuums with the rejected version in
-  `VacuumPaths.ProtectVersions`, then deletes the record. A new code path that
-  links a staged image must go through `installTransfers` (or read the record
-  itself), or it can undo a rollback. Linking a given version uses
-  `sysext.LinkVersionAt` through `sysext.VersionSysextRunner` (a runner without
-  it gets `ErrLegacySysextRunner`), and moves links all or none with
-  `Client.linkAllOrNone`.
+  name validated with `catalog.ValidateSysextName`. **The hold covers every
+  feature that shares a transfer**, because a transfer can name several
+  features (`Transfer.Features` OR, `Transfer.RequisiteFeatures` AND).
+  `collectRollbackHolds` (`updex/rollback.go`) reads, once per call, the record
+  of every feature that names one of the transfers, enabled or not, and keeps
+  the highest rejected version per component; `installTransfers`,
+  `Features` and `CheckFeatures` all use it. **Every path that links honours
+  it**: `installTransfers` fails closed for the feature when any applicable
+  record is unreadable (nothing downloaded or linked, the error names the
+  feature whose record failed), holds the whole feature (no download, no link,
+  `UpdateResult.Held`) when any transfer's newest available version is `<=` its
+  rejected version (`version.Compare`), and otherwise stages, links, vacuums
+  with the rejected version in `VacuumPaths.ProtectVersions`, then deletes each
+  applicable record whose every rejected version is behind a link now
+  (`sysext.LinkedVersionAt`; a component outside these transfers is looked up
+  in the loaded domain, and an unknown component keeps the record). A new code
+  path that links a staged image must go through `installTransfers` (or read
+  the applicable records itself), or it can undo a rollback. Linking a given
+  version uses `sysext.LinkVersionAt` through `sysext.VersionSysextRunner` (a
+  runner without it gets `ErrLegacySysextRunner`), and moves links all or none
+  with `Client.linkAllOrNone`.
 - **Minimum image version (ADR-0016).** **Every path that moves a link to a
   newer image checks `UPDEX_MIN_IMAGE_VERSION` through `installTransfers`**
   (`gateMinImage` in `updex/imagegate.go`, between the stage step and the link
