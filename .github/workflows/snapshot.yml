@@ -46,3 +46,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
+
+      # GoReleaser has published the dev release by now, so this check turns
+      # the run red; it does not stop the publication. It fails the nightly
+      # when the .deb stops shipping the update units.
+      - name: Check that the .deb ships the update units
+        run: ./scripts/check-deb-units.sh dist/*_amd64.deb

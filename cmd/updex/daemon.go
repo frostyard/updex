@@ -15,15 +15,22 @@ func newDaemonCmd() *cobra.Command {
 		Long: `Manage the automatic update timer and service.
 
 The daemon periodically checks for and downloads new extension versions.
-Updates are staged but not activated until next reboot.
+Updates are linked but not activated until the next reboot.
 
 SUBCOMMANDS:
-  enable   Install and start the systemd timer
-  disable  Stop and remove the systemd timer
-  status   Show current timer state
+  enable   Enable and start the systemd timer
+  disable  Stop and disable the systemd timer
+  status   Show timer state, next run, and last result
 
-The timer runs daily by default. Extensions are downloaded but not
-activated, allowing safe updates without unexpected system changes.`,
+The frostyard-updex package ships updex-update.timer and
+updex-update.service in /usr/lib/systemd/system, disabled. The timer runs
+every 6 hours (with up to an hour of random delay) while the host is on AC
+power. Extensions are downloaded but not activated, allowing safe updates
+without unexpected system changes.
+
+To keep a host from updating at all, mask the timer; the mask survives
+image updates:
+  sudo systemctl mask updex-update.timer`,
 		Example: `  # Enable automatic updates
   sudo updex daemon enable
 
@@ -45,14 +52,17 @@ func newDaemonEnableCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "enable",
 		Short: "Enable automatic updates",
-		Long: `Install and enable the systemd timer for automatic updates.
+		Long: `Enable the systemd timer for automatic updates.
 
-This creates timer and service unit files in /etc/systemd/system/ and
-enables the timer to run daily. Updates will download new versions but
-not activate them until the next reboot.
+When the package ships updex-update.timer (in /usr/lib/systemd/system), this
+enables and starts it and writes nothing. When it does not (updex installed
+without the package), this writes updex-update.timer and
+updex-update.service to /etc/systemd/system/ first. Updates download new
+versions but do not activate them until the next reboot.
 
 WHAT IT DOES:
-  1. Creates updex-update.timer and updex-update.service
+  1. Writes the unit files to /etc/systemd/system/, only if the package
+     does not ship them
   2. Enables the timer to start on boot
   3. Starts the timer immediately
 
@@ -92,8 +102,11 @@ func runDaemonEnable(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Println("Auto-update daemon enabled.")
-	fmt.Println("Updates will run daily and download new versions.")
+	fmt.Println(result.Message + ".")
+	if result.Packaged {
+		fmt.Println("Using the units shipped by the package; no unit file was written.")
+	}
+	fmt.Println("Updates run every 6 hours while on AC power and download new versions.")
 	fmt.Println("Reboot required to activate downloaded extensions.")
 	return nil
 }
@@ -102,15 +115,20 @@ func newDaemonDisableCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "disable",
 		Short: "Disable automatic updates",
-		Long: `Stop and remove the systemd timer for automatic updates.
+		Long: `Stop and disable the systemd timer for automatic updates.
 
-This stops the timer, disables it, and removes both timer and service
-unit files from /etc/systemd/system/.
+This stops the timer, disables it, and removes the unit files that updex
+wrote to /etc/systemd/system/ (the ones with its marker, and the units that
+older updex releases wrote). It keeps any other file there, and it never
+removes the units that the package ships in /usr/lib/systemd/system.
+
+To keep the timer off across image updates, mask it instead:
+  sudo systemctl mask updex-update.timer
 
 WHAT IT DOES:
   1. Stops the running timer
   2. Disables the timer from starting on boot
-  3. Removes the unit files
+  3. Removes the unit files that updex wrote
 
 With --dry-run, the command prints the unit files and actions and changes
 nothing.
@@ -148,8 +166,12 @@ func runDaemonDisable(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Println("Auto-update daemon disabled.")
+	fmt.Println(result.Message + ".")
 	fmt.Println("Automatic updates will no longer run.")
+	if result.Packaged {
+		fmt.Println("The package keeps its units in /usr/lib/systemd/system; to keep the timer off")
+		fmt.Println("across image updates, run: sudo systemctl mask updex-update.timer")
+	}
 	return nil
 }
 
@@ -159,14 +181,21 @@ func newDaemonStatusCmd() *cobra.Command {
 		Short: "Show daemon status",
 		Long: `Show the current status of the auto-update daemon.
 
-Displays whether the timer is installed, enabled, and active,
-along with the configured schedule.
+Displays whether the timer is installed, enabled, and active, where its unit
+files come from, its schedule, the next run, and the last run.
 
 OUTPUT:
-  Installed - Whether unit files exist
-  Enabled   - Whether timer starts on boot
-  Active    - Whether timer is currently running
-  Schedule  - When updates run (e.g., daily)`,
+  Installed  - Whether a timer unit file exists
+  Enabled    - Whether timer starts on boot
+  Active     - Whether timer is currently running
+  Source     - "packaged" (/usr/lib/systemd/system) or "etc"
+               (/etc/systemd/system, which overrides a packaged unit)
+  Unit files - The unit files in use
+  Schedule   - When updates run (the timer's OnCalendar)
+  Next run   - When the timer fires next
+  Last run   - When the service last finished, and its result
+
+The run log is in the journal: journalctl -u updex-update.service`,
 		Example: `  # Check daemon status
   updex daemon status
 
@@ -197,6 +226,28 @@ func runDaemonStatus(cmd *cobra.Command, args []string) error {
 	fmt.Println("Auto-update daemon: installed")
 	fmt.Printf("  Enabled: %v\n", status.Enabled)
 	fmt.Printf("  Active: %v\n", status.Active)
-	fmt.Printf("  Schedule: %s\n", status.Schedule)
+	fmt.Printf("  Source: %s\n", status.Source)
+	for _, path := range status.UnitFiles {
+		fmt.Printf("  Unit file: %s\n", path)
+	}
+	fmt.Printf("  Schedule: %s\n", orDash(status.Schedule))
+	if status.NextRun != "" {
+		fmt.Printf("  Next run: %s\n", status.NextRun)
+	} else {
+		fmt.Println("  Next run: none scheduled")
+	}
+	if status.LastRun != "" {
+		fmt.Printf("  Last run: %s (%s)\n", status.LastRun, orDash(status.LastResult))
+	} else {
+		fmt.Println("  Last run: none recorded since boot")
+	}
 	return nil
+}
+
+// orDash returns value, or "-" when it is empty.
+func orDash(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
 }

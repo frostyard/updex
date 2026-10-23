@@ -8,18 +8,43 @@ type DaemonActionResult struct {
 	// DryRun reports that the daemon units and their systemd state were not
 	// changed; Message describes the actions that a real run would take.
 	DryRun bool `json:"dry_run,omitempty"`
-	// UnitFiles holds the absolute paths of the timer and service unit files,
-	// in that order: written, removed, or that the operation would write or
-	// remove.
+	// UnitFiles holds the absolute paths of the unit files the operation
+	// wrote, removed, or would write or remove (timer first), or, when
+	// Packaged is set on an enable, the packaged files in use. Disable lists
+	// only the files updex removed; a unit that the OS package ships is not
+	// listed because disable never removes it.
 	UnitFiles []string `json:"unit_files,omitzero"`
+	// Packaged reports that the OS package ships the timer, so enable wrote
+	// nothing and disable left the packaged units in place.
+	Packaged bool `json:"packaged,omitempty"`
+	// KeptFiles holds the unit files in /etc/systemd/system that disable
+	// left in place because updex cannot prove that it wrote them.
+	KeptFiles []string `json:"kept_files,omitzero"`
 }
 
 // DaemonStatusResult represents the automatic update daemon's current state.
 type DaemonStatusResult struct {
-	Installed bool   `json:"installed"`
-	Enabled   bool   `json:"enabled"`
-	Active    bool   `json:"active"`
-	Schedule  string `json:"schedule,omitempty"`
+	// Installed reports that a timer unit file exists, packaged or in /etc.
+	Installed bool `json:"installed"`
+	Enabled   bool `json:"enabled"`
+	Active    bool `json:"active"`
+	// Schedule is the OnCalendar value of the timer file in use.
+	Schedule string `json:"schedule,omitempty"`
+	// Source is "packaged" when the timer file in use is the package's in
+	// /usr/lib/systemd/system, or "etc" when it is in /etc/systemd/system
+	// (where it overrides a packaged one).
+	Source string `json:"source,omitempty"`
+	// UnitFiles holds the paths of the timer and service files in use.
+	UnitFiles []string `json:"unit_files,omitzero"`
+	// NextRun is the timer's NextElapseUSecRealtime as systemd prints it;
+	// empty when no run is scheduled.
+	NextRun string `json:"next_run,omitempty"`
+	// LastRun is the service's ExecMainExitTimestamp as systemd prints it;
+	// empty when the service has not run since boot.
+	LastRun string `json:"last_run,omitempty"`
+	// LastResult is the service's Result for the last run ("success",
+	// "exit-code", ...); empty when LastRun is empty.
+	LastResult string `json:"last_result,omitempty"`
 }
 
 // CheckResult represents the result of a check operation for a single component.

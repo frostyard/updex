@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strings"
 )
 
 // SystemctlRunner executes systemctl commands
@@ -33,6 +34,17 @@ type ContextSystemctlRunner interface {
 	IsEnabledContext(ctx context.Context, unit string) (bool, error)
 }
 
+// ShowRunner is implemented by runners that can read one systemd property of a
+// unit (systemctl show -p PROPERTY --value UNIT). It is separate from
+// SystemctlRunner so existing external runners stay source-compatible;
+// Manager.Show reports ErrShowUnsupported for a runner without it.
+type ShowRunner interface {
+	// ShowContext returns the trimmed value of property for unit. A property
+	// systemd holds no value for (a timer that is not scheduled, a service
+	// that never ran) comes back as an empty string or "n/a".
+	ShowContext(ctx context.Context, unit, property string) (string, error)
+}
+
 // DefaultSystemctlRunner executes real systemctl commands. It implements
 // ContextSystemctlRunner so an in-flight command is killed promptly when its
 // context is canceled or expires; the legacy methods delegate to the
@@ -42,6 +54,7 @@ type DefaultSystemctlRunner struct{}
 var (
 	_ SystemctlRunner        = (*DefaultSystemctlRunner)(nil)
 	_ ContextSystemctlRunner = (*DefaultSystemctlRunner)(nil)
+	_ ShowRunner             = (*DefaultSystemctlRunner)(nil)
 )
 
 func (r *DefaultSystemctlRunner) DaemonReload() error {
@@ -130,6 +143,22 @@ func (r *DefaultSystemctlRunner) IsEnabledContext(ctx context.Context, unit stri
 		return false, err
 	}
 	return true, nil
+}
+
+// ShowContext runs systemctl show -p property --value unit and returns its
+// trimmed standard output. It queries one property per call: with --value,
+// systemctl prints values in its own property order, not the order requested,
+// so a single call for several properties could not be told apart.
+func (r *DefaultSystemctlRunner) ShowContext(ctx context.Context, unit, property string) (string, error) {
+	cmd := exec.CommandContext(ctx, "systemctl", "show", "-p", property, "--value", unit)
+	out, err := cmd.Output()
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", ctxErr
+		}
+		return "", fmt.Errorf("systemctl show %s failed: %w", property, err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // runSystemctl executes a systemctl command with the given arguments,

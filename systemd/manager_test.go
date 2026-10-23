@@ -823,3 +823,81 @@ func TestManagerContextCancellationDuringDaemonReload(t *testing.T) {
 		t.Fatal("Install() did not return after context cancellation")
 	}
 }
+
+func TestManagerPackagedUnits(t *testing.T) {
+	t.Run("default path", func(t *testing.T) {
+		if got := NewManager().PackagedUnitPath; got != "/usr/lib/systemd/system" {
+			t.Errorf("NewManager().PackagedUnitPath = %q, want /usr/lib/systemd/system", got)
+		}
+	})
+
+	t.Run("test manager has none", func(t *testing.T) {
+		m := NewTestManager(t.TempDir(), &MockSystemctlRunner{})
+		if m.PackagedUnitPath != "" || m.PackagedExists("updex-update") || m.PackagedUnitPaths("updex-update") != nil {
+			t.Errorf("NewTestManager() reports packaged units: %q", m.PackagedUnitPath)
+		}
+	})
+
+	t.Run("timer decides", func(t *testing.T) {
+		dir := t.TempDir()
+		m := NewTestManager(t.TempDir(), &MockSystemctlRunner{})
+		m.PackagedUnitPath = dir
+		if m.PackagedExists("updex-update") {
+			t.Fatal("PackagedExists() = true for an empty directory")
+		}
+		if err := os.WriteFile(filepath.Join(dir, "updex-update.service"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if m.PackagedExists("updex-update") {
+			t.Error("PackagedExists() = true with only the service present")
+		}
+		if err := os.WriteFile(filepath.Join(dir, "updex-update.timer"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if !m.PackagedExists("updex-update") {
+			t.Error("PackagedExists() = false with the timer present")
+		}
+		want := []string{filepath.Join(dir, "updex-update.timer"), filepath.Join(dir, "updex-update.service")}
+		got := m.PackagedUnitPaths("updex-update")
+		if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+			t.Errorf("PackagedUnitPaths() = %v, want %v", got, want)
+		}
+	})
+}
+
+func TestManagerStopDisableReloadShow(t *testing.T) {
+	runner := &MockSystemctlRunner{ShowValues: map[string]string{"Result": "success"}}
+	m := NewTestManager(t.TempDir(), runner)
+	ctx := t.Context()
+
+	if err := m.Stop(ctx, "a.timer"); err != nil || !runner.StopCalled || runner.StopUnit != "a.timer" {
+		t.Errorf("Stop() = %v, called=%v unit=%q", err, runner.StopCalled, runner.StopUnit)
+	}
+	if err := m.Disable(ctx, "a.timer"); err != nil || !runner.DisableCalled || runner.DisableUnit != "a.timer" {
+		t.Errorf("Disable() = %v, called=%v unit=%q", err, runner.DisableCalled, runner.DisableUnit)
+	}
+	if err := m.DaemonReload(ctx); err != nil || !runner.DaemonReloadCalled {
+		t.Errorf("DaemonReload() = %v, called=%v", err, runner.DaemonReloadCalled)
+	}
+	if got, err := m.Show(ctx, "a.service", "Result"); err != nil || got != "success" {
+		t.Errorf("Show() = (%q, %v), want (success, nil)", got, err)
+	}
+
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := m.Show(canceled, "a.service", "Result"); !errors.Is(err, context.Canceled) {
+		t.Errorf("Show() with a canceled context error = %v, want context.Canceled", err)
+	}
+}
+
+// bareRunner implements only SystemctlRunner.
+type bareRunner struct{ *MockSystemctlRunner }
+
+func (bareRunner) ShowContext() {} // wrong signature on purpose: does not satisfy ShowRunner
+
+func TestManagerShowUnsupportedRunner(t *testing.T) {
+	m := NewTestManager(t.TempDir(), bareRunner{&MockSystemctlRunner{}})
+	if _, err := m.Show(t.Context(), "a.service", "Result"); !errors.Is(err, ErrShowUnsupported) {
+		t.Errorf("Show() error = %v, want ErrShowUnsupported", err)
+	}
+}

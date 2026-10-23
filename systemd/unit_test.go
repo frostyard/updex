@@ -301,3 +301,49 @@ func TestGenerateServiceWithoutSandbox(t *testing.T) {
 		}
 	}
 }
+
+// TestGenerateServiceUnitDirectives pins where Wants, After, Conditions and
+// Comment land, and that a config that sets none of them is unchanged.
+func TestGenerateServiceUnitDirectives(t *testing.T) {
+	config := &ServiceConfig{
+		Comment:     "owned by a test",
+		Name:        "svc",
+		Description: "Service",
+		Wants:       []string{"network-online.target", "other.target"},
+		After:       []string{"network-online.target"},
+		Conditions:  []string{"ConditionACPower=true", "ConditionPathExists=/etc/x"},
+		ExecStart:   "/usr/bin/test",
+		Type:        "oneshot",
+	}
+	want := "# owned by a test\n" +
+		"[Unit]\n" +
+		"Description=Service\n" +
+		"Wants=network-online.target other.target\n" +
+		"After=network-online.target\n" +
+		"ConditionACPower=true\n" +
+		"ConditionPathExists=/etc/x\n" +
+		"\n" +
+		"[Service]\n" +
+		"Type=oneshot\n" +
+		"ExecStart=/usr/bin/test\n"
+	if got := GenerateService(config); got != want {
+		t.Errorf("GenerateService() =\n%s\nwant\n%s", got, want)
+	}
+
+	plain := &ServiceConfig{Name: "svc", Description: "Service", ExecStart: "/usr/bin/test", Type: "simple"}
+	wantPlain := "[Unit]\nDescription=Service\n\n[Service]\nType=simple\nExecStart=/usr/bin/test\n"
+	if got := GenerateService(plain); got != wantPlain {
+		t.Errorf("GenerateService() without the new fields =\n%s\nwant\n%s", got, wantPlain)
+	}
+}
+
+func TestGenerateTimerComment(t *testing.T) {
+	config := &TimerConfig{Comment: "owned by a test", Name: "t", Description: "Timer", OnCalendar: "daily"}
+	if got := GenerateTimer(config); !strings.HasPrefix(got, "# owned by a test\n[Unit]\n") {
+		t.Errorf("GenerateTimer() = %q, want the comment as the first line", got)
+	}
+	config.Comment = ""
+	if got := GenerateTimer(config); !strings.HasPrefix(got, "[Unit]\n") {
+		t.Errorf("GenerateTimer() without a comment = %q", got)
+	}
+}
