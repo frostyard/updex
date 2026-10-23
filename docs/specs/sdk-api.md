@@ -128,6 +128,7 @@ type RuntimePaths struct {
     RunExtensionsDir   string   // systemd-sysext runtime image search dir (merged on next refresh); default: sysext.RunExtensionsDir
     SysextHierarchies  []string // Hierarchies whose .systemd-sysext metadata records merged images; default: sysext.MergedHierarchies
     LockPath           string   // Lock file every mutating operation holds (flock); default: updex.DefaultLockPath (/run/updex/lock)
+    RollbackDir        string   // Directory of per-feature rollback records; default: updex.DefaultRollbackDir (/var/lib/updex/rollback)
 }
 
 // DisableCatalogCache is a RuntimePaths.CatalogCacheDir sentinel that
@@ -377,6 +378,59 @@ When the link step relinked because the image was already staged and current, it
 - A transfer whose state cannot be read is skipped with a warning (`could not determine whether a refresh activates …`).
 - `UpdateFeaturesResult.PendingActivations` is host-wide: every element of the returned slice carries the same list. With no enabled features the slice is empty and only the warning reports it.
 
+### RollbackFeature
+
+```go
+func (c *Client) RollbackFeature(ctx context.Context, name string, opts RollbackFeatureOptions) (*RollbackFeatureResult, error)
+```
+
+Links every transfer of a feature to an older staged version and records what it rolled back from, so the update path does not undo it ([ADR-0016](../adr/0016-automatic-sysext-updates-apply-at-next-boot.md), "Rollback"). Except in a dry run it holds the operation lock (`ErrBusy`).
+
+**Target.** Per transfer: with no `To`, the newest staged version (`sysext.StagedVersionsAt`) that is older than the version the sysext link names (`sysext.LinkedVersionAt`, `version.Compare`); each transfer of a multi-transfer feature goes to **its own** newest older version, so the transfers may land on different versions. With `To`, every transfer goes to that version. A transfer with no usable link, no older staged version, a `To` that is not staged (`version X of <component> is not on disk`), equals the linked version (`is already linked`) or is not older than the version rolled back from, blocks the whole rollback: every problem is joined into one error and nothing changes (no link, no record, no directory). The feature must exist and not be masked; it may be disabled.
+
+**Record.** `<RuntimePaths.RollbackDir>/<feature>`, JSON written through `writeManagedFile`-style temp file plus rename after `Lstat` checks of the directory and the file (a symlink or non-regular entry is refused). The feature name is validated with `catalog.ValidateSysextName` first. Format 1: `{"format":1,"feature":"incus","created":"<RFC 3339 UTC>","rejected":{"<component>":"<version>"}}`, one rejected version per transfer: the version rolled back from, or a newer version that an earlier record already rejected. An existing record that cannot be read blocks a new rollback (`run 'updex features rollback --clear <name>' to delete it first`). The record is written **before** the links; the links then move all or none (`Client.linkAllOrNone`, the Phase 1 snapshot and atomic restore, through `sysext.VersionSysextRunner.LinkVersionAt`), and a link failure restores the links and the previous record. A runner that implements only `sysext.PathSysextRunner` is refused with `ErrLegacySysextRunner` before any change.
+
+**Effect.** Without `Now`, the rollback takes effect at the next boot (`NextActionMessage` says so). With `Now` (and not `NoRefresh`) it lists the other pending activations (`PendingActivations`, see "Refresh warning"), runs `systemd-sysext refresh`, and sets `Refreshed`; a failed refresh keeps links and record and returns `sysext refresh failed: …` with `RefreshError` set. `DryRun` reports the plan and writes nothing.
+
+**Clear.** `Clear: true` deletes the record and changes no link; it needs no feature and cannot be combined with `To` or `Now`. A missing record is success with `NoRecord` set; `Cleared` is set when a record was (in a dry run: would be) deleted.
+
+**What the update path does with the record** (`installTransfers`, so `UpdateFeatures` and `EnableFeature{Now}`): the record is read first. If it cannot be read (malformed, unsupported `format`, another feature name, not a regular file, larger than 64 KiB, symlinked directory), nothing is downloaded or linked for that feature, every transfer reports `not linking feature <name>: rollback record …`, and other features continue. If any transfer's newest available version is not newer than its rejected version (`version.Compare`), the **whole feature is held**: nothing is downloaded or linked (so the "already staged, relink" path cannot move the link back to the rejected image), the old links stay, and each `UpdateResult` has `Held=true`, `RejectedVersion` and `NextActionMessage: held by rollback: rejected <version>`; this is not an error. Otherwise the newest version is staged and linked as usual, the vacuum runs with the rejected version in `VacuumPaths.ProtectVersions`, and the record is deleted after the links succeeded. `Features` and `CheckFeatures` show the hold (`TransferStatus.RollbackRejected`, `CheckResult.RollbackRejected`; `UpdateAvailable` is false while the newest version is not newer than the rejected one; an unreadable record is the transfer's `Error`).
+
+**RollbackFeatureOptions:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `To` | `string` | Version to link for every transfer; empty = the next older staged version per transfer |
+| `Now` | `bool` | Apply with a `systemd-sysext refresh` |
+| `Clear` | `bool` | Delete the record, change no link |
+| `DryRun` | `bool` | Preview without writing |
+| `NoRefresh` | `bool` | Skip the refresh `Now` would run |
+| `Component` | `string` | Scope to one named component; `""` = default union |
+
+```go
+type RollbackFeatureResult struct {
+    Feature            string              `json:"feature"`
+    Action             string              `json:"action"` // "rollback" or "rollback-clear"
+    Success            bool                `json:"success"`
+    DryRun             bool                `json:"dry_run,omitempty"`
+    Transfers          []RollbackTransfer  `json:"transfers,omitzero"`
+    Record             string              `json:"record,omitempty"`
+    Cleared            bool                `json:"cleared,omitempty"`
+    NoRecord           bool                `json:"no_record,omitempty"`
+    Refreshed          bool                `json:"refreshed,omitempty"`
+    RefreshError       string              `json:"refresh_error,omitempty"`
+    PendingActivations []PendingActivation `json:"pending_activations,omitzero"`
+    Error              string              `json:"error,omitempty"`
+    NextActionMessage  string              `json:"next_action_message,omitempty"`
+}
+
+type RollbackTransfer struct {
+    Component       string `json:"component"`
+    FromVersion     string `json:"from_version"`
+    ToVersion       string `json:"to_version"`
+    RejectedVersion string `json:"rejected_version"`
+}
+```
+
 ### CheckFeatures
 
 ```go
@@ -513,6 +567,7 @@ type TransferStatus struct {
     RunningVersion string `json:"running_version"` // merged now; "" = not merged; "unknown" = merged, no recorded version
     LinkedVersion  string `json:"linked_version"`  // the /var/lib/extensions link names it; "" = no usable link
     PendingReboot  bool   `json:"pending_reboot,omitempty"`
+    RollbackRejected string `json:"rollback_rejected,omitempty"` // version a rollback record rejected; set by Features and CheckFeatures
     Error          string `json:"error,omitempty"`
 }
 
@@ -570,6 +625,8 @@ type UpdateResult struct {
     Error             string   `json:"error,omitempty"`
     NextActionMessage string   `json:"next_action_message,omitempty"`
     RemovedVersions   []string `json:"removed_versions,omitzero"`
+    Held              bool     `json:"held_by_rollback,omitempty"`  // a rollback record holds the feature; nothing downloaded or linked; not an error
+    RejectedVersion   string   `json:"rejected_version,omitempty"`  // the record's version for this transfer, when Held
 }
 ```
 
@@ -590,6 +647,7 @@ type CheckResult struct {
     RunningVersion  string `json:"running_version"`           // merged now; always present
     LinkedVersion   string `json:"linked_version"`            // the link names it; always present
     PendingReboot   bool   `json:"pending_reboot,omitempty"`  // LinkedVersion != RunningVersion
+    RollbackRejected string `json:"rollback_rejected,omitempty"` // a rollback record rejects this version; UpdateAvailable is false while NewestVersion is not newer
     UpdateAvailable bool   `json:"update_available"`
     Error           string `json:"error,omitempty"` // set when the component could not be checked
 }
@@ -680,6 +738,9 @@ recorded in [ADR-0008](../adr/0008-bounded-retry-no-resume.md).
 - `SysextRunner` interface — `Refresh()`, `Merge()`, `Unmerge()`, `LinkToSysext(*config.Transfer)` methods executed via `DefaultRunner` (real commands) or `MockRunner` (tests)
 - `PathSysextRunner` interface — `SysextRunner` plus `LinkToSysextAt(*config.Transfer, sysextDir string) error`. `updex.Client` links only through this interface, with the `SysextLinkDir` it captured at construction; a runner implementing only `SysextRunner` is refused with `updex.ErrLegacySysextRunner` rather than redirected to the package-global `SysextDir`. `DefaultRunner` and `MockRunner` both implement it; `MockRunner.LinkToSysextAtDir` records the directory it was given (and `LinkToSysextCalled` is set by either entry point)
 - `GetInstalledVersions(t *config.Transfer) ([]string, string, error)` — List installed + current version
+- `StagedVersionsAt(t *config.Transfer, defaultDir string) ([]string, error)` — Versions of the transfer's staged images (regular files in the target directory that match the target patterns), newest first by `version.Compare`; nil when the directory is absent
+- `LinkVersionAt(t *config.Transfer, sysextDir, version string) error` — Atomically (temp symlink plus rename) point `<sysextDir>/<SysextLinkName(t)>` at the staged image of exactly that version; errors with `version X of <component> is not on disk` and changes nothing otherwise. `LinkToSysextAt` links the newest image through the same helper
+- `VersionSysextRunner` interface — `PathSysextRunner` plus `LinkVersionAt(t *config.Transfer, sysextDir, version string) error`. `RollbackFeature` links only through it; a runner that does not implement it is refused with `updex.ErrLegacySysextRunner`. `DefaultRunner` and `MockRunner` implement it (`MockRunner.LinkVersionAtCalls`, `LinkVersionAtErr`); `MockRunner` creates no link
 - `LinkedVersionAt(t *config.Transfer, sysextDir string) (string, error)` — Version of the image the systemd-sysext link `<sysextDir>/<SysextLinkName(t)>` points to; `""` with a nil error when the link is absent, not a symlink, dangling, or names an image the transfer's target patterns do not match. A relative link target is resolved against `sysextDir`. `CheckFeatures` uses it for `CurrentVersion`; `GetInstalledVersions` stays staging-based because `stageTransfer` relies on that to skip a re-download
 - `MergedVersionIn(t *config.Transfer, hierarchies []string) (string, error)` — Version of the transfer's image that the `.systemd-sysext` metadata under `hierarchies` records (`UnknownVersion` when the metadata records the image without a version, `""` when not merged; first hierarchy that records it wins; a read error returns `read merged state: …`). Unlike `GetActiveVersionWith` it ignores a legacy `CurrentSymlink` and `/run/extensions`, so it answers "merged now", not "active or about to be". `updex.Client` uses it for `RunningVersion`
 - `GetActiveVersion(t *config.Transfer) (string, error)` — Get the version considered active by updex: first a legacy `CurrentSymlink`, then an image name under each `MergedHierarchies` entry's `.systemd-sysext` metadata, then an image name in `RunExtensionsDir` (`/run/extensions`, the runtime image search directory)

@@ -26,6 +26,7 @@ func newLockTestClient(t *testing.T, lockPath string) *Client {
 			RunExtensionsDir:   t.TempDir(),
 			SysextHierarchies:  []string{t.TempDir()},
 			LockPath:           lockPath,
+			RollbackDir:        filepath.Join(t.TempDir(), "rollback"),
 		},
 	})
 }
@@ -54,6 +55,10 @@ func TestMutatingOperationsReturnErrBusyWhileLockHeld(t *testing.T) {
 		},
 		"DisableFeature": func() error {
 			_, err := other.DisableFeature(t.Context(), "x", DisableFeatureOptions{})
+			return err
+		},
+		"RollbackFeature": func() error {
+			_, err := other.RollbackFeature(t.Context(), "x", RollbackFeatureOptions{})
 			return err
 		},
 		"CatalogAdd": func() error {

@@ -41,8 +41,12 @@ type CheckResult struct {
 	LinkedVersion string `json:"linked_version"`
 	// PendingReboot is true when LinkedVersion differs from RunningVersion
 	// (see TransferStatus.PendingReboot).
-	PendingReboot   bool `json:"pending_reboot,omitempty"`
-	UpdateAvailable bool `json:"update_available"`
+	PendingReboot bool `json:"pending_reboot,omitempty"`
+	// RollbackRejected is the version a rollback record rejected for this
+	// component (see TransferStatus.RollbackRejected). While NewestVersion is
+	// not newer than it, UpdateAvailable is false: `features update` holds.
+	RollbackRejected string `json:"rollback_rejected,omitempty"`
+	UpdateAvailable  bool   `json:"update_available"`
 	// Error is set when the component could not be checked (manifest fetch,
 	// signature verification, pattern failure, or installed-version listing).
 	// UpdateAvailable is always false in that case; other fields may be empty,
@@ -60,6 +64,15 @@ type UpdateResult struct {
 	Error             string   `json:"error,omitempty"`
 	NextActionMessage string   `json:"next_action_message,omitempty"`
 	RemovedVersions   []string `json:"removed_versions,omitzero"`
+	// Held is true when a rollback record holds the feature: nothing newer
+	// than the rejected version is published, so nothing was downloaded or
+	// linked and every old link stays. It is not an error. Version is the
+	// version the link names, and NextActionMessage says what is rejected.
+	Held bool `json:"held_by_rollback,omitempty"`
+	// RejectedVersion is the version the rollback record rejected for this
+	// transfer, when Held. Empty when the transfer is held only because
+	// another transfer of its feature is.
+	RejectedVersion string `json:"rejected_version,omitempty"`
 }
 
 // UpdateFeaturesResult represents the result of updating all enabled features.
@@ -167,4 +180,47 @@ type FeatureActionResult struct {
 	// `systemd-sysext refresh` of this action activates as well (a dry run:
 	// would activate). Set only when the action runs, or would run, a refresh.
 	PendingActivations []PendingActivation `json:"pending_activations,omitzero"`
+}
+
+// RollbackTransfer reports what RollbackFeature did, or would do, for one
+// transfer of the feature.
+type RollbackTransfer struct {
+	// Component is the transfer's component name.
+	Component string `json:"component"`
+	// FromVersion is the version the link named before the rollback.
+	FromVersion string `json:"from_version"`
+	// ToVersion is the staged version the link names after the rollback.
+	ToVersion string `json:"to_version"`
+	// RejectedVersion is the version the rollback record holds for this
+	// transfer: FromVersion, or a newer version an earlier rollback already
+	// rejected. features update links nothing at or below it.
+	RejectedVersion string `json:"rejected_version"`
+}
+
+// RollbackFeatureResult represents the result of a feature rollback (or of
+// clearing its record).
+type RollbackFeatureResult struct {
+	Feature string `json:"feature"`
+	// Action is "rollback", or "rollback-clear" for Clear.
+	Action  string `json:"action"`
+	Success bool   `json:"success"`
+	DryRun  bool   `json:"dry_run,omitempty"`
+	// Transfers lists every transfer of the feature, in order.
+	Transfers []RollbackTransfer `json:"transfers,omitzero"`
+	// Record is the path of the feature's rollback record.
+	Record string `json:"record,omitempty"`
+	// Cleared is true when Clear deleted a record (in a dry run: would).
+	Cleared bool `json:"cleared,omitempty"`
+	// NoRecord is true when Clear found no record to delete.
+	NoRecord bool `json:"no_record,omitempty"`
+	// Refreshed is true when Now ran systemd-sysext refresh successfully.
+	Refreshed bool `json:"refreshed,omitempty"`
+	// RefreshError is set when the links and the record were written but the
+	// refresh failed; Success is false and Error carries the same message.
+	RefreshError string `json:"refresh_error,omitempty"`
+	// PendingActivations lists the sysexts outside this feature that the
+	// refresh activates as well (a dry run: would activate).
+	PendingActivations []PendingActivation `json:"pending_activations,omitzero"`
+	Error              string              `json:"error,omitempty"`
+	NextActionMessage  string              `json:"next_action_message,omitempty"`
 }

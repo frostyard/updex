@@ -131,3 +131,32 @@ type DisableFeatureOptions struct {
 	// legacy default sysupdate.d directory and every discovered component.
 	Component string
 }
+
+// RollbackFeatureOptions configures the RollbackFeature operation.
+type RollbackFeatureOptions struct {
+	// To is the version to link for every transfer of the feature. Empty
+	// selects, per transfer, the newest staged version older than the
+	// linked one. It must be staged, differ from the linked version and be
+	// older than the version being rolled back from.
+	To string
+
+	// Now applies the rollback with a systemd-sysext refresh instead of
+	// waiting for the next boot.
+	Now bool
+
+	// Clear deletes the feature's rollback record and changes no link. It
+	// cannot be combined with To or Now. A missing record is not an error.
+	Clear bool
+
+	// DryRun previews the rollback without writing the record, changing a
+	// link, or refreshing.
+	DryRun bool
+
+	// NoRefresh skips the refresh that Now would run.
+	NoRefresh bool
+
+	// Component scopes the operation to a single named systemd-sysupdate
+	// component. Empty operates on the default domain: the union of the
+	// legacy default sysupdate.d directory and every discovered component.
+	Component string
+}

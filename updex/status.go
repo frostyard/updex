@@ -34,9 +34,34 @@ type TransferStatus struct {
 	// "unknown" (the two cannot be compared), and when Error is set.
 	PendingReboot bool `json:"pending_reboot,omitempty"`
 
-	// Error is set when the merged state or the link could not be read. The
-	// version that could be read is still reported.
+	// RollbackRejected is the version a rollback record rejected for this
+	// transfer: `features update` links nothing at or below it until a newer
+	// version is published. Empty when the feature has no record. It is set
+	// by the callers that know the feature (Features, CheckFeatures).
+	RollbackRejected string `json:"rollback_rejected,omitempty"`
+
+	// Error is set when the merged state or the link could not be read, or
+	// when the feature's rollback record could not be read. The version that
+	// could be read is still reported.
 	Error string `json:"error,omitempty"`
+}
+
+// featureTransferStatus is transferStatus plus what the feature's rollback
+// record (read once by the caller) says about the transfer. A record that
+// cannot be read is an Error on every transfer of the feature, because the
+// update path then links nothing for it.
+func (c *Client) featureTransferStatus(t *config.Transfer, rec *rollbackRecord, recErr error) TransferStatus {
+	status := c.transferStatus(t)
+	if recErr != nil {
+		if status.Error != "" {
+			status.Error += "; "
+		}
+		status.Error += recErr.Error()
+		status.PendingReboot = false
+		return status
+	}
+	status.RollbackRejected = rec.rejectedVersions()[t.Component]
+	return status
 }
 
 // PendingActivation names a sysext that is linked to a version the host does

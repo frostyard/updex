@@ -59,6 +59,13 @@ func newRevisionServer(t *testing.T, component string) *revisionServer {
 	return rs
 }
 
+// unpublish withdraws <component>_<version>.raw.
+func (rs *revisionServer) unpublish(version string) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	delete(rs.content, rs.component+"_"+version+".raw")
+}
+
 // publish makes <component>_<version>.raw available.
 func (rs *revisionServer) publish(version string) {
 	rs.mu.Lock()
@@ -69,19 +76,33 @@ func (rs *revisionServer) publish(version string) {
 // featureLinkFixture is one enabled feature whose transfers each have a
 // revision server, a shared staging directory, a link directory and a hierarchy.
 type featureLinkFixture struct {
-	t          *testing.T
-	client     *Client
-	out        *bytes.Buffer
-	servers    map[string]*revisionServer
-	components []string
-	targetDir  string
-	linkDir    string
-	hierarchy  string
+	t           *testing.T
+	client      *Client
+	out         *bytes.Buffer
+	servers     map[string]*revisionServer
+	components  []string
+	targetDir   string
+	linkDir     string
+	hierarchy   string
+	rollbackDir string
+	lockPath    string
+	defDir      string
 }
 
 // newFeatureLinkFixture writes feature "grp" with one transfer per component
 // and, for each, stages and links version 1.0.0 (the state before an update).
 func newFeatureLinkFixture(t *testing.T, runnerWrap func(sysext.PathSysextRunner) sysext.PathSysextRunner, components ...string) *featureLinkFixture {
+	t.Helper()
+	var runner sysext.SysextRunner = &sysext.DefaultRunner{}
+	if runnerWrap != nil {
+		runner = runnerWrap(&sysext.DefaultRunner{})
+	}
+	return newFeatureLinkFixtureWithRunner(t, runner, components...)
+}
+
+// newFeatureLinkFixtureWithRunner is newFeatureLinkFixture with the sysext
+// runner chosen by the caller.
+func newFeatureLinkFixtureWithRunner(t *testing.T, runner sysext.SysextRunner, components ...string) *featureLinkFixture {
 	t.Helper()
 	root := t.TempDir()
 	defDir := filepath.Join(root, "sysupdate.d")
@@ -114,10 +135,9 @@ func newFeatureLinkFixture(t *testing.T, runnerWrap func(sysext.PathSysextRunner
 		}
 	}
 
-	var runner sysext.SysextRunner = &sysext.DefaultRunner{}
-	if runnerWrap != nil {
-		runner = runnerWrap(&sysext.DefaultRunner{})
-	}
+	f.rollbackDir = filepath.Join(t.TempDir(), "rollback")
+	f.lockPath = filepath.Join(t.TempDir(), "lock")
+	f.defDir = defDir
 	f.client = NewClient(ClientConfig{
 		SysextRunner: runner,
 		Progress:     reporter.NewTextReporter(f.out),
@@ -126,7 +146,8 @@ func newFeatureLinkFixture(t *testing.T, runnerWrap func(sysext.PathSysextRunner
 			SysextLinkDir:     f.linkDir,
 			SysextHierarchies: []string{f.hierarchy},
 			RunExtensionsDir:  t.TempDir(),
-			LockPath:          filepath.Join(t.TempDir(), "lock"),
+			LockPath:          f.lockPath,
+			RollbackDir:       f.rollbackDir,
 		},
 	})
 	return f

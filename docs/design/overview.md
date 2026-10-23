@@ -38,6 +38,8 @@ updex/                          Public SDK (Client + methods)
                                 verify), then linkStaged() links all or none
                                 (snapshot + restore), then the vacuum
                                 Reuses parsed patterns from getAvailableVersions
+  rollback.go                   RollbackFeature(), the rollback record
+                                (/var/lib/updex/rollback/<feature>, RuntimePaths.RollbackDir)
   lock.go                       ErrBusy, acquireLock() — the exclusive,
                                 non-blocking flock every mutating operation holds
                                 (RuntimePaths.LockPath, default /run/updex/lock)
@@ -596,6 +598,53 @@ guessing. The package-level `Vacuum`, `VacuumAt`, `VacuumWithDetails`,
 `PlanVacuumAfterInstall` and `PlanVacuumAfterInstallAt` remain compatibility
 wrappers that do not know the link or the hierarchies.
 
+### Rollback (ADR-0016)
+
+`updex features rollback <name> [--to VERSION] [--now] [--clear]` is
+`Client.RollbackFeature` (`updex/rollback.go`). It plans first and changes
+nothing when any transfer of the feature blocks it:
+
+- **Target.** Per transfer, the newest staged version older than the linked one
+  (`sysext.StagedVersionsAt`, `LinkedVersionAt`, `version.Compare`), or `--to`
+  for all. With several transfers each one goes to its own newest older version
+  (a feature's transfers share a revision in practice, but the rule must not
+  invent a common version when they differ). A missing link, a missing staged
+  version, a target equal to or newer than the linked version: the error lists
+  every blocking transfer.
+- **Record.** `<RollbackDir>/<feature>`, JSON, `format` 1: `{"format":1,
+  "feature":…,"created":…,"rejected":{"<component>":"<version>"}}`. One rejected
+  version per transfer: the version rolled back from, or a higher one an earlier
+  record already holds, so a second rollback never lowers the hold. JSON with an
+  explicit `format` lets a later updex change the shape while an older one fails
+  closed on it. Written with a temp file plus rename after `Lstat` checks of the
+  directory and file; the feature name goes through `catalog.ValidateSysextName`
+  first.
+- **Order.** Record first, then the links (`linkAllOrNone` with
+  `sysext.LinkVersionAt`), then the optional refresh. A crash between the record
+  and the links leaves a hold on the current link, which is harmless; the other
+  order would leave a rolled-back link that the next update undoes. A link
+  failure restores the links (Phase 1 snapshot/restore) and the previous record.
+- **Update path.** `installTransfers` reads the record before it stages
+  anything. An unreadable record fails closed for that feature only (nothing
+  downloaded or linked, an error on every transfer). When any transfer's newest
+  available version is not newer than its rejected version, the whole feature is
+  held (`holdByRollback`): no download, no link, so the stage step's "already
+  staged, relink" branch can never point the link back at the newest staged
+  image, which is the rejected one. Held is a result state
+  (`UpdateResult.Held`, `RejectedVersion`), not an error. A newer revision is
+  staged and linked together as usual; the vacuum then runs with the record's
+  rejected version in `VacuumPaths.ProtectVersions`, and the record is deleted
+  after the links succeeded. `EnableFeature{Now}` shares this path.
+- **Status.** `TransferStatus.RollbackRejected` and `CheckResult.RollbackRejected`
+  (JSON `rollback_rejected`); `UpdateAvailable` is false while the newest version
+  is not newer than the rejected one. The CLI marks it `held (rejected X)` in
+  `features check` and with a `HELD BY ROLLBACK:` footer in `features list`.
+- **`--now`** refreshes through the runner after listing the other pending
+  activations; without it the rollback applies at the next boot. `--clear`
+  deletes the record and changes no link; a missing record is success.
+- **CLI.** Root is required except with `--dry-run`. The command takes the
+  operation lock like every mutating command.
+
 ### Operation lock
 
 Every mutating SDK operation (`UpdateFeatures`, `EnableFeature`,
@@ -683,6 +732,12 @@ updex features disable <name>           Disable a feature (without --now the
 updex features update                   Download and install new versions
   --no-vacuum                           Skip removing old versions
   --dry-run                             Preview update work without filesystem/sysext changes
+updex features rollback <name>          Link every transfer to an older staged version and
+                                         record the rejected one; update holds until a newer
+                                         version is published
+  --to <version>                        Link this staged version (all transfers)
+  --now                                 Apply with a systemd-sysext refresh
+  --clear                               Delete the rollback record, change no link
 updex features check                    Check for available updates; CURRENT is the version
                                          the systemd-sysext link points to (staging
                                          fallback when there is no usable link);
@@ -723,7 +778,7 @@ Global flags:
   --verbose                             Enable debug output (from clix)
 ```
 
-Mutating commands enforce root before reading `--dry-run`, so examples that preview `features enable`, `features disable`, `features update`, `daemon enable`, or `daemon disable` may still need `sudo` when run through the CLI.
+`features rollback` is the exception: it requires root only without `--dry-run`. Other mutating commands enforce root before reading `--dry-run`, so examples that preview `features enable`, `features disable`, `features update`, `daemon enable`, or `daemon disable` may still need `sudo` when run through the CLI.
 
 ## Dependencies
 

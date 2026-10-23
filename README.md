@@ -70,6 +70,9 @@ sudo updex features disable docker --now  # Unmerge and remove images now
 sudo updex features disable docker --now --force # If currently merged; reboot required
 sudo updex features update                # Install newest versions
 sudo updex features update --no-vacuum    # Keep older versions
+sudo updex features rollback docker       # Link the previous staged version (next boot)
+sudo updex features rollback docker --to r4 --now  # A given version, applied by a refresh
+sudo updex features rollback --clear docker        # Delete the rollback record
 sudo updex --dry-run features update      # Preview without modifying state
 updex features check                      # Check for updates (read-only)
 updex components                          # List discovered named components
@@ -148,6 +151,34 @@ and the table shows the failure on that transfer and
 features still update. If a link fails part-way, the links already moved are
 put back.
 
+**Rolling back:** `updex features rollback <name>` links every transfer of
+a feature to an older version that is still staged on disk, and records the
+version it rolled back from as rejected. By default each transfer goes to its
+own newest staged version older than the one its link names; `--to VERSION`
+sets one version for all of them. If any transfer has no such version on disk
+(or no link), nothing changes and the command fails with, for example,
+`version r4 of docker is not on disk`. The links move together: if one fails,
+the others are put back. Without `--now` the rollback takes effect at the next
+boot; with `--now` it takes effect through a `systemd-sysext refresh` (the
+warning lists other sysexts that the refresh activates too; `--no-refresh`
+skips it). `--dry-run` previews and needs no root.
+
+The record is `/var/lib/updex/rollback/<feature>` (JSON, one rejected version
+per transfer). While it exists, `updex features update` and the timer link
+nothing at or below the rejected version and download nothing for that
+feature: the run reports `held by rollback: rejected <version>` and exits 0.
+When a newer version is published, the next update downloads and links it
+(all transfers of the feature together) and deletes the record. A feature is
+held as a whole: if one transfer has a newer version and another does not,
+neither moves. `updex features rollback --clear <name>` deletes the record
+without changing a link (a missing record is not an error); the next update
+then links the newest version again. If the record cannot be read (malformed,
+not a regular file), updates link nothing for that feature and report an
+error until you fix or clear it. The vacuum keeps the rejected version while
+the record exists. `features check` shows `held (rejected <version>)` in the
+`UPDATE` column (JSON `rollback_rejected`) and `features list` ends with a
+`HELD BY ROLLBACK:` line.
+
 **What the vacuum keeps:** after the links succeeded, `features update`
 removes old images but always keeps, per transfer, the image the link names
 (it merges at the next boot), the image merged now (the one the host runs),
@@ -161,7 +192,7 @@ deletes nothing and warns.
 `catalog remove`, `daemon enable`, `daemon disable`) takes an exclusive lock on
 `/run/updex/lock` and never waits for it. Dry runs and read-only commands
 (`features list`, `features check`, `components`, `catalog list`,
-`daemon status`) do not take it. When another updex operation holds the lock:
+`daemon status`) do not take it. `features rollback` takes it too. When another updex operation holds the lock:
 
 - in an interactive shell the command prints
   `another updex operation is running` and exits non-zero;

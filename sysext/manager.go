@@ -717,7 +717,55 @@ func LinkToSysextAt(t *config.Transfer, sysextDir string) error {
 		return fmt.Errorf("no installed versions found for %s", t.Component)
 	}
 
-	actualTargetPath := filepath.Join(targetDirAt(t, sysextDir), files[0].filename)
+	return linkImageAt(t, sysextDir, files[0].filename)
+}
+
+// StagedVersionsAt lists the versions of the transfer's images that are
+// staged on disk (regular files in the target directory that match the target
+// patterns), newest first. defaultDir is the fallback directory for a
+// transfer that omits Target.Path. It returns nil with a nil error when the
+// directory does not exist.
+func StagedVersionsAt(t *config.Transfer, defaultDir string) ([]string, error) {
+	files, err := installedVersionFilesAt(t, defaultDir)
+	if err != nil {
+		return nil, err
+	}
+	var versions []string
+	for _, f := range files {
+		if !slices.Contains(versions, f.version) {
+			versions = append(versions, f.version)
+		}
+	}
+	return versions, nil
+}
+
+// LinkVersionAt creates (or atomically replaces) the symlink
+// <sysextDir>/<SysextLinkName(t)> so that it points to the staged image of
+// exactly the given version, not the newest one. It is what a rollback uses.
+// It errors, and changes nothing, when that version is not staged.
+func LinkVersionAt(t *config.Transfer, sysextDir, ver string) error {
+	linkName := SysextLinkName(t)
+	if linkName == "" {
+		return fmt.Errorf("cannot determine sysext link name")
+	}
+
+	files, err := installedVersionFilesAt(t, sysextDir)
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		if f.version == ver {
+			return linkImageAt(t, sysextDir, f.filename)
+		}
+	}
+	return fmt.Errorf("version %s of %s is not on disk", ver, t.Component)
+}
+
+// linkImageAt points <sysextDir>/<SysextLinkName(t)> at the staged file
+// filename (a base name in the transfer's target directory).
+func linkImageAt(t *config.Transfer, sysextDir, filename string) error {
+	linkName := SysextLinkName(t)
+	actualTargetPath := filepath.Join(targetDirAt(t, sysextDir), filename)
 	destSymlink := filepath.Join(sysextDir, linkName)
 
 	// Ensure the sysext directory exists
