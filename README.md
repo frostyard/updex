@@ -178,9 +178,10 @@ without changing a link (a missing record is not an error); the next update
 then links the newest version again. If the record cannot be read (malformed,
 not a regular file), updates link nothing for that feature and report an
 error until you fix or clear it. The vacuum keeps the rejected version while
-the record exists. `features check` shows `held (rejected <version>)` in the
-`UPDATE` column (JSON `rollback_rejected`) and `features list` ends with a
-`HELD BY ROLLBACK:` line.
+the record exists. `features check` shows `held (rejected <version>)`, or
+`held (by rollback of <feature>: …)` when another component of the record is
+the reason, in the `UPDATE` column (JSON `rollback_rejected` and
+`rollback_held_by`), and `features list` ends with a `HELD BY ROLLBACK:` line.
 
 A transfer can belong to more than one feature (`Features=` or
 `RequisiteFeatures=` in its `.transfer` file). The hold covers **every**
@@ -192,6 +193,17 @@ transfer, the highest rejected version applies. If one of those records cannot
 be read, updates link nothing for every feature that shares the transfer and
 name the feature whose record failed. The record is deleted once every version
 it rejects is behind a link, whichever feature's update got there first.
+
+A shared transfer advances only when the whole record that applies to it can
+advance. The record covers every component it names, also one that the feature
+being updated does not use: each of them must have a version newer than the one
+the record rejects. So a feature that shares only one transfer of a
+rolled-back feature stays held while another component of that record has no
+newer version, and the message names it, for example `held by rollback of
+grp: beta has no version newer than 2.0.0`. A component the record names whose
+transfer is not in the loaded definitions (for example with `-C` or a narrowed
+`--component`) also keeps the hold, because updex cannot tell whether a newer
+version exists; `features check` shows it as `rollback_held_by`.
 
 A publisher that bumps only one component of a multi-transfer feature keeps
 the hold, because every transfer must have a version newer than its rejected

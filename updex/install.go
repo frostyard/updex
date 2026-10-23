@@ -194,6 +194,26 @@ type transferInstall struct {
 	// transfer. It is empty when no record names this component and the
 	// transfer is held only because another transfer of its feature is.
 	heldVersion string
+
+	// heldReason says why a record holds the whole feature when this
+	// transfer's own rejected version is not the reason, for example
+	// "grp: beta has no version newer than 2.0.0". Empty when heldVersion
+	// is the reason, and when the transfer is not held.
+	heldReason string
+}
+
+// heldMessage renders why the rollback holds this transfer: the record's
+// component and version when the transfer itself is the reason, else the
+// record and component that keep the whole feature from advancing.
+func (in transferInstall) heldMessage(feature string) string {
+	switch {
+	case in.heldReason != "":
+		return "held by rollback of " + in.heldReason
+	case in.heldVersion != "":
+		return "held by rollback: rejected " + in.heldVersion
+	default:
+		return "held by rollback: another transfer of feature " + feature + " is held"
+	}
 }
 
 // errNotLinked builds the error that a transfer reports when another
@@ -224,8 +244,10 @@ type installFeatureOptions struct {
 
 	// Domain is every transfer the calling operation loaded. A rollback
 	// record can name a component that this feature's transfers do not
-	// cover; the record may then be deleted only when that component's own
-	// link is newer too, which needs its transfer.
+	// cover: the record holds the feature only while that component has no
+	// newer version, so its transfer and available versions are needed to
+	// decide the hold, and its link decides whether the record may be
+	// deleted.
 	Domain []*config.Transfer
 }
 
@@ -295,8 +317,21 @@ func (c *Client) installTransfers(ctx context.Context, feature string, transfers
 	for i, transfer := range transfers {
 		results[i].rejected = holds.rejected[transfer.Component]
 	}
-	if len(holds.rejected) > 0 {
-		if c.holdByRollback(ctx, feature, transfers, holds.rejected, manifests, results) {
+	if len(holds.records) > 0 {
+		// A record covers every component it names, also one outside this
+		// feature's transfers, so the feature stays whole whatever the
+		// other component's newest version is.
+		reason, err := c.rollbackHoldReason(ctx, transfers, opts.Domain, holds, manifests)
+		if err != nil {
+			// The versions that decide whether the record still holds
+			// cannot be read: link nothing, as for an unreadable record.
+			for i := range results {
+				results[i].err = fmt.Errorf("not linking feature %s: %w", feature, err)
+			}
+			return results
+		}
+		if reason != nil {
+			c.holdFeature(transfers, holds, reason, results)
 			return results
 		}
 	}
@@ -373,51 +408,24 @@ func (c *Client) installTransfers(ctx context.Context, feature string, transfers
 	return results
 }
 
-// holdByRollback reports whether the rollback records that apply hold the
-// feature, and fills results when they do. The feature is held when, for any
-// transfer, the newest available version is not newer than the version the
-// records reject for it (compared with version.Compare). It then downloads and
-// links nothing for any transfer, so the feature never ends split between a
-// new and an old revision. A transfer whose versions cannot be listed gets its
-// error and the others errNotLinked, as in the stage step.
-func (c *Client) holdByRollback(ctx context.Context, feature string, transfers []*config.Transfer, rejected map[string]string, manifests map[string]*manifest.Manifest, results []transferInstall) bool {
-	held := false
-	failed := false
-	for i, transfer := range transfers {
-		available, m, _, err := c.getAvailableVersions(ctx, transfer, manifests[transfer.Source.Path])
-		if m != nil {
-			manifests[transfer.Source.Path] = m
-		}
-		if err == nil && len(available) == 0 {
-			err = fmt.Errorf("no versions available")
-		}
-		if err != nil {
-			results[i].err = fmt.Errorf("failed to get available versions: %w", err)
-			failed = true
-			continue
-		}
-		version.Sort(available)
-		if rej := rejected[transfer.Component]; rej != "" && version.Compare(available[0], rej) <= 0 {
-			held = true
-		}
-	}
-	if failed {
-		c.markNotLinked(feature, results)
-		return true
-	}
-	if !held {
-		return false
-	}
+// holdFeature reports that an applicable rollback record holds the feature,
+// so nothing is downloaded or linked for any of its transfers: the feature
+// never ends split between a new and an old revision. The transfer whose own
+// rejected version is the reason reports that version; the others report the
+// record component that keeps the whole feature from advancing.
+func (c *Client) holdFeature(transfers []*config.Transfer, holds rollbackHolds, reason *rollbackHoldReason, results []transferInstall) {
 	for i, transfer := range transfers {
 		linked, err := sysext.LinkedVersionAt(transfer, c.paths.sysextLinkDir)
 		if err != nil {
 			linked = ""
 		}
 		results[i].held = true
-		results[i].heldVersion = rejected[transfer.Component]
+		results[i].heldVersion = holds.rejected[transfer.Component]
+		if reason.component != transfer.Component {
+			results[i].heldReason = reason.String()
+		}
 		results[i].outcome = installOutcome{Version: linked}
 	}
-	return true
 }
 
 // markNotLinked gives every transfer that has no error of its own the
@@ -559,7 +567,7 @@ func (s *linkSnapshot) restore() error {
 // When a link fails, it restores the links already moved, including the
 // failing one, and returns the index of the failing transfer and the link
 // error joined with every restore failure. restoreFailed maps the indexes
-// (before failed) whose restore failed to that failure: their link may still point at the new
+// (up to and including failed) whose restore failed to that failure: their link may still point at the new
 // version. Backups are removed at the end, except one whose restore failed,
 // which holds the only copy of the file. On success failed is -1.
 func (c *Client) linkAllOrNone(transfers []*config.Transfer, link func(i int, t *config.Transfer) error) (failed int, restoreFailed map[int]error, err error) {
@@ -587,12 +595,12 @@ func (c *Client) linkAllOrNone(transfers []*config.Transfer, link func(i int, t 
 				rerr = fmt.Errorf("failed to restore sysext link for %s: %w", transfers[j].Component, rerr)
 				c.warn("%s", rerr)
 				errs = append(errs, rerr)
-				if j < i {
-					if restoreFailed == nil {
-						restoreFailed = make(map[int]error)
-					}
-					restoreFailed[j] = rerr
+				// The failing transfer's link may have moved before link
+				// returned the error, so it is recorded too.
+				if restoreFailed == nil {
+					restoreFailed = make(map[int]error)
 				}
+				restoreFailed[j] = rerr
 			}
 			return i, restoreFailed, errors.Join(errs...)
 		}
@@ -627,10 +635,16 @@ func (c *Client) linkStaged(feature string, transfers []*config.Transfer, staged
 		results[idx[failed]].err = err
 		c.markNotLinked(feature, results)
 		for j, rerr := range restoreFailed {
-			// This transfer's link had moved and could not be put back: it
-			// may still point at the new version, so it must not read as
-			// not linked.
-			results[idx[j]].err = fmt.Errorf("%w; the link may point at the new version", rerr)
+			// This transfer's link may have moved and could not be put
+			// back: it may still point at the new version, so it must not
+			// read as not linked. The failing transfer keeps its link error
+			// too.
+			rerr = fmt.Errorf("%w; the link may point at the new version", rerr)
+			if j == failed {
+				results[idx[j]].err = errors.Join(err, rerr)
+			} else {
+				results[idx[j]].err = rerr
+			}
 			results[idx[j]].notLinked = false
 		}
 		return err

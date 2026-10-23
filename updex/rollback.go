@@ -16,6 +16,7 @@ import (
 
 	"github.com/frostyard/updex/v2/catalog"
 	"github.com/frostyard/updex/v2/config"
+	"github.com/frostyard/updex/v2/manifest"
 	"github.com/frostyard/updex/v2/sysext"
 	"github.com/frostyard/updex/v2/version"
 )
@@ -276,6 +277,118 @@ func (c *Client) collectRollbackHolds(transfers []*config.Transfer) rollbackHold
 		holds.errs[component] = errors.Join(errs...)
 	}
 	return holds
+}
+
+// rollbackHoldReason is one reason an applicable rollback record still holds a
+// feature: a component the record rejects has no available version newer than
+// the rejected one, so linking the newest version would undo the rollback.
+// The component can be one outside the feature's own transfers: a feature's
+// transfers link together, so a record that still holds any of them holds the
+// whole feature.
+type rollbackHoldReason struct {
+	// feature is the feature whose record holds.
+	feature string
+
+	// component is the record component that keeps the record in force.
+	component string
+
+	// rejected is the version the record rejects for component.
+	rejected string
+
+	// newest is the newest available version of component. It is empty when
+	// the component's source lists no version.
+	newest string
+
+	// noTransfer reports that component has no transfer in the loaded
+	// domain, so the operation cannot tell whether a newer version exists.
+	noTransfer bool
+}
+
+// String renders the reason for a hold message:
+// "grp: beta has no version newer than 2.0.0", or, when the record names a
+// component the operation has no transfer for, "grp: beta has no transfer in
+// the loaded definitions".
+func (h *rollbackHoldReason) String() string {
+	if h.noTransfer {
+		return fmt.Sprintf("%s: %s has no transfer in the loaded definitions", h.feature, h.component)
+	}
+	return fmt.Sprintf("%s: %s has no version newer than %s", h.feature, h.component, h.rejected)
+}
+
+// rollbackHoldLookupError reports that the newest available version of a
+// component an applicable rollback record names could not be read. The
+// operation cannot tell whether the record still holds, so it links nothing
+// for the feature (fail closed), as it does for a record it cannot read.
+type rollbackHoldLookupError struct {
+	// feature is the feature whose record names component.
+	feature string
+
+	// component is the record component whose versions could not be read.
+	component string
+
+	// err is the failure to read them.
+	err error
+}
+
+// Error implements error.
+func (e *rollbackHoldLookupError) Error() string {
+	return fmt.Sprintf("rollback record of feature %s needs the newest version of %s: %v", e.feature, e.component, e.err)
+}
+
+// Unwrap returns the failure to read the versions.
+func (e *rollbackHoldLookupError) Unwrap() error { return e.err }
+
+// rollbackHoldReason reports whether an applicable rollback record still holds
+// transfers, and why (ADR-0016).
+//
+// A record still holds when any component it rejects has no available version
+// newer than the rejected one (version.Compare), because the update would then
+// link at or below the version the rollback left. It covers every component
+// the record names, also one outside transfers: that component's transfer is
+// looked up in domain, and its versions are read through manifests, the
+// per-call cache. A component with no transfer in domain holds the record too
+// (fail closed): without its newest version the operation cannot tell whether
+// the rollback is over, and it must never link a rejected version by default.
+// A failure to read a component's versions is a *rollbackHoldLookupError: the
+// caller then links nothing for the feature, rather than guess. Only one
+// reason is returned, from the record and component that sort first, so the
+// message is stable.
+func (c *Client) rollbackHoldReason(ctx context.Context, transfers, domain []*config.Transfer, holds rollbackHolds, manifests map[string]*manifest.Manifest) (*rollbackHoldReason, error) {
+	if len(holds.records) == 0 {
+		return nil, nil
+	}
+	if manifests == nil {
+		manifests = make(map[string]*manifest.Manifest)
+	}
+	for _, name := range slices.Sorted(maps.Keys(holds.records)) {
+		rejectedVersions := holds.records[name].Rejected
+		for _, component := range slices.Sorted(maps.Keys(rejectedVersions)) {
+			rejected := rejectedVersions[component]
+			t := transferForComponent(component, transfers)
+			if t == nil {
+				t = transferForComponent(component, domain)
+			}
+			if t == nil {
+				return &rollbackHoldReason{feature: name, component: component, rejected: rejected, noTransfer: true}, nil
+			}
+			available, m, _, err := c.getAvailableVersions(ctx, t, manifests[t.Source.Path])
+			if m != nil {
+				manifests[t.Source.Path] = m
+			}
+			if err != nil {
+				return nil, &rollbackHoldLookupError{feature: name, component: component, err: err}
+			}
+			newest := ""
+			if len(available) > 0 {
+				version.Sort(available)
+				newest = available[0]
+			}
+			if newest == "" || version.Compare(newest, rejected) <= 0 {
+				return &rollbackHoldReason{feature: name, component: component, rejected: rejected, newest: newest}, nil
+			}
+		}
+	}
+	return nil, nil
 }
 
 // deleteFinishedRollbackRecords deletes every applicable record that a link

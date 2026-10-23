@@ -60,7 +60,10 @@ func runFeaturesList(cmd *cobra.Command, args []string) error {
 		table.Rowf("%s\t%s\t%s\t%s\t%s\t%s\t%s\n", f.Name, f.Description, status, formatOrigin(f), transfersStr, running, linked)
 
 		for _, ts := range f.TransferStatus {
-			if ts.RollbackRejected != "" {
+			switch {
+			case ts.RollbackHeldBy != "":
+				held = append(held, fmt.Sprintf("%s (held by rollback of %s)", ts.Component, ts.RollbackHeldBy))
+			case ts.RollbackRejected != "":
 				held = append(held, fmt.Sprintf("%s (rejected %s)", ts.Component, ts.RollbackRejected))
 			}
 			if ts.NeedsImage != "" {
@@ -352,9 +355,11 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 			} else if r.NotLinked {
 				status = "not linked: another transfer needs a newer image"
 			} else if r.Held {
-				status = "held by rollback"
-				if r.RejectedVersion != "" {
-					status += ": rejected " + r.RejectedVersion
+				// NextActionMessage names what holds the feature, also when
+				// another component of the record is the reason.
+				status = r.NextActionMessage
+				if status == "" {
+					status = "held by rollback"
 				}
 			} else if r.DryRun && r.Downloaded {
 				status = "would download"
@@ -475,6 +480,8 @@ func runFeaturesCheck(cmd *cobra.Command, args []string) error {
 				update = r.NeedsImage
 			case r.UpdateAvailable:
 				update = "yes"
+			case r.RollbackHeldBy != "":
+				update = "held (by rollback of " + r.RollbackHeldBy + ")"
 			case r.RollbackRejected != "":
 				update = "held (rejected " + r.RollbackRejected + ")"
 			}

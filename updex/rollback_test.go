@@ -3,6 +3,8 @@ package updex
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -885,7 +887,16 @@ func (f *rollbackFixture) addSharedFeature(name string) {
 	f.t.Helper()
 	createFeatureFile(f.t, f.defDir, name, true)
 	for _, component := range f.components {
-		content := `[Transfer]
+		f.shareTransfer(name, component)
+	}
+}
+
+// shareTransfer rewrites one transfer so that it also names the given feature
+// (Features=grp <name>).
+func (f *rollbackFixture) shareTransfer(name, component string) {
+	f.t.Helper()
+	createFeatureFile(f.t, f.defDir, name, true)
+	content := `[Transfer]
 Features=grp ` + name + `
 Verify=false
 
@@ -898,8 +909,7 @@ MatchPattern=` + component + `_@v.raw
 Path=` + f.targetDir + `
 MatchPattern=` + component + `_@v.raw
 `
-		writeTestFile(f.t, filepath.Join(f.defDir, component+".transfer"), content)
-	}
+	writeTestFile(f.t, filepath.Join(f.defDir, component+".transfer"), content)
 }
 
 // addUnrelatedFeature writes a second, enabled feature with its own component
@@ -1075,6 +1085,225 @@ func TestUpdateFeatures_MalformedSharedRecordFailsClosed(t *testing.T) {
 	}
 	if got := f.linkTarget("gamma"); got != "gamma_2.0.0.raw" {
 		t.Errorf("gamma link = %s, want gamma_2.0.0.raw", got)
+	}
+}
+
+// newSplitRollbackFixture: grp has alpha and beta, other shares only alpha
+// (alpha.transfer names both features, beta.transfer only grp). Both
+// components have 1.0.0 and 2.0.0 staged and 2.0.0 linked, and grp is rolled
+// back to 1.0.0, so its record rejects 2.0.0 for both.
+func newSplitRollbackFixture(t *testing.T) *rollbackFixture {
+	t.Helper()
+	f := newRollbackFixture(t, "alpha", "beta")
+	for _, component := range []string{"alpha", "beta"} {
+		f.setup(component, "2.0.0", "1.0.0", "2.0.0")
+	}
+	f.shareTransfer("other", "alpha")
+	if _, err := f.rollback(RollbackFeatureOptions{}); err != nil {
+		t.Fatalf("RollbackFeature: %v", err)
+	}
+	return f
+}
+
+// The record of grp also rejects beta, which other does not use. Publishing a
+// newer alpha must not let other split the rolled-back feature: alpha stays at
+// 1.0.0 because beta has no newer version, and the hold message names beta
+// (the review finding).
+func TestUpdateFeatures_SharedFeatureCannotSplitAnotherFeaturesRollback(t *testing.T) {
+	f := newSplitRollbackFixture(t)
+	f.servers["alpha"].publish("3.0.0")
+
+	results, err := f.update()
+	if err != nil {
+		t.Fatalf("a held run must not fail: %v", err)
+	}
+	by := updateResultsByFeature(t, results)
+	for _, name := range []string{"grp", "other"} {
+		r := by[name]["alpha"]
+		if !r.Held || r.Error != "" || r.Downloaded || r.Version != "1.0.0" {
+			t.Errorf("%s alpha result = %+v", name, r)
+		}
+		if !strings.Contains(r.NextActionMessage, "beta") || !strings.Contains(r.NextActionMessage, "2.0.0") {
+			t.Errorf("%s alpha message = %q; it must name beta, the component that holds the record", name, r.NextActionMessage)
+		}
+	}
+	if r := by["grp"]["beta"]; !r.Held || r.RejectedVersion != "2.0.0" || r.Error != "" {
+		t.Errorf("grp beta result = %+v", r)
+	}
+	f.wantLinks(map[string]string{"alpha": "1.0.0", "beta": "1.0.0"})
+	if got := f.gets(); got != 0 {
+		t.Errorf("%d image download(s); a held run downloads nothing", got)
+	}
+	f.readRecord()
+}
+
+// EnableFeature --now through the sharing feature gets the same whole-record
+// hold.
+func TestEnableFeatureNow_SharedFeatureCannotSplitAnotherFeaturesRollback(t *testing.T) {
+	f := newSplitRollbackFixture(t)
+	f.servers["alpha"].publish("3.0.0")
+
+	result, err := f.client.EnableFeature(t.Context(), "other", EnableFeatureOptions{Now: true, NoRefresh: true})
+	if err != nil || !result.Success {
+		t.Fatalf("EnableFeature = %+v, %v", result, err)
+	}
+	if len(result.DownloadedFiles) != 0 {
+		t.Errorf("downloaded = %v", result.DownloadedFiles)
+	}
+	f.wantLinks(map[string]string{"alpha": "1.0.0", "beta": "1.0.0"})
+	if got := f.gets(); got != 0 {
+		t.Errorf("%d image download(s); a held run downloads nothing", got)
+	}
+	if !strings.Contains(f.out.String(), "beta") {
+		t.Errorf("the hold message must name beta; output:\n%s", f.out.String())
+	}
+	f.readRecord()
+}
+
+// Once beta has a newer version too, the whole record can advance: both
+// components link 3.0.0 and grp's record is deleted.
+func TestUpdateFeatures_SharedFeatureAdvancesWhenEveryRecordComponentAdvances(t *testing.T) {
+	f := newSplitRollbackFixture(t)
+	f.servers["alpha"].publish("3.0.0")
+	f.servers["beta"].publish("3.0.0")
+
+	results, err := f.update()
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	by := updateResultsByFeature(t, results)
+	for _, name := range []string{"grp", "other"} {
+		r := by[name]["alpha"]
+		if r.Held || r.Error != "" || r.Version != "3.0.0" {
+			t.Errorf("%s alpha result = %+v", name, r)
+		}
+	}
+	if r := by["grp"]["beta"]; r.Held || r.Error != "" || r.Version != "3.0.0" {
+		t.Errorf("grp beta result = %+v", r)
+	}
+	f.wantLinks(map[string]string{"alpha": "3.0.0", "beta": "3.0.0"})
+	f.noRecord()
+	if got := f.gets(); got != 2 {
+		t.Errorf("%d image download(s), want 2: each new image is downloaded once", got)
+	}
+}
+
+// A record component whose transfer is not in the loaded definitions cannot be
+// checked for a newer version, so the sharing feature stays held (fail
+// closed) instead of advancing on the components it can see.
+func TestUpdateFeatures_RecordComponentWithNoTransferHoldsTheFeature(t *testing.T) {
+	f := newSplitRollbackFixture(t)
+	f.servers["alpha"].publish("3.0.0")
+	if err := os.Remove(filepath.Join(f.defDir, "beta.transfer")); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := f.update()
+	if err != nil {
+		t.Fatalf("a held run must not fail: %v", err)
+	}
+	by := updateResultsByFeature(t, results)
+	for _, name := range []string{"grp", "other"} {
+		r := by[name]["alpha"]
+		if !r.Held || r.Error != "" || r.Downloaded {
+			t.Errorf("%s alpha result = %+v", name, r)
+		}
+		if !strings.Contains(r.NextActionMessage, "beta") || !strings.Contains(r.NextActionMessage, "no transfer") {
+			t.Errorf("%s alpha message = %q; it must name the record component without a transfer", name, r.NextActionMessage)
+		}
+	}
+	f.wantLinks(map[string]string{"alpha": "1.0.0", "beta": "1.0.0"})
+	if got := f.gets(); got != 0 {
+		t.Errorf("%d image download(s); a held run downloads nothing", got)
+	}
+	f.readRecord()
+}
+
+// A record component whose versions cannot be read fails closed: nothing is
+// downloaded or linked for the sharing feature, and the error names the record
+// and the component. The record stays.
+func TestUpdateFeatures_RecordComponentLookupFailureLinksNothing(t *testing.T) {
+	f := newSplitRollbackFixture(t)
+	f.servers["alpha"].publish("3.0.0")
+	// A 404 manifest is non-transient, so the lookup fails at once.
+	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(broken.Close)
+	createFeatureTransferFileWithoutCurrentSymlink(t, f.defDir, "beta", "grp", broken.URL, f.targetDir)
+
+	results, err := f.update()
+	if err == nil {
+		t.Fatal("expected an error when a record component cannot be read")
+	}
+	by := updateResultsByFeature(t, results)
+	for _, name := range []string{"grp", "other"} {
+		r := by[name]["alpha"]
+		if r.Held || r.Downloaded || !strings.Contains(r.Error, "rollback record of feature grp") || !strings.Contains(r.Error, "beta") {
+			t.Errorf("%s alpha result = %+v", name, r)
+		}
+	}
+	f.wantLinks(map[string]string{"alpha": "1.0.0", "beta": "1.0.0"})
+	if got := f.gets(); got != 0 {
+		t.Errorf("%d image download(s); nothing may be downloaded", got)
+	}
+	f.readRecord()
+}
+
+// features list and features check report the hold of the sharing feature,
+// including the record component that keeps it in force.
+func TestFeaturesAndCheck_SharedFeatureHeldByAnotherComponent(t *testing.T) {
+	f := newSplitRollbackFixture(t)
+	f.servers["alpha"].publish("3.0.0")
+	const wantHeldBy = "grp: beta has no version newer than 2.0.0"
+
+	infos, err := f.client.Features(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 2 {
+		t.Fatalf("features = %+v, want grp and other", infos)
+	}
+	for _, info := range infos {
+		var found bool
+		for _, status := range info.TransferStatus {
+			if status.Component != "alpha" {
+				continue
+			}
+			found = true
+			if status.RollbackRejected != "2.0.0" || status.RollbackHeldBy != wantHeldBy {
+				t.Errorf("features list %s = %+v", info.Name, status)
+			}
+		}
+		if !found {
+			t.Fatalf("%s has no alpha status: %+v", info.Name, info.TransferStatus)
+		}
+	}
+
+	check, err := f.client.CheckFeatures(t.Context(), CheckFeaturesOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(check) != 2 {
+		t.Fatalf("check = %+v, want grp and other", check)
+	}
+	for _, c := range check {
+		var found bool
+		for _, r := range c.Results {
+			if r.Component != "alpha" {
+				continue
+			}
+			found = true
+			if r.UpdateAvailable || r.Error != "" || r.NewestVersion != "3.0.0" || r.LinkedVersion != "1.0.0" {
+				t.Errorf("check %s alpha = %+v", c.Feature, r)
+			}
+			if r.RollbackHeldBy != wantHeldBy {
+				t.Errorf("check %s alpha rollback_held_by = %q, want %q", c.Feature, r.RollbackHeldBy, wantHeldBy)
+			}
+		}
+		if !found {
+			t.Fatalf("%s has no alpha result: %+v", c.Feature, c.Results)
+		}
 	}
 }
 

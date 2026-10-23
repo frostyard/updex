@@ -46,7 +46,12 @@ type CheckResult struct {
 	// component (see TransferStatus.RollbackRejected). While NewestVersion is
 	// not newer than it, UpdateAvailable is false: `features update` holds.
 	RollbackRejected string `json:"rollback_rejected,omitempty"`
-	UpdateAvailable  bool   `json:"update_available"`
+	// RollbackHeldBy names why a record holds the feature although this
+	// component could advance (see TransferStatus.RollbackHeldBy), for
+	// example "grp: beta has no version newer than 2.0.0". While it is set,
+	// UpdateAvailable is false.
+	RollbackHeldBy  string `json:"rollback_held_by,omitempty"`
+	UpdateAvailable bool   `json:"update_available"`
 	// NeedsImage is "needs image >= <value>" when the newest staged image of
 	// this component is not linked and `features update` would not link it
 	// because its UPDEX_MIN_IMAGE_VERSION is higher than the next-boot image
@@ -75,11 +80,13 @@ type UpdateResult struct {
 	NextActionMessage string   `json:"next_action_message,omitempty"`
 	RemovedVersions   []string `json:"removed_versions,omitzero"`
 	// Held is true when the rollback records that apply to the transfers
-	// hold the feature: nothing newer than a rejected version is published,
-	// so nothing was downloaded or linked and every old link stays. It is
-	// not an error. A record of any feature that shares a transfer counts,
-	// not only the feature being updated. Version is the version the link
-	// names, and NextActionMessage says what is rejected.
+	// hold the feature: some component they name has no version newer than
+	// the one it rejects, so nothing was downloaded or linked and every old
+	// link stays. It is not an error. A record of any feature that shares a
+	// transfer counts, not only the feature being updated, and a component
+	// the record names outside this feature's transfers counts too. Version
+	// is the version the link names; NextActionMessage says what holds the
+	// feature.
 	Held bool `json:"held_by_rollback,omitempty"`
 	// RejectedVersion is the highest version the applicable rollback
 	// records reject for this transfer, when Held. Empty when the transfer

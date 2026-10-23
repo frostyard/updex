@@ -47,21 +47,28 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 	// staged unlinked image sets UPDEX_MIN_IMAGE_VERSION.
 	nextBoot := &nextBootImage{}
 
+	// Manifests are read only when a rollback record applies to a feature:
+	// whether the record still holds needs the newest available version of
+	// every component it names, also one outside the feature's transfers.
+	manifests := make(map[string]*manifest.Manifest)
+
 	for _, f := range features {
 		// Get transfers associated with this feature
 		featureTransfers := config.GetTransfersForFeature(transfers, f.Name)
 		var transferNames []string
 		var statuses []TransferStatus
 		// The records of every feature that shares one of the transfers
-		// apply, not only this feature's own (ADR-0016).
+		// apply, not only this feature's own (ADR-0016), and a record
+		// still holds when any component it names has no newer version.
 		holds := c.collectRollbackHolds(featureTransfers)
+		reason, holdErr := c.rollbackHoldReason(ctx, featureTransfers, transfers, holds, manifests)
 		for _, t := range featureTransfers {
 			transferNames = append(transferNames, t.Component)
 
 			// A transfer whose merged state or link cannot be read is
 			// reported as a warning, and keeps its other value, so one bad
 			// transfer never breaks the listing.
-			status := c.featureTransferStatus(t, holds)
+			status := c.featureTransferStatus(t, holds, reason, holdErr)
 			if status.Error != "" {
 				c.warn("%s: %s", t.Component, status.Error)
 			}
@@ -326,7 +333,7 @@ func (c *Client) enableFeature(ctx context.Context, name string, opts EnableFeat
 							notLinked = append(notLinked, reason)
 						}
 					case in.held:
-						c.msg("%s is held by a rollback (rejected %s); nothing was downloaded or linked", in.transfer.Component, in.heldVersion)
+						c.msg("%s: %s; nothing was downloaded or linked", in.transfer.Component, in.heldMessage(name))
 					case in.outcome.Downloaded:
 						result.DownloadedFiles = append(result.DownloadedFiles, fmt.Sprintf("%s@%s", in.transfer.Component, in.outcome.Version))
 						c.msg("Downloaded %s version %s", in.transfer.Component, in.outcome.Version)
@@ -741,17 +748,13 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 
 			if in.held {
 				// A rollback record holds the feature at an older version:
-				// nothing newer than the rejected one is published. The old
-				// links stay; this is not an error.
+				// some component it names has no newer version published.
+				// The old links stay; this is not an error.
 				result.Held = true
 				result.RejectedVersion = in.heldVersion
 				result.Version = in.outcome.Version
 				result.Installed = in.outcome.Version != ""
-				if in.heldVersion != "" {
-					result.NextActionMessage = "held by rollback: rejected " + in.heldVersion
-				} else {
-					result.NextActionMessage = "held by rollback: another transfer of feature " + f.Name + " is held"
-				}
+				result.NextActionMessage = in.heldMessage(f.Name)
 				c.msg("%s/%s: %s", f.Name, transfer.Component, result.NextActionMessage)
 				featureResult.Results = append(featureResult.Results, result)
 				continue
@@ -896,15 +899,18 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 		}
 
 		// Every rollback record that applies to these transfers counts, not
-		// only this feature's own (ADR-0016).
+		// only this feature's own (ADR-0016), and a record still holds when
+		// any component it names, inside this feature or not, has no newer
+		// version. The decision is the same one installTransfers makes.
 		holds := c.collectRollbackHolds(featureTransfers)
+		reason, holdErr := c.rollbackHoldReason(ctx, featureTransfers, transfers, holds, manifestCache)
 		for _, transfer := range featureTransfers {
 			c.msg("Checking %s/%s", f.Name, transfer.Component)
 
 			// What the host runs and what its next boot merges. A failure to
 			// read either is reported after the manifest check below, in this
 			// component's Error, with the values that could be read.
-			status := c.featureTransferStatus(transfer, holds)
+			status := c.featureTransferStatus(transfer, holds, reason, holdErr)
 
 			available, m, _, err := c.getAvailableVersions(ctx, transfer, manifestCache[transfer.Source.Path])
 			if m != nil {
@@ -965,6 +971,11 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 				// A rollback holds this transfer: update links nothing at or
 				// below the rejected version, so there is no update to take.
 				c.msg("Held by rollback: rejected %s (newest available %s)", rej, newest)
+			} else if status.RollbackHeldBy != "" {
+				// The record still holds another component of the record, and
+				// the feature's transfers link together, so update takes no
+				// new version for this one either.
+				c.msg("Held by rollback of %s (newest available %s)", status.RollbackHeldBy, newest)
 			} else if len(installed) == 0 {
 				result.UpdateAvailable = true
 				c.msg("New version available: %s", newest)
@@ -1012,6 +1023,7 @@ func checkResultFor(t *config.Transfer, status TransferStatus, newest string, er
 		PendingReboot:  status.PendingReboot,
 
 		RollbackRejected: status.RollbackRejected,
+		RollbackHeldBy:   status.RollbackHeldBy,
 	}
 	if err != nil {
 		r.Error = err.Error()
