@@ -220,6 +220,7 @@ Key packages:
 - `version/` — Pattern matching (`@v` placeholder) and semantic version comparison
 - `sysext/` — systemd-sysext integration with mockable `Runner` interface, `/var/lib/extensions` link management, and the vacuum (`VacuumWith`/`PlanVacuumWith` over `VacuumPaths`: it keeps the linked and the merged version, see "Feature install and retention" below)
 - `systemd/` — Generates/installs systemd timer+service units, mockable `Runner` interface
+- `imagecompat/` — Minimum-image-version check (ADR-0016): reads `extension-release.*` from a staged sysext image without mounting it (pure-Go GPT + EROFS reader, `ReadExtensionRelease`), finds the next-boot `IMAGE_VERSION` (`NextBootImageVersion`: `bootc status --json` through the mockable `BootcRunner`, else the booted `os-release`) and compares both as numbers (`CheckMinImageVersion`, key `UPDEX_MIN_IMAGE_VERSION`). No CLI imports; treats the image as untrusted input
 - `internal/retry/`, `internal/httpclient/`, `internal/testutil/` — HTTP retry policy, the shared default-HTTP-client constructor (`internal/httpclient.New`; enforces the HTTPS-to-HTTP redirect downgrade refusal used by `updex.NewClient`, `manifest.Fetch`, and `download.Download` when no caller-supplied client is given), and shared test helpers (HTTP test server)
 
 Entry point: `cmd/updex-cli/main.go` → `cmd/updex/root.go`
@@ -254,6 +255,7 @@ updex/
 ├── manifest/                 # SHA256SUMS handling and GPG verification
 ├── sysext/                   # systemd-sysext integration
 ├── systemd/                  # Timer and service unit management
+├── imagecompat/              # Minimum image version: extension-release reader, bootc version, check
 ├── version/                  # Pattern matching and version comparison
 ├── internal/
 │   ├── retry/                # Internal HTTP retry policy
@@ -286,6 +288,7 @@ afterwards.
 | `github.com/ulikunitz/xz`                 | XZ decompression            |
 | `github.com/klauspost/compress/zstd`      | Zstd decompression          |
 | `github.com/ProtonMail/go-crypto/openpgp` | GPG verification            |
+| `github.com/erofs/go-erofs`               | Read an EROFS sysext image without mounting it (`imagecompat/`; pure Go, Apache-2.0) |
 
 ### CLI commands
 

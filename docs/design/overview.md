@@ -87,7 +87,7 @@ internal/testutil/              HTTP test server helpers (module-internal)
 ```
 CLI (cmd/features*) ─┐
 CLI (cmd/catalog.go) ├→ SDK (updex/) → config, catalog, manifest, download,
-CLI (cmd/daemon.go) ─┘                version, sysext, systemd
+CLI (cmd/daemon.go) ─┘                version, sysext, systemd, imagecompat
 ```
 
 ## Key Patterns
@@ -667,6 +667,45 @@ take a flag); in an interactive shell it is an error and the exit status is
 non-zero. The lock covers `systemd-sysext refresh` as well. The sandboxed
 service (`ProtectSystem=full`) can write `/run`.
 
+### Reading a sysext's extension-release without mounting (`imagecompat/`)
+
+ADR-0016 ("Minimum image version") needs one value from inside a downloaded
+image: `UPDEX_MIN_IMAGE_VERSION` in `usr/lib/extension-release.d/extension-release.<name>`.
+The obvious tools cannot run in the auto-update service, which has
+`RestrictNamespaces=yes` and `SystemCallFilter=@system-service` (see
+`systemd.SandboxDirectives`): it cannot mount, so `systemd-dissect`, `mount`
+and loop devices all fail. `imagecompat.ReadExtensionRelease` therefore reads
+the file in pure Go, with plain `ReadAt` on the staged file:
+
+1. `Lstat` and `O_NOFOLLOW` open; refuse anything that is not a regular file.
+2. Look for a GPT header at LBA 1 for 512-byte sectors, then for 4096-byte
+   sectors (`EFI PART`). A GPT is validated before it is trusted: header size,
+   header CRC32, entry count (at most 256) and size (128 to 1024, multiple of
+   8), the entry array inside the file, the array CRC32. Every used partition
+   inside the file becomes a candidate (at most 16 are opened); no GUID filter,
+   because snosi uses the root partition types but another builder may not.
+   Without a GPT, the whole file is the candidate (a bare EROFS image).
+3. Open each candidate with `github.com/erofs/go-erofs` through an
+   `io.SectionReader` (so the filesystem cannot read outside its partition);
+   the first one that has `usr/lib/extension-release.d` wins.
+4. Pick the file: the only `extension-release.*`, else the one named
+   `extension-release.<name>`; read it with a 64 KiB cap and parse it with
+   `ParseOSRelease`.
+
+An image that is not GPT-with-EROFS or bare EROFS (for example squashfs, or
+EROFS with internal compression, which go-erofs does not read) returns
+`ErrUnsupportedImage`; the caller decides. The image's SHA256 was verified
+earlier, but the reader treats it as untrusted: a parser panic is turned into
+an error, so one bad image cannot end the run for the other features.
+
+`NextBootImageVersion` does not mount either: it runs `bootc status --json`
+and reads `.status.staged.image.version` (bootc's `Host` schema:
+`status.staged` and `status.booted` are `BootEntry` objects or null, and
+`image.version` is a string or null), else the booted `IMAGE_VERSION` from
+`os-release`. A missing bootc falls back; a bootc that fails does not
+(fail closed). `CheckMinImageVersion` compares digit strings as numbers
+without conversion.
+
 ### Feature check (end-to-end)
 
 `CheckFeatures` never writes; it resolves the newest available version exactly as the update path does, then compares it with the version the host actually runs.
@@ -793,6 +832,7 @@ Global flags:
 | `github.com/ulikunitz/xz` | XZ decompression |
 | `github.com/klauspost/compress` | ZSTD decompression |
 | `github.com/ProtonMail/go-crypto` | GPG signature verification (openpgp) |
+| `github.com/erofs/go-erofs` | EROFS reader for `imagecompat/` (Apache-2.0, pure Go, standard library only) |
 
 ## CI and Releases
 
