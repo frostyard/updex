@@ -386,7 +386,18 @@ in the `config/` structs and parse functions. Always finish with
   select, download, verify; it never touches a link), and only when all
   succeeded links them (`linkStaged`: snapshot each old link, link through
   the runner, and on a failure restore the links already moved with an atomic
-  temp-symlink rename). A failed stage links nothing, keeps the downloaded
+  temp-symlink rename). The snapshot pass runs before any link moves: a
+  symlink is recorded (`Lstat` + `Readlink`), a regular file at the link path
+  is backed up as a hard link beside it (`os.Link`, through the `backupLink`
+  seam, named `.<name>.raw.updex-backup-<pid>-<nanos>` so systemd-sysext
+  never reads it as an image) and that backup is renamed back over the link
+  by `restore` (through the `restoreRename` seam); any other entry (directory,
+  FIFO, device), and a regular file `os.Link` cannot back up, is refused with
+  nothing changed. Backups are removed after the feature linked; a backup a
+  failed restore could not put back is kept for recovery. `linkStaged` returns
+  `errors.Join` of the link error and every restore failure, and a transfer
+  whose restore failed reports `… the link may point at the new version`
+  instead of `not linked`. A failed stage links nothing, keeps the downloaded
   images for the next run (which relinks without downloading) and reports
   `not linked: another transfer of feature <name> failed` on the other
   transfers. `UpdateFeatures` and `EnableFeature{Now}` both use it. The vacuum
