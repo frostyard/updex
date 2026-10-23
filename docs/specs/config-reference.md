@@ -132,7 +132,7 @@ Mode=0644
 | `MinVersion` | string | — | Only consider versions >= this value |
 | `ProtectVersion` | string | — | Never remove this version during vacuum |
 | `Verify` | bool | `true` | Require GPG signature on SHA256SUMS; set false to opt out |
-| `InstancesMax` | int | `2` | Maximum versions to keep; oldest removed first |
+| `InstancesMax` | int | `2` | Maximum versions to keep; oldest removed first. The linked and the merged version are kept in addition |
 | `Features` | string list | — | OR logic: transfer activates if *any* listed feature is enabled |
 | `RequisiteFeatures` | string list | — | AND logic: transfer activates only if *all* listed features are enabled |
 
@@ -313,9 +313,9 @@ Version candidates extracted from the manifest are deduplicated in a set and ret
 
 ## Retention and Active Versions
 
-`InstancesMax` controls how many installed versions are normally retained. During `sysext.VacuumWithDetails`, a legacy active version pointed to by `CurrentSymlink` is always kept even if it would otherwise sort outside the retention window, and `ProtectVersion` is always kept as well. If `InstancesMax <= 0`, vacuum falls back to the default of `2`.
+`InstancesMax` controls how many installed versions are normally retained. The vacuum that `updex features update` (and `features enable --now`) runs after a feature's links succeeded always keeps, besides the newest `InstancesMax` versions: the version that the sysext link `/var/lib/extensions/<component>.<ext>` names (linked), the version merged now (read from the `.systemd-sysext` metadata of the merged hierarchies, ADR-0015), `ProtectVersion`, and a legacy active version pointed to by `CurrentSymlink`. They are kept in addition to the newest `InstancesMax` versions (one that is among the newest counts as one of them), so a host that has linked a new revision but still runs an older one keeps up to `InstancesMax` + 1 images per transfer until its next reboot. If updex cannot read the link or the merged state, it deletes nothing. If `InstancesMax <= 0`, vacuum falls back to the default of `2`.
 
-Dry-run updates call `sysext.PlanVacuumAfterInstall` with the would-install version as the active-version override, which lets the SDK report `RemovedVersions` without touching disk. Real installs call `sysext.Vacuum`, so the update result currently does not include removed-version details for non-dry-run runs.
+Dry-run updates call `sysext.PlanVacuumWith` with the would-install version as the active-version override, which lets the SDK report `RemovedVersions` without touching disk. Real installs call `sysext.VacuumWith`, so the update result currently does not include removed-version details for non-dry-run runs.
 
 ## Remote Manifest Format
 

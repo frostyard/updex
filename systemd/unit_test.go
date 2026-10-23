@@ -156,6 +156,19 @@ func TestGenerateService(t *testing.T) {
 				"ExecStart=/usr/bin/updex update --quiet",
 			},
 		},
+		{
+			name: "start timeout",
+			config: &ServiceConfig{
+				Name:            "updex-update",
+				Description:     "Automatic sysext update",
+				ExecStart:       "/usr/bin/updex update --quiet",
+				Type:            "oneshot",
+				TimeoutStartSec: "2h",
+			},
+			contains: []string{
+				"ExecStart=/usr/bin/updex update --quiet\nTimeoutStartSec=2h\n",
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -345,5 +358,12 @@ func TestGenerateTimerComment(t *testing.T) {
 	config.Comment = ""
 	if got := GenerateTimer(config); !strings.HasPrefix(got, "[Unit]\n") {
 		t.Errorf("GenerateTimer() without a comment = %q", got)
+	}
+}
+
+func TestGenerateServiceNoTimeoutByDefault(t *testing.T) {
+	result := GenerateService(&ServiceConfig{Name: "x", Description: "x", ExecStart: "/bin/true", Type: "oneshot"})
+	if strings.Contains(result, "TimeoutStartSec") {
+		t.Errorf("GenerateService() wrote TimeoutStartSec without one configured:\n%s", result)
 	}
 }

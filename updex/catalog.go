@@ -140,10 +140,19 @@ func (c *Client) CatalogList(ctx context.Context, opts CatalogListOptions) ([]Ca
 // the feature with an immediate download (EnableFeature with Now). From
 // then on the sysext is managed by the standard feature operations; only
 // CatalogRemove knows it came from a catalog.
+//
+// Except in a dry run, CatalogAdd holds the operation lock; when another
+// updex operation holds it, CatalogAdd changes nothing and returns an error
+// that wraps ErrBusy.
 func (c *Client) CatalogAdd(ctx context.Context, name string, opts CatalogAddOptions) (*CatalogAddResult, error) {
 	if err := catalog.ValidateSysextName(name); err != nil {
 		return nil, err
 	}
+	release, err := c.lockMutation(opts.DryRun)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	// A real add ends in EnableFeature(Now), so it ends in a link. Refuse a
 	// runner that cannot be told where to link before any definition is
 	// written, rather than part-way through the add's rollback transaction.
@@ -327,7 +336,7 @@ func (c *Client) CatalogAdd(ctx context.Context, name string, opts CatalogAddOpt
 	}()
 	c.msg("Added %s/%s to %s", repo.Name, name, dir)
 
-	enableResult, err := c.EnableFeature(ctx, name, EnableFeatureOptions{
+	enableResult, err := c.enableFeature(ctx, name, EnableFeatureOptions{
 		Now:       true,
 		NoRefresh: opts.NoRefresh,
 		Component: repo.Component,
@@ -660,10 +669,19 @@ func matchesCatalogTarget(name string, patterns []*version.Pattern) bool {
 // extension is currently merged) and deletes the generated
 // .transfer/.feature files and drop-ins from the repo's /etc component
 // directory.
+//
+// Except in a dry run, CatalogRemove holds the operation lock; when another
+// updex operation holds it, CatalogRemove changes nothing and returns an error
+// that wraps ErrBusy.
 func (c *Client) CatalogRemove(ctx context.Context, name string, opts CatalogRemoveOptions) (*CatalogRemoveResult, error) {
 	if err := catalog.ValidateSysextName(name); err != nil {
 		return nil, err
 	}
+	release, err := c.lockMutation(opts.DryRun)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	repos, err := c.catalogRepos()
 	if err != nil {
 		return nil, err
@@ -736,7 +754,7 @@ func (c *Client) CatalogRemove(ctx context.Context, name string, opts CatalogRem
 		DryRun:    opts.DryRun,
 	}
 
-	disableResult, err := c.DisableFeature(ctx, name, DisableFeatureOptions{
+	disableResult, err := c.disableFeature(ctx, name, DisableFeatureOptions{
 		Now:       true,
 		Force:     opts.Force,
 		DryRun:    opts.DryRun,

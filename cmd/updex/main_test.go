@@ -42,7 +42,11 @@ func TestMain(m *testing.M) {
 		SysextHierarchies: hierarchies,
 		// Deliberately not created: no image is staged for a future refresh.
 		RunExtensionsDir: filepath.Join(root, "run-search", "extensions"),
+		// Every mutating handler takes this lock; the production default
+		// /run/updex/lock is never touched by a test.
+		LockPath: filepath.Join(root, "run-updex", "lock"),
 	}
+	testLockPath = runtimePaths.LockPath
 
 	code := m.Run()
 
@@ -52,6 +56,9 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// testLockPath is the temporary lock file TestMain gives every handler test.
+var testLockPath string
+
 // setRuntimePaths replaces the CLI runtime-path seam for one test and restores
 // the previous value on cleanup, so a test can point a handler at a fake
 // merged hierarchy without leaking paths into the next test.
@@ -60,6 +67,10 @@ func setRuntimePaths(t *testing.T, rp updex.RuntimePaths) {
 	old := runtimePaths
 	t.Cleanup(func() { runtimePaths = old })
 
+	if rp.LockPath == "" {
+		// A test that sets its own paths still never reaches /run/updex.
+		rp.LockPath = testLockPath
+	}
 	rp.DefinitionRoots = slices.Clone(rp.DefinitionRoots)
 	rp.OSReleasePaths = slices.Clone(rp.OSReleasePaths)
 	rp.CatalogConfigRoots = slices.Clone(rp.CatalogConfigRoots)
@@ -87,6 +98,10 @@ func TestHandlerTestsDoNotReadHostMergedState(t *testing.T) {
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			t.Errorf("runtimePaths.SysextHierarchies entry %q is not inside %q", hierarchy, tempDir)
 		}
+	}
+
+	if runtimePaths.LockPath == "" || runtimePaths.LockPath == updex.DefaultLockPath {
+		t.Errorf("runtimePaths.LockPath = %q: handler tests would take the production lock", runtimePaths.LockPath)
 	}
 
 	if runtimePaths.RunExtensionsDir == "" {

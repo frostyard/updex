@@ -46,6 +46,10 @@ type ServiceConfig struct {
 	ExecStart string
 	// Type is the service type (e.g., "oneshot", "simple")
 	Type string
+	// TimeoutStartSec bounds the start of the unit (for a oneshot, the whole
+	// run), written as "TimeoutStartSec=<value>" after ExecStart. Empty
+	// writes no line and keeps systemd's default.
+	TimeoutStartSec string
 	// Sandbox emits the systemd hardening directives in SandboxDirectives
 	// into the [Service] section. The auto-update daemon unit sets it; other
 	// callers keep the minimal unit unless they opt in.
@@ -149,6 +153,9 @@ func GenerateService(cfg *ServiceConfig) string {
 	b.WriteString("[Service]\n")
 	fmt.Fprintf(&b, "Type=%s\n", cfg.Type)
 	fmt.Fprintf(&b, "ExecStart=%s\n", cfg.ExecStart)
+	if cfg.TimeoutStartSec != "" {
+		fmt.Fprintf(&b, "TimeoutStartSec=%s\n", cfg.TimeoutStartSec)
+	}
 	if cfg.Sandbox {
 		for _, directive := range SandboxDirectives {
 			b.WriteString(directive)

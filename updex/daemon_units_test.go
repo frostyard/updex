@@ -77,6 +77,7 @@ func TestDaemonUnitsText(t *testing.T) {
 		"ConditionACPower=true\n",
 		"Type=oneshot\n",
 		"ExecStart=/usr/bin/updex features update --no-refresh\n",
+		"TimeoutStartSec=2h\n",
 	}
 	for _, directive := range systemd.SandboxDirectives {
 		wants = append(wants, directive+"\n")
@@ -575,5 +576,41 @@ func TestLegacyUnitTextsMatchTheOldGenerator(t *testing.T) {
 	sandboxed := strings.TrimPrefix(legacyServiceUnits[0], legacyServiceUnits[1])
 	if got := strings.Count(sandboxed, "\n"); got != 18 {
 		t.Errorf("legacy sandboxed service adds %d lines to the unsandboxed text, want 18:\n%s", got, sandboxed)
+	}
+}
+
+// TestPackagedDaemonTakesTheLock pins that the packaged-units paths of
+// EnableDaemon and DisableDaemon hold the operation lock: a second client
+// gets ErrBusy and systemctl is never called. A dry run takes no lock.
+func TestPackagedDaemonTakesTheLock(t *testing.T) {
+	runner := &systemd.MockSystemctlRunner{}
+	etcPath := t.TempDir()
+	packagedPath := t.TempDir()
+	seedPackagedUnits(t, packagedPath)
+	lockPath := filepath.Join(t.TempDir(), "lock")
+	newClient := func() *Client {
+		manager := systemd.NewTestManager(etcPath, runner)
+		manager.PackagedUnitPath = packagedPath
+		return NewClient(ClientConfig{SystemdManager: manager, Paths: RuntimePaths{LockPath: lockPath}})
+	}
+	holder, other := newClient(), newClient()
+
+	release, err := holder.lockMutation(false)
+	if err != nil {
+		t.Fatalf("lockMutation() error = %v", err)
+	}
+	defer release()
+
+	if _, err := other.EnableDaemon(t.Context(), EnableDaemonOptions{}); !errors.Is(err, ErrBusy) {
+		t.Errorf("EnableDaemon() with packaged units error = %v, want ErrBusy", err)
+	}
+	if _, err := other.DisableDaemon(t.Context(), DisableDaemonOptions{}); !errors.Is(err, ErrBusy) {
+		t.Errorf("DisableDaemon() with packaged units error = %v, want ErrBusy", err)
+	}
+	if runner.EnableCalled || runner.DisableCalled || runner.StartCalled || runner.StopCalled {
+		t.Errorf("systemctl was called while the lock was held: %+v", runner)
+	}
+	if _, err := other.EnableDaemon(t.Context(), EnableDaemonOptions{DryRun: true}); err != nil {
+		t.Errorf("EnableDaemon() dry run error = %v, want no lock", err)
 	}
 }

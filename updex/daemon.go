@@ -70,6 +70,10 @@ func DaemonUnits() (*systemd.TimerConfig, *systemd.ServiceConfig) {
 		Conditions: []string{"ConditionACPower=true"},
 		ExecStart:  "/usr/bin/updex features update --no-refresh",
 		Type:       "oneshot",
+		// A backstop for a stuck run: systemd stops the service after 2
+		// hours, which releases /run/updex/lock. The per-request timeouts
+		// and ADR-0008's bounded retries normally end a run long before.
+		TimeoutStartSec: "2h",
 		// Sandbox the root oneshot: read-only /usr and /etc, no new
 		// privileges, and restricted syscalls/address families.
 		Sandbox: true,
@@ -100,10 +104,19 @@ func (c *Client) daemonUnitPaths() []string {
 //
 // With opts.DryRun it reports the unit files and actions without writing any
 // file or calling systemctl; the already-installed precondition still applies.
+// Except in a dry run it holds the operation lock; when another updex
+// operation holds it, EnableDaemon changes nothing and returns an error that
+// wraps ErrBusy.
 func (c *Client) EnableDaemon(ctx context.Context, opts EnableDaemonOptions) (*DaemonActionResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("enable daemon: %w", err)
 	}
+	release, err := c.lockMutation(opts.DryRun)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	timerUnit := daemonUnitName + ".timer"
 
 	if c.systemd.PackagedExists(daemonUnitName) {
@@ -274,11 +287,18 @@ func (c *Client) planDaemonRemoval() daemonRemovalPlan {
 //
 // With opts.DryRun it reports the unit files and actions without stopping,
 // disabling, or removing anything; the not-installed precondition still
-// applies.
+// applies. Except in a dry run it holds the operation lock; when another
+// updex operation holds it, DisableDaemon changes nothing and returns an error
+// that wraps ErrBusy.
 func (c *Client) DisableDaemon(ctx context.Context, opts DisableDaemonOptions) (*DaemonActionResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("disable daemon: %w", err)
 	}
+	release, err := c.lockMutation(opts.DryRun)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	packaged := c.systemd.PackagedExists(daemonUnitName)
 	if !packaged && !c.systemd.Exists(daemonUnitName) {
 		return nil, fmt.Errorf("timer not installed; nothing to disable")

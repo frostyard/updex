@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/frostyard/updex/v2/config"
 	"github.com/frostyard/updex/v2/download"
@@ -14,10 +16,10 @@ import (
 	"github.com/frostyard/updex/v2/version"
 )
 
-// installOutcome reports what installTransfer did for one transfer. It is
+// installOutcome reports what installTransfers did for one transfer. It is
 // unexported: callers inside the SDK translate it into their own result types.
 type installOutcome struct {
-	// Version is the version installTransfer selected.
+	// Version is the version that was selected.
 	Version string
 
 	// Manifest is the manifest that lists Version, when one was read.
@@ -34,21 +36,31 @@ type installOutcome struct {
 	Relinked bool
 }
 
-// installTransfer performs the update/install logic for a single transfer.
-// It returns what happened (see installOutcome) and any error.
-// If opts.CachedManifest is non-nil, it is used instead of fetching the manifest over HTTP.
-func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer, opts installTransferOptions) (installOutcome, error) {
-	fail := func(err error) (installOutcome, error) { return installOutcome{}, err }
+// stagedTransfer is the result of stageTransfer: what the stage step found
+// or downloaded, and whether the link step has work to do.
+type stagedTransfer struct {
+	// outcome is what stageTransfer reports so far. Relinked stays false
+	// until linkStaged moves the link.
+	outcome installOutcome
 
-	// A real install ends in a link. Refuse a runner that cannot be told
-	// where to link before removing a legacy symlink or downloading
-	// anything, so the failure leaves no half-installed state behind. A dry
-	// run never links, so it stays available.
-	if !opts.DryRun {
-		if err := c.requireLinkableRunner(); err != nil {
-			return fail(err)
-		}
-	}
+	// link reports that the systemd-sysext link must be (re)pointed at the
+	// newest staged image: a new image was downloaded, or the image was
+	// already staged but the link was missing, dangling or elsewhere. It is
+	// always false in a dry run.
+	link bool
+
+	// relink reports that link is needed although nothing was downloaded.
+	relink bool
+}
+
+// stageTransfer is the stage step of an install: it selects the newest
+// available version of a single transfer, downloads and verifies it into the
+// staging directory, and changes no systemd-sysext link. A failure leaves the
+// current link and every image already on disk untouched.
+// If opts.CachedManifest is non-nil, it is used instead of fetching the
+// manifest over HTTP.
+func (c *Client) stageTransfer(ctx context.Context, transfer *config.Transfer, opts installTransferOptions) (stagedTransfer, error) {
+	fail := func(err error) (stagedTransfer, error) { return stagedTransfer{}, err }
 
 	// Get available versions (applies MinVersion filter)
 	available, m, patterns, err := c.getAvailableVersions(ctx, transfer, opts.CachedManifest)
@@ -79,23 +91,20 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 		if v == versionToInstall && v == current {
 			// The image is staged and current, but the systemd-sysext link
 			// may be missing, dangling, or pointing at another image (a
-			// crashed earlier run, a hand-edited link dir). Restore it
-			// without re-downloading; a correct link is left untouched.
-			outcome := installOutcome{Version: versionToInstall, Manifest: m}
+			// crashed earlier run, a failed run that downloaded this image
+			// but linked nothing, a hand-edited link dir). The link step
+			// restores it without re-downloading; a correct link is left
+			// untouched.
+			staged := stagedTransfer{outcome: installOutcome{Version: versionToInstall, Manifest: m}}
 			if !opts.DryRun {
 				linked, err := sysext.LinkIsCurrentAt(transfer, c.paths.sysextLinkDir)
 				if err != nil {
 					return fail(fmt.Errorf("failed to inspect sysext link: %w", err))
 				}
-				if !linked {
-					if err := c.linkToSysext(transfer); err != nil {
-						return fail(err)
-					}
-					c.msg("restored sysext link for %s", transfer.Component)
-					outcome.Relinked = true
-				}
+				staged.link = !linked
+				staged.relink = !linked
 			}
-			return outcome, nil
+			return staged, nil
 		}
 	}
 
@@ -124,7 +133,7 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 	downloadURL := transfer.Source.Path + "/" + sourceFile
 	if opts.DryRun {
 		c.debug("would download %s → %s", downloadURL, targetPath)
-		return installOutcome{Version: versionToInstall, Manifest: m, Downloaded: true}, nil
+		return stagedTransfer{outcome: installOutcome{Version: versionToInstall, Manifest: m, Downloaded: true}}, nil
 	}
 
 	c.debug("downloading %s → %s", downloadURL, targetPath)
@@ -133,30 +142,266 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 		return fail(fmt.Errorf("download failed: %w", err))
 	}
 
-	if err := c.linkToSysext(transfer); err != nil {
-		return fail(err)
+	return stagedTransfer{
+		outcome: installOutcome{Version: versionToInstall, Manifest: m, Downloaded: true},
+		link:    true,
+	}, nil
+}
+
+// transferInstall is the result of installing one transfer of a feature with
+// installTransfers.
+type transferInstall struct {
+	transfer *config.Transfer
+
+	// outcome reports what was staged. It is set whenever staging succeeded,
+	// also when err is set because the link step did not run or was undone.
+	outcome installOutcome
+
+	// err is why the transfer is not installed: its own stage or link
+	// failure, or errNotLinked when another transfer of its feature failed.
+	err error
+
+	// notLinked reports that err is errNotLinked: this transfer did nothing
+	// wrong, but its feature stayed on the old links.
+	notLinked bool
+}
+
+// errNotLinked builds the error that a transfer reports when another
+// transfer of its feature failed, so the feature kept its old links.
+func errNotLinked(feature string) error {
+	return fmt.Errorf("not linked: another transfer of feature %s failed", feature)
+}
+
+// installFeatureOptions configures installTransfers.
+type installFeatureOptions struct {
+	// DryRun stages nothing and links nothing; it only reports what would
+	// be downloaded.
+	DryRun bool
+
+	// NoVacuum skips removing old versions after the links succeeded.
+	NoVacuum bool
+
+	// Manifests caches manifests by source URL across the transfers of one
+	// call and, when the caller keeps the map, across features. It may be
+	// nil.
+	Manifests map[string]*manifest.Manifest
+}
+
+// installTransfers installs the transfers of one feature so that they link
+// together (ADR-0016): it stages every transfer first, then links them all.
+//
+//   - If any transfer fails to stage (version lookup, download or
+//     verification), no transfer is linked. Every old link stays, and the
+//     images that were downloaded stay on disk for the next run, which
+//     relinks them without downloading again. The failing transfer reports
+//     its own error; the others report errNotLinked.
+//   - If a link fails part-way, the links that this call already moved are
+//     put back, and no transfer is reported as installed.
+//   - The vacuum runs only after every link succeeded.
+//
+// The result has one entry per transfer, in order. A dry run stages and
+// links nothing.
+func (c *Client) installTransfers(ctx context.Context, feature string, transfers []*config.Transfer, opts installFeatureOptions) []transferInstall {
+	results := make([]transferInstall, len(transfers))
+	for i, transfer := range transfers {
+		results[i].transfer = transfer
 	}
 
-	// Refresh systemd-sysext. Both SDK callers batch this with NoRefresh:
-	// true; when a caller does ask for it, a failure is returned (the image
-	// is installed and linked, so versionToInstall is still reported) rather
-	// than swallowed, matching the batched refresh in UpdateFeatures.
-	var refreshErr error
-	if !opts.NoRefresh {
-		if err := c.runner.Refresh(); err != nil {
-			refreshErr = fmt.Errorf("sysext refresh failed: %w", err)
-			c.warn("%s", refreshErr)
+	// A real install ends in a link. Refuse a runner that cannot be told
+	// where to link before removing a legacy symlink or downloading
+	// anything, so the failure leaves no half-installed state behind. A dry
+	// run never links, so it stays available.
+	if !opts.DryRun {
+		if err := c.requireLinkableRunner(); err != nil {
+			for i := range results {
+				results[i].err = err
+			}
+			return results
 		}
 	}
 
-	// Run vacuum
+	manifests := opts.Manifests
+	if manifests == nil {
+		manifests = make(map[string]*manifest.Manifest)
+	}
+
+	// Stage step.
+	staged := make([]stagedTransfer, len(transfers))
+	failed := false
+	for i, transfer := range transfers {
+		c.msg("Processing %s/%s", feature, transfer.Component)
+
+		st, err := c.stageTransfer(ctx, transfer, installTransferOptions{
+			DryRun:         opts.DryRun,
+			CachedManifest: manifests[transfer.Source.Path],
+		})
+		if st.outcome.Manifest != nil {
+			manifests[transfer.Source.Path] = st.outcome.Manifest
+		}
+		staged[i] = st
+		results[i].outcome = st.outcome
+		if err != nil {
+			results[i].err = err
+			failed = true
+		}
+	}
+
+	if failed {
+		c.markNotLinked(feature, results)
+		return results
+	}
+	if opts.DryRun {
+		return results
+	}
+
+	// Link step: all or none.
+	if err := c.linkStaged(feature, transfers, staged, results); err != nil {
+		return results
+	}
+	for i := range results {
+		results[i].outcome.Relinked = staged[i].relink
+	}
+
+	// Vacuum only after the feature's links succeeded.
 	if !opts.NoVacuum {
-		if err := sysext.VacuumAt(transfer, c.paths.sysextLinkDir); err != nil {
-			c.warn("vacuum failed: %v", err)
+		for _, transfer := range transfers {
+			if _, _, err := sysext.VacuumWith(transfer, c.vacuumPaths()); err != nil {
+				c.warn("vacuum failed for %s: %v", transfer.Component, err)
+			}
 		}
 	}
 
-	return installOutcome{Version: versionToInstall, Manifest: m, Downloaded: true}, refreshErr
+	return results
+}
+
+// markNotLinked gives every transfer that has no error of its own the
+// errNotLinked error.
+func (c *Client) markNotLinked(feature string, results []transferInstall) {
+	for i := range results {
+		if results[i].err == nil {
+			results[i].err = errNotLinked(feature)
+			results[i].notLinked = true
+		}
+	}
+}
+
+// vacuumPaths returns the paths the vacuum reads for a transfer: the staging
+// fallback and the link directory the client captured at construction, and
+// its merged-state hierarchies.
+func (c *Client) vacuumPaths() sysext.VacuumPaths {
+	return sysext.VacuumPaths{
+		DefaultDir:  c.paths.sysextLinkDir,
+		LinkDir:     c.paths.sysextLinkDir,
+		Hierarchies: c.paths.sysextHierarchies,
+	}
+}
+
+// linkSnapshot records what a sysext link was before the link step moved
+// it, so a later failure can put it back.
+type linkSnapshot struct {
+	path    string
+	exists  bool
+	symlink bool
+	target  string
+}
+
+// snapshotLink records the entry at path with Lstat, so a symlink is seen as
+// itself and a dangling one is not mistaken for absent.
+func snapshotLink(path string) (linkSnapshot, error) {
+	snap := linkSnapshot{path: path}
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return snap, nil
+		}
+		return snap, fmt.Errorf("failed to inspect sysext link: %w", err)
+	}
+	snap.exists = true
+	if info.Mode()&os.ModeSymlink != 0 {
+		snap.symlink = true
+		snap.target, err = os.Readlink(path)
+		if err != nil {
+			return snap, fmt.Errorf("failed to read sysext link: %w", err)
+		}
+	}
+	return snap, nil
+}
+
+// restore puts the link back as snapshotLink saw it. A symlink is recreated
+// beside the link and renamed over it, so systemd-sysext never sees a moment
+// without a link (the way sysext.LinkToSysextAt replaces one); a link that
+// did not exist is removed. An entry that was not a symlink cannot be
+// restored from a snapshot and is reported.
+func (s linkSnapshot) restore() error {
+	switch {
+	case !s.exists:
+		info, err := os.Lstat(s.path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			return nil // not a link this run made
+		}
+		return os.Remove(s.path)
+	case !s.symlink:
+		return fmt.Errorf("%s was not a symlink and cannot be restored", s.path)
+	}
+	tmp := fmt.Sprintf("%s.tmp-%d-%d", s.path, os.Getpid(), time.Now().UnixNano())
+	if err := os.Symlink(s.target, tmp); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, s.path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// linkStaged is the link step: it points the systemd-sysext link of every
+// staged transfer that needs one at its newest image. When a link fails, it
+// restores the links this call already moved, records the failure on the
+// failing transfer and errNotLinked on the others, and returns the error.
+func (c *Client) linkStaged(feature string, transfers []*config.Transfer, staged []stagedTransfer, results []transferInstall) error {
+	snapshots := make([]linkSnapshot, len(transfers))
+	for i, transfer := range transfers {
+		if !staged[i].link {
+			continue
+		}
+		snap, err := snapshotLink(filepath.Join(c.paths.sysextLinkDir, sysext.SysextLinkName(transfer)))
+		if err != nil {
+			// Nothing is linked yet, so there is nothing to undo.
+			results[i].err = err
+			c.markNotLinked(feature, results)
+			return err
+		}
+		snapshots[i] = snap
+	}
+
+	for i, transfer := range transfers {
+		if !staged[i].link {
+			continue
+		}
+		if err := c.linkToSysext(transfer); err != nil {
+			results[i].err = err
+			c.markNotLinked(feature, results)
+			for j := 0; j <= i; j++ {
+				if !staged[j].link {
+					continue
+				}
+				if rerr := snapshots[j].restore(); rerr != nil {
+					c.warn("failed to restore sysext link for %s: %v", transfers[j].Component, rerr)
+				}
+			}
+			return err
+		}
+		if staged[i].relink {
+			c.msg("restored sysext link for %s", transfer.Component)
+		}
+	}
+	return nil
 }
 
 // ErrLegacySysextRunner reports a ClientConfig.SysextRunner that implements
@@ -254,7 +499,7 @@ func buildTargetFilename(targetPatterns []string, ver string) (string, error) {
 
 // validateTargetFilename rejects a filename built from a runtime-substituted
 // version (config.Transfer.Target.Patterns' @v placeholder) that would escape
-// Target.Path when joined with filepath.Join in installTransfer: "." or "..",
+// Target.Path when joined with filepath.Join in stageTransfer: "." or "..",
 // any path separator, or a name whose Base differs from itself (e.g. an
 // absolute path). This mirrors catalog/catalog.go's validateCatalogPatterns,
 // which validates pattern *literals* configured by trusted operators; this

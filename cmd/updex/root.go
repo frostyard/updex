@@ -20,6 +20,15 @@ func registerAppFlags(cmd *cobra.Command) {
 	cmd.PersistentFlags().BoolVar(&noRefresh, "no-refresh", false, "Skip running systemd-sysext refresh after install/update")
 }
 
+// runningUnderSystemd reports whether this process is a systemd service:
+// systemd sets INVOCATION_ID in the environment of every unit it starts. The
+// packaged timer runs exactly "updex features update --no-refresh", so the
+// command cannot take a flag for "scheduled run". It is a variable so a test
+// can replace it; t.Setenv("INVOCATION_ID", ...) works as well.
+var runningUnderSystemd = func() bool {
+	return os.Getenv("INVOCATION_ID") != ""
+}
+
 func requireRoot() error {
 	if getEUID() != 0 {
 		return fmt.Errorf("this operation requires root privileges")

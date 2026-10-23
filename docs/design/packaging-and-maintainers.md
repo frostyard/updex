@@ -125,7 +125,8 @@ The `frostyard-updex` package ships the auto-update timer and service
 Both are mode 0644 and **disabled**: the package has no maintainer script and
 runs no `systemctl`. The service runs
 `/usr/bin/updex features update --no-refresh` as a sandboxed `oneshot`, after
-`network-online.target`, only on AC power (`ConditionACPower=true`); the timer
+`network-online.target`, only on AC power (`ConditionACPower=true`), with
+`TimeoutStartSec=2h` as a backstop for a stuck run; the timer
 fires every 6 hours (`OnCalendar=*-*-* 00/6:00:00`, `RandomizedDelaySec=3600s`,
 `Persistent=true`).
 

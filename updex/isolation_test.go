@@ -248,6 +248,7 @@ func TestClientIsolation_CatalogAddPaths(t *testing.T) {
 					CatalogCacheDir:    DisableCatalogCache,
 					CatalogTargetPath:  targetDir,
 					SysextLinkDir:      linkDir,
+					LockPath:           filepath.Join(t.TempDir(), "lock"),
 				},
 			}),
 			definitionRoot: definitionRoot,

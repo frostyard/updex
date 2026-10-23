@@ -98,6 +98,7 @@ func TestUnitsHookMatchesGenerator(t *testing.T) {
 			"ConditionACPower=true",
 			"Type=oneshot",
 			"ExecStart=/usr/bin/updex features update --no-refresh",
+			"TimeoutStartSec=2h",
 		}, systemd.SandboxDirectives...),
 	}
 	for name, lines := range wantLines {
