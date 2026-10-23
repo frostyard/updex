@@ -678,6 +678,57 @@ func LinkIsCurrentAt(t *config.Transfer, sysextDir string) (bool, error) {
 	return true, nil
 }
 
+// LinkedVersionAt reports the version of the image that the transfer's
+// systemd-sysext link (<sysextDir>/<SysextLinkName(t)>) points to. That link is
+// the one systemd-sysext merges, so this is the image the running host uses
+// even when another updater has advanced the staging symlink past it.
+//
+// It returns "" with a nil error when the link is absent, is not a symlink, is
+// dangling, or points at a base name the transfer's target patterns do not
+// match. A relative link target is resolved against sysextDir. The error is
+// returned only when the link could not be inspected (a failed stat or
+// readlink) or the transfer has no usable target pattern.
+func LinkedVersionAt(t *config.Transfer, sysextDir string) (string, error) {
+	linkName := SysextLinkName(t)
+	if linkName == "" {
+		return "", nil
+	}
+
+	patterns, err := parseTargetPatterns(t)
+	if err != nil {
+		return "", err
+	}
+
+	linkPath := filepath.Join(sysextDir, linkName)
+	info, err := os.Lstat(linkPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to stat sysext link: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return "", nil
+	}
+
+	target, err := os.Readlink(linkPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read sysext link: %w", err)
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(linkPath), target)
+	}
+
+	v, _, ok := version.ExtractVersionParsed(filepath.Base(target), patterns)
+	if !ok {
+		return "", nil
+	}
+	if _, err := os.Stat(linkPath); err != nil {
+		return "", nil // dangling
+	}
+	return v, nil
+}
+
 // LinkToSysext creates a symlink in /var/lib/extensions pointing to the newest
 // installed extension file in the staging directory (e.g., /var/lib/extensions.d/).
 //

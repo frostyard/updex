@@ -378,3 +378,130 @@ func TestUpdateFeatures_PathRunnerReceivesCapturedLinkDir(t *testing.T) {
 		t.Error("the runner was given the mutated package global, not the captured dir")
 	}
 }
+
+// staleLinkFixture reproduces a real host on 2026-10-23: a second updater
+// (systemd-sysupdate) stages 2.0.0 and moves its own legacy staging
+// CurrentSymlink to it, but the systemd-sysext link updex made still points at
+// 1.0.0. systemd-sysext merges that link, so the host runs 1.0.0. The test
+// server offers 2.0.0 as the newest available version.
+type staleLinkFixture struct {
+	client    *Client
+	out       *bytes.Buffer
+	targetDir string
+	linkDir   string
+	linkPath  string
+	oldImage  string // staged 1.0.0, where a stale link points
+	newImage  string // staged 2.0.0, newest staged and newest available
+}
+
+// newStaleLinkFixture builds the fixture. linkedVersion chooses the staged
+// version the systemd-sysext link points at; "" leaves the link absent.
+func newStaleLinkFixture(t *testing.T, linkedVersion string) *staleLinkFixture {
+	t.Helper()
+	root := t.TempDir()
+	defDir := filepath.Join(root, "sysupdate.d")
+	if err := os.MkdirAll(defDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	targetDir := t.TempDir()
+	linkDir := t.TempDir()
+
+	oldContent := []byte("extension content 1.0.0")
+	newContent := []byte("extension content 2.0.0")
+	server := testutil.NewTestServer(t, testutil.TestServerFiles{
+		Files: map[string]string{
+			"testext_1.0.0.raw": hashContent(oldContent),
+			"testext_2.0.0.raw": hashContent(newContent),
+		},
+		Content: map[string][]byte{
+			"testext_1.0.0.raw": oldContent,
+			"testext_2.0.0.raw": newContent,
+		},
+	})
+	t.Cleanup(server.Close)
+
+	// This helper writes CurrentSymlink=testext.raw, as systemd-sysupdate's
+	// legacy setup does.
+	createFeatureFile(t, defDir, "testfeature", true)
+	createFeatureTransferFile(t, defDir, "testext", "testfeature", server.URL)
+	updateTransferTargetPath(t, defDir, targetDir)
+
+	oldImage := filepath.Join(targetDir, "testext_1.0.0.raw")
+	newImage := filepath.Join(targetDir, "testext_2.0.0.raw")
+	if err := os.WriteFile(oldImage, oldContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(newImage, newContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+	// The other updater's staging symlink already points at the new image.
+	if err := os.Symlink(newImage, filepath.Join(targetDir, "testext.raw")); err != nil {
+		t.Fatal(err)
+	}
+
+	linkPath := filepath.Join(linkDir, "testext.raw")
+	if linkedVersion != "" {
+		if err := os.Symlink(filepath.Join(targetDir, "testext_"+linkedVersion+".raw"), linkPath); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out := &bytes.Buffer{}
+	client := NewClient(ClientConfig{
+		Paths: RuntimePaths{
+			DefinitionRoots:   []string{root},
+			SysextLinkDir:     linkDir,
+			SysextHierarchies: []string{t.TempDir()},
+		},
+		SysextRunner: &sysext.DefaultRunner{},
+		Progress:     reporter.NewTextReporter(out),
+	})
+	return &staleLinkFixture{
+		client:    client,
+		out:       out,
+		targetDir: targetDir,
+		linkDir:   linkDir,
+		linkPath:  linkPath,
+		oldImage:  oldImage,
+		newImage:  newImage,
+	}
+}
+
+// A stale systemd-sysext link is relinked to the staged newest version without
+// a download, and the result tells the operator a reboot activates it.
+func TestUpdateFeatures_RelinksStaleSysextLink(t *testing.T) {
+	f := newStaleLinkFixture(t, "1.0.0")
+	assertLinkResolvesTo(t, f.linkPath, f.oldImage)
+
+	results, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true, NoVacuum: true})
+	if err != nil {
+		t.Fatalf("UpdateFeatures failed: %v", err)
+	}
+	if len(results) != 1 || len(results[0].Results) != 1 {
+		t.Fatalf("expected 1 feature result with 1 component, got %+v", results)
+	}
+	r := results[0].Results[0]
+	if r.Error != "" {
+		t.Fatalf("component update failed: %s", r.Error)
+	}
+	if r.Downloaded {
+		t.Error("a staged image must not be downloaded again")
+	}
+	if !r.Installed {
+		t.Error("expected Installed=true for the relinked component")
+	}
+	if r.Version != "2.0.0" {
+		t.Errorf("Version = %q, want 2.0.0", r.Version)
+	}
+	if r.NextActionMessage != "Reboot required to activate changes" {
+		t.Errorf("NextActionMessage = %q, want the reboot hint", r.NextActionMessage)
+	}
+	assertLinkResolvesTo(t, f.linkPath, f.newImage)
+	if !strings.Contains(f.out.String(), "Linked staged version 2.0.0") {
+		t.Errorf("expected a 'Linked staged version' message, got:\n%s", f.out.String())
+	}
+	if strings.Contains(f.out.String(), "already installed and current") {
+		t.Errorf("a relink must not be reported as already current, got:\n%s", f.out.String())
+	}
+	assertOnlyEntries(t, f.linkDir, "testext.raw")
+}

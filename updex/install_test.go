@@ -271,13 +271,12 @@ func TestInstallTransfer_RefreshFailure_ReturnsErrorAfterInstall(t *testing.T) {
 		t.Fatalf("expected 1 transfer, got %d", len(transfers))
 	}
 
-	version, _, downloaded, err := client.installTransfer(t.Context(), transfers[0], installTransferOptions{NoVacuum: true})
-
+	outcome, err := client.installTransfer(t.Context(), transfers[0], installTransferOptions{NoVacuum: true})
 	if err == nil || !strings.Contains(err.Error(), "sysext refresh failed") {
 		t.Fatalf("expected refresh error, got %v", err)
 	}
-	if version != "1.0.0" || !downloaded {
-		t.Errorf("install outcome must still be reported: version=%q downloaded=%v", version, downloaded)
+	if outcome.Version != "1.0.0" || !outcome.Downloaded {
+		t.Errorf("install outcome must still be reported: version=%q downloaded=%v", outcome.Version, outcome.Downloaded)
 	}
 	if !mockRunner.RefreshCalled {
 		t.Error("expected Refresh to be called")

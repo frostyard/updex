@@ -93,6 +93,13 @@ then.
 healthy components, and exits non-zero. Do not interpret an errored row as
 "up to date."
 
+**What "current" means:** `features check` compares the newest available
+version with the version the systemd-sysext link in `/var/lib/extensions`
+points to, because that link is the image systemd-sysext merges. If no usable link
+exists it falls back to the staged image. A link still on an older image
+therefore shows an update, and `features update` repoints the link without
+downloading again and reports that a reboot activates it.
+
 ### Catalogs
 
 ```bash

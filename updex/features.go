@@ -249,7 +249,7 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 					result.DownloadedFiles = append(result.DownloadedFiles, transfer.Component+" (would download)")
 				} else {
 					// Use installTransfer which handles all the download logic
-					version, _, downloaded, err := c.installTransfer(ctx, transfer, installTransferOptions{
+					outcome, err := c.installTransfer(ctx, transfer, installTransferOptions{
 						NoRefresh: true, // refresh is batched at the end
 					})
 					if err != nil {
@@ -258,11 +258,13 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 						c.warn("%s", result.Error)
 						return result, err
 					}
-					if downloaded {
-						result.DownloadedFiles = append(result.DownloadedFiles, fmt.Sprintf("%s@%s", transfer.Component, version))
-						c.msg("Downloaded %s version %s", transfer.Component, version)
+					if outcome.Downloaded {
+						result.DownloadedFiles = append(result.DownloadedFiles, fmt.Sprintf("%s@%s", transfer.Component, outcome.Version))
+						c.msg("Downloaded %s version %s", transfer.Component, outcome.Version)
+					} else if outcome.Relinked {
+						c.msg("Linked staged version %s for %s", outcome.Version, transfer.Component)
 					} else {
-						c.msg("Version %s already installed and current for %s", version, transfer.Component)
+						c.msg("Version %s already installed and current for %s", outcome.Version, transfer.Component)
 					}
 				}
 			}
@@ -505,14 +507,14 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 				DryRun:    opts.DryRun,
 			}
 
-			v, m, downloaded, err := c.installTransfer(ctx, transfer, installTransferOptions{
+			outcome, err := c.installTransfer(ctx, transfer, installTransferOptions{
 				DryRun:         opts.DryRun,
 				NoVacuum:       opts.NoVacuum,
 				NoRefresh:      true, // refresh is batched at the end
 				CachedManifest: manifestCache[transfer.Source.Path],
 			})
-			if m != nil {
-				manifestCache[transfer.Source.Path] = m
+			if outcome.Manifest != nil {
+				manifestCache[transfer.Source.Path] = outcome.Manifest
 			}
 			if err != nil {
 				result.Error = err.Error()
@@ -522,8 +524,9 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 				continue
 			}
 
+			v := outcome.Version
 			result.Version = v
-			if downloaded {
+			if outcome.Downloaded {
 				result.Downloaded = true
 				if opts.DryRun {
 					result.NextActionMessage = "Would download and install version " + v
@@ -545,7 +548,17 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 				}
 			} else {
 				result.Installed = true
-				c.msg("Version %s already installed and current", v)
+				if outcome.Relinked && !opts.DryRun {
+					// The image was already staged but the systemd-sysext link
+					// pointed elsewhere (another updater such as
+					// systemd-sysupdate advanced its own staging symlink without
+					// touching ours). The link now points at this version, so the
+					// host needs a refresh or reboot to run it.
+					result.NextActionMessage = "Reboot required to activate changes"
+					c.msg("Linked staged version %s", v)
+				} else {
+					c.msg("Version %s already installed and current", v)
+				}
 			}
 
 			featureResult.Results = append(featureResult.Results, result)
@@ -651,6 +664,28 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 				})
 				hasErrors = true
 				continue
+			}
+
+			// The systemd-sysext link is what the host actually merges, so it
+			// decides the current version when it resolves. Staging alone can
+			// be ahead: another updater (systemd-sysupdate) can advance its own
+			// CurrentSymlink, and the newest staged file, without touching the
+			// link updex made. With no usable link, the staging-based current
+			// version stands as before.
+			linked, err := sysext.LinkedVersionAt(transfer, c.paths.sysextLinkDir)
+			if err != nil {
+				err = fmt.Errorf("failed to inspect sysext link: %w", err)
+				c.warn("%s", err)
+				featureResult.Results = append(featureResult.Results, CheckResult{
+					Component:     transfer.Component,
+					NewestVersion: newest,
+					Error:         err.Error(),
+				})
+				hasErrors = true
+				continue
+			}
+			if linked != "" {
+				current = linked
 			}
 
 			result := CheckResult{

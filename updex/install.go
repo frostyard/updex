@@ -14,28 +14,50 @@ import (
 	"github.com/frostyard/updex/v2/version"
 )
 
+// installOutcome reports what installTransfer did for one transfer. It is
+// unexported: callers inside the SDK translate it into their own result types.
+type installOutcome struct {
+	// Version is the version installTransfer selected.
+	Version string
+
+	// Manifest is the manifest that lists Version, when one was read.
+	Manifest *manifest.Manifest
+
+	// Downloaded reports that a new image was fetched and installed, or in a
+	// dry run that it would be.
+	Downloaded bool
+
+	// Relinked reports that nothing was downloaded because the image was
+	// already staged and current, but the systemd-sysext link had to be
+	// changed to point at it (it was missing, dangling, or pointed at another
+	// image). It is always false in a dry run, which never links.
+	Relinked bool
+}
+
 // installTransfer performs the update/install logic for a single transfer.
-// It returns the version selected, the resolved manifest, whether a download occurred, and any error.
+// It returns what happened (see installOutcome) and any error.
 // If opts.CachedManifest is non-nil, it is used instead of fetching the manifest over HTTP.
-func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer, opts installTransferOptions) (string, *manifest.Manifest, bool, error) {
+func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer, opts installTransferOptions) (installOutcome, error) {
+	fail := func(err error) (installOutcome, error) { return installOutcome{}, err }
+
 	// A real install ends in a link. Refuse a runner that cannot be told
 	// where to link before removing a legacy symlink or downloading
 	// anything, so the failure leaves no half-installed state behind. A dry
 	// run never links, so it stays available.
 	if !opts.DryRun {
 		if err := c.requireLinkableRunner(); err != nil {
-			return "", nil, false, err
+			return fail(err)
 		}
 	}
 
 	// Get available versions (applies MinVersion filter)
 	available, m, patterns, err := c.getAvailableVersions(ctx, transfer, opts.CachedManifest)
 	if err != nil {
-		return "", nil, false, fmt.Errorf("failed to get available versions: %w", err)
+		return fail(fmt.Errorf("failed to get available versions: %w", err))
 	}
 
 	if len(available) == 0 {
-		return "", nil, false, fmt.Errorf("no versions available")
+		return fail(fmt.Errorf("no versions available"))
 	}
 
 	// Sort and get newest
@@ -46,7 +68,7 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 	// Check if already installed and current
 	installed, current, err := sysext.GetInstalledVersionsAt(transfer, c.paths.sysextLinkDir)
 	if err != nil {
-		return "", nil, false, fmt.Errorf("failed to inspect installed versions: %w", err)
+		return fail(fmt.Errorf("failed to inspect installed versions: %w", err))
 	}
 	if !opts.DryRun && transfer.Target.CurrentSymlink != "" {
 		if err := sysext.RemoveLegacyCurrentSymlinkAt(transfer, c.paths.sysextLinkDir); err != nil {
@@ -59,19 +81,21 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 			// may be missing, dangling, or pointing at another image (a
 			// crashed earlier run, a hand-edited link dir). Restore it
 			// without re-downloading; a correct link is left untouched.
+			outcome := installOutcome{Version: versionToInstall, Manifest: m}
 			if !opts.DryRun {
 				linked, err := sysext.LinkIsCurrentAt(transfer, c.paths.sysextLinkDir)
 				if err != nil {
-					return "", nil, false, fmt.Errorf("failed to inspect sysext link: %w", err)
+					return fail(fmt.Errorf("failed to inspect sysext link: %w", err))
 				}
 				if !linked {
 					if err := c.linkToSysext(transfer); err != nil {
-						return "", nil, false, err
+						return fail(err)
 					}
 					c.msg("restored sysext link for %s", transfer.Component)
+					outcome.Relinked = true
 				}
 			}
-			return versionToInstall, m, false, nil
+			return outcome, nil
 		}
 	}
 
@@ -87,12 +111,12 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 	}
 
 	if sourceFile == "" {
-		return "", nil, false, fmt.Errorf("no file found for version %s", versionToInstall)
+		return fail(fmt.Errorf("no file found for version %s", versionToInstall))
 	}
 
 	targetFile, err := buildTargetFilename(transfer.Target.Patterns(), versionToInstall)
 	if err != nil {
-		return "", nil, false, err
+		return fail(err)
 	}
 	targetPath := filepath.Join(transfer.Target.Path, targetFile)
 
@@ -100,17 +124,17 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 	downloadURL := transfer.Source.Path + "/" + sourceFile
 	if opts.DryRun {
 		c.debug("would download %s → %s", downloadURL, targetPath)
-		return versionToInstall, m, true, nil
+		return installOutcome{Version: versionToInstall, Manifest: m, Downloaded: true}, nil
 	}
 
 	c.debug("downloading %s → %s", downloadURL, targetPath)
 	err = download.Download(ctx, c.httpClient, downloadURL, targetPath, expectedHash, transfer.Target.Mode, c.config.OnDownloadProgress, download.WithRetryNotify(c.retryNotify("download")))
 	if err != nil {
-		return "", nil, false, fmt.Errorf("download failed: %w", err)
+		return fail(fmt.Errorf("download failed: %w", err))
 	}
 
 	if err := c.linkToSysext(transfer); err != nil {
-		return "", nil, false, err
+		return fail(err)
 	}
 
 	// Refresh systemd-sysext. Both SDK callers batch this with NoRefresh:
@@ -132,7 +156,7 @@ func (c *Client) installTransfer(ctx context.Context, transfer *config.Transfer,
 		}
 	}
 
-	return versionToInstall, m, true, refreshErr
+	return installOutcome{Version: versionToInstall, Manifest: m, Downloaded: true}, refreshErr
 }
 
 // ErrLegacySysextRunner reports a ClientConfig.SysextRunner that implements
