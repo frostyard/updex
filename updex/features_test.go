@@ -2034,6 +2034,80 @@ func TestCheckFeatures_UpToDate(t *testing.T) {
 	}
 }
 
+// checkOnce runs CheckFeatures on the stale-link fixture and returns the one
+// component result, failing on an unexpected shape or component error.
+func checkOnce(t *testing.T, f *staleLinkFixture) CheckResult {
+	t.Helper()
+	results, err := f.client.CheckFeatures(t.Context(), CheckFeaturesOptions{})
+	if err != nil {
+		t.Fatalf("CheckFeatures failed: %v", err)
+	}
+	if len(results) != 1 || len(results[0].Results) != 1 {
+		t.Fatalf("expected 1 feature result with 1 component, got %+v", results)
+	}
+	r := results[0].Results[0]
+	if r.Error != "" {
+		t.Fatalf("component check failed: %s", r.Error)
+	}
+	return r
+}
+
+// TestCheckFeatures_StaleSysextLinkReportsUpdate is the regression test for
+// the 2026-10-23 host report: a second updater staged 2.0.0 and advanced its
+// own staging CurrentSymlink, but the systemd-sysext link still points at
+// 1.0.0, which is the image the host merges and runs. Check compared against
+// the staging symlink and wrongly said "Up to date".
+func TestCheckFeatures_StaleSysextLinkReportsUpdate(t *testing.T) {
+	f := newStaleLinkFixture(t, "1.0.0")
+
+	r := checkOnce(t, f)
+	if !r.UpdateAvailable {
+		t.Error("expected UpdateAvailable=true while the link points at the older image")
+	}
+	if r.CurrentVersion != "1.0.0" {
+		t.Errorf("CurrentVersion = %q, want the linked 1.0.0", r.CurrentVersion)
+	}
+	if r.NewestVersion != "2.0.0" {
+		t.Errorf("NewestVersion = %q, want 2.0.0", r.NewestVersion)
+	}
+	if !strings.Contains(f.out.String(), "Update available: 1.0.0 → 2.0.0") {
+		t.Errorf("expected an 'Update available: 1.0.0 → 2.0.0' message, got:\n%s", f.out.String())
+	}
+}
+
+// TestCheckFeatures_LinkedNewestIsUpToDate: the link points at the newest
+// version, so the component is up to date even though the staging symlink is
+// irrelevant.
+func TestCheckFeatures_LinkedNewestIsUpToDate(t *testing.T) {
+	f := newStaleLinkFixture(t, "2.0.0")
+
+	r := checkOnce(t, f)
+	if r.UpdateAvailable {
+		t.Error("expected UpdateAvailable=false while the link points at the newest image")
+	}
+	if r.CurrentVersion != "2.0.0" {
+		t.Errorf("CurrentVersion = %q, want the linked 2.0.0", r.CurrentVersion)
+	}
+	if !strings.Contains(f.out.String(), "Up to date: 2.0.0") {
+		t.Errorf("expected an 'Up to date: 2.0.0' message, got:\n%s", f.out.String())
+	}
+}
+
+// TestCheckFeatures_NoSysextLinkFallsBackToStaging keeps today's behaviour for
+// hosts that have no updex link yet: the staging CurrentSymlink (then the
+// newest staged file) decides the current version.
+func TestCheckFeatures_NoSysextLinkFallsBackToStaging(t *testing.T) {
+	f := newStaleLinkFixture(t, "")
+
+	r := checkOnce(t, f)
+	if r.UpdateAvailable {
+		t.Error("expected the staging-based current version 2.0.0 to be up to date")
+	}
+	if r.CurrentVersion != "2.0.0" {
+		t.Errorf("CurrentVersion = %q, want the staging-based 2.0.0", r.CurrentVersion)
+	}
+}
+
 // TestCheckFeatures_EmptyResultsSerializeAsArray verifies that when there are
 // no enabled features (or no qualifying results), CheckFeatures returns a
 // non-nil slice that JSON-marshals to `[]` rather than `null`. Consumers such

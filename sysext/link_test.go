@@ -426,3 +426,119 @@ func assertOnly(t *testing.T, dir string, want ...string) {
 		t.Errorf("%s should hold exactly %v, got %v", dir, want, names)
 	}
 }
+
+// TestLinkedVersionAt pins the read side of the /var/lib/extensions link: it
+// reports the version the host actually merges, and reports nothing when the
+// link is absent, not a symlink, dangling, or names an image this transfer
+// does not own. CheckFeatures uses it so a second updater that advances the
+// staging CurrentSymlink cannot make a stale link look up to date.
+func TestLinkedVersionAt(t *testing.T) {
+	tests := []struct {
+		name string
+		// patterns overrides the transfer's target match patterns.
+		patterns []string
+		// link creates the systemd-sysext link; nil leaves it absent.
+		link    func(t *testing.T, stagingDir, linkPath string)
+		want    string
+		wantErr bool
+	}{
+		{
+			name: "absent link",
+		},
+		{
+			name: "regular file at the link path",
+			link: func(t *testing.T, _, linkPath string) {
+				if err := os.WriteFile(linkPath, []byte("not a link"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "dangling link",
+			link: func(t *testing.T, stagingDir, linkPath string) {
+				symlink(t, filepath.Join(stagingDir, "myext_3.0.0.raw"), linkPath)
+			},
+		},
+		{
+			name: "foreign image name",
+			link: func(t *testing.T, stagingDir, linkPath string) {
+				symlink(t, filepath.Join(stagingDir, "other_1.0.0.raw"), linkPath)
+			},
+		},
+		{
+			name: "relative target",
+			link: func(t *testing.T, stagingDir, linkPath string) {
+				rel, err := filepath.Rel(filepath.Dir(linkPath), filepath.Join(stagingDir, "myext_1.0.0.raw"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				symlink(t, rel, linkPath)
+			},
+			want: "1.0.0",
+		},
+		{
+			name: "absolute target",
+			link: func(t *testing.T, stagingDir, linkPath string) {
+				symlink(t, filepath.Join(stagingDir, "myext_2.0.0.raw"), linkPath)
+			},
+			want: "2.0.0",
+		},
+		{
+			name:     "compressed target name",
+			patterns: []string{"myext_@v.raw.zst", "myext_@v.raw"},
+			link: func(t *testing.T, stagingDir, linkPath string) {
+				symlink(t, filepath.Join(stagingDir, "myext_1.0.0.raw.zst"), linkPath)
+			},
+			want: "1.0.0",
+		},
+		{
+			name:     "unusable target pattern",
+			patterns: []string{"myext-latest.raw"},
+			wantErr:  true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			stagingDir := t.TempDir()
+			sysextDir := t.TempDir()
+			stageImages(t, stagingDir,
+				"myext_1.0.0.raw",
+				"myext_2.0.0.raw",
+				"myext_1.0.0.raw.zst",
+				"other_1.0.0.raw",
+			)
+
+			tr := linkTransfer(stagingDir)
+			if len(tc.patterns) > 0 {
+				tr.Target.MatchPattern = ""
+				tr.Target.MatchPatterns = tc.patterns
+			}
+			if tc.link != nil {
+				tc.link(t, stagingDir, filepath.Join(sysextDir, "myext.raw"))
+			}
+
+			got, err := LinkedVersionAt(tr, sysextDir)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("LinkedVersionAt() = %q, want an error", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("LinkedVersionAt() error = %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("LinkedVersionAt() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// symlink creates a symlink at linkPath, failing the test on error.
+func symlink(t *testing.T, target, linkPath string) {
+	t.Helper()
+	if err := os.Symlink(target, linkPath); err != nil {
+		t.Fatalf("symlink %s -> %s: %v", linkPath, target, err)
+	}
+}
