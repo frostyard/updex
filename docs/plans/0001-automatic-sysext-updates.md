@@ -126,8 +126,7 @@ Phase 8 checks real hosts. Nothing starts before the ADR is Accepted.
 
 ## Open questions
 
-- **Metered networks:** systemd has no metered condition. Decide whether
-  updex asks NetworkManager before downloading, by Phase 2.
+*(none)*
 
 ## References
 

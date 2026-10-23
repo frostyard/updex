@@ -1,6 +1,6 @@
 # 0016 — Automatic sysext updates: a packaged updex timer that applies at the next boot
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-23
 
 ## Context
@@ -70,6 +70,9 @@ the units come from, the schedule, retention, status and recovery.
   `Persistent=true` and `[Install] WantedBy=timers.target`. A run that
   finds nothing new fetches only the `SHA256SUMS` manifests (and their
   signatures) of enabled features.
+- updex does not check for metered networks. A host on a metered network
+  downloads like any other host; its administrator masks the timer to stop
+  this.
 - `updex daemon enable` runs `systemctl enable --now updex-update.timer`
   when the packaged units exist. It writes units to `/etc/systemd/system/`
   only when they do not (an updex binary installed without the package).
@@ -213,7 +216,6 @@ new revision and still runs an older one.
   packaged units until `updex daemon disable` removes them.
 - A manual `systemd-sysupdate` run still vacuums without knowledge of the
   updex link. It stays a manual tool.
-- When this ADR is accepted, it supersedes ADR-0007.
 
 ## Alternatives considered
 
@@ -255,8 +257,8 @@ new revision and still runs an older one.
   [design/packaging-and-maintainers.md](../design/packaging-and-maintainers.md),
   [specs/sdk-api.md](../specs/sdk-api.md),
   [plans/0001-automatic-sysext-updates.md](../plans/0001-automatic-sysext-updates.md)
-- Builds on: [ADR-0007](0007-daemon-stages-never-activates.md),
-  [ADR-0008](0008-bounded-retry-no-resume.md),
+- Supersedes: [ADR-0007](0007-daemon-stages-never-activates.md)
+- Builds on: [ADR-0008](0008-bounded-retry-no-resume.md),
   [ADR-0015](0015-detect-merged-sysexts-from-hierarchy-metadata.md);
   core [ADR-0008](https://github.com/frostyard/core/blob/main/docs/adr/0008-sysext-distribution-and-update-contract.md),
   [ADR-0055](https://github.com/frostyard/core/blob/main/docs/adr/0055-publish-debian-packages-through-the-apt-publisher.md),
