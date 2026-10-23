@@ -304,7 +304,7 @@ func (c *Client) enableFeature(ctx context.Context, name string, opts EnableFeat
 			// A refresh activates every pending link on the host, not only
 			// this feature's: say which others, before it runs (or would).
 			if !opts.NoRefresh {
-				result.PendingActivations = c.pendingActivations(opts.Component, transfers, featureTransfers)
+				result.PendingActivations = c.pendingActivations(transfers, featureTransfers)
 				c.warnPendingActivations(result.PendingActivations, opts.DryRun)
 			}
 
@@ -444,7 +444,7 @@ func (c *Client) disableFeature(ctx context.Context, name string, opts DisableFe
 		// merged state, after which every link would look pending.
 		var pending []PendingActivation
 		if opts.Now && !opts.NoRefresh {
-			pending = c.pendingActivations(opts.Component, transfers, featureTransfers)
+			pending = c.pendingActivations(transfers, featureTransfers)
 		}
 
 		// If --now is specified, unmerge first (unless dry-run)
@@ -669,7 +669,7 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 	// and the refresh is what applies them); list the others, such as a
 	// disabled feature whose link still names a newer image.
 	if !opts.NoRefresh {
-		pending := c.pendingActivations(opts.Component, transfers, ownTransfers)
+		pending := c.pendingActivations(transfers, ownTransfers)
 		c.warnPendingActivations(pending, opts.DryRun)
 		for i := range allResults {
 			allResults[i].PendingActivations = pending

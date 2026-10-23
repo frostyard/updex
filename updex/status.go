@@ -2,6 +2,7 @@ package updex
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/frostyard/updex/v2/config"
@@ -115,25 +116,32 @@ func (c *Client) transferStatus(t *config.Transfer) TransferStatus {
 // changed: a link that names a version the host does not run (activation),
 // and a merged sysext with no link (deactivation). own is the operation's own
 // transfers; they are matched by link name, because the link is the thing a
-// refresh activates. scoped is the domain the caller loaded. A caller scoped
-// to one component (ClientConfig.Definitions unset) still gets the whole host
-// checked, because a refresh does not honour that scope.
+// refresh activates. scoped is the domain the caller loaded.
+//
+// A refresh does not honour any scope, so the host's normal definitions are
+// always read and unioned with scoped, whether scoped is one component or a
+// definitions directory (ClientConfig.Definitions). A run limited that way
+// still lists every host sysext its refresh changes, for example a transfer
+// whose definitions live in a normal sysupdate.d root while the run works in
+// another directory. Transfers are matched by link name and the first one
+// seen wins (scoped before the host's own), so a transfer that both describe
+// is listed once. Only the warning reads this wide; the operation's update
+// scope stays scoped. When the host definitions cannot be read, the failure is
+// a warning and scoped is used alone.
 //
 // Only links of transfers that updex's definitions describe are visible: a
 // link made by hand for an image with no transfer is not listed. A transfer
 // whose state cannot be read is reported as a warning and skipped, and the
 // refresh is not prevented.
-func (c *Client) pendingActivations(component string, scoped, own []*config.Transfer) []PendingActivation {
+func (c *Client) pendingActivations(scoped, own []*config.Transfer) []PendingActivation {
 	domain := scoped
-	if component != "" && c.config.Definitions == "" {
-		// Name-collision warnings of the full union are dropped: this is a
-		// read for the warning only, not the domain the caller operates on.
-		all, _, err := config.LoadAllTransfersIn("", c.paths.definitionRoots, c.paths.osReleasePaths)
-		if err != nil {
-			c.warn("could not list sysexts outside component %q that a refresh would activate: %v", component, err)
-		} else {
-			domain = all
-		}
+	// Name-collision warnings of the full union are dropped: this is a read
+	// for the warning only, not the domain the caller operates on.
+	host, _, err := config.LoadAllTransfersIn("", c.paths.definitionRoots, c.paths.osReleasePaths)
+	if err != nil {
+		c.warn("could not list the sysexts outside the requested scope that a refresh would activate: %v", err)
+	} else {
+		domain = slices.Concat(scoped, host)
 	}
 
 	ownLinks := make(map[string]bool, len(own))
