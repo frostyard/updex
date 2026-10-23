@@ -130,9 +130,12 @@ still prints; `features check` reports it as that row's `error`).
 `systemd-sysext refresh`, which activates every linked-but-not-merged sysext on
 the host, not only the ones you asked about. Before the refresh, updex warns
 and lists the others (`systemd-sysext refresh will also activate 1 sysext(s)
-that are linked but not merged: beta: 1.0.0 -> 2.0.0`). The JSON result carries
+that are linked but not merged: beta: 1.0.0 -> 2.0.0`). It also lists the
+sysexts that are merged but have no link, because the refresh unmerges them
+under their running workload (`… will also deactivate 1 sysext(s) that are
+merged but not linked: beta: 1.0.0 -> not linked`). The JSON result carries
 the same list as `pending_activations` (`component`, `running_version`,
-`linked_version`). For `update`, the enabled features are the run's own, so the
+`linked_version`, and `deactivate: true` for a deactivation). For `update`, the enabled features are the run's own, so the
 list holds transfers that are not part of an enabled feature, such as a disabled
 feature whose link still names a newer image. With `--dry-run` it says what the
 refresh would activate. With `--no-refresh` nothing is listed, because nothing

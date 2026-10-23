@@ -39,24 +39,42 @@ type TransferStatus struct {
 	Error string `json:"error,omitempty"`
 }
 
-// PendingActivation names a sysext that is linked to a version the host does
-// not run, so that a systemd-sysext refresh (or the next boot) activates it.
+// PendingActivation names a sysext whose merged state a systemd-sysext
+// refresh (or the next boot) changes: it is linked to a version the host does
+// not run (an activation), or, with Deactivate, it is merged but has no link
+// (a deactivation: the refresh unmerges it under any workload that uses it).
 type PendingActivation struct {
 	// Component is the transfer's component name.
 	Component string `json:"component"`
 	// RunningVersion is the version merged now; empty when not merged.
 	RunningVersion string `json:"running_version"`
-	// LinkedVersion is the version the refresh would merge.
+	// LinkedVersion is the version the refresh would merge; empty for a
+	// deactivation.
 	LinkedVersion string `json:"linked_version"`
+	// Deactivate is true when the sysext is merged but not linked, so the
+	// refresh unmerges it. An image that another systemd-sysext search
+	// directory (/etc/extensions, /run/extensions, /usr/lib/extensions)
+	// provides stays merged; updex cannot tell, so it lists it anyway.
+	Deactivate bool `json:"deactivate,omitempty"`
 }
 
-// String renders the activation as "component: running -> linked".
+// String renders an activation as "component: running -> linked" and a
+// deactivation as "component: running -> not linked".
 func (p PendingActivation) String() string {
 	running := p.RunningVersion
 	if running == "" {
 		running = "not merged"
 	}
+	if p.Deactivate {
+		return fmt.Sprintf("%s: %s -> not linked", p.Component, running)
+	}
 	return fmt.Sprintf("%s: %s -> %s", p.Component, running, p.LinkedVersion)
+}
+
+// deactivationPending reports whether a refresh unmerges a sysext: it is
+// merged (any running version, "unknown" included) and has no link.
+func deactivationPending(running, linked string) bool {
+	return running != "" && linked == ""
 }
 
 // activationPending reports whether a link to linked changes what the host
@@ -92,9 +110,10 @@ func (c *Client) transferStatus(t *config.Transfer) TransferStatus {
 	return status
 }
 
-// pendingActivations lists the transfers, outside own, whose link names a
-// version the host does not run: what a systemd-sysext refresh activates in
-// addition to what the calling operation changed. own is the operation's own
+// pendingActivations lists the transfers, outside own, whose merged state a
+// systemd-sysext refresh changes in addition to what the calling operation
+// changed: a link that names a version the host does not run (activation),
+// and a merged sysext with no link (deactivation). own is the operation's own
 // transfers; they are matched by link name, because the link is the thing a
 // refresh activates. scoped is the domain the caller loaded. A caller scoped
 // to one component (ClientConfig.Definitions unset) still gets the whole host
@@ -137,11 +156,18 @@ func (c *Client) pendingActivations(component string, scoped, own []*config.Tran
 		if status.Error != "" {
 			c.warn("could not determine whether a refresh activates %s: %s", t.Component, status.Error)
 		}
-		if status.PendingReboot {
+		switch {
+		case status.PendingReboot:
 			pending = append(pending, PendingActivation{
 				Component:      t.Component,
 				RunningVersion: status.RunningVersion,
 				LinkedVersion:  status.LinkedVersion,
+			})
+		case status.Error == "" && deactivationPending(status.RunningVersion, status.LinkedVersion):
+			pending = append(pending, PendingActivation{
+				Component:      t.Component,
+				RunningVersion: status.RunningVersion,
+				Deactivate:     true,
 			})
 		}
 	}
@@ -154,14 +180,24 @@ func (c *Client) warnPendingActivations(pending []PendingActivation, dryRun bool
 	if len(pending) == 0 {
 		return
 	}
-	items := make([]string, len(pending))
-	for i, p := range pending {
-		items[i] = p.String()
+	var activate, deactivate []string
+	for _, p := range pending {
+		if p.Deactivate {
+			deactivate = append(deactivate, p.String())
+		} else {
+			activate = append(activate, p.String())
+		}
 	}
-	verb := "will also activate"
+	will := "will"
 	if dryRun {
-		verb = "would also activate"
+		will = "would"
 	}
-	c.warn("systemd-sysext refresh %s %d sysext(s) that are linked but not merged: %s",
-		verb, len(pending), strings.Join(items, ", "))
+	if len(activate) > 0 {
+		c.warn("systemd-sysext refresh %s also activate %d sysext(s) that are linked but not merged: %s",
+			will, len(activate), strings.Join(activate, ", "))
+	}
+	if len(deactivate) > 0 {
+		c.warn("systemd-sysext refresh %s also deactivate %d sysext(s) that are merged but not linked: %s",
+			will, len(deactivate), strings.Join(deactivate, ", "))
+	}
 }

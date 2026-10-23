@@ -721,3 +721,54 @@ func TestPendingActivationString(t *testing.T) {
 		t.Errorf("String = %q", got)
 	}
 }
+
+// TestEnableFeature_NowWarnsAboutDeactivations pins that a refresh lists a
+// sysext that is merged but not linked (for example a feature disabled
+// without --now): the refresh unmerges it under its workload.
+func TestEnableFeature_NowWarnsAboutDeactivations(t *testing.T) {
+	f := newStatusFixture(t)
+	f.addFeature("alpha", false)
+	f.addFeature("beta", false)
+	f.stage("alpha", "2.0.0")
+	f.link("alpha", "2.0.0")
+	f.stage("beta", "1.0.0") // beta is merged, but its link is gone
+	f.merge(map[string]string{"alpha": "1.0.0", "beta": "1.0.0"})
+
+	result, err := f.client().EnableFeature(t.Context(), "alpha", EnableFeatureOptions{Now: true})
+	if err != nil {
+		t.Fatalf("EnableFeature: %v", err)
+	}
+	if !f.runner.RefreshCalled {
+		t.Error("the refresh must still run")
+	}
+	want := PendingActivation{Component: "beta", RunningVersion: "1.0.0", Deactivate: true}
+	if len(result.PendingActivations) != 1 || result.PendingActivations[0] != want {
+		t.Errorf("PendingActivations = %+v, want [%+v]", result.PendingActivations, want)
+	}
+	if !f.reporter.hasWarningContaining("also deactivate 1 sysext(s) that are merged but not linked: beta: 1.0.0 -> not linked") {
+		t.Errorf("warnings = %v", f.reporter.warnings)
+	}
+	if f.reporter.hasWarningContaining("also activate") {
+		t.Errorf("nothing is activated, but warnings = %v", f.reporter.warnings)
+	}
+}
+
+func TestDeactivationPending(t *testing.T) {
+	for _, tt := range []struct {
+		running, linked string
+		want            bool
+	}{
+		{"1", "", true},
+		{sysext.UnknownVersion, "", true},
+		{"", "", false},
+		{"1", "1", false},
+		{"1", "2", false},
+	} {
+		if got := deactivationPending(tt.running, tt.linked); got != tt.want {
+			t.Errorf("deactivationPending(%q, %q) = %v, want %v", tt.running, tt.linked, got, tt.want)
+		}
+	}
+	if got := (PendingActivation{Component: "a", RunningVersion: "1", Deactivate: true}).String(); got != "a: 1 -> not linked" {
+		t.Errorf("String = %q", got)
+	}
+}
