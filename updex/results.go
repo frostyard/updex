@@ -64,14 +64,16 @@ type UpdateResult struct {
 	Error             string   `json:"error,omitempty"`
 	NextActionMessage string   `json:"next_action_message,omitempty"`
 	RemovedVersions   []string `json:"removed_versions,omitzero"`
-	// Held is true when a rollback record holds the feature: nothing newer
-	// than the rejected version is published, so nothing was downloaded or
-	// linked and every old link stays. It is not an error. Version is the
-	// version the link names, and NextActionMessage says what is rejected.
+	// Held is true when the rollback records that apply to the transfers
+	// hold the feature: nothing newer than a rejected version is published,
+	// so nothing was downloaded or linked and every old link stays. It is
+	// not an error. A record of any feature that shares a transfer counts,
+	// not only the feature being updated. Version is the version the link
+	// names, and NextActionMessage says what is rejected.
 	Held bool `json:"held_by_rollback,omitempty"`
-	// RejectedVersion is the version the rollback record rejected for this
-	// transfer, when Held. Empty when the transfer is held only because
-	// another transfer of its feature is.
+	// RejectedVersion is the highest version the applicable rollback
+	// records reject for this transfer, when Held. Empty when the transfer
+	// is held only because another transfer of its feature is.
 	RejectedVersion string `json:"rejected_version,omitempty"`
 }
 

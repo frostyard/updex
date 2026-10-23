@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -191,6 +193,144 @@ func (r *rollbackRecord) rejectedVersions() map[string]string {
 	return r.Rejected
 }
 
+// rollbackHolds is what every rollback record that applies to a set of
+// transfers says (ADR-0016). A record is keyed by the feature that was rolled
+// back, and a transfer can belong to several features (Features= and
+// RequisiteFeatures=), so a rollback of one feature must hold the transfer for
+// every other feature that shares it; otherwise updating through a sharer
+// would link the rejected version again.
+type rollbackHolds struct {
+	// rejected maps a transfer component to the highest version any
+	// applicable record rejects for it. Several features can reject
+	// different versions of one component; the highest wins, so an older
+	// rejection never lifts a newer one.
+	rejected map[string]string
+
+	// errs maps a transfer component to the failure of an applicable record
+	// that cannot be read. A caller that links must then link nothing for
+	// the feature, because it cannot tell what was rejected.
+	errs map[string]error
+
+	// records holds the applicable records that could be read, by the
+	// feature that wrote them. A rollback is over, and its record may be
+	// deleted, once every version it rejects is behind a link (see
+	// deleteFinishedRollbackRecords).
+	records map[string]*rollbackRecord
+}
+
+// rollbackFeaturesOf returns the features that name a transfer, deduplicated
+// and sorted: Features= is OR logic and RequisiteFeatures= is AND logic, and
+// either way the transfer belongs to that feature, with or without the
+// feature being enabled.
+func rollbackFeaturesOf(t *config.Transfer) []string {
+	names := make(map[string]struct{}, len(t.Transfer.Features)+len(t.Transfer.RequisiteFeatures))
+	for _, name := range t.Transfer.Features {
+		names[name] = struct{}{}
+	}
+	for _, name := range t.Transfer.RequisiteFeatures {
+		names[name] = struct{}{}
+	}
+	return slices.Sorted(maps.Keys(names))
+}
+
+// collectRollbackHolds reads the rollback record of every feature that names
+// one of transfers, and combines them. Each record is read at most once per
+// call. A record that cannot be read is an error for every transfer it names,
+// which names the feature whose record failed.
+func (c *Client) collectRollbackHolds(transfers []*config.Transfer) rollbackHolds {
+	holds := rollbackHolds{
+		rejected: make(map[string]string),
+		errs:     make(map[string]error),
+		records:  make(map[string]*rollbackRecord),
+	}
+	read := make(map[string]*rollbackRecord)
+	readErr := make(map[string]error)
+	problems := make(map[string][]error)
+
+	for _, t := range transfers {
+		for _, name := range rollbackFeaturesOf(t) {
+			rec, ok := read[name]
+			if !ok {
+				rec, readErr[name] = c.readRollbackRecord(name)
+				read[name] = rec
+			}
+			if err := readErr[name]; err != nil {
+				problems[t.Component] = append(problems[t.Component],
+					fmt.Errorf("rollback record of feature %s cannot be read: %w", name, err))
+				continue
+			}
+			if rec == nil {
+				continue
+			}
+			holds.records[name] = rec
+			rejected := rec.Rejected[t.Component]
+			if rejected == "" {
+				continue
+			}
+			if current := holds.rejected[t.Component]; current == "" || version.Compare(rejected, current) > 0 {
+				holds.rejected[t.Component] = rejected
+			}
+		}
+	}
+	for component, errs := range problems {
+		holds.errs[component] = errors.Join(errs...)
+	}
+	return holds
+}
+
+// deleteFinishedRollbackRecords deletes every applicable record that a link
+// has overtaken: for each component the record rejects, the version linked now
+// is newer than the rejected one (ADR-0016). A component of the record that is
+// not one of transfers is looked up in domain, the transfers the operation
+// loaded. A component whose transfer cannot be found, whose link cannot be
+// read, or whose link is not newer keeps its record: the rollback may still be
+// in force for it.
+func (c *Client) deleteFinishedRollbackRecords(transfers, domain []*config.Transfer, holds rollbackHolds) {
+	for _, name := range slices.Sorted(maps.Keys(holds.records)) {
+		if !c.rollbackOvertaken(holds.records[name], transfers, domain) {
+			continue
+		}
+		if _, err := c.deleteRollbackRecord(name); err != nil {
+			c.warn("failed to delete the rollback record of %s: %v", name, err)
+			continue
+		}
+		c.msg("Linked a version newer than the one rolled back from; deleted the rollback record of %s", name)
+	}
+}
+
+// rollbackOvertaken reports whether every version rec rejects is behind the
+// link in place now.
+func (c *Client) rollbackOvertaken(rec *rollbackRecord, transfers, domain []*config.Transfer) bool {
+	for component, rejected := range rec.Rejected {
+		t := transferForComponent(component, transfers)
+		if t == nil {
+			t = transferForComponent(component, domain)
+		}
+		if t == nil {
+			return false
+		}
+		linked, err := sysext.LinkedVersionAt(t, c.paths.sysextLinkDir)
+		if err != nil || linked == "" {
+			return false
+		}
+		if version.Compare(linked, rejected) <= 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// transferForComponent returns the transfer of the named component, or nil
+// when the list has none.
+func transferForComponent(component string, transfers []*config.Transfer) *config.Transfer {
+	for _, t := range transfers {
+		if t.Component == component {
+			return t
+		}
+	}
+	return nil
+}
+
 // versionRunner returns the client's runner as a sysext.VersionSysextRunner,
 // or an error wrapping ErrLegacySysextRunner when it cannot link a given
 // version.
@@ -211,6 +351,12 @@ type rollbackPlan struct {
 // RollbackFeature links every transfer of a feature to an older staged
 // version and records the version it rolled back from, so that
 // `features update` does not link it again (ADR-0016, "Rollback").
+//
+// The record names only the rolled-back feature, but its hold covers every
+// feature that shares one of its transfers (Features= or
+// RequisiteFeatures=), enabled or not: the records of all of them are read by
+// UpdateFeatures, EnableFeature, Features and CheckFeatures, so a second
+// feature cannot link the rejected version again.
 //
 // By default each transfer goes to its own newest staged version older than
 // the version its link names. With opts.To every transfer goes to that

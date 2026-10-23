@@ -47,14 +47,16 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 		featureTransfers := config.GetTransfersForFeature(transfers, f.Name)
 		var transferNames []string
 		var statuses []TransferStatus
-		rec, recErr := c.readRollbackRecord(f.Name)
+		// The records of every feature that shares one of the transfers
+		// apply, not only this feature's own (ADR-0016).
+		holds := c.collectRollbackHolds(featureTransfers)
 		for _, t := range featureTransfers {
 			transferNames = append(transferNames, t.Component)
 
 			// A transfer whose merged state or link cannot be read is
 			// reported as a warning, and keeps its other value, so one bad
 			// transfer never breaks the listing.
-			status := c.featureTransferStatus(t, rec, recErr)
+			status := c.featureTransferStatus(t, holds)
 			if status.Error != "" {
 				c.warn("%s: %s", t.Component, status.Error)
 			}
@@ -280,7 +282,7 @@ func (c *Client) enableFeature(ctx context.Context, name string, opts EnableFeat
 			} else {
 				// The feature's transfers are staged first and linked
 				// together: when one fails, none is linked.
-				installs := c.installTransfers(ctx, name, featureTransfers, installFeatureOptions{})
+				installs := c.installTransfers(ctx, name, featureTransfers, installFeatureOptions{Domain: transfers})
 				for _, in := range installs {
 					if in.err != nil && !in.notLinked {
 						err := fmt.Errorf("failed to download %s: %w", in.transfer.Component, in.err)
@@ -599,6 +601,7 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 			DryRun:    opts.DryRun,
 			NoVacuum:  opts.NoVacuum,
 			Manifests: manifestCache,
+			Domain:    transfers,
 		})
 
 		for _, in := range installs {
@@ -761,14 +764,16 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 			Results: make([]CheckResult, 0),
 		}
 
-		checkRec, checkRecErr := c.readRollbackRecord(f.Name)
+		// Every rollback record that applies to these transfers counts, not
+		// only this feature's own (ADR-0016).
+		holds := c.collectRollbackHolds(featureTransfers)
 		for _, transfer := range featureTransfers {
 			c.msg("Checking %s/%s", f.Name, transfer.Component)
 
 			// What the host runs and what its next boot merges. A failure to
 			// read either is reported after the manifest check below, in this
 			// component's Error, with the values that could be read.
-			status := c.featureTransferStatus(transfer, checkRec, checkRecErr)
+			status := c.featureTransferStatus(transfer, holds)
 
 			available, m, _, err := c.getAvailableVersions(ctx, transfer, manifestCache[transfer.Source.Path])
 			if m != nil {

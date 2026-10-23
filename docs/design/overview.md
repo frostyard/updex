@@ -628,27 +628,38 @@ nothing when any transfer of the feature blocks it:
   explicit `format` lets a later updex change the shape while an older one fails
   closed on it. Written with a temp file plus rename after `Lstat` checks of the
   directory and file; the feature name goes through `catalog.ValidateSysextName`
-  first.
+  first. The record names only the rolled-back feature; its hold covers every
+  feature that shares a transfer with it (see "Update path").
 - **Order.** Record first, then the links (`linkAllOrNone` with
   `sysext.LinkVersionAt`), then the optional refresh. A crash between the record
   and the links leaves a hold on the current link, which is harmless; the other
   order would leave a rolled-back link that the next update undoes. A link
   failure restores the links (Phase 1 snapshot/restore) and the previous record.
-- **Update path.** `installTransfers` reads the record before it stages
-  anything. An unreadable record fails closed for that feature only (nothing
-  downloaded or linked, an error on every transfer). When any transfer's newest
-  available version is not newer than its rejected version, the whole feature is
-  held (`holdByRollback`): no download, no link, so the stage step's "already
-  staged, relink" branch can never point the link back at the newest staged
-  image, which is the rejected one. Held is a result state
-  (`UpdateResult.Held`, `RejectedVersion`), not an error. A newer revision is
-  staged and linked together as usual; the vacuum then runs with the record's
-  rejected version in `VacuumPaths.ProtectVersions`, and the record is deleted
-  after the links succeeded. `EnableFeature{Now}` shares this path.
+- **Update path.** A transfer can belong to several features (`Features=` OR,
+  `RequisiteFeatures=` AND), so `installTransfers` reads not only the record of
+  the feature it processes but every record that applies to its transfers
+  (`collectRollbackHolds`): the record of each feature that names one of them,
+  enabled or not, each read once per call. For a component that several records
+  reject, the highest rejected version wins (`version.Compare`). An unreadable
+  applicable record fails closed for that feature only (nothing downloaded or
+  linked, an error on every transfer, naming the feature whose record failed).
+  When any transfer's newest available version is not newer than its rejected
+  version, the whole feature is held (`holdByRollback`): no download, no link,
+  so the stage step's "already staged, relink" branch can never point the link
+  back at the newest staged image, which is the rejected one. Held is a result
+  state (`UpdateResult.Held`, `RejectedVersion`), not an error. A newer revision
+  is staged and linked together as usual; the vacuum then runs with the rejected
+  version in `VacuumPaths.ProtectVersions`, and afterwards every applicable
+  record is deleted whose every rejected version is behind a link now
+  (`sysext.LinkedVersionAt`; a component of the record outside this feature's
+  transfers is looked up in the loaded domain, and a record whose component has
+  no transfer or no readable link stays). `EnableFeature{Now}` shares this path.
 - **Status.** `TransferStatus.RollbackRejected` and `CheckResult.RollbackRejected`
-  (JSON `rollback_rejected`); `UpdateAvailable` is false while the newest version
-  is not newer than the rejected one. The CLI marks it `held (rejected X)` in
-  `features check` and with a `HELD BY ROLLBACK:` footer in `features list`.
+  (JSON `rollback_rejected`), from the same `collectRollbackHolds`, for every
+  feature that shares the transfer; `UpdateAvailable` is false while the newest
+  version is not newer than the rejected one. The CLI marks it
+  `held (rejected X)` in `features check` and with a `HELD BY ROLLBACK:` footer
+  in `features list`.
 - **`--now`** refreshes through the runner after listing the other pending
   activations; without it the rollback applies at the next boot. `--clear`
   deletes the record and changes no link; a missing record is success.

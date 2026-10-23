@@ -35,33 +35,34 @@ type TransferStatus struct {
 	// "unknown" (the two cannot be compared), and when Error is set.
 	PendingReboot bool `json:"pending_reboot,omitempty"`
 
-	// RollbackRejected is the version a rollback record rejected for this
-	// transfer: `features update` links nothing at or below it until a newer
-	// version is published. Empty when the feature has no record. It is set
-	// by the callers that know the feature (Features, CheckFeatures).
+	// RollbackRejected is the highest version a rollback record that applies
+	// to this transfer rejects: `features update` links nothing at or below
+	// it until a newer version is published. Empty when no record names the
+	// transfer. Every feature that shares the transfer sees it, not only the
+	// rolled-back one.
 	RollbackRejected string `json:"rollback_rejected,omitempty"`
 
 	// Error is set when the merged state or the link could not be read, or
-	// when the feature's rollback record could not be read. The version that
+	// when an applicable rollback record could not be read. The version that
 	// could be read is still reported.
 	Error string `json:"error,omitempty"`
 }
 
-// featureTransferStatus is transferStatus plus what the feature's rollback
-// record (read once by the caller) says about the transfer. A record that
-// cannot be read is an Error on every transfer of the feature, because the
-// update path then links nothing for it.
-func (c *Client) featureTransferStatus(t *config.Transfer, rec *rollbackRecord, recErr error) TransferStatus {
+// featureTransferStatus is transferStatus plus what the rollback records that
+// apply to the transfers (collected once by the caller) say about the
+// transfer. A record that cannot be read is an Error on every transfer it
+// names, because the update path then links nothing for the feature.
+func (c *Client) featureTransferStatus(t *config.Transfer, holds rollbackHolds) TransferStatus {
 	status := c.transferStatus(t)
-	if recErr != nil {
+	if err := holds.errs[t.Component]; err != nil {
 		if status.Error != "" {
 			status.Error += "; "
 		}
-		status.Error += recErr.Error()
+		status.Error += err.Error()
 		status.PendingReboot = false
 		return status
 	}
-	status.RollbackRejected = rec.rejectedVersions()[t.Component]
+	status.RollbackRejected = holds.rejected[t.Component]
 	return status
 }
 
