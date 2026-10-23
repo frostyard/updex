@@ -521,7 +521,7 @@ func (s *linkSnapshot) restore() error {
 // When a link fails, it restores the links already moved, including the
 // failing one, and returns the index of the failing transfer and the link
 // error joined with every restore failure. restoreFailed maps the indexes
-// (before failed) whose restore failed to that failure: their link may still point at the new
+// (up to and including failed) whose restore failed to that failure: their link may still point at the new
 // version. Backups are removed at the end, except one whose restore failed,
 // which holds the only copy of the file. On success failed is -1.
 func (c *Client) linkAllOrNone(transfers []*config.Transfer, link func(i int, t *config.Transfer) error) (failed int, restoreFailed map[int]error, err error) {
@@ -549,12 +549,12 @@ func (c *Client) linkAllOrNone(transfers []*config.Transfer, link func(i int, t 
 				rerr = fmt.Errorf("failed to restore sysext link for %s: %w", transfers[j].Component, rerr)
 				c.warn("%s", rerr)
 				errs = append(errs, rerr)
-				if j < i {
-					if restoreFailed == nil {
-						restoreFailed = make(map[int]error)
-					}
-					restoreFailed[j] = rerr
+				// The failing transfer's link may have moved before link
+				// returned the error, so it is recorded too.
+				if restoreFailed == nil {
+					restoreFailed = make(map[int]error)
 				}
+				restoreFailed[j] = rerr
 			}
 			return i, restoreFailed, errors.Join(errs...)
 		}
@@ -589,10 +589,16 @@ func (c *Client) linkStaged(feature string, transfers []*config.Transfer, staged
 		results[idx[failed]].err = err
 		c.markNotLinked(feature, results)
 		for j, rerr := range restoreFailed {
-			// This transfer's link had moved and could not be put back: it
-			// may still point at the new version, so it must not read as
-			// not linked.
-			results[idx[j]].err = fmt.Errorf("%w; the link may point at the new version", rerr)
+			// This transfer's link may have moved and could not be put
+			// back: it may still point at the new version, so it must not
+			// read as not linked. The failing transfer keeps its link error
+			// too.
+			rerr = fmt.Errorf("%w; the link may point at the new version", rerr)
+			if j == failed {
+				results[idx[j]].err = errors.Join(err, rerr)
+			} else {
+				results[idx[j]].err = rerr
+			}
 			results[idx[j]].notLinked = false
 		}
 		return err
