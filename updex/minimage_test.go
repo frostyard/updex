@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -114,6 +115,7 @@ type minImageHost struct {
 	root      string
 	targetDir string
 	linkDir   string
+	hierarchy string
 	osRelease string
 	bootc     *fakeBootc
 	out       *bytes.Buffer
@@ -148,6 +150,7 @@ func newMinImageHost(t *testing.T, bootc *fakeBootc, osRelease string, comps ...
 		root:      t.TempDir(),
 		targetDir: t.TempDir(),
 		linkDir:   t.TempDir(),
+		hierarchy: t.TempDir(),
 		bootc:     bootc,
 		out:       &bytes.Buffer{},
 		runner:    &countingRunner{DefaultRunner: &sysext.DefaultRunner{}},
@@ -173,7 +176,7 @@ func newMinImageHost(t *testing.T, bootc *fakeBootc, osRelease string, comps ...
 			DefinitionRoots:   []string{h.root},
 			OSReleasePaths:    []string{h.osRelease},
 			SysextLinkDir:     h.linkDir,
-			SysextHierarchies: []string{t.TempDir()},
+			SysextHierarchies: []string{h.hierarchy},
 			RunExtensionsDir:  t.TempDir(),
 			RollbackDir:       filepath.Join(t.TempDir(), "rollback"),
 		},
@@ -1056,5 +1059,185 @@ func TestUpdateFeatures_RefreshGate_DryRunReportsSkip(t *testing.T) {
 	}
 	if h.linked("tool") != oldVersion {
 		t.Errorf("a dry run moved a link to %q", h.linked("tool"))
+	}
+}
+
+// A feature with no transfers has nothing to unmerge and nothing to refresh,
+// so disable --now does not run the refresh preflight. A pending link of
+// another feature that the gate would refuse proves the scan did not run.
+func TestDisableFeature_NoTransfersWithNowSkipsTheRefreshPreflight(t *testing.T) {
+	other := sysextImage(t, "other", "20270101000000")
+	h := newMinImageHost(t, bootcNotInstalled(), osRelease20261001,
+		minComp{name: "other", feature: "otherfeat", versions: map[string][]byte{newVersion: other}})
+	h.preinstallImage("other", newVersion, other, true)
+	createFeatureFile(t, filepath.Join(h.root, "sysupdate.d"), "empty", true)
+
+	result, err := h.client.DisableFeature(t.Context(), "empty", DisableFeatureOptions{Now: true})
+	if err != nil {
+		t.Fatalf("DisableFeature: %v (a feature with no transfers refreshes nothing)", err)
+	}
+	if !result.Success {
+		t.Errorf("Success = false: %+v", result)
+	}
+	if h.runner.unmerges != 0 || h.runner.refreshes != 0 {
+		t.Errorf("unmerge ran %d times and refresh %d times, want neither", h.runner.unmerges, h.runner.refreshes)
+	}
+}
+
+// mergeUnknown records the component in the hierarchy's extensions list and
+// writes no origin file: the merged version is then sysext.UnknownVersion.
+func (h *minImageHost) mergeUnknown(component string) {
+	h.t.Helper()
+	dir := filepath.Join(h.hierarchy, sysext.MergedStateDirName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		h.t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "extensions"), []byte(component+"\n"), 0o644); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+// mergeVersion records the component's merged image in the hierarchy's origin
+// file, as systemd-sysext does.
+func (h *minImageHost) mergeVersion(component, version string) {
+	h.t.Helper()
+	dir := filepath.Join(h.hierarchy, sysext.MergedStateDirName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		h.t.Fatal(err)
+	}
+	data, err := json.Marshal(map[string]any{
+		"extensions": map[string]map[string]string{
+			component: {"path": filepath.Join(h.targetDir, component+"_"+version+".raw")},
+		},
+	})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "origin"), data, 0o644); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+// breakMergedState puts a directory where the origin file belongs, so reading
+// the merged state fails.
+func (h *minImageHost) breakMergedState() {
+	h.t.Helper()
+	if err := os.MkdirAll(filepath.Join(h.hierarchy, sysext.MergedStateDirName, "origin"), 0o755); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+// TestUpdateFeatures_RefreshGate_UnknownMergedVersion is the reproduction: the
+// hierarchy's extensions list names the image, no origin file records its
+// version, so the merged version is "unknown". That is not a value the display
+// can compare, but the refresh gate must still check the link: the running
+// image cannot merge it, so the refresh is skipped.
+func TestUpdateFeatures_RefreshGate_UnknownMergedVersion(t *testing.T) {
+	h := newMinImageHost(t, bootcStaged(stagedNewer), osRelease20261001,
+		minComp{name: "tool", feature: "toolfeature", versions: map[string][]byte{newVersion: sysextImage(t, "tool", minNeedsStaged)}})
+	h.preinstall("tool", oldVersion, true)
+	h.mergeUnknown("tool")
+
+	results, err := h.updateWithRefresh(UpdateFeaturesOptions{NoVacuum: true})
+	if err != nil {
+		t.Fatalf("UpdateFeatures: %v (a skipped refresh is not an error)", err)
+	}
+	if got := h.linked("tool"); got != newVersion {
+		t.Errorf("linked version = %q, want %q, which the next boot can run", got, newVersion)
+	}
+	if h.runner.refreshes != 0 {
+		t.Errorf("the refresh ran %d times, want 0", h.runner.refreshes)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %+v", results)
+	}
+	skipped := results[0].RefreshSkipped
+	for _, want := range []string{"refresh skipped", "tool needs image >= " + minNeedsStaged, "running image 20261001000000"} {
+		if !strings.Contains(skipped, want) {
+			t.Errorf("RefreshSkipped = %q, want it to contain %q", skipped, want)
+		}
+	}
+}
+
+// A pending link of another feature whose merged version is unknown is a gate
+// candidate too, while the display still lists nothing it cannot compare.
+func TestUpdateFeatures_RefreshGate_OtherPendingLinkUnknownMergedVersion(t *testing.T) {
+	other := sysextImage(t, "other", "20270101000000")
+	h := newMinImageHost(t, bootcNotInstalled(), osRelease20261001,
+		minComp{name: "mine", feature: "minefeat", versions: map[string][]byte{newVersion: sysextImage(t, "mine", "")}},
+		minComp{name: "other", feature: "otherfeat", versions: map[string][]byte{newVersion: other}})
+	h.preinstall("mine", oldVersion, true)
+	h.preinstallImage("other", newVersion, other, true)
+	h.mergeUnknown("other")
+	createFeatureFile(t, filepath.Join(h.root, "sysupdate.d"), "otherfeat", false)
+
+	results, err := h.updateWithRefresh(UpdateFeaturesOptions{NoVacuum: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.linked("mine") != newVersion {
+		t.Errorf("mine linked = %q, want %s", h.linked("mine"), newVersion)
+	}
+	if h.runner.refreshes != 0 {
+		t.Errorf("the refresh ran %d times, want 0", h.runner.refreshes)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %+v", results)
+	}
+	if !strings.Contains(results[0].RefreshSkipped, "other needs image >= 20270101000000") {
+		t.Errorf("RefreshSkipped = %q, want it to name other", results[0].RefreshSkipped)
+	}
+	if len(results[0].PendingActivations) != 0 {
+		t.Errorf("PendingActivations = %+v, want none: an unknown merged version is not a display activation", results[0].PendingActivations)
+	}
+}
+
+// A merged state that cannot be read is not proof that the refresh is safe:
+// the gate fails closed and the refresh is skipped, with a reason.
+func TestUpdateFeatures_RefreshGate_UnreadableMergedState(t *testing.T) {
+	h := newMinImageHost(t, bootcNotInstalled(), osRelease20261001,
+		minComp{name: "tool", feature: "toolfeature", versions: map[string][]byte{newVersion: sysextImage(t, "tool", "")}})
+	h.preinstall("tool", oldVersion, true)
+	h.breakMergedState()
+
+	results, err := h.updateWithRefresh(UpdateFeaturesOptions{NoVacuum: true})
+	if err != nil {
+		t.Fatalf("UpdateFeatures: %v (a skipped refresh is not an error)", err)
+	}
+	if got := h.linked("tool"); got != newVersion {
+		t.Errorf("linked = %q, want %s: the links stay for the next boot", got, newVersion)
+	}
+	if h.runner.refreshes != 0 {
+		t.Errorf("the refresh ran %d times, want 0", h.runner.refreshes)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %+v", results)
+	}
+	skipped := results[0].RefreshSkipped
+	if !strings.Contains(skipped, "cannot read the state of tool") || !strings.Contains(skipped, "refresh skipped") {
+		t.Errorf("RefreshSkipped = %q, want it to say the state cannot be read", skipped)
+	}
+}
+
+// A link whose merged version equals the linked version changes nothing when
+// the refresh merges it, so it is not a gate candidate and the refresh runs.
+func TestUpdateFeatures_RefreshGate_MergedVersionEqualsLink(t *testing.T) {
+	h := newMinImageHost(t, bootcNotInstalled(), osRelease20261001,
+		minComp{name: "tool", feature: "toolfeature", versions: map[string][]byte{oldVersion: sysextImage(t, "tool", "20270101000000")}})
+	h.preinstall("tool", oldVersion, true)
+	h.mergeVersion("tool", oldVersion)
+
+	results, err := h.updateWithRefresh(UpdateFeaturesOptions{NoVacuum: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.runner.refreshes != 1 {
+		t.Errorf("the refresh ran %d times, want 1", h.runner.refreshes)
+	}
+	if results[0].RefreshSkipped != "" {
+		t.Errorf("RefreshSkipped = %q, want empty", results[0].RefreshSkipped)
+	}
+	if h.bootc.calls != 0 {
+		t.Errorf("bootc ran %d times: the merged version equals the link, so nothing is checked", h.bootc.calls)
 	}
 }

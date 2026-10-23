@@ -217,6 +217,9 @@ func TestClient_Components_NoneDiscovered(t *testing.T) {
 // touches the real filesystem.
 func TestWriteFeatureDropIn_ComponentScoped(t *testing.T) {
 	client := NewClient(ClientConfig{})
+	// The first definition root stands in for /etc (see
+	// config.EtcComponentDirIn); TestMain points it at a temporary directory.
+	etcRoot := client.paths.definitionRoots[0]
 
 	tests := []struct {
 		name        string
@@ -228,25 +231,25 @@ func TestWriteFeatureDropIn_ComponentScoped(t *testing.T) {
 			name:        "component-scoped feature",
 			featureName: "docker",
 			featureFile: "/usr/lib/sysupdate.docker.d/docker.feature",
-			wantDropIn:  filepath.Join("/etc", "sysupdate.docker.d", "docker.feature.d", "00-updex.conf"),
+			wantDropIn:  filepath.Join(etcRoot, "sysupdate.docker.d", "docker.feature.d", "00-updex.conf"),
 		},
 		{
 			name:        "component-scoped feature overridden in /etc",
 			featureName: "docker",
 			featureFile: "/etc/sysupdate.docker.d/docker.feature",
-			wantDropIn:  filepath.Join("/etc", "sysupdate.docker.d", "docker.feature.d", "00-updex.conf"),
+			wantDropIn:  filepath.Join(etcRoot, "sysupdate.docker.d", "docker.feature.d", "00-updex.conf"),
 		},
 		{
 			name:        "legacy default directory feature",
 			featureName: "shared",
 			featureFile: "/usr/lib/sysupdate.d/shared.feature",
-			wantDropIn:  filepath.Join("/etc", "sysupdate.d", "shared.feature.d", "00-updex.conf"),
+			wantDropIn:  filepath.Join(etcRoot, "sysupdate.d", "shared.feature.d", "00-updex.conf"),
 		},
 		{
 			name:        "--definitions override directory",
 			featureName: "custom",
 			featureFile: "/tmp/my-custom-dir/custom.feature",
-			wantDropIn:  filepath.Join("/etc", "sysupdate.d", "custom.feature.d", "00-updex.conf"),
+			wantDropIn:  filepath.Join(etcRoot, "sysupdate.d", "custom.feature.d", "00-updex.conf"),
 		},
 	}
 

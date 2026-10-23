@@ -71,6 +71,7 @@ func TestCLIIntegration_DefaultConfigurationDiscovery(t *testing.T) {
 	originalRoots := config.SearchRoots
 	config.SearchRoots = roots
 	t.Cleanup(func() { config.SearchRoots = originalRoots })
+	setRuntimePaths(t, sdk.RuntimePaths{DefinitionRoots: roots})
 
 	componentDir := filepath.Join(roots[1], "sysupdate.demo.d")
 	if err := os.MkdirAll(componentDir, 0755); err != nil {
@@ -133,6 +134,7 @@ func TestCLIIntegration_CatalogDoesNotSendGitHubTokenToCustomOrigin(t *testing.T
 		catalog.CacheDir = originalCacheDir
 		config.SearchRoots = originalSearchRoots
 	})
+	setRuntimePaths(t, sdk.RuntimePaths{CatalogConfigRoots: []string{catalogRoot}})
 	t.Setenv("GITHUB_TOKEN", "cli-integration-token")
 
 	stdout, stderr, err := runCLI(t,

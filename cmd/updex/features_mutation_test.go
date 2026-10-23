@@ -96,6 +96,12 @@ func newFeatureCLIFixture(t *testing.T) *featureCLIFixture {
 	})
 	config.SearchRoots = fx.roots
 	sysext.SysextDir = fx.sysextDir
+	// The CLI client reads paths through runtimePaths, not the compatibility
+	// variables: point the seam at this fixture too.
+	setRuntimePaths(t, updex.RuntimePaths{
+		DefinitionRoots: fx.roots,
+		SysextLinkDir:   fx.sysextDir,
+	})
 	return fx
 }
 

@@ -194,6 +194,8 @@ func TestRunFeaturesDisableDockerMergedState(t *testing.T) {
 				writeMergedStateFile(t, fx.hierarchy, "extensions", "docker\n")
 			}
 			setRuntimePaths(t, updex.RuntimePaths{
+				DefinitionRoots:   fx.roots,
+				SysextLinkDir:     fx.sysextDir,
 				SysextHierarchies: []string{fx.hierarchy},
 				RunExtensionsDir:  filepath.Join(t.TempDir(), "run-search", "extensions"),
 			})

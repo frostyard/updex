@@ -688,10 +688,17 @@ refresh gate (running 20261001000000): too old ──▶ keep the link, skip the
 `refreshGate` (`updex/imagegate.go`) runs before every refresh updex starts:
 `UpdateFeatures` without `NoRefresh`, `EnableFeature{Now}`,
 `RollbackFeature{Now}`, and `DisableFeature{Now}`. It checks every sysext the
-refresh would merge with a version other than the running one: the operation's
-own pending links (`ownPendingLinks`) and the other pending activations of the
-host (`pendingActivationLinks`, whose transfers are kept so the image can be
-found; deactivations merge nothing and are skipped). Each linked image
+refresh would merge: the operation's own links (`ownPendingLinks`) and the
+other pending activations of the host (`pendingActivationLinks`, whose
+transfers are kept so the image can be found; deactivations merge nothing and
+are skipped). A candidate is every transfer with a usable link
+(`LinkedVersion != ""`) whose merged version is not known to equal it
+(`RunningVersion != LinkedVersion`, including `unknown` and `""`, the
+fail-closed rule). The display flag `TransferStatus.PendingReboot` and the
+refresh warning stay narrower: an unknown merged version is neither reported
+as pending nor listed in `PendingActivations`. A transfer whose merged or
+linked state cannot be read is unsafe too, with the reason `cannot read the
+state of <component>`. Each linked image
 (`sysext.StagedImageAt` → `imagecompat.ReadExtensionRelease`) is judged by the
 same fail-open/fail-closed rules as the link gate, compared with the running
 version: key absent or `ErrUnsupportedImage` is safe; another read error is

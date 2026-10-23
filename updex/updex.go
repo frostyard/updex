@@ -122,6 +122,53 @@ type runtimePaths struct {
 	rollbackDir        string
 }
 
+// The unexported defaults below are the paths a client uses when its
+// RuntimePaths leaves the field zero. Production never changes them (all are
+// empty), so the compatibility variables (config.SearchRoots,
+// config.OSReleasePaths, sysext.SysextDir, catalog.ConfigRoots,
+// catalog.TargetPath) and the sysext.RunExtensionsDir constant apply as
+// before. TestMain in each
+// test binary sets them to empty temporary paths, so a client constructed
+// without Paths can never read the host's definitions, os-release files,
+// sysext images, or catalog roots.
+//
+// A test that replaces one compatibility variable itself keeps that value:
+// the replacement is used even while the default points at a temporary path.
+// The production values below are captured once, as the process started,
+// before any test replaces a compatibility variable.
+var (
+	definitionRootsDefault    []string
+	osReleasePathsDefault     []string
+	catalogConfigRootsDefault []string
+	catalogTargetPathDefault  string
+	sysextLinkDirDefault      string
+	runExtensionsDirDefault   string
+
+	productionDefinitionRoots = slices.Clone(config.SearchRoots)
+	productionOSReleasePaths  = slices.Clone(config.OSReleasePaths)
+	productionCatalogRoots    = slices.Clone(catalog.ConfigRoots)
+	productionCatalogTarget   = catalog.TargetPath
+	productionSysextLinkDir   = sysext.SysextDir
+)
+
+// defaultPaths returns the test default for a path list when it is set and the
+// compatibility variable still holds its production value. A test that
+// replaced the compatibility variable keeps its own value.
+func defaultPaths(def, compat, production []string) []string {
+	if def != nil && slices.Equal(compat, production) {
+		return slices.Clone(def)
+	}
+	return slices.Clone(compat)
+}
+
+// defaultPath is the string form of defaultPaths.
+func defaultPath(def, compat, production string) string {
+	if def != "" && compat == production {
+		return def
+	}
+	return compat
+}
+
 // resolveRuntimePaths converts a RuntimePaths (zero = default) to a fully
 // resolved runtimePaths, reading the package-level globals exactly once and
 // taking defensive copies of all slices so later global mutations cannot
@@ -132,19 +179,19 @@ func resolveRuntimePaths(rp RuntimePaths) runtimePaths {
 	if len(rp.DefinitionRoots) > 0 {
 		p.definitionRoots = slices.Clone(rp.DefinitionRoots)
 	} else {
-		p.definitionRoots = slices.Clone(config.SearchRoots)
+		p.definitionRoots = defaultPaths(definitionRootsDefault, config.SearchRoots, productionDefinitionRoots)
 	}
 
 	if len(rp.OSReleasePaths) > 0 {
 		p.osReleasePaths = slices.Clone(rp.OSReleasePaths)
 	} else {
-		p.osReleasePaths = slices.Clone(config.OSReleasePaths)
+		p.osReleasePaths = defaultPaths(osReleasePathsDefault, config.OSReleasePaths, productionOSReleasePaths)
 	}
 
 	if len(rp.CatalogConfigRoots) > 0 {
 		p.catalogConfigRoots = slices.Clone(rp.CatalogConfigRoots)
 	} else {
-		p.catalogConfigRoots = slices.Clone(catalog.ConfigRoots)
+		p.catalogConfigRoots = defaultPaths(catalogConfigRootsDefault, catalog.ConfigRoots, productionCatalogRoots)
 	}
 
 	switch rp.CatalogCacheDir {
@@ -159,18 +206,23 @@ func resolveRuntimePaths(rp RuntimePaths) runtimePaths {
 	if rp.CatalogTargetPath != "" {
 		p.catalogTargetPath = rp.CatalogTargetPath
 	} else {
-		p.catalogTargetPath = catalog.TargetPath
+		p.catalogTargetPath = defaultPath(catalogTargetPathDefault, catalog.TargetPath, productionCatalogTarget)
 	}
 
 	if rp.SysextLinkDir != "" {
 		p.sysextLinkDir = rp.SysextLinkDir
 	} else {
-		p.sysextLinkDir = sysext.SysextDir
+		p.sysextLinkDir = defaultPath(sysextLinkDirDefault, sysext.SysextDir, productionSysextLinkDir)
 	}
 
-	if rp.RunExtensionsDir != "" {
+	switch {
+	case rp.RunExtensionsDir != "":
 		p.runExtensionsDir = rp.RunExtensionsDir
-	} else {
+	case runExtensionsDirDefault != "":
+		// sysext.RunExtensionsDir is a constant, so a test default always
+		// replaces it.
+		p.runExtensionsDir = runExtensionsDirDefault
+	default:
 		p.runExtensionsDir = sysext.RunExtensionsDir
 	}
 

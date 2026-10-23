@@ -238,9 +238,9 @@ func (r *runningImage) get(c *Client) string {
 }
 
 // refreshLink is one sysext that a systemd-sysext refresh merges with a
-// version other than the running one: a link the operation moved, or a
-// pending link elsewhere on the host that the host-wide refresh activates
-// too.
+// version other than the running one, or one whose merged state updex cannot
+// read: a link the operation moved, or a pending link elsewhere on the host
+// that the host-wide refresh activates too.
 type refreshLink struct {
 	// component names the sysext, for the report.
 	component string
@@ -248,6 +248,9 @@ type refreshLink struct {
 	transfer *config.Transfer
 	// version is the linked version the refresh would merge.
 	version string
+	// stateErr is set when the merged state or the link could not be read.
+	// The gate then fails closed without reading the image.
+	stateErr error
 }
 
 // refreshBlocker names the sysext that keeps the refresh from running: the
@@ -286,9 +289,11 @@ func (b refreshBlocker) skipped() string {
 // refreshGate decides whether a systemd-sysext refresh may run now, and
 // returns why it may not, or nil when it may.
 //
-// Every link the refresh would merge with a version other than the running
-// one is read like the link gate reads a staged image, but compared with the
-// running image version instead of the next-boot one:
+// Every link the refresh would merge, except one whose merged version is known
+// to equal it, is read like the link gate reads a staged image, but compared
+// with the running image version instead of the next-boot one. A link whose
+// merged state or link cannot be read is blocked without reading its image:
+// the gate fails closed when it cannot establish the state.
 //
 //   - No key in the extension-release file: it may be merged.
 //   - imagecompat.ErrUnsupportedImage: it may be merged, for the same reason
@@ -312,8 +317,12 @@ func (c *Client) refreshGate(links []refreshLink, ri *runningImage) *refreshBloc
 }
 
 // refreshLinkBlocker checks one link and returns nil when the running base
-// can merge it.
+// can merge it. A link whose state could not be read is blocked: without the
+// merged version, updex cannot tell what the refresh would merge.
 func (c *Client) refreshLinkBlocker(link refreshLink, ri *runningImage) *refreshBlocker {
+	if link.stateErr != nil {
+		return &refreshBlocker{component: link.component, err: fmt.Errorf("cannot read the state of %s: %w", link.component, link.stateErr)}
+	}
 	path, err := sysext.StagedImageAt(link.transfer, c.paths.sysextLinkDir, link.version)
 	if err != nil {
 		return &refreshBlocker{component: link.component, err: fmt.Errorf("cannot find the linked image: %w", err)}
@@ -350,19 +359,20 @@ func (c *Client) refreshLinkBlocker(link refreshLink, ri *runningImage) *refresh
 	return nil
 }
 
-// ownPendingLinks lists the links of own whose merged state a refresh
-// changes to the version they name: linked to a version the host does not
-// run. It is the own half of pendingActivationLinks. A transfer whose state
-// cannot be read is a warning, as in pendingActivationLinks, and is skipped.
+// ownPendingLinks lists the links of own that the running-base check must
+// read: every transfer with a usable link whose merged version is not known to
+// equal the linked one, including an "unknown" or empty merged version. It is
+// the own half of pendingActivationLinks. A transfer whose state cannot be read
+// is a candidate with stateErr, so the gate fails closed.
 func (c *Client) ownPendingLinks(own []*config.Transfer) []refreshLink {
 	var links []refreshLink
 	for _, t := range own {
 		status := c.transferStatus(t)
-		if status.Error != "" {
+		switch {
+		case status.Error != "":
 			c.warn("could not determine whether a refresh activates %s: %s", t.Component, status.Error)
-			continue
-		}
-		if status.PendingReboot {
+			links = append(links, refreshLink{component: t.Component, transfer: t, stateErr: errors.New(status.Error)})
+		case refreshPending(status.RunningVersion, status.LinkedVersion):
 			links = append(links, refreshLink{component: t.Component, transfer: t, version: status.LinkedVersion})
 		}
 	}
@@ -370,14 +380,16 @@ func (c *Client) ownPendingLinks(own []*config.Transfer) []refreshLink {
 }
 
 // activationLinks returns the links a refresh would activate from pending:
-// a deactivation merges nothing, so it needs no check.
+// a deactivation merges nothing, so it needs no check. A display-only entry is
+// a gate candidate too when its merged version is unknown, and a state error
+// is carried into the gate.
 func activationLinks(pending []pendingActivationLink) []refreshLink {
 	var links []refreshLink
 	for _, p := range pending {
 		if p.Deactivate {
 			continue
 		}
-		links = append(links, refreshLink{component: p.Component, transfer: p.transfer, version: p.LinkedVersion})
+		links = append(links, refreshLink{component: p.Component, transfer: p.transfer, version: p.LinkedVersion, stateErr: p.stateErr})
 	}
 	return links
 }
@@ -391,14 +403,18 @@ func (c *Client) refreshGateFor(own []*config.Transfer, pending []pendingActivat
 }
 
 // activationsOf returns the report form of pending activations, nil when
-// there are none.
+// there are none. Gate-only entries (an unknown merged version, or a state
+// that could not be read) are not shown.
 func activationsOf(pending []pendingActivationLink) []PendingActivation {
-	if len(pending) == 0 {
-		return nil
+	var out []PendingActivation
+	for _, p := range pending {
+		if !p.reported {
+			continue
+		}
+		out = append(out, p.PendingActivation)
 	}
-	out := make([]PendingActivation, len(pending))
-	for i, p := range pending {
-		out[i] = p.PendingActivation
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

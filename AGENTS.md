@@ -445,10 +445,18 @@ in the `config/` structs and parse functions. Always finish with
   `Paths.OSReleasePaths`, cached per operation in `runningImage`; never
   `bootc`). Before the refresh in `UpdateFeatures` (without `NoRefresh`),
   `EnableFeature{Now}`, `RollbackFeature{Now}` and `DisableFeature{Now}`, every
-  sysext the refresh would merge with a version other than the running one
-  must pass: the operation's own pending links (`ownPendingLinks`) and the
-  host's other pending activations (`pendingActivationLinks` + `activationLinks`;
-  deactivations need no check). Each linked image is read with
+  sysext the refresh would merge must pass: the operation's own links
+  (`ownPendingLinks`) and the host's other pending activations
+  (`pendingActivationLinks` + `activationLinks`; deactivations need no check).
+  A candidate is every transfer with a usable link (`LinkedVersion != ""`)
+  whose merged version is not known to equal it — `RunningVersion !=
+  LinkedVersion`, including `sysext.UnknownVersion` and `""`. The display flag
+  `TransferStatus.PendingReboot` and the refresh warning stay narrower: an
+  unknown merged version cannot be compared, so it is neither reported as
+  pending nor listed in `PendingActivations`. A transfer whose state cannot be
+  read (`TransferStatus.Error`: merged state or link unreadable) is unsafe
+  (fail closed) with the reason `cannot read the state of <component>`.
+  Each linked image is read with
   `sysext.StagedImageAt` + `imagecompat.ReadExtensionRelease` and judged by the
   link gate's fail-open/fail-closed rules, compared with the running version.
   Unsafe: `UpdateFeatures` and `EnableFeature{Now}` keep their links and skip
@@ -731,36 +739,53 @@ Go 1.26. Use modern idioms: `any`, `slices`/`maps`/`cmp` packages, `t.Context()`
   superseded compatibility path).
 - Every mutating SDK operation takes the lock at `RuntimePaths.LockPath`, which
   defaults to `/run/updex/lock` (not writable by the test user), so a test must
-  never rely on that default. Package `updex` tests get a temporary default
-  from `TestMain` (`updex/main_test.go` sets the unexported `lockPathDefault`
-  and `rollbackDirDefault`, and empty temporary `sysext.MergedHierarchies`), so
-  no test touches `/run/updex` or `/var/lib/updex`; tests run one after
-  another in one process, so one default lock file suffices. A test that runs
-  clients concurrently, or that tests the lock, gives each client its own
+  never rely on that default. Package `updex` tests get temporary defaults from
+  `TestMain` (`updex/main_test.go` sets the unexported `lockPathDefault` and
+  `rollbackDirDefault`, `definitionRootsDefault`, `osReleasePathsDefault`,
+  `catalogConfigRootsDefault`, `catalogTargetPathDefault`,
+  `sysextLinkDirDefault`, `runExtensionsDirDefault`, and empty temporary
+  `sysext.MergedHierarchies`), so no test touches `/run/updex`,
+  `/var/lib/updex`, `/etc`, `/run`, `/usr/lib`, `/var/lib/extensions`,
+  `/var/lib/extensions.d`, or `/run/extensions`; tests run one after another
+  in one process, so one default lock file suffices.
+  `resolveRuntimePaths` applies those defaults only while the matching
+  compatibility variable (`config.SearchRoots`, `config.OSReleasePaths`,
+  `catalog.ConfigRoots`, `catalog.TargetPath`, `sysext.SysextDir`) still holds
+  its production value, so a test that replaces one itself keeps that value;
+  `sysext.RunExtensionsDir` is a constant, so the test default always replaces
+  it. A test that runs clients concurrently,
+  or that tests the lock, gives each client its own
   `RuntimePaths{LockPath: filepath.Join(t.TempDir(), "lock")}`. Hold the lock in
   a test through `client.lockMutation(false)` and release it with the returned
-  function.
+  function. `TestDefaultClientPathsAreTemporary` guards the defaults: it fails
+  when a client constructed without `Paths` resolves any path that is not
+  inside `os.TempDir()`.
 - Vacuum and retention tests use temp staging, link and hierarchy directories
   (`sysext.VacuumPaths`, or `RuntimePaths.SysextLinkDir`/`SysextHierarchies`),
   so no test reads the host's `/var/lib/extensions`, `/usr/.systemd-sysext` or
   `/opt/.systemd-sysext`.
 - Every `cmd/updex` handler test runs with the `runtimePaths` CLI seam
   (`cmd/updex/client.go`), which `newClient()` passes as
-  `ClientConfig.Paths`. `TestMain` in `cmd/updex/main_test.go` points it at
-  temporary hierarchies in one `os.MkdirTemp` tree, so no CLI test reads the
-  host's `/usr/.systemd-sysext`, `/opt/.systemd-sysext` or
-  `/run/extensions`. A test that needs other paths calls
-  `setRuntimePaths(t, updex.RuntimePaths{...})`, which restores the previous
-  value with `t.Cleanup`. In production the seam stays the zero
-  `updex.RuntimePaths`, so behaviour is unchanged;
-  `TestHandlerTestsDoNotReadHostMergedState` guards it. `TestMain` also sets a
-  temporary `LockPath` and `RollbackDir` (and `setRuntimePaths` keeps them when
-  a test sets its own paths), so no handler test touches `/run/updex` or
-  `/var/lib/updex`; a test that inspects rollback records sets its own
-  `RollbackDir`; a handler test that builds
-  its own `updex.NewClient` must pass `Paths: runtimePaths`. Tests of the
+  `ClientConfig.Paths`. `TestMain` in `cmd/updex/main_test.go` sets every field
+  of it in one `os.MkdirTemp` tree — temporary definition roots, os-release
+  paths, catalog config roots and target, sysext link dir, hierarchies, and
+  runtime search dir — so no CLI test reads the host's
+  `/usr/.systemd-sysext`, `/opt/.systemd-sysext`, `/run/extensions`, `/etc`,
+  `/run`, `/usr`, `/var/lib/extensions`, or `/var/lib/extensions.d`. A test
+  that needs other paths calls `setRuntimePaths(t, updex.RuntimePaths{...})`,
+  which restores the previous value with `t.Cleanup` and keeps the temporary
+  `TestMain` value for every field the test leaves zero. In production the
+  seam stays the zero `updex.RuntimePaths`, so behaviour is unchanged;
+  `TestHandlerTestsDoNotReadHostMergedState` and
+  `TestHandlerTestsDoNotReadHostPaths` guard it. `TestMain` also sets a
+  temporary `LockPath` and `RollbackDir`, so no handler test touches
+  `/run/updex` or `/var/lib/updex`; a test that inspects rollback records sets
+  its own `RollbackDir`; a handler test that builds its own
+  `updex.NewClient` must pass `Paths: runtimePaths`. Tests of the
   `INVOCATION_ID` behaviour use `t.Setenv("INVOCATION_ID", ...)` and hold the
-  lock with a plain `flock` on `runtimePaths.LockPath`.
+  lock with a plain `flock` on `runtimePaths.LockPath`. No test may read the
+  host's definitions or images, and a test that points a compatibility variable
+  at a temp tree must also point the `runtimePaths` seam at it.
 - Run `make fmt` before running tests; for verbose output use `go test -v ./...`.
 
 ## Security

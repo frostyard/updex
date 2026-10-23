@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/frostyard/updex/v2/updex"
+
 	"github.com/frostyard/clix"
 	"github.com/frostyard/updex/v2/catalog"
 	"github.com/frostyard/updex/v2/config"
@@ -188,6 +190,7 @@ func TestRunComponents_ReportsOutputFailure(t *testing.T) {
 
 	root := t.TempDir()
 	config.SearchRoots = []string{root}
+	setRuntimePaths(t, updex.RuntimePaths{DefinitionRoots: []string{root}})
 	componentDir := filepath.Join(root, "sysupdate.testcomponent.d")
 	if err := os.MkdirAll(componentDir, 0755); err != nil {
 		t.Fatal(err)
@@ -243,6 +246,7 @@ func TestRunCatalogList_ReportsOutputFailure(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(catalogConfigRoot, "testcatalog.catalog"), []byte(catalogFile), 0644); err != nil {
 		t.Fatal(err)
 	}
+	setRuntimePaths(t, updex.RuntimePaths{CatalogConfigRoots: []string{catalogConfigRoot}})
 	definitions = ""
 	catalogRepo = ""
 	catalogNoCache = true

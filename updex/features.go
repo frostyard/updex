@@ -495,8 +495,12 @@ func (c *Client) disableFeature(ctx context.Context, name string, opts DisableFe
 	// drop-in, no unmerge, no file removal, no refresh. The operator runs the
 	// command without --now instead, which leaves every link for the next
 	// boot.
+	//
+	// A feature with no transfers has nothing to unmerge and nothing to
+	// refresh, so the preflight does not run for it: there is no reason to
+	// read the host's other links.
 	var pendingLinks []pendingActivationLink
-	if willRemoveFiles && opts.Now && !opts.NoRefresh {
+	if willRemoveFiles && len(featureTransfers) > 0 && !opts.NoRefresh {
 		pendingLinks = c.pendingActivationLinks(transfers, featureTransfers)
 		if blocker := c.refreshGate(activationLinks(pendingLinks), &runningImage{}); blocker != nil {
 			errMsg := fmt.Sprintf("cannot disable %[1]s with --now: %[2]s; run 'updex features disable %[1]s' without --now and reboot. Nothing was changed.", name, blocker.reason())

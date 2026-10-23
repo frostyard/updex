@@ -232,7 +232,11 @@ bootc host `/etc/os-release` and `/usr/lib/os-release` describe the booted
 deployment, not a staged one. Before every refresh it runs (`features update`
 without `--no-refresh`, `features enable --now`, `features rollback --now`),
 updex therefore compares the key of every sysext the refresh would merge with
-the running image's `IMAGE_VERSION` too. When that check fails, including when
+the running image's `IMAGE_VERSION` too. It checks every link whose merged
+version it cannot prove equal to the linked version, including a merged image
+whose version the metadata does not record (`unknown`). A merged state or link
+that cannot be read stops the refresh as well: updex fails closed. When that
+check fails, including when
 the running version is missing or not numeric, updex **keeps the links** (they
 are right for the next boot), **skips the refresh**, and says so:
 `refresh skipped: <component> needs image >= <value> (running image <running>);
