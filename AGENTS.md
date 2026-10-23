@@ -404,12 +404,21 @@ in the `config/` structs and parse functions. Always finish with
   `collectRollbackHolds` (`updex/rollback.go`) reads, once per call, the record
   of every feature that names one of the transfers, enabled or not, and keeps
   the highest rejected version per component; `installTransfers`,
-  `Features` and `CheckFeatures` all use it. **Every path that links honours
+  `Features` and `CheckFeatures` all use it. A record still holds only when it
+  has no component whose newest available version is newer than the one it
+  rejects, so **a shared transfer advances only when the whole applicable
+  record can advance**: `rollbackHoldReason` checks every component the record
+  names, also one outside the feature's transfers (looked up in
+  `installFeatureOptions.Domain`, versions read through the call's manifest
+  cache). A component with no transfer in the domain, or one whose versions
+  cannot be read, holds too (fail closed); a version read error is the
+  feature's error, a missing transfer is part of the hold message. **Every path
+  that links honours
   it**: `installTransfers` fails closed for the feature when any applicable
   record is unreadable (nothing downloaded or linked, the error names the
   feature whose record failed), holds the whole feature (no download, no link,
-  `UpdateResult.Held`) when any transfer's newest available version is `<=` its
-  rejected version (`version.Compare`), and otherwise stages, links, vacuums
+  `UpdateResult.Held`, the message naming the component that holds) when any
+  applicable record still holds, and otherwise stages, links, vacuums
   with the rejected version in `VacuumPaths.ProtectVersions`, then deletes each
   applicable record whose every rejected version is behind a link now
   (`sysext.LinkedVersionAt`; a component outside these transfers is looked up
