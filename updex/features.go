@@ -455,7 +455,7 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 	} else if willRemoveFiles {
 		result.NextActionMessage = fmt.Sprintf("Feature '%s' disabled and %d extension file(s) removed.", name, len(result.RemovedFiles))
 	} else {
-		result.NextActionMessage = fmt.Sprintf("Feature '%s' disabled. Run 'updex features update' to apply changes.", name)
+		result.NextActionMessage = fmt.Sprintf("Feature '%[1]s' disabled. Its extensions stay installed and merged; run 'updex features disable %[1]s --now' to remove them.", name)
 	}
 
 	return result, nil

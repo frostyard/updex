@@ -357,6 +357,26 @@ func TestDisableFeature_DryRun_NoNow_ShowsConfig(t *testing.T) {
 	}
 }
 
+// TestDisableFeature_NoNow_NextActionMessage verifies plain disable points at --now, not update
+func TestDisableFeature_NoNow_NextActionMessage(t *testing.T) {
+	configDir := t.TempDir()
+	createFeatureFile(t, configDir, "testfeature", true)
+	createFeatureTransferFile(t, configDir, "testext", "testfeature", "http://localhost")
+
+	client := NewClient(ClientConfig{Definitions: configDir, SysextRunner: &sysext.MockRunner{}, Paths: RuntimePaths{DefinitionRoots: []string{t.TempDir()}}})
+	result, err := client.DisableFeature(t.Context(), "testfeature", DisableFeatureOptions{Now: false})
+	if err != nil {
+		t.Fatalf("DisableFeature failed: %v", err)
+	}
+	want := "Feature 'testfeature' disabled. Its extensions stay installed and merged; run 'updex features disable testfeature --now' to remove them."
+	if result.NextActionMessage != want {
+		t.Errorf("NextActionMessage = %q, want %q", result.NextActionMessage, want)
+	}
+	if !strings.Contains(result.NextActionMessage, "--now") || strings.Contains(result.NextActionMessage, "features update") {
+		t.Errorf("unexpected NextActionMessage %q", result.NextActionMessage)
+	}
+}
+
 // TestDisableFeature_MergedExtension_RequiresForce verifies merge state check blocks removal
 func TestDisableFeature_MergedExtension_RequiresForce(t *testing.T) {
 	configDir := t.TempDir()

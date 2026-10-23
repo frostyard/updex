@@ -183,10 +183,10 @@ func runFeaturesDisable(cmd *cobra.Command, args []string) error {
 					fmt.Printf("Extensions unmerged.\n")
 				}
 				printRemovedFiles(result.RemovedFiles)
-				if featureDisableForce {
+				if !featureDisableNow {
+					fmt.Printf("Its extensions stay installed and merged. Run 'updex features disable %s --now' to remove them.\n", result.Feature)
+				} else if featureDisableForce {
 					fmt.Printf("Warning: Reboot required for changes to take effect.\n")
-				} else if !featureDisableNow {
-					fmt.Printf("Run 'updex features update' to apply changes.\n")
 				}
 			}
 		}
