@@ -381,6 +381,8 @@ When the link step relinked because the image was already staged and current, it
 `UpdateFeatures` (without `NoRefresh`), `EnableFeature` with `Now`, and `DisableFeature` with `Now` end in `systemd-sysext refresh`, which merges every link on the host that names a version other than the running one. Before the refresh (or, with `DryRun`, in place of it) each of them lists, through the reporter as one warning, the *other* pending sysexts, and records them in the result's `PendingActivations` (`[]PendingActivation`, JSON `pending_activations`, `omitzero`). The warning is advice: it never stops the refresh. `NoRefresh` lists nothing.
 
 - A transfer is *pending* when `LinkedVersion` is non-empty, differs from `RunningVersion`, and `RunningVersion` is not `unknown`, and its state was read without error (see [TransferStatus](#transferstatus)).
+- A transfer is a pending *deactivation* (`Deactivate: true`, empty `LinkedVersion`) when it is merged (any `RunningVersion`, `unknown` included) and has no link, for example after `features disable` without `--now`: the refresh unmerges it under any workload that uses it. Deactivations get their own warning line (`… will also deactivate N sysext(s) that are merged but not linked: …`). An image that another systemd-sysext search directory (`/etc/extensions`, `/run/extensions`, `/usr/lib/extensions`) still provides stays merged; updex cannot tell from the version alone and lists it anyway.
+- **A caller that does not show the reporter's warnings (a GUI, an automation) must show `PendingActivations` to its user before it asks for a refresh** (`Now`, or `UpdateFeatures` without `NoRefresh`): the list is the only signal that the refresh changes sysexts the user did not name. Use `DryRun` to get the list without refreshing.
 - *Own* transfers are excluded, matched by link name (`SysextLinkName`), because the link is what the refresh activates. For `EnableFeature` and `DisableFeature` they are the named feature's transfers. For `UpdateFeatures` they are the transfers of every enabled, unmasked feature: the operator asked to update those, and the refresh is what applies them, including a link that an earlier run (the timer) already moved. What remains is the "other" set, for example a disabled feature whose link still names a newer image, and any ungated transfer.
 - The set is computed over the whole host's definitions, even when `Component` scopes the call, because the refresh does not honour that scope. With a `Definitions` override only that directory is read. A link made by hand for an image that no transfer describes is not visible.
 - `DisableFeature` reads the pending state *before* `Unmerge`, which clears the merged state and would make every link look pending, and warns just before the refresh.
@@ -585,6 +587,7 @@ type PendingActivation struct {
     Component      string `json:"component"`
     RunningVersion string `json:"running_version"`
     LinkedVersion  string `json:"linked_version"`
+    Deactivate     bool   `json:"deactivate,omitempty"` // merged but not linked: the refresh unmerges it
 }
 ```
 
