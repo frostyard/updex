@@ -339,7 +339,7 @@ func (c *Client) enableFeature(ctx context.Context, name string, opts EnableFeat
 			// A refresh activates every pending link on the host, not only
 			// this feature's: say which others, before it runs (or would).
 			if !opts.NoRefresh {
-				result.PendingActivations = c.pendingActivations(opts.Component, transfers, featureTransfers)
+				result.PendingActivations = c.pendingActivations(transfers, featureTransfers)
 				c.warnPendingActivations(result.PendingActivations, opts.DryRun)
 			}
 
@@ -483,7 +483,7 @@ func (c *Client) disableFeature(ctx context.Context, name string, opts DisableFe
 		// merged state, after which every link would look pending.
 		var pending []PendingActivation
 		if opts.Now && !opts.NoRefresh {
-			pending = c.pendingActivations(opts.Component, transfers, featureTransfers)
+			pending = c.pendingActivations(transfers, featureTransfers)
 		}
 
 		// If --now is specified, unmerge first (unless dry-run)
@@ -601,6 +601,10 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 	allResults := make([]UpdateFeaturesResult, 0)
 	var hasErrors bool
 	var ownTransfers []*config.Transfer // transfers of the enabled features this run updates
+	// transferErrs carries each failed transfer's error into the returned
+	// error, so a caller that only logs the error still sees why (a link
+	// restore failure in particular, see linkStaged).
+	var transferErrs []error
 
 	// Cache manifests by source URL to avoid redundant HTTP requests
 	// when multiple transfers share the same source. getAvailableVersions
@@ -658,6 +662,7 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 				c.warn("%s", result.Error)
 				featureResult.Results = append(featureResult.Results, result)
 				hasErrors = true
+				transferErrs = append(transferErrs, fmt.Errorf("%s/%s: %w", f.Name, transfer.Component, in.err))
 				continue
 			}
 
@@ -759,7 +764,7 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 	// and the refresh is what applies them); list the others, such as a
 	// disabled feature whose link still names a newer image.
 	if !opts.NoRefresh {
-		pending := c.pendingActivations(opts.Component, transfers, ownTransfers)
+		pending := c.pendingActivations(transfers, ownTransfers)
 		c.warnPendingActivations(pending, opts.DryRun)
 		for i := range allResults {
 			allResults[i].PendingActivations = pending
@@ -782,7 +787,10 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 	}
 
 	if hasErrors {
-		return allResults, errors.Join(fmt.Errorf("one or more components failed to update"), refreshErr)
+		errs := []error{fmt.Errorf("one or more components failed to update")}
+		errs = append(errs, transferErrs...)
+		errs = append(errs, refreshErr)
+		return allResults, errors.Join(errs...)
 	}
 	return allResults, refreshErr
 }
