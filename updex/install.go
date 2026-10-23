@@ -165,6 +165,20 @@ type transferInstall struct {
 	// wrong, but its feature stayed on the old links.
 	notLinked bool
 
+	// needsImage is "needs image >= <value>" when this transfer's staged image
+	// needs a newer base image than the one that boots next (ADR-0016). Nothing
+	// of the feature is linked, the old links stay and the image stays staged.
+	// It is not an error.
+	needsImage string
+
+	// imageBlocked is set on the other transfers of a feature that needsImage
+	// kept unlinked: it says which transfer needs what. It is not an error.
+	imageBlocked string
+
+	// nextBootImage is the next-boot IMAGE_VERSION the check compared; empty
+	// when the image has no key.
+	nextBootImage string
+
 	// held reports that a rollback record holds the feature: nothing newer
 	// than the rejected version is published, so nothing was downloaded or
 	// linked and every old link stays. It is not an error. outcome.Version is
@@ -200,6 +214,12 @@ type installFeatureOptions struct {
 	// call and, when the caller keeps the map, across features. It may be
 	// nil.
 	Manifests map[string]*manifest.Manifest
+
+	// NextBoot caches the next-boot image version across the features of one
+	// operation, so bootc runs at most once and only when an image has the
+	// minimum-image-version key. It may be nil, then the call resolves it
+	// itself.
+	NextBoot *nextBootImage
 }
 
 // installTransfers installs the transfers of one feature so that they link
@@ -212,10 +232,18 @@ type installFeatureOptions struct {
 //     its own error; the others report errNotLinked.
 //   - If a link fails part-way, the links that this call already moved are
 //     put back, and no transfer is reported as installed.
+//   - Before the links, every image that would move a link is checked against
+//     the next-boot image version (ADR-0016, "Minimum image version"; see
+//     gateMinImage). An image that needs a newer base blocks the whole
+//     feature without an error: no link moves, no vacuum runs, the downloaded
+//     images stay staged. A read or bootc error is an error and also links
+//     nothing. The check covers the relink path, because an image that was
+//     blocked earlier stays staged and the next run reaches it there.
 //   - The vacuum runs only after every link succeeded.
 //
 // The result has one entry per transfer, in order. A dry run stages and
-// links nothing.
+// links nothing; it checks the images that are already staged and would be
+// relinked, and says nothing about an image it would download.
 func (c *Client) installTransfers(ctx context.Context, feature string, transfers []*config.Transfer, opts installFeatureOptions) []transferInstall {
 	results := make([]transferInstall, len(transfers))
 	for i, transfer := range transfers {
@@ -284,6 +312,24 @@ func (c *Client) installTransfers(ctx context.Context, feature string, transfers
 
 	if failed {
 		c.markNotLinked(feature, results)
+		return results
+	}
+
+	// Minimum image version: after the stage step, before any link moves.
+	nextBoot := opts.NextBoot
+	if nextBoot == nil {
+		nextBoot = &nextBootImage{}
+	}
+	var move []bool
+	if opts.DryRun {
+		move = c.dryRunMoves(transfers, results)
+	} else {
+		move = make([]bool, len(staged))
+		for i := range staged {
+			move[i] = staged[i].link
+		}
+	}
+	if c.gateMinImage(ctx, feature, transfers, move, results, nextBoot) {
 		return results
 	}
 	if opts.DryRun {

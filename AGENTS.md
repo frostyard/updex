@@ -402,6 +402,21 @@ in the `config/` structs and parse functions. Always finish with
   `sysext.LinkVersionAt` through `sysext.VersionSysextRunner` (a runner without
   it gets `ErrLegacySysextRunner`), and moves links all or none with
   `Client.linkAllOrNone`.
+- **Minimum image version (ADR-0016).** **Every path that moves a link to a
+  newer image checks `UPDEX_MIN_IMAGE_VERSION` through `installTransfers`**
+  (`gateMinImage` in `updex/imagegate.go`, between the stage step and the link
+  step): `UpdateFeatures` and `EnableFeature{Now}`, on the download path and on
+  the already-staged relink path. A new link path must go through
+  `installTransfers`, or it can link a revision that needs a newer base.
+  `RollbackFeature` does not check: it links an older image on purpose. An image
+  that needs a newer base blocks the whole feature without an error (no link,
+  no vacuum, the images stay staged; `UpdateResult.NeedsImage`); a read error
+  or a failing bootc is an error and also links nothing; an image
+  `imagecompat.ErrUnsupportedImage` is treated as "key absent". bootc runs
+  once per operation (`nextBootImage`), only when an image has the key, through
+  `ClientConfig.BootcRunner` (nil = the real bootc; tests inject a fake, never
+  the real one). `CheckFeatures` and `Features` run the same gate read-only
+  for a staged unlinked image.
 - **CLI.** `features update` that gets `ErrBusy` exits 0 with one stderr line
   only when `runningUnderSystemd()` (non-empty `INVOCATION_ID`; the packaged
   timer runs exactly `updex features update --no-refresh`); every other

@@ -579,6 +579,69 @@ link step, all transfers report the failing transfer's error or the same
 update`, and other features continue. `EnableFeature{Now}` uses the same
 helper and returns the first own error as `failed to download <component>: …`.
 
+### Minimum image version (ADR-0016)
+
+A sysext delta is valid only against a base that has what the delta omits, and
+a host can run an old image for weeks. `installTransfers` therefore checks each
+image whose link would move, between the stage step and the link step
+(`gateMinImage`, `updex/imagegate.go`):
+
+```
+stage ──▶ for each transfer that would link: read the staged image
+            (sysext.LinkTargetAt → imagecompat.ReadExtensionRelease)
+          ├─ key absent ─────────────────────────────▶ link
+          ├─ ErrUnsupportedImage ────────────────────▶ link   (fail open)
+          ├─ other read error / bootc fails ─────────▶ error, link nothing (fail closed)
+          └─ key set ─ next-boot IMAGE_VERSION (once per operation)
+                       ├─ new enough ────────────────▶ link
+                       └─ too old / missing / not digits ▶ link nothing of the
+                          feature, keep links and images, no vacuum,
+                          report `needs image >= X` (not an error)
+```
+
+The check sits on the shared path, so it covers a fresh download and the
+relink path alike: an image that was blocked stays staged, the next run finds
+it already current and the link missing, and the check runs again, so it links
+once the host image is new enough (a reboot into a newer deployment, or a new
+staged one). `UpdateFeatures` and `EnableFeature{Now}` both go through it.
+`RollbackFeature` does not: it links an older image on purpose, and an older
+revision needs at most the base the host already runs.
+
+**Fail open or closed, and why.**
+
+- *Too old, or the version is missing or not numeric:* a normal outcome, not
+  an error. The timer must not mark `updex-update.service` failed because a
+  revision waits for a newer base; the feature stays on its old links.
+- *`ErrUnsupportedImage` (an image that is not GPT+EROFS or bare EROFS):
+  fail open.* Only snosi sets the key and snosi ships EROFS. Failing closed
+  would stop every sysext from another catalog (squashfs, say) from updating,
+  for a key it cannot carry.
+- *An image that opens as EROFS but has no usable extension-release file, or
+  bootc installed but failing:* fail closed (an error, nothing linked). Such an
+  image is snosi-shaped and cannot be judged; a silent fallback to the booted
+  os-release could be older than the staged image and link a revision that
+  breaks the next boot. A failing bootc stops only features whose image has the
+  key; bootc runs once per operation, and never when no image has the key.
+- *bootc not installed:* fall back to the booted `os-release` (not an
+  image-based host).
+
+`features check` and `features list` run the same gate read-only
+(`stagedImageGate`) for a staged image that is newer than the linked one and
+not held by a rollback, and show `needs image >= X`. They never download, so
+they say nothing about an image that is only published.
+
+**Sandbox.** The service runs with `SandboxDirectives` (`ProtectSystem=full`,
+`RestrictNamespaces=yes`, `SystemCallFilter=@system-service`). Reading the
+image needs only `open` and `pread`; `bootc status --json` runs inside the same
+sandbox. **This is not verified on a host.** An operator checks it with
+`systemd-run -p` set to the same directives (for example
+`systemd-run --wait --pty -p NoNewPrivileges=yes -p ProtectSystem=full
+-p RestrictNamespaces=yes -p SystemCallFilter=@system-service
+-p MemoryDenyWriteExecute=yes /usr/bin/updex features check`) on a host with a
+staged unlinked image and `bootc`: `features check` should print the
+`needs image` line or no error. A bootc that the sandbox blocks shows as the
+component's `Error` (fail closed).
+
 ### Retention (vacuum)
 
 ADR-0016. After a feature's links succeeded, `sysext.VacuumWith` keeps, for

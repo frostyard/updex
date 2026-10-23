@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/frostyard/updex/v2/catalog"
 	"github.com/frostyard/updex/v2/config"
@@ -42,6 +43,10 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 	// Resolved once: os-release does not change between features.
 	imageName := config.ImageNameFrom(c.paths.osReleasePaths)
 
+	// The next-boot image version is read at most once, and only when a
+	// staged unlinked image sets UPDEX_MIN_IMAGE_VERSION.
+	nextBoot := &nextBootImage{}
+
 	for _, f := range features {
 		// Get transfers associated with this feature
 		featureTransfers := config.GetTransfersForFeature(transfers, f.Name)
@@ -57,6 +62,15 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 			status := c.featureTransferStatus(t, rec, recErr)
 			if status.Error != "" {
 				c.warn("%s: %s", t.Component, status.Error)
+			}
+			if f.Enabled && !f.Masked && status.Error == "" {
+				// Why a staged image is not linked (ADR-0016). A failure
+				// here is a warning: the listing never breaks.
+				gate, err := c.stagedImageGate(ctx, f.Name, t, status, nextBoot)
+				if err != nil {
+					c.warn("%s: %v", t.Component, err)
+				}
+				status.NeedsImage = gate.needs
 			}
 			statuses = append(statuses, status)
 		}
@@ -262,6 +276,10 @@ func (c *Client) enableFeature(ctx context.Context, name string, opts EnableFeat
 		result.DropIn = dropInFile
 	}
 
+	// notLinked collects why an image was downloaded but not linked: it needs
+	// a newer base image than the one that boots next (ADR-0016).
+	var notLinked []string
+
 	// Handle --now flag: download extensions immediately
 	if opts.Now {
 		c.msg("Downloading extensions")
@@ -291,6 +309,20 @@ func (c *Client) enableFeature(ctx context.Context, name string, opts EnableFeat
 				}
 				for _, in := range installs {
 					switch {
+					case in.needsImage != "" || in.imageBlocked != "":
+						// Too old for the next-boot image (ADR-0016): nothing
+						// of the feature is linked. The image stays staged.
+						reason := in.imageBlocked
+						if in.needsImage != "" {
+							reason = in.transfer.Component + " of feature " + name + " " + in.needsImage
+						}
+						if in.outcome.Downloaded {
+							result.DownloadedFiles = append(result.DownloadedFiles, fmt.Sprintf("%s@%s", in.transfer.Component, in.outcome.Version))
+						}
+						c.msg("%s: not linked: %s", in.transfer.Component, reason)
+						if in.needsImage != "" {
+							notLinked = append(notLinked, reason)
+						}
 					case in.held:
 						c.msg("%s is held by a rollback (rejected %s); nothing was downloaded or linked", in.transfer.Component, in.heldVersion)
 					case in.outcome.Downloaded:
@@ -341,6 +373,10 @@ func (c *Client) enableFeature(ctx context.Context, name string, opts EnableFeat
 		result.NextActionMessage = fmt.Sprintf("Feature '%s' enabled and %d extension(s) downloaded", name, len(result.DownloadedFiles))
 	} else {
 		result.NextActionMessage = fmt.Sprintf("Feature '%s' enabled. Run 'updex features update' to download extensions.", name)
+	}
+	result.NotLinked = notLinked
+	if len(notLinked) > 0 {
+		result.NextActionMessage += fmt.Sprintf("; not linked, the old links stay: %s", strings.Join(notLinked, ", "))
 	}
 
 	return result, nil
@@ -572,6 +608,10 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 	// unverified entry; the verified manifest then replaces it here.
 	manifestCache := make(map[string]*manifest.Manifest)
 
+	// The next-boot image version is read at most once per run, and only when
+	// a staged image sets UPDEX_MIN_IMAGE_VERSION.
+	nextBoot := &nextBootImage{}
+
 	for _, f := range features {
 		if !f.Enabled || f.Masked {
 			continue
@@ -595,13 +635,16 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 			DryRun:    opts.DryRun,
 			NoVacuum:  opts.NoVacuum,
 			Manifests: manifestCache,
+			NextBoot:  nextBoot,
 		})
 
 		for _, in := range installs {
 			transfer := in.transfer
 			result := UpdateResult{
-				Component: transfer.Component,
-				DryRun:    opts.DryRun,
+				Component:            transfer.Component,
+				DryRun:               opts.DryRun,
+				NeedsImage:           in.needsImage,
+				NextBootImageVersion: in.nextBootImage,
 			}
 
 			if in.err != nil {
@@ -615,6 +658,32 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 				c.warn("%s", result.Error)
 				featureResult.Results = append(featureResult.Results, result)
 				hasErrors = true
+				continue
+			}
+
+			if in.needsImage != "" || in.imageBlocked != "" {
+				// The staged image needs a newer base image than the one that
+				// boots next (ADR-0016), or another transfer of the feature
+				// does. Nothing of the feature was linked: the old links stay
+				// and the images stay staged. This is not an error.
+				result.Version = in.outcome.Version
+				result.Downloaded = in.outcome.Downloaded
+				if in.needsImage != "" {
+					result.NextActionMessage = "not linked: " + in.needsImage
+					if in.nextBootImage != "" {
+						result.NextActionMessage += " (next-boot image " + in.nextBootImage + ")"
+					} else {
+						result.NextActionMessage += " (next-boot image version unknown)"
+					}
+				} else {
+					result.NotLinked = true
+					result.NextActionMessage = "not linked: " + in.imageBlocked
+				}
+				if opts.DryRun {
+					result.NextActionMessage = "would not link: " + strings.TrimPrefix(result.NextActionMessage, "not linked: ")
+				}
+				c.msg("%s/%s: %s", f.Name, transfer.Component, result.NextActionMessage)
+				featureResult.Results = append(featureResult.Results, result)
 				continue
 			}
 
@@ -736,6 +805,10 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 	manifestCache := make(map[string]*manifest.Manifest)
 	var hasErrors bool
 
+	// The next-boot image version is read at most once, and only when a
+	// staged unlinked image sets UPDEX_MIN_IMAGE_VERSION.
+	nextBoot := &nextBootImage{}
+
 	for _, f := range features {
 		if !f.Enabled || f.Masked {
 			continue
@@ -829,6 +902,20 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 				c.msg("Update available: %s → %s", current, newest)
 			} else {
 				c.msg("Up to date: %s", current)
+			}
+
+			// A staged image that `features update` would not link because it
+			// needs a newer base image (ADR-0016). Read-only; a failure to
+			// judge the image is the component's error, as in update.
+			gate, gateErr := c.stagedImageGate(ctx, f.Name, transfer, status, nextBoot)
+			result.NextBootImageVersion = gate.nextBoot
+			if gateErr != nil {
+				c.warn("%s", gateErr)
+				result.Error = gateErr.Error()
+				hasErrors = true
+			} else if gate.needs != "" {
+				result.NeedsImage = gate.needs
+				c.msg("%s: staged image %s", transfer.Component, gate.needs)
 			}
 
 			featureResult.Results = append(featureResult.Results, result)

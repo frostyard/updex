@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/frostyard/clix"
+	"github.com/frostyard/updex/v2/imagecompat"
 	"github.com/frostyard/updex/v2/sysext"
 	"github.com/frostyard/updex/v2/systemd"
 	"github.com/frostyard/updex/v2/updex"
@@ -30,6 +31,11 @@ var systemdManager *systemd.Manager
 // setRuntimePaths, so no handler test reads the host's merged-sysext state.
 var runtimePaths updex.RuntimePaths
 
+// bootcRunner is the bootc runner handed to every CLI-constructed client (the
+// minimum image version check, ADR-0016). It stays nil in production so the
+// SDK runs the real bootc; tests set a fake, so no test runs bootc.
+var bootcRunner imagecompat.BootcRunner
+
 // newClient creates a new updex client with the appropriate progress reporter.
 func newClient() *updex.Client {
 	clientConfig := updex.ClientConfig{
@@ -38,6 +44,7 @@ func newClient() *updex.Client {
 		Verbose:        clix.Verbose,
 		Progress:       clix.NewReporter(),
 		SysextRunner:   sysextRunner,
+		BootcRunner:    bootcRunner,
 		SystemdManager: systemdManager,
 		Paths:          runtimePaths,
 	}

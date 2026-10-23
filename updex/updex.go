@@ -25,6 +25,7 @@ import (
 	"github.com/frostyard/updex/v2/catalog"
 	"github.com/frostyard/updex/v2/config"
 	"github.com/frostyard/updex/v2/download"
+	"github.com/frostyard/updex/v2/imagecompat"
 	"github.com/frostyard/updex/v2/internal/httpclient"
 	"github.com/frostyard/updex/v2/sysext"
 	"github.com/frostyard/updex/v2/systemd"
@@ -228,6 +229,14 @@ type ClientConfig struct {
 	// If nil, uses the default runner that executes real commands.
 	// Set this in tests to inject a mock.
 	SysextRunner sysext.SysextRunner
+
+	// BootcRunner is an optional runner for "bootc status --json", which
+	// gives the staged deployment's image version for the minimum image
+	// version check (ADR-0016). If nil, the real bootc found in PATH is used;
+	// without bootc the check falls back to the booted os-release. The runner
+	// is called at most once per operation, and only when a staged image sets
+	// UPDEX_MIN_IMAGE_VERSION. Set this in tests to inject a fake.
+	BootcRunner imagecompat.BootcRunner
 
 	// SystemdManager is an optional manager for systemd unit files and
 	// systemctl operations. If nil, a production manager for

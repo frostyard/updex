@@ -40,6 +40,13 @@ type TransferStatus struct {
 	// by the callers that know the feature (Features, CheckFeatures).
 	RollbackRejected string `json:"rollback_rejected,omitempty"`
 
+	// NeedsImage is "needs image >= <value>" when the newest staged image of
+	// this transfer is not linked and its UPDEX_MIN_IMAGE_VERSION is higher
+	// than the next-boot image version, so `features update` leaves the old
+	// link (ADR-0016). Set by Features and CheckFeatures; empty when the image
+	// has no key, is old enough, or no unlinked image is staged.
+	NeedsImage string `json:"needs_image,omitempty"`
+
 	// Error is set when the merged state or the link could not be read, or
 	// when the feature's rollback record could not be read. The version that
 	// could be read is still reported.

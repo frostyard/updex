@@ -110,6 +110,7 @@ type ClientConfig struct {
     Verbose            bool                  // Enable debug output
     Progress           reporter.Reporter     // Progress reporter (optional)
     SysextRunner       sysext.SysextRunner   // Mock runner for tests (optional)
+    BootcRunner        imagecompat.BootcRunner // Runs `bootc status --json` for the minimum image version check; nil = the real bootc (optional; tests inject a fake)
     SystemdManager     *systemd.Manager       // Unit manager and runner for daemon operations (optional)
     OnDownloadProgress download.ProgressFunc // Download progress callback (optional)
     HTTPClient         *http.Client          // Shared HTTP client (optional)
@@ -359,6 +360,14 @@ Already-current components are detected by `sysext.GetInstalledVersions`: the se
 
 When the link step relinked because the image was already staged and current, it reports that fact to `UpdateFeatures` separately from `Downloaded` (an unexported outcome field, `Relinked`; no exported result field changed). The non-dry-run component result then keeps `Downloaded=false` and `Installed=true`, sets `NextActionMessage` to `Reboot required to activate changes` (the same text as the download case), and the progress reporter prints `Linked staged version <version>` instead of `Version <version> already installed and current`. This is how an operator learns that a second updater (for example `systemd-sysupdate`) advanced its own staging symlink while the systemd-sysext link updex owns still pointed at the older image.
 
+**Minimum image version** ([ADR-0016](../adr/0016-automatic-sysext-updates-apply-at-next-boot.md), plan 0001 Phase 5; `updex/imagegate.go`, package `imagecompat`). `installTransfers` checks every image whose link would move, after the stage step and before the link step. That covers a new download and the relink path (an image blocked earlier stays staged). It reads the staged image the link step would link (`sysext.LinkTargetAt`) with `imagecompat.ReadExtensionRelease` (name hint: the transfer's component, then the feature name when several extension-release files exist).
+- No key: link as usual. `imagecompat.ErrUnsupportedImage` (squashfs, not GPT+EROFS, invalid GPT): the same, **fail open**, because only snosi sets the key and snosi ships EROFS; a debug line says so.
+- Key set: the next-boot `IMAGE_VERSION` is resolved once per operation (`nextBootImage`; so a run with no key never runs bootc) with `imagecompat.NextBootImageVersion(ClientConfig.BootcRunner, Paths.OSReleasePaths)`, then `imagecompat.CheckMinImageVersion`.
+- **Too old / missing / not numeric: not an error.** No transfer of the feature links, every old link stays, the images stay staged, no vacuum runs. The blocking transfer has `UpdateResult.NeedsImage = "needs image >= <value>"` and `NextActionMessage` `not linked: needs image >= <value> (next-boot image <version>)`; the feature's other transfers have `NotLinked=true` and a message naming the blocking one. `Installed` is false, `Downloaded` shows what was fetched. Other features continue; `UpdateFeatures` returns no error for this.
+- **A read error on an image that opens (no extension-release file, several without a match, over 64 KiB) or a bootc that is installed but fails: an error, fail closed.** Nothing of that feature links, the result has `Error`, and the run fails like any feature error. Images without the key are not affected by a failing bootc. bootc not installed is not an error: the os-release is used.
+- `DryRun` downloads nothing, so it checks only an image that is already staged and would be relinked (`NextActionMessage` starts `would not link:`); for an image it would download it says nothing.
+- `EnableFeature` with `Now` uses the same path; a blocked image leaves the feature enabled and reports it in `FeatureActionResult.NotLinked` and the `NextActionMessage` suffix `; not linked, the old links stay: …`. `RollbackFeature` does not check: it links an older staged image, which needs at most the base the host already runs (the ADR applies the rule to updates).
+
 **UpdateFeaturesOptions:**
 | Field | Type | Description |
 |-------|------|-------------|
@@ -568,6 +577,7 @@ type TransferStatus struct {
     LinkedVersion  string `json:"linked_version"`  // the /var/lib/extensions link names it; "" = no usable link
     PendingReboot  bool   `json:"pending_reboot,omitempty"`
     RollbackRejected string `json:"rollback_rejected,omitempty"` // version a rollback record rejected; set by Features and CheckFeatures
+    NeedsImage     string `json:"needs_image,omitempty"` // "needs image >= X": the newest staged image is not linked and `features update` would not link it; set by Features and CheckFeatures
     Error          string `json:"error,omitempty"`
 }
 
@@ -596,6 +606,7 @@ type FeatureActionResult struct {
     DownloadedFiles   []string `json:"downloaded_files,omitzero"`
     DryRun            bool     `json:"dry_run,omitempty"`
     Unmerged          bool     `json:"unmerged,omitempty"`
+    NotLinked         []string `json:"not_linked,omitzero"`     // Now: images downloaded but not linked because they need a newer base image
     RefreshError      string   `json:"refresh_error,omitempty"` // set when only the final systemd-sysext refresh failed
 
     PendingActivations []PendingActivation `json:"pending_activations,omitzero"` // other sysexts the refresh activates (see Refresh warning)
@@ -627,6 +638,9 @@ type UpdateResult struct {
     RemovedVersions   []string `json:"removed_versions,omitzero"`
     Held              bool     `json:"held_by_rollback,omitempty"`  // a rollback record holds the feature; nothing downloaded or linked; not an error
     RejectedVersion   string   `json:"rejected_version,omitempty"`  // the record's version for this transfer, when Held
+    NeedsImage        string   `json:"needs_image,omitempty"`       // "needs image >= X": the staged image needs a newer base image; nothing of the feature was linked; not an error
+    NotLinked         bool     `json:"not_linked,omitempty"`        // another transfer of the feature NeedsImage, so this one was not linked either
+    NextBootImageVersion string `json:"next_boot_image_version,omitempty"` // the next-boot IMAGE_VERSION that was compared
 }
 ```
 
@@ -649,9 +663,13 @@ type CheckResult struct {
     PendingReboot   bool   `json:"pending_reboot,omitempty"`  // LinkedVersion != RunningVersion
     RollbackRejected string `json:"rollback_rejected,omitempty"` // a rollback record rejects this version; UpdateAvailable is false while NewestVersion is not newer
     UpdateAvailable bool   `json:"update_available"`
+    NeedsImage      string `json:"needs_image,omitempty"` // "needs image >= X": a staged unlinked image that update would not link; not an error
+    NextBootImageVersion string `json:"next_boot_image_version,omitempty"` // read only when a staged unlinked image has the key
     Error           string `json:"error,omitempty"` // set when the component could not be checked
 }
 ```
+
+`NeedsImage` is set from the newest staged image that is not the linked one and that no rollback record holds: `CheckFeatures` runs the same read as the update path (read-only; it never downloads, so it cannot tell for a newer image that is only published, and it runs bootc only when that staged image has the key). A bootc failure or an unreadable image is the component's `Error`, as in update. The CLI shows `needs image >= X` in the `UPDATE` column and a `NEEDS NEWER IMAGE:` footer.
 
 `Error` is non-empty only for a component whose check failed (see `CheckFeatures` above); `UpdateAvailable` is always `false` in that case, and `NewestVersion`/`CurrentVersion` are empty unless the failure happened after the manifest was read (an installed-versions or sysext-link inspection failure keeps `NewestVersion`). The CLI renders such a row with `UPDATE=error` and exits non-zero.
 

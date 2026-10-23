@@ -305,6 +305,34 @@ chain). SHA256 hash checks are unconditional.
 into `/etc/sysupdate.<Component>.d/`, which is discovered as a normal named
 component (see "Components" above).
 
+## Sysext image files (`extension-release`)
+
+updex reads one key of the `extension-release.<name>` file of a downloaded
+sysext image (`usr/lib/extension-release.d/extension-release.<name>`, an
+os-release style file; see extension-release.d(5)). The image is read without
+mounting it: a GPT disk image holding an EROFS partition (the snosi shape), or
+a bare EROFS image. `systemd-sysext` ignores the key.
+
+| Key | Description |
+|-----|-------------|
+| `UPDEX_MIN_IMAGE_VERSION` | The lowest `IMAGE_VERSION` of the base image that this sysext revision works with ([ADR-0016](../adr/0016-automatic-sysext-updates-apply-at-next-boot.md), "Minimum image version"). Absent: no check. Digits only (`^[0-9]+$`, for example a 14-digit snosi timestamp `20261022021319`); no sign, no space, not empty |
+
+**The version that it is compared with** is the `IMAGE_VERSION` of the image
+that boots next: `.status.staged.image.version` of `bootc status --json` when
+bootc reports a staged deployment with a version, else `IMAGE_VERSION` from the
+first readable of the client's os-release files (`/etc/os-release`,
+`/usr/lib/os-release`; `RuntimePaths.OSReleasePaths`). A host without `bootc`
+uses the os-release. Both values are compared as numbers of any length
+(leading zeros ignored). When the key is set and the image version is lower,
+missing or not digits only, or the key value itself is not digits only, the
+revision is not linked and updex reports `needs image >= <value>`; see
+`README.md` for what stays and what continues.
+
+If several `extension-release.*` files exist, the one named after the transfer
+(its file name without `.transfer`), then the one named after the feature, is
+used; with no match the image cannot be judged and the feature is not linked
+(an error). A file larger than 64 KiB is refused.
+
 ## Version Comparison
 
 Versions extracted via `@v` are sorted descending (newest first) when selecting which version to install. `version.Compare` uses a dpkg-compatible comparator for Debian-style versions containing `:`, `~`, or `+` so epochs and tilde pre-release ordering work correctly. `+` is included because semver treats everything after it as ignorable build metadata, which collapsed dpkg-derived sysext versions like `1+7.2-debian13-202607011055` (epoch encoded as `+` because `:` is not filename-safe) to equal precedence and made selection random. Other versions are compared with `hashicorp/go-version` after stripping a leading `v`/`V`; if parsing fails, plain string comparison is used as fallback.

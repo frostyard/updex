@@ -179,6 +179,34 @@ the record exists. `features check` shows `held (rejected <version>)` in the
 `UPDATE` column (JSON `rollback_rejected`) and `features list` ends with a
 `HELD BY ROLLBACK:` line.
 
+**Minimum image version:** a sysext revision that needs a newer base image
+can set `UPDEX_MIN_IMAGE_VERSION=<digits>` in its
+`usr/lib/extension-release.d/extension-release.<name>` (snosi sets it by hand,
+only on a revision that depends on a base change; `systemd-sysext` ignores the
+key). After the download and before the link, `features update` (and
+`features enable --now`) reads the key from the downloaded image, without
+mounting it, and compares it with the `IMAGE_VERSION` of the image that boots
+next: the staged `bootc` deployment (`bootc status --json`) when there is one,
+else the booted `/etc/os-release`. Both values must be digits only (snosi uses
+14-digit timestamps) and are compared as numbers. When the host image is older
+than the minimum, or either value is missing or not a number, updex links
+**nothing** of that feature (its transfers link together), keeps the old links
+and the downloaded images, and reports `needs image >= <value>`. This is not an
+error: other features continue and the run exits 0. The image stays staged, so
+the next run checks it again and links it once the host image is new enough
+(after the host stages or boots a newer image). The update table shows
+`not linked: needs image >= <value>`, and the JSON result has `needs_image`
+(and `not_linked` on the feature's other transfers). `features check` shows
+the same for a staged image that is not linked: `needs image >= <value>` in the
+`UPDATE` column (JSON `needs_image`, `next_boot_image_version`) and a
+`NEEDS NEWER IMAGE:` line; `features list` ends with the same line. They never
+download, so they cannot tell about a newer image that is only published.
+Without the key nothing changes. An image updex cannot read (for example a
+squashfs sysext from another catalog) is treated as having no key. An image
+that opens but has no readable extension-release file, or a `bootc` that is
+installed but fails, is an error for the features concerned: nothing is linked
+for them.
+
 **What the vacuum keeps:** after the links succeeded, `features update`
 removes old images but always keeps, per transfer, the image the link names
 (it merges at the next boot), the image merged now (the one the host runs),
