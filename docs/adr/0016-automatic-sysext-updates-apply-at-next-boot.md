@@ -74,24 +74,36 @@ the units come from, the schedule, retention, status and recovery.
   when the packaged units exist. It writes units to `/etc/systemd/system/`
   only when they do not (an updex binary installed without the package).
   `updex daemon disable` disables the timer and removes only units that
-  updex wrote to `/etc`.
+  updex wrote to `/etc`. It never deletes a path that the OS image ships in
+  `/etc`.
 
 ### Enablement
 
 - snosi enables the timer on every image with a preset line,
-  `enable updex-update.timer`, in the base image. snosi's enablement
-  manifest and `preset-reconcile.service` enable it on existing hosts at
-  their next image update, and do not enable it again on a host whose
-  administrator disabled it (snosi ADR-0002).
+  `enable updex-update.timer`, in a base preset file. The image build's
+  `systemctl preset-all` creates the `timers.target.wants` link, and the
+  finalize records it in snosi's enablement manifest (snosi ADR-0002). A
+  fresh install enables the timer at its first boot.
+- On an existing host, `preset-reconcile.service` enables the timer once,
+  when the manifest entry first appears, and skips masked units. It runs
+  after the boot transaction, so the timer runs from the second boot of the
+  first image that carries the preset, unless a person starts it.
+- The snosi image build fails when the preset names `updex-update.timer`
+  and the image has no `/usr/lib/systemd/system/updex-update.timer`, or
+  when the enablement manifest has no
+  `system timers.target.wants/updex-update.timer` entry.
 - On a host without snosi, the timer is off until the administrator runs
   `updex daemon enable`.
 - snosi keeps `systemd-sysupdate-update.timer` masked.
 
 ### Opt-out
 
-- Whole host: `systemctl disable --now updex-update.timer` (or
-  `updex daemon disable`). The state is in `/etc` and survives image
-  updates. `systemctl mask updex-update.timer` also stops a manual start.
+- Whole host: `systemctl mask updex-update.timer`. A mask survives image
+  updates, and `preset-reconcile` skips masked units, so it is the durable
+  opt-out on snosi. `systemctl disable --now updex-update.timer` (or
+  `updex daemon disable`) also lasts, but only after the image that carries
+  the preset has enabled the timer once: a disable before that image
+  arrives is not recorded, and `preset-reconcile` enables the timer.
 - One sysext: `updex features disable <name>`. Disabled features are not
   updated. A disabled feature is not an error.
 - One sysext at one version: `updex features rollback <name>` (below).
@@ -112,6 +124,27 @@ the units come from, the schedule, retention, status and recovery.
 - Every mutating updex command holds an exclusive lock
   (`/run/updex/lock`, `flock`). A timer run that finds the lock taken exits 0
   with a log line and does not wait.
+
+### Minimum image version
+
+A sysext delta is valid only against a base that has what the delta omits
+(snosi design/sysexts.md). A host can run an old image for weeks, so the
+timer must not link a revision that needs a newer image.
+
+- A sysext can set `UPDEX_MIN_IMAGE_VERSION=<value>` in its
+  `extension-release.<name>`. snosi sets it only on a revision that depends
+  on a base change, by hand, as it sets `SYSEXT_REVISION`. Without the key,
+  nothing changes. `systemd-sysext` ignores the key.
+- After the download and before the link, updex reads the key from the
+  downloaded image and compares it with the `IMAGE_VERSION` of the image
+  that boots next: the staged deployment when `bootc status` reports one,
+  else the booted image's `os-release`.
+- Both values must be digits only (snosi uses 14-digit timestamps), and
+  updex compares them as numbers. When the image is older than the minimum,
+  or when either value is missing or not numeric while the key is set,
+  updex keeps the old link and the downloaded image, and reports
+  `needs image >= <value>` for that feature. The other features continue,
+  and the run does not fail for this reason.
 
 ### Retention
 
@@ -168,9 +201,13 @@ new revision and still runs an older one.
 - Hosts download more, about one image per enabled sysext per revision, and
   keep up to 3 images per transfer before a reboot. An incus image is about
   1 GB uncompressed.
-- A sysext revision built against a newer base reaches hosts that still run
-  an older image. snosi's rule that a base change publishes only after the
-  images reach users becomes more important. updex does not check it.
+- A sysext revision built against a newer base waits on a host with an
+  older image only when snosi set `UPDEX_MIN_IMAGE_VERSION` on it. A
+  revision without the key that needs a newer base still breaks such a
+  host at its next boot; setting the key is snosi's obligation.
+- updex must read a file from inside a downloaded image
+  (`systemd-dissect --copy-from` or an equivalent) inside the sandboxed
+  service.
 - `frostyard-updex` gains 2 unit files and a release-time generation step.
   A host with the old ADR-0007 units in `/etc` keeps them; they override the
   packaged units until `updex daemon disable` removes them.
@@ -206,6 +243,11 @@ new revision and still runs an older one.
 - **A rollback that holds until released:** rejected as the default. A held
   host stops taking fixes. The rejected-version record resumes updates when
   a newer revision is published.
+- **No updex image check; snosi publishes a base-dependent revision only
+  after the images reach users:** rejected. That hold worked while no host
+  took sysexts automatically. With the timer, every host takes a revision
+  within hours, and a host that does not reboot, or holds or rolls back its
+  image, runs an old image for weeks.
 
 ## References
 

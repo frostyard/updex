@@ -2,9 +2,9 @@
 
 This plan delivers [ADR-0016](../adr/0016-automatic-sysext-updates-apply-at-next-boot.md):
 a packaged `updex-update.timer` that snosi enables, safe retention, status,
-and a rollback command. Phases 1–4 are updex pull requests, in this order,
-each with `make ci` green. Phase 5 is a release. Phase 6 is a snosi change.
-Phase 7 checks real hosts. Nothing starts before the ADR is Accepted.
+and a rollback command. Phases 1–5 are updex pull requests, in this order,
+each with `make ci` green. Phase 6 is a release. Phase 7 is a snosi change.
+Phase 8 checks real hosts. Nothing starts before the ADR is Accepted.
 
 ## Phase 1 — Retention and atomic links (S)
 
@@ -63,7 +63,22 @@ Phase 7 checks real hosts. Nothing starts before the ADR is Accepted.
 - **Done when:** after `rollback incus`, a timer run keeps the old link,
   and the next revision is linked automatically.
 
-## Phase 5 — Release (Brian)
+## Phase 5 — Minimum image version (S)
+
+- After the download and before the link, read `UPDEX_MIN_IMAGE_VERSION`
+  from the image's `extension-release.<name>`; compare it with the
+  next-boot `IMAGE_VERSION` (staged deployment from `bootc status`, else
+  the booted `os-release`); keep the old link and report
+  `needs image >= <value>` when the image is too old or a value is missing.
+- Checks: tests with fixture images and fake `bootc status` output: key
+  absent (link), image new enough (link), too old (no link, other features
+  continue, exit 0), staged deployment newer than booted (link), value not
+  numeric (no link); the read works under `SandboxDirectives`
+  (`systemd-run -p` with the same directives on a test host).
+- **Done when:** a fixture revision with a future minimum stays unlinked,
+  and `features check` shows why.
+
+## Phase 6 — Release (Brian)
 
 - Brian tags the release (`make bump`). The release workflow requests APT
   publication; apt-publisher publishes `frostyard-updex` and dispatches a
@@ -73,37 +88,44 @@ Phase 7 checks real hosts. Nothing starts before the ADR is Accepted.
   contains `/usr/lib/systemd/system/updex-update.timer`.
 - **Done when:** a published snosi image carries the packaged units.
 
-## Phase 6 — snosi enablement (Murbella)
+## Phase 7 — snosi enablement (Murbella)
 
-- A preset line `enable updex-update.timer` in the base image; the
-  enablement manifest lists `timers.target.wants/updex-update.timer`;
+- A preset line `enable updex-update.timer` in
+  `mkosi.images/base/mkosi.extra/usr/lib/systemd/system-preset/04-bootc-update.preset`
+  (or a new `05-updex.preset`); the enablement manifest lists
+  `system timers.target.wants/updex-update.timer`;
   `docs/design/sysexts.md` describes the timer next to the
-  `systemd-sysupdate-update.timer` mask.
-- Checks: snosi CI, `test/tests/05-firstboot-presets.sh` parity, and
-  `test/bootc-secure-static-test.sh` pinning the preset next to the masks.
-  This phase merges only after Phase 5, so the preset never names a
-  missing unit.
+  `systemd-sysupdate-update.timer` mask, the `mask` opt-out, and the rule
+  for `UPDEX_MIN_IMAGE_VERSION` on base-dependent revisions.
+- A fail-closed image-build check: the build fails when the preset names
+  `updex-update.timer` and `/usr/lib/systemd/system/updex-update.timer` is
+  missing, or when the manifest lacks the entry.
+- Checks: snosi CI with that build check; `test/bootc-secure-static-test.sh`
+  pins the preset line next to the masks. `test/tests/05-firstboot-presets.sh`
+  is a manual VM test, not a gate. This phase merges only after Phase 6, so
+  the preset never names a missing unit.
 - **Done when:** a published image enables the timer at first boot, and
   `preset-reconcile` enables it on an existing host.
 
-## Phase 7 — Fleet check
+## Phase 8 — Fleet check
 
 - On framework and selfie after their image update:
-  `systemctl is-enabled updex-update.timer` is `enabled`;
-  `systemctl list-timers updex-update.timer` shows a next run; after a run,
+  `systemctl is-enabled updex-update.timer` is `enabled` after the first
+  boot of the new image (`preset-reconcile` runs after the boot
+  transaction); `systemctl list-timers updex-update.timer` shows a next run
+  from the second boot; after a run,
   `journalctl -u updex-update.service` shows it, and
   `updex daemon status` shows its result.
 - After the next sysext publication, `updex features check` shows
   `LINKED` = the new revision before a reboot and `RUNNING` = it after one;
   `find /var/lib/extensions -xtype l` is empty.
+- Before the first base-dependent revision after Phase 7, snosi sets
+  `UPDEX_MIN_IMAGE_VERSION` on it, and a host on an older image keeps its
+  old link.
 - **Done when:** both hosts run a new revision that no person installed.
 
 ## Open questions
 
-- **A sysext revision built against a newer base than the host's image:**
-  should updex refuse to link it (for example, from a minimum image version
-  in `extension-release`)? Decide before snosi ships a base change that
-  shrinks the base.
 - **Metered networks:** systemd has no metered condition. Decide whether
   updex asks NetworkManager before downloading, by Phase 2.
 

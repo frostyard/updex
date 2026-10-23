@@ -74,7 +74,8 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
   *Proposed:* `frostyard-updex` ships `updex-update.timer` (every 6 h, AC
   power only), snosi enables it; runs stage and link but never refresh, so
   revisions apply at the next boot; vacuum keeps the linked and merged
-  images; `features rollback` records a rejected version
+  images; a revision with `UPDEX_MIN_IMAGE_VERSION` waits for a new enough
+  image; `features rollback` records a rejected version
 
 ### Design
 
@@ -105,7 +106,7 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
 
 - [Automatic sysext updates](plans/0001-automatic-sysext-updates.md) —
   phases and checks for ADR-0016: retention, packaged units, status,
-  rollback, release, snosi enablement, fleet check
+  rollback, minimum image version, release, snosi enablement, fleet check
 
 ### Process docs (uncategorized)
 
