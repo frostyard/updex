@@ -102,10 +102,11 @@ CLI (cmd/daemon.go) ─┘                version, sysext, systemd
 - `ClientConfig.HTTPClient` is reused for manifest fetches and downloads; if nil, `NewClient` creates one with a 10-minute timeout, the standard 10-redirect limit, and an HTTPS-to-HTTP downgrade refusal
 - `ClientConfig.Progress` receives informational/warning/debug messages; `ClientConfig.OnDownloadProgress` is a separate download-byte callback
 - `ClientConfig.SystemdManager` injects the unit-file paths (`UnitPath`,
-  `PackagedUnitPath`) and `SystemctlRunner` used by daemon SDK methods; nil
-  selects the production manager (`/etc/systemd/system`,
-  `/usr/lib/systemd/system`). `NewTestManager` leaves `PackagedUnitPath` empty
-  so a test never sees the host's packaged units
+  `RunUnitPath`, `PackagedUnitPath`) and `SystemctlRunner` used by daemon SDK
+  methods; nil selects the production manager (`/etc/systemd/system`,
+  `/run/systemd/system`, `/usr/lib/systemd/system`). `NewTestManager` leaves
+  `RunUnitPath` and `PackagedUnitPath` empty so a test never sees the host's
+  runtime or packaged units
 - `UpdateFeatures` and `CheckFeatures` cache fetched manifests by `Transfer.Source.Path` only. Future changes that mix verification policy or auth by transfer for the same source URL need to revisit that cache key.
 - The feature SDK methods (`UpdateFeatures`, `CheckFeatures`, enable/disable with `Now`) use `config.GetTransfersForFeature`, which includes transfers where the feature appears in either `Features` or `RequisiteFeatures`. The more general `config.FilterTransfersByFeatures` implements full active-transfer logic, including standalone transfers and AND/OR feature requirements, but it is not the main path for current feature update/check workflows.
 - Error messages: lowercase, no trailing punctuation, wrapped with `fmt.Errorf("context: %w", err)`
@@ -701,8 +702,16 @@ which supersedes [ADR-0007](../adr/0007-daemon-stages-never-activates.md).
   the timer; the opt-out that survives image updates is `systemctl mask`.
 - `updex daemon status`: `Installed` means a timer file exists in either directory.
   `Source` is `etc` when the timer file in use is in `/etc/systemd/system` (it
-  overrides the packaged one), else `packaged`; `UnitFiles` lists the files in use
-  and `Schedule` is the `OnCalendar` value read from the timer file in use. The
+  overrides the packaged one), else `packaged`; `UnitFiles` lists the files in use and `Schedule` is the timer's effective
+  `OnCalendar` schedule: the `TimersCalendar` property that `systemctl show`
+  reports, so administrator drop-ins such as
+  `/etc/systemd/system/updex-update.timer.d/*.conf` and the reset meaning of an
+  empty `OnCalendar=` count, or, when systemd cannot report it (a runner
+  without `Show`, a failing query, no calendar trigger), the schedule computed
+  from the timer file in use plus its drop-ins in `/etc`, `/run` and the
+  packaged directory, by systemd's rules (`OnCalendar` appends inside `[Timer]`,
+  an empty value clears the list, and a drop-in name in a higher-priority
+  directory hides the same name below). The
   next run and last run come from `systemctl show -p PROPERTY --value`, one call
   per property through the `systemd.ShowRunner` interface (an optional runner
   interface, like `ContextSystemctlRunner`; a runner without it leaves them

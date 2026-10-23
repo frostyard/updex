@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -641,6 +642,10 @@ func TestNewManager(t *testing.T) {
 		t.Errorf("UnitPath = %q, want %q", mgr.UnitPath, "/etc/systemd/system")
 	}
 
+	if mgr.RunUnitPath != "/run/systemd/system" {
+		t.Errorf("RunUnitPath = %q, want %q", mgr.RunUnitPath, "/run/systemd/system")
+	}
+
 	if mgr.runner == nil {
 		t.Error("runner should not be nil")
 	}
@@ -664,6 +669,57 @@ func TestNewTestManager(t *testing.T) {
 	if mgr.runner != mockRunner {
 		t.Error("runner should be the provided mock")
 	}
+
+	if mgr.RunUnitPath != "" {
+		t.Errorf("RunUnitPath = %q, want empty so a test never reads the host's runtime units", mgr.RunUnitPath)
+	}
+}
+
+// TestUnitDropIns pins how the manager picks the drop-ins systemd applies to
+// a unit: the highest-priority directory wins for each file name, and the
+// surviving files are sorted by name.
+func TestUnitDropIns(t *testing.T) {
+	etcPath, runPath, packagedPath := t.TempDir(), t.TempDir(), t.TempDir()
+	writeDropIn := func(dir, name string) {
+		t.Helper()
+		d := filepath.Join(dir, "updex-update.timer.d")
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, name), []byte("[Timer]\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeDropIn(packagedPath, "20-late.conf")
+	writeDropIn(packagedPath, "10-shared.conf")
+	writeDropIn(packagedPath, "30-hidden.conf")
+	writeDropIn(runPath, "10-shared.conf")
+	writeDropIn(runPath, "30-hidden.conf")
+	writeDropIn(etcPath, "10-shared.conf")
+	// A file that is not a *.conf drop-in must not be reported.
+	if err := os.WriteFile(filepath.Join(etcPath, "updex-update.timer.d", "notes.txt"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewTestManager(etcPath, &MockSystemctlRunner{})
+	mgr.RunUnitPath = runPath
+	mgr.PackagedUnitPath = packagedPath
+
+	want := []string{
+		filepath.Join(etcPath, "updex-update.timer.d", "10-shared.conf"),
+		filepath.Join(packagedPath, "updex-update.timer.d", "20-late.conf"),
+		filepath.Join(runPath, "updex-update.timer.d", "30-hidden.conf"),
+	}
+	if got := mgr.UnitDropIns("updex-update.timer"); !slices.Equal(got, want) {
+		t.Errorf("UnitDropIns() = %v, want %v", got, want)
+	}
+
+	t.Run("no drop-in directory", func(t *testing.T) {
+		bare := NewTestManager(t.TempDir(), &MockSystemctlRunner{})
+		if got := bare.UnitDropIns("updex-update.timer"); len(got) != 0 {
+			t.Errorf("UnitDropIns() = %v, want none", got)
+		}
+	})
 }
 
 // TestManagerPrefersContextRunner pins that Manager dispatches to a runner's

@@ -1,7 +1,6 @@
 package updex
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -404,6 +403,13 @@ func (c *Client) daemonUnitFileInUse(suffix string) (path, source string, ok boo
 // run is scheduled (the timer is not active). LastRun and LastResult are empty
 // when the service never ran since boot. A runner that cannot read properties
 // leaves all three empty.
+//
+// Schedule is the timer's effective OnCalendar schedule, as a
+// comma-separated list: the TimersCalendar property that systemd reports,
+// which already includes administrator drop-ins and an empty OnCalendar=
+// assignment that resets the list, or, when systemd cannot report it, the
+// schedule computed from the unit file in use and its drop-ins by systemd's
+// rules.
 func (c *Client) DaemonStatus(ctx context.Context, _ DaemonStatusOptions) (*DaemonStatusResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("get daemon status: %w", err)
@@ -421,9 +427,9 @@ func (c *Client) DaemonStatus(ctx context.Context, _ DaemonStatusOptions) (*Daem
 			status.UnitFiles = append(status.UnitFiles, path)
 		}
 	}
-	status.Schedule = readOnCalendar(timerPath)
-
 	timerUnit := daemonUnitName + ".timer"
+	status.Schedule = c.daemonSchedule(ctx, timerUnit, timerPath)
+
 	enabled, err := c.systemd.IsEnabled(ctx, timerUnit)
 	if err != nil {
 		return nil, fmt.Errorf("get daemon status: query enabled state: %w", err)
@@ -474,21 +480,130 @@ func (c *Client) showDaemonProperty(ctx context.Context, unit, property string) 
 	return value, nil
 }
 
-// readOnCalendar returns the OnCalendar= values of the timer file at path,
-// joined with ", ", or "" when the file cannot be read or has none. It reports
-// the schedule of the file in use, whoever wrote it.
-func readOnCalendar(path string) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer func() { _ = f.Close() }()
-	var values []string
-	scanner := bufio.NewScanner(io.LimitReader(f, maxUnitRead))
-	for scanner.Scan() {
-		if value, ok := strings.CutPrefix(strings.TrimSpace(scanner.Text()), "OnCalendar="); ok && value != "" {
-			values = append(values, value)
+// daemonSchedule returns the effective OnCalendar schedule of the timer unit,
+// as a comma-separated list, or "" when it is unknown.
+//
+// It prefers what systemd reports: the timer's TimersCalendar property
+// already accounts for administrator drop-ins and for the reset meaning of an
+// empty OnCalendar= assignment. When systemd cannot answer (a runner without
+// Show support, a systemctl failure, or output with no calendar trigger), it
+// computes the schedule from the unit file at timerPath and its drop-ins by
+// systemd's rules. Reading the schedule is best-effort: it never fails the
+// status.
+func (c *Client) daemonSchedule(ctx context.Context, timerUnit, timerPath string) string {
+	if value, err := c.systemd.Show(ctx, timerUnit, "TimersCalendar"); err == nil {
+		if values := parseTimersCalendar(value); len(values) > 0 {
+			return strings.Join(values, ", ")
 		}
 	}
+	return c.scheduleFromUnitFiles(timerUnit, timerPath)
+}
+
+// parseTimersCalendar extracts the OnCalendar= values from the value of
+// systemd's TimersCalendar property, in order.
+//
+// `systemctl show -p TimersCalendar --value` prints one entry per calendar
+// trigger, in the shape src/systemctl/systemctl-show.c prints it:
+//
+//	{ OnCalendar=*-*-* 00/6:00:00 ; next_elapse=Fri 2026-10-23 18:00:00 EDT }
+//
+// with several entries following each other on separate lines. The parser
+// depends only on that shape: it takes each OnCalendar= value up to the " ;"
+// separator before next_elapse (or up to the closing brace), so entries
+// separated by spaces parse the same, and odd input yields no values, which
+// makes the caller fall back to the files. It never panics.
+func parseTimersCalendar(value string) []string {
+	var values []string
+	rest := value
+	for {
+		_, after, ok := strings.Cut(rest, "OnCalendar=")
+		if !ok {
+			return values
+		}
+		rest = after
+		end := len(rest)
+		for _, terminator := range [...]string{" ;", "}", "\n"} {
+			if i := strings.Index(rest, terminator); i >= 0 && i < end {
+				end = i
+			}
+		}
+		if spec := strings.TrimSpace(rest[:end]); spec != "" {
+			values = append(values, spec)
+		}
+		// Each iteration drops at least the OnCalendar= prefix, so the loop
+		// always ends.
+		rest = rest[end:]
+	}
+}
+
+// scheduleFromUnitFiles computes the OnCalendar schedule that systemd would
+// apply to the timer from its unit files: the file in use first, then the
+// drop-ins (<unit>.d/*.conf, see systemd.Manager.UnitDropIns) sorted by name,
+// each applied after the file it overrides.
+//
+// Only [Timer] sections count. Inside one, OnCalendar=value adds a trigger
+// and an empty OnCalendar= clears the list so far, which is systemd's reset
+// rule (systemd.timer(5)). A file that cannot be read or is not a regular
+// file is skipped; the values are joined with ", ".
+func (c *Client) scheduleFromUnitFiles(timerUnit, timerPath string) string {
+	content, ok := readScheduleFile(timerPath)
+	if !ok {
+		return ""
+	}
+	values := parseOnCalendar(content, nil)
+	for _, path := range c.systemd.UnitDropIns(timerUnit) {
+		content, ok := readScheduleFile(path)
+		if !ok {
+			continue
+		}
+		values = parseOnCalendar(content, values)
+	}
 	return strings.Join(values, ", ")
+}
+
+// readScheduleFile reads a unit or drop-in file for its schedule. It uses
+// os.Lstat and refuses anything that is not a regular file, so it never reads
+// through a symlink or a directory (ADR-0005), and it bounds the read with
+// maxUnitRead. ok is false when the file cannot be read or is not regular.
+func readScheduleFile(path string) (content string, ok bool) {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", false
+	}
+	content, err = readUnitFile(path)
+	if err != nil {
+		return "", false
+	}
+	return content, true
+}
+
+// parseOnCalendar returns values with the OnCalendar= assignments of the
+// [Timer] sections of a unit or drop-in file applied: a value appends, and an
+// empty value clears the list so far (systemd's reset rule). Blank lines,
+// comments, and lines outside a [Timer] section are ignored.
+func parseOnCalendar(content string, values []string) []string {
+	inTimer := false
+	for line := range strings.SplitSeq(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			inTimer = line == "[Timer]"
+			continue
+		}
+		if !inTimer {
+			continue
+		}
+		value, ok := strings.CutPrefix(line, "OnCalendar=")
+		if !ok {
+			continue
+		}
+		if value = strings.TrimSpace(value); value == "" {
+			values = nil
+			continue
+		}
+		values = append(values, value)
+	}
+	return values
 }

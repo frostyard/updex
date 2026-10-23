@@ -191,7 +191,7 @@ OUTPUT:
   Source     - "packaged" (/usr/lib/systemd/system) or "etc"
                (/etc/systemd/system, which overrides a packaged unit)
   Unit files - The unit files in use
-  Schedule   - When updates run (the timer's OnCalendar)
+  Schedule   - When updates run (the effective OnCalendar, drop-ins included)
   Next run   - When the timer fires next
   Last run   - When the service last finished, and its result
 

@@ -485,6 +485,7 @@ func TestDaemonStatusRunsAndSources(t *testing.T) {
 				t.Errorf("DaemonStatus() = %+v, want %+v", *got, want)
 			}
 			wantCalls := []string{
+				daemonUnitName + ".timer:TimersCalendar",
 				daemonUnitName + ".timer:NextElapseUSecRealtime",
 				daemonUnitName + ".service:ExecMainExitTimestamp",
 			}
@@ -526,29 +527,199 @@ func TestDaemonStatusRunsAndSources(t *testing.T) {
 	})
 }
 
-func TestDaemonStatusSchedule(t *testing.T) {
+// newDaemonScheduleTestClient returns a client whose unit directories are
+// three separate temporary trees, standing in for /etc/systemd/system,
+// /run/systemd/system, and /usr/lib/systemd/system, and the three paths.
+func newDaemonScheduleTestClient(t *testing.T, runner systemd.SystemctlRunner) (client *Client, etcPath, runPath, packagedPath string) {
+	t.Helper()
+	etcPath, runPath, packagedPath = t.TempDir(), t.TempDir(), t.TempDir()
+	manager := systemd.NewTestManager(etcPath, runner)
+	manager.RunUnitPath = runPath
+	manager.PackagedUnitPath = packagedPath
+	return NewClient(ClientConfig{SystemdManager: manager}), etcPath, runPath, packagedPath
+}
+
+// writeDropIn writes name to the drop-in directory of the timer unit under
+// unitDir, creating the directory.
+func writeDropIn(t *testing.T, unitDir, name, content string) {
+	t.Helper()
+	dir := filepath.Join(unitDir, daemonUnitName+".timer.d")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("create drop-in dir %s: %v", dir, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		t.Fatalf("write drop-in %s: %v", name, err)
+	}
+}
+
+func TestParseTimersCalendar(t *testing.T) {
 	tests := []struct {
-		name, content, want string
+		name, value string
+		want        []string
 	}{
-		{name: "one schedule", content: "[Timer]\nOnCalendar=daily\nPersistent=true\n", want: "daily"},
-		{name: "two schedules", content: "[Timer]\nOnCalendar=daily\nOnCalendar=weekly\n", want: "daily, weekly"},
-		{name: "none", content: "[Timer]\nPersistent=true\n", want: ""},
-		{name: "empty value", content: "[Timer]\nOnCalendar=\n", want: ""},
+		{name: "empty", value: ""},
+		{name: "not the shape", value: "garbage"},
+		{name: "one entry", value: "{ OnCalendar=daily ; next_elapse=Fri 2026-10-23 18:00:00 EDT }", want: []string{"daily"}},
+		{
+			name:  "two entries separated by a space",
+			value: "{ OnCalendar=daily ; next_elapse=x } { OnCalendar=weekly ; next_elapse=y }",
+			want:  []string{"daily", "weekly"},
+		},
+		{
+			name:  "two entries on separate lines",
+			value: "{ OnCalendar=*-*-* 00/6:00:00 ; next_elapse=a }\n{ OnCalendar=Mon *-*-* 03:00:00 ; next_elapse=b }",
+			want:  []string{"*-*-* 00/6:00:00", "Mon *-*-* 03:00:00"},
+		},
+		{name: "empty calendar value", value: "{ OnCalendar= ; next_elapse=x }"},
+		{name: "no closing brace", value: "OnCalendar=daily", want: []string{"daily"}},
+		{name: "brace only", value: "OnCalendar=}"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "t.timer")
-			if err := os.WriteFile(path, []byte(test.content), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			if got := readOnCalendar(path); got != test.want {
-				t.Errorf("readOnCalendar() = %q, want %q", got, test.want)
+			if got := parseTimersCalendar(test.value); !slices.Equal(got, test.want) {
+				t.Errorf("parseTimersCalendar(%q) = %v, want %v", test.value, got, test.want)
 			}
 		})
 	}
-	if got := readOnCalendar(filepath.Join(t.TempDir(), "missing.timer")); got != "" {
-		t.Errorf("readOnCalendar(missing) = %q, want empty", got)
+}
+
+func TestDaemonStatusScheduleFromSystemd(t *testing.T) {
+	t.Run("two entries in order", func(t *testing.T) {
+		runner := &systemd.MockSystemctlRunner{
+			IsEnabledResult: true, IsActiveResult: true,
+			ShowValues: map[string]string{
+				"TimersCalendar": "{ OnCalendar=daily ; next_elapse=Fri 2026-10-23 18:00:00 EDT }\n" +
+					"{ OnCalendar=weekly ; next_elapse=Fri 2026-10-30 18:00:00 EDT }",
+			},
+		}
+		client, _, _, packagedPath := newDaemonScheduleTestClient(t, runner)
+		seedPackagedUnits(t, packagedPath)
+
+		got, err := client.DaemonStatus(t.Context(), DaemonStatusOptions{})
+		if err != nil {
+			t.Fatalf("DaemonStatus() error = %v", err)
+		}
+		if got.Schedule != "daily, weekly" {
+			t.Errorf("Schedule = %q, want %q", got.Schedule, "daily, weekly")
+		}
+		if !slices.Contains(runner.ShowCalls, daemonUnitName+".timer:TimersCalendar") {
+			t.Errorf("show calls = %v, want the timer's TimersCalendar", runner.ShowCalls)
+		}
+	})
+
+	t.Run("an override from a drop-in wins over the packaged schedule", func(t *testing.T) {
+		runner := &systemd.MockSystemctlRunner{
+			IsEnabledResult: true, IsActiveResult: true,
+			ShowValues: map[string]string{
+				"TimersCalendar": "{ OnCalendar=daily ; next_elapse=Fri 2026-10-23 18:00:00 EDT }",
+			},
+		}
+		client, _, _, packagedPath := newDaemonScheduleTestClient(t, runner)
+		seedPackagedUnits(t, packagedPath)
+
+		got, err := client.DaemonStatus(t.Context(), DaemonStatusOptions{})
+		if err != nil {
+			t.Fatalf("DaemonStatus() error = %v", err)
+		}
+		if got.Schedule != "daily" {
+			t.Errorf("Schedule = %q, want the override %q rather than the packaged schedule", got.Schedule, "daily")
+		}
+	})
+}
+
+func TestDaemonStatusScheduleFromFiles(t *testing.T) {
+	const packagedSixHour = "[Timer]\nOnCalendar=*-*-* 00/6:00:00\n"
+
+	tests := []struct {
+		name                   string
+		etcTimer, runTimer     string // main timer file content; "" for none
+		packagedTimer          string
+		etcDropIns, runDropIns map[string]string
+		packagedDropIns        map[string]string
+		want                   string
+	}{
+		{
+			name:     "an empty OnCalendar= resets the list",
+			etcTimer: "[Timer]\nOnCalendar=daily\nOnCalendar=\nOnCalendar=weekly\n",
+			want:     "weekly",
+		},
+		{
+			name:          "an etc drop-in replaces the packaged schedule",
+			packagedTimer: packagedSixHour,
+			etcDropIns:    map[string]string{"override.conf": "[Timer]\nOnCalendar=\nOnCalendar=daily\n"},
+			want:          "daily",
+		},
+		{
+			name:            "an etc drop-in hides the same name in run and packaged",
+			packagedTimer:   packagedSixHour,
+			etcDropIns:      map[string]string{"10-extra.conf": "[Timer]\nOnCalendar=daily\n"},
+			runDropIns:      map[string]string{"10-extra.conf": "[Timer]\nOnCalendar=hourly\n"},
+			packagedDropIns: map[string]string{"10-extra.conf": "[Timer]\nOnCalendar=monthly\n"},
+			want:            "*-*-* 00/6:00:00, daily",
+		},
+		{
+			name:     "OnCalendar outside [Timer] is ignored",
+			etcTimer: "[Service]\nOnCalendar=monthly\n[Timer]\nOnCalendar=daily\n",
+			want:     "daily",
+		},
+		{
+			name:            "drop-ins apply sorted by name",
+			packagedTimer:   packagedSixHour,
+			packagedDropIns: map[string]string{"20-late.conf": "[Timer]\nOnCalendar=weekly\n", "10-early.conf": "[Timer]\nOnCalendar=daily\n"},
+			want:            "*-*-* 00/6:00:00, daily, weekly",
+		},
+		{
+			name:     "no schedule in any file",
+			etcTimer: "[Timer]\nPersistent=true\n",
+			want:     "",
+		},
 	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			// plainRunner has no ShowRunner method, so the status must
+			// compute the schedule from the files.
+			inner := &systemd.MockSystemctlRunner{IsEnabledResult: true, IsActiveResult: true}
+			client, etcPath, runPath, packagedPath := newDaemonScheduleTestClient(t, plainRunner{inner})
+			for dir, content := range map[string]string{etcPath: test.etcTimer, runPath: test.runTimer, packagedPath: test.packagedTimer} {
+				if content != "" {
+					writeUnit(t, dir, ".timer", content)
+				}
+			}
+			for name, content := range test.etcDropIns {
+				writeDropIn(t, etcPath, name, content)
+			}
+			for name, content := range test.runDropIns {
+				writeDropIn(t, runPath, name, content)
+			}
+			for name, content := range test.packagedDropIns {
+				writeDropIn(t, packagedPath, name, content)
+			}
+
+			got, err := client.DaemonStatus(t.Context(), DaemonStatusOptions{})
+			if err != nil {
+				t.Fatalf("DaemonStatus() error = %v", err)
+			}
+			if got.Schedule != test.want {
+				t.Errorf("Schedule = %q, want %q", got.Schedule, test.want)
+			}
+		})
+	}
+
+	t.Run("a show failure falls back to the files", func(t *testing.T) {
+		runner := &systemd.MockSystemctlRunner{ShowErr: errors.New("bus down")}
+		client, etcPath, _, _ := newDaemonScheduleTestClient(t, runner)
+		timerPath := writeUnit(t, etcPath, ".timer", "[Timer]\nOnCalendar=daily\n")
+		if got := client.daemonSchedule(t.Context(), daemonUnitName+".timer", timerPath); got != "daily" {
+			t.Errorf("daemonSchedule() = %q, want the file schedule %q", got, "daily")
+		}
+	})
+
+	t.Run("a missing timer file yields an unknown schedule", func(t *testing.T) {
+		client, _, _, _ := newDaemonScheduleTestClient(t, plainRunner{&systemd.MockSystemctlRunner{}})
+		if got := client.daemonSchedule(t.Context(), daemonUnitName+".timer", filepath.Join(t.TempDir(), "missing.timer")); got != "" {
+			t.Errorf("daemonSchedule(missing) = %q, want empty", got)
+		}
+	})
 }
 
 func TestLegacyUnitTextsMatchTheOldGenerator(t *testing.T) {

@@ -28,7 +28,10 @@ type DaemonStatusResult struct {
 	Installed bool `json:"installed"`
 	Enabled   bool `json:"enabled"`
 	Active    bool `json:"active"`
-	// Schedule is the OnCalendar value of the timer file in use.
+	// Schedule is the timer's effective OnCalendar schedule, a comma-separated
+	// list of its calendar triggers. It comes from the TimersCalendar property
+	// systemd reports, which includes administrator drop-ins, or, when systemd
+	// cannot report it, from the unit file in use and its drop-ins.
 	Schedule string `json:"schedule,omitempty"`
 	// Source is "packaged" when the timer file in use is the package's in
 	// /usr/lib/systemd/system, or "etc" when it is in /etc/systemd/system

@@ -240,12 +240,23 @@ success result.
 `DaemonStatus` reports a missing timer without querying systemctl. For an
 installed timer (a timer file in either directory) it reports enabled/active
 state, `Source` (`etc` when the timer file in use is in the `/etc` unit
-directory, else `packaged`), `UnitFiles` in use, `Schedule` (the `OnCalendar`
-value of that file), and the next and last run from `systemctl show -p
+directory, else `packaged`), `UnitFiles` in use, `Schedule` (the timer's
+effective `OnCalendar` schedule, comma-separated), and the next and last run
+from `systemctl show -p
 PROPERTY --value`, one call per property: `NextRun` (timer
 `NextElapseUSecRealtime`), `LastRun` (service `ExecMainExitTimestamp`) and
 `LastResult` (service `Result`, read only when `LastRun` is set), as systemd
-prints them. An empty value, `n/a` and `0` give an empty string: `NextRun` is
+prints them. `Schedule` comes from the timer's `TimersCalendar` property, so it
+includes administrator drop-ins (`/etc/systemd/system/updex-update.timer.d/`,
+`/run/systemd/system/updex-update.timer.d/`, and the same under
+`/usr/lib/systemd/system`) and honours an empty `OnCalendar=` that resets the
+list. When `Show` is unsupported, fails, or reports no calendar trigger,
+`Schedule` is computed from the timer file in use and those drop-ins by
+systemd's rules, with drop-in names in higher-priority directories hiding the
+same name below and the remaining files applied sorted by name; files are read
+with `os.Lstat` and a bounded read, and non-regular files are skipped. A
+schedule that cannot be read leaves `Schedule` empty; it never fails the
+status. An empty value, `n/a` and `0` give an empty string: `NextRun` is
 empty when nothing is scheduled; `LastRun` and `LastResult` are empty when the
 service never ran since boot. A runner that does not implement
 `systemd.ShowRunner` leaves them empty without an error. If a query fails,
@@ -293,7 +304,7 @@ type DaemonStatusResult struct {
     Installed  bool     `json:"installed"`
     Enabled    bool     `json:"enabled"`
     Active     bool     `json:"active"`
-    Schedule   string   `json:"schedule,omitempty"`
+    Schedule   string   `json:"schedule,omitempty"` // effective OnCalendar, "a, b"
     Source     string   `json:"source,omitempty"`      // "packaged" or "etc"
     UnitFiles  []string `json:"unit_files,omitzero"`
     NextRun    string   `json:"next_run,omitempty"`
@@ -700,8 +711,9 @@ recorded in [ADR-0008](../adr/0008-bounded-retry-no-resume.md).
 
 ### `systemd`
 
-- `NewManager() *Manager` — Create manager with default paths (`UnitPath` `/etc/systemd/system`, `PackagedUnitPath` `/usr/lib/systemd/system`)
-- `NewTestManager(unitPath string, runner SystemctlRunner) *Manager` — Create manager with custom paths and runner for testing; `PackagedUnitPath` is empty (no packaged units), set the exported field to test the packaged path
+- `NewManager() *Manager` — Create manager with default paths (`UnitPath` `/etc/systemd/system`, `RunUnitPath` `/run/systemd/system`, `PackagedUnitPath` `/usr/lib/systemd/system`)
+- `NewTestManager(unitPath string, runner SystemctlRunner) *Manager` — Create manager with custom paths and runner for testing; `RunUnitPath` and `PackagedUnitPath` are empty (no runtime or packaged units), set the exported fields to test those paths
+- `Manager.UnitDropInDirs() []string` / `UnitDropIns(unit string) []string` — The drop-in directories in priority order (`UnitPath`, `RunUnitPath`, `PackagedUnitPath`), and the `*.conf` drop-ins that systemd applies to a unit in apply order: the highest-priority directory wins for each file name, and the surviving files are sorted by name
 - `Manager.PackagedExists(name) bool` / `PackagedUnitPaths(name) []string` — Look for the package-shipped timer (read-only; `os.Lstat`) and list the packaged timer and service paths
 - `GenerateTimer(cfg *TimerConfig) string` — Generate systemd timer unit content
 - `GenerateService(cfg *ServiceConfig) string` — Generate systemd service unit content; `ServiceConfig.Sandbox` appends the `SandboxDirectives` hardening block to `[Service]` (the daemon unit sets it; other callers keep the minimal unit); `Wants`/`After` (one line each, space-joined) and `Conditions` (whole `ConditionX=y` lines) follow `Description` in `[Unit]`; `Comment` (also on `TimerConfig`) is written first as `# <Comment>`; a config that sets none of these produces the same text as before

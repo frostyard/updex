@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 )
 
 // Manager handles systemd unit file operations (install, remove, etc.)
@@ -18,6 +20,12 @@ type Manager struct {
 	// directory, which is what NewTestManager sets so a test never depends on
 	// the host's installed units. It is captured at construction (ADR-0010).
 	PackagedUnitPath string
+	// RunUnitPath is the runtime unit directory that systemd also reads units
+	// and drop-ins from (default: /run/systemd/system). Manager only reads it,
+	// to find drop-ins of an installed unit; it never writes there. Empty
+	// means no runtime directory, which is what NewTestManager sets so a test
+	// never reads the host's runtime units.
+	RunUnitPath string
 	// runner is the SystemctlRunner for daemon-reload, enable, etc.
 	runner SystemctlRunner
 }
@@ -26,6 +34,7 @@ type Manager struct {
 func NewManager() *Manager {
 	return &Manager{
 		UnitPath:         "/etc/systemd/system",
+		RunUnitPath:      "/run/systemd/system",
 		PackagedUnitPath: "/usr/lib/systemd/system",
 		runner:           &DefaultSystemctlRunner{},
 	}
@@ -242,6 +251,57 @@ func (m *Manager) PackagedExists(name string) bool {
 	}
 	_, err := os.Lstat(paths[0])
 	return err == nil || !os.IsNotExist(err)
+}
+
+// UnitDropInDirs returns the directories whose drop-ins systemd applies to a
+// unit, highest priority first: the unit directory (/etc/systemd/system), the
+// runtime directory (/run/systemd/system), and the packaged directory
+// (/usr/lib/systemd/system). Empty fields are skipped.
+func (m *Manager) UnitDropInDirs() []string {
+	dirs := make([]string, 0, 3)
+	for _, dir := range []string{m.UnitPath, m.RunUnitPath, m.PackagedUnitPath} {
+		if dir != "" {
+			dirs = append(dirs, dir)
+		}
+	}
+	return dirs
+}
+
+// UnitDropIns returns the drop-in files that systemd applies to the unit named
+// unit (for example "updex-update.timer"), in the order systemd applies them.
+//
+// It reads the unit's drop-in directory (<dir>/<unit>.d) in UnitDropInDirs
+// order. Each drop-in name is taken from the highest-priority directory that
+// has it, so a drop-in in /etc hides a drop-in of the same name in /run or in
+// the packaged directory; the surviving files are sorted by name. A drop-in
+// directory that does not exist is skipped. Only the file names are decided
+// here: the caller reads the files and skips ones that are not regular files.
+func (m *Manager) UnitDropIns(unit string) []string {
+	subdir := unit + ".d"
+	seen := make(map[string]bool)
+	var names []string
+	byName := make(map[string]string)
+	for _, dir := range m.UnitDropInDirs() {
+		entries, err := os.ReadDir(filepath.Join(dir, subdir))
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if !strings.HasSuffix(name, ".conf") || seen[name] {
+				continue
+			}
+			seen[name] = true
+			names = append(names, name)
+			byName[name] = filepath.Join(dir, subdir, name)
+		}
+	}
+	slices.Sort(names)
+	paths := make([]string, 0, len(names))
+	for _, name := range names {
+		paths = append(paths, byName[name])
+	}
+	return paths
 }
 
 // Enable enables a systemd unit through the manager's configured runner.

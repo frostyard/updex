@@ -164,7 +164,10 @@ the identical units that older updex releases wrote).
 
 - **Schedule:** every 6 hours (`OnCalendar=*-*-* 00/6:00:00`) with up to one
   hour of random delay; a run missed while the host was off happens at the next
-  boot (`Persistent=true`).
+  boot (`Persistent=true`). An administrator can change it with a drop-in such
+  as `/etc/systemd/system/updex-update.timer.d/override.conf`, and
+  `updex daemon status` shows the schedule that actually applies, drop-ins
+  included.
 - **What a run does:** `updex features update --no-refresh` downloads, verifies
   and links the new revision. It never runs `systemd-sysext refresh`, so the
   new revision takes effect at the next boot. A run that finds nothing new
