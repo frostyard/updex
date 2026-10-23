@@ -18,6 +18,7 @@ import (
 type statusFixture struct {
 	t         *testing.T
 	configDir string
+	rootDir   string
 	targetDir string
 	linkDir   string
 	hierarchy string
@@ -45,6 +46,7 @@ func newStatusFixture(t *testing.T) *statusFixture {
 	return &statusFixture{
 		t:         t,
 		configDir: t.TempDir(),
+		rootDir:   t.TempDir(),
 		targetDir: t.TempDir(),
 		linkDir:   t.TempDir(),
 		hierarchy: t.TempDir(),
@@ -59,6 +61,18 @@ func (f *statusFixture) addFeature(name string, enabled bool) {
 	f.t.Helper()
 	createFeatureFile(f.t, f.configDir, name, enabled)
 	writeCheckTransfer(f.t, f.configDir, name, name, f.serverURL, f.targetDir, false)
+}
+
+// addHostTransfer writes just the transfer of name into the host's legacy
+// default component directory, <rootDir>/sysupdate.d, which the client reads
+// through RuntimePaths.DefinitionRoots.
+func (f *statusFixture) addHostTransfer(name string) {
+	f.t.Helper()
+	dir := filepath.Join(f.rootDir, "sysupdate.d")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		f.t.Fatal(err)
+	}
+	writeCheckTransfer(f.t, dir, name, name, f.serverURL, f.targetDir, false)
 }
 
 // stage writes the staged image <component>_<version>.raw and returns its path.
@@ -113,7 +127,7 @@ func (f *statusFixture) client() *Client {
 		SysextRunner: f.runner,
 		Progress:     f.reporter,
 		Paths: RuntimePaths{
-			DefinitionRoots:   []string{f.t.TempDir()},
+			DefinitionRoots:   []string{f.rootDir},
 			SysextLinkDir:     f.linkDir,
 			RunExtensionsDir:  filepath.Join(f.t.TempDir(), "run-extensions"),
 			SysextHierarchies: []string{f.hierarchy},
@@ -692,6 +706,106 @@ func TestPendingActivations_ComponentScopeStillChecksTheWholeHost(t *testing.T) 
 	}
 	if len(result.PendingActivations) != 1 || result.PendingActivations[0].Component != "beta" {
 		t.Errorf("PendingActivations = %+v, want beta (another component)", result.PendingActivations)
+	}
+}
+
+// hostScopeFixture is a host where alpha's definitions live in the directory
+// that ClientConfig.Definitions overrides, and beta's live in a normal
+// sysupdate.d root that only RuntimePaths.DefinitionRoots reaches. The refresh
+// activates beta too, although the run reads alpha's directory alone.
+func hostScopeFixture(t *testing.T, alphaEnabled bool) *statusFixture {
+	t.Helper()
+	f := newStatusFixture(t)
+	f.addFeature("alpha", alphaEnabled)
+	f.addHostTransfer("beta")
+	f.stage("alpha", "1.0.0")
+	f.stage("alpha", "2.0.0")
+	f.stage("beta", "1.0.0")
+	f.stage("beta", "2.0.0")
+	f.link("beta", "2.0.0")
+	return f
+}
+
+// TestUpdateFeatures_DefinitionsOverrideStillChecksTheWholeHost pins the
+// reproduction: with Definitions set, UpdateFeatures reads only that
+// directory, yet its refresh still activates a sysext whose definitions live
+// in a normal root, so the warning must list it.
+func TestUpdateFeatures_DefinitionsOverrideStillChecksTheWholeHost(t *testing.T) {
+	f := hostScopeFixture(t, true)
+	f.link("alpha", "2.0.0")
+	f.merge(map[string]string{"alpha": "2.0.0", "beta": "1.0.0"})
+
+	results, err := f.client().UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoVacuum: true})
+	if err != nil {
+		t.Fatalf("UpdateFeatures: %v", err)
+	}
+	if !f.runner.RefreshCalled {
+		t.Error("the refresh must still run")
+	}
+	if len(results) != 1 || results[0].Feature != "alpha" {
+		t.Fatalf("the update scope must stay the override directory, got %+v", results)
+	}
+	wantBetaPending(t, results[0].PendingActivations)
+	if !f.reporter.hasWarningContaining("beta: 1.0.0 -> 2.0.0") {
+		t.Errorf("warnings = %v", f.reporter.warnings)
+	}
+}
+
+// TestEnableFeature_NowDefinitionsOverrideStillChecksTheWholeHost is the same
+// reproduction for EnableFeature --now.
+func TestEnableFeature_NowDefinitionsOverrideStillChecksTheWholeHost(t *testing.T) {
+	f := hostScopeFixture(t, false)
+	f.link("alpha", "2.0.0")
+	f.merge(map[string]string{"alpha": "2.0.0", "beta": "1.0.0"})
+
+	result, err := f.client().EnableFeature(t.Context(), "alpha", EnableFeatureOptions{Now: true})
+	if err != nil {
+		t.Fatalf("EnableFeature: %v", err)
+	}
+	if !f.runner.RefreshCalled {
+		t.Error("the refresh must still run")
+	}
+	wantBetaPending(t, result.PendingActivations)
+	if !f.reporter.hasWarningContaining("beta: 1.0.0 -> 2.0.0") {
+		t.Errorf("warnings = %v", f.reporter.warnings)
+	}
+}
+
+// TestPendingActivations_TransferInBothDomainsListedOnce pins that a transfer
+// the override directory and the host roots both describe is listed once.
+func TestPendingActivations_TransferInBothDomainsListedOnce(t *testing.T) {
+	f := hostScopeFixture(t, true)
+	f.link("alpha", "2.0.0")
+	f.merge(map[string]string{"alpha": "2.0.0", "beta": "1.0.0"})
+	// beta's transfer now exists in the override directory as well.
+	writeCheckTransfer(t, f.configDir, "beta", "beta", f.serverURL, f.targetDir, false)
+
+	results, err := f.client().UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoVacuum: true})
+	if err != nil {
+		t.Fatalf("UpdateFeatures: %v", err)
+	}
+	wantBetaPending(t, results[0].PendingActivations)
+	if len(f.reporter.warnings) != 1 {
+		t.Errorf("one warning line for one sysext, got %v", f.reporter.warnings)
+	}
+}
+
+// TestUpdateFeatures_DefinitionsOverrideOwnTransfersNotListed pins that the
+// widened read keeps excluding the run's own transfers, which live in the
+// override directory: only the other host sysext is listed.
+func TestUpdateFeatures_DefinitionsOverrideOwnTransfersNotListed(t *testing.T) {
+	f := hostScopeFixture(t, true)
+	f.link("alpha", "2.0.0") // alpha is own and pending
+	f.merge(map[string]string{"alpha": "1.0.0", "beta": "1.0.0"})
+
+	results, err := f.client().UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoVacuum: true})
+	if err != nil {
+		t.Fatalf("UpdateFeatures: %v", err)
+	}
+	wantBetaPending(t, results[0].PendingActivations)
+	if !f.reporter.hasWarningContaining("beta: 1.0.0 -> 2.0.0") ||
+		f.reporter.hasWarningContaining("alpha") {
+		t.Errorf("alpha is this run's own feature and must not be listed: %v", f.reporter.warnings)
 	}
 }
 

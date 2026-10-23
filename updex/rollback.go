@@ -294,7 +294,7 @@ func (c *Client) RollbackFeature(ctx context.Context, name string, opts Rollback
 		result.Success = true
 		result.NextActionMessage = fmt.Sprintf("Dry run complete. Would roll back feature '%s'", name)
 		if opts.Now && !opts.NoRefresh {
-			result.PendingActivations = c.pendingActivations(opts.Component, transfers, featureTransfers)
+			result.PendingActivations = c.pendingActivations(transfers, featureTransfers)
 			c.warnPendingActivations(result.PendingActivations, true)
 		}
 		return result, nil
@@ -339,7 +339,7 @@ func (c *Client) RollbackFeature(ctx context.Context, name string, opts Rollback
 	for i, p := range plans {
 		targets[i] = p.transfer
 	}
-	_, failed, err := c.linkAllOrNone(targets, func(i int, t *config.Transfer) error {
+	failed, _, err := c.linkAllOrNone(targets, func(i int, t *config.Transfer) error {
 		if err := runner.LinkVersionAt(t, c.paths.sysextLinkDir, plans[i].entry.ToVersion); err != nil {
 			return fmt.Errorf("failed to link %s to %s: %w", t.Component, plans[i].entry.ToVersion, err)
 		}
@@ -355,7 +355,7 @@ func (c *Client) RollbackFeature(ctx context.Context, name string, opts Rollback
 	c.msg("Rolled back %s", name)
 
 	if opts.Now && !opts.NoRefresh {
-		result.PendingActivations = c.pendingActivations(opts.Component, transfers, featureTransfers)
+		result.PendingActivations = c.pendingActivations(transfers, featureTransfers)
 		c.warnPendingActivations(result.PendingActivations, false)
 		c.msg("Refreshing sysext")
 		if err := c.runner.Refresh(); err != nil {

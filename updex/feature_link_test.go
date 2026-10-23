@@ -370,6 +370,214 @@ func TestUpdateFeatures_LinkFailurePartWayRemovesNewLinks(t *testing.T) {
 	}
 }
 
+// makeRegularFileAtLink replaces a component's sysext link with a regular
+// file holding content: the shape a hand-placed image takes.
+func (f *featureLinkFixture) makeRegularFileAtLink(component, content string) {
+	f.t.Helper()
+	path := filepath.Join(f.linkDir, component+".raw")
+	if err := os.Remove(path); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// linkDirNames returns the names in the link directory, sorted by ReadDir.
+func (f *featureLinkFixture) linkDirNames() []string {
+	f.t.Helper()
+	entries, err := os.ReadDir(f.linkDir)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
+}
+
+// regularFileAt reports whether path is a regular file with content.
+func regularFileAt(t *testing.T, path, content string) bool {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Logf("%s: %v", path, err)
+		return false
+	}
+	if !info.Mode().IsRegular() {
+		t.Logf("%s: mode %v, want a regular file", path, info.Mode())
+		return false
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Logf("%s: %v", path, err)
+		return false
+	}
+	if string(got) != content {
+		t.Logf("%s: content %q, want %q", path, got, content)
+		return false
+	}
+	return true
+}
+
+// A regular file at a link path is backed up before the link step replaces it,
+// and put back when a later transfer's link fails: the file is not lost and
+// the transfer that moved does not stay on its new link.
+func TestUpdateFeatures_RegularFileAtLinkIsRestoredAfterLinkFailure(t *testing.T) {
+	f := newFeatureLinkFixture(t, func(r sysext.PathSysextRunner) sysext.PathSysextRunner {
+		return failingLinkRunner{PathSysextRunner: r, failComponent: "beta"}
+	}, "alpha", "beta")
+	f.makeRegularFileAtLink("alpha", "original image")
+
+	results, err := f.update()
+	if err == nil {
+		t.Fatal("expected an error: the second link failed")
+	}
+	if by := resultsByComponent(t, results); by["alpha"].Installed {
+		t.Errorf("alpha must not report success, got %+v", by["alpha"])
+	}
+
+	if !regularFileAt(t, filepath.Join(f.linkDir, "alpha.raw"), "original image") {
+		t.Error("alpha.raw must be the original regular file again")
+	}
+	if got := f.linkTarget("beta"); got != "beta_1.0.0.raw" {
+		t.Errorf("beta link = %s; it must keep its old target", got)
+	}
+	if got := f.linkDirNames(); !slices.Equal(got, []string{"alpha.raw", "beta.raw"}) {
+		t.Errorf("link dir = %v, want no backup file left", got)
+	}
+}
+
+// A regular file at a link path is replaced by the link when the whole feature
+// links, and the backup is removed.
+func TestUpdateFeatures_RegularFileAtLinkIsReplacedOnSuccess(t *testing.T) {
+	f := newFeatureLinkFixture(t, nil, "alpha")
+	f.makeRegularFileAtLink("alpha", "original image")
+
+	if _, err := f.update(); err != nil {
+		t.Fatalf("UpdateFeatures: %v", err)
+	}
+	if got := f.linkTarget("alpha"); got != "alpha_2.0.0.raw" {
+		t.Errorf("alpha link = %s, want alpha_2.0.0.raw", got)
+	}
+	if got := f.linkDirNames(); !slices.Equal(got, []string{"alpha.raw"}) {
+		t.Errorf("link dir = %v, want no backup file left", got)
+	}
+}
+
+// A directory at a link path is refused in the snapshot pass: no link moves and
+// no image is lost.
+func TestUpdateFeatures_DirectoryAtLinkIsRefusedBeforeAnyChange(t *testing.T) {
+	f := newFeatureLinkFixture(t, nil, "alpha", "beta")
+	alphaPath := filepath.Join(f.linkDir, "alpha.raw")
+	if err := os.Remove(alphaPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(alphaPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := f.update()
+	if err == nil {
+		t.Fatal("expected an error: the alpha link path is a directory")
+	}
+	by := resultsByComponent(t, results)
+	if !strings.Contains(by["alpha"].Error, "is not a symlink or a regular file") {
+		t.Errorf("alpha must report the refused link path, got %+v", by["alpha"])
+	}
+	if !strings.Contains(by["beta"].Error, "not linked") {
+		t.Errorf("beta must report not linked, got %+v", by["beta"])
+	}
+	info, err := os.Lstat(alphaPath)
+	if err != nil || !info.IsDir() {
+		t.Errorf("alpha.raw must still be a directory (info %v, err %v)", info, err)
+	}
+	if got := f.linkTarget("beta"); got != "beta_1.0.0.raw" {
+		t.Errorf("beta link = %s; no link may move", got)
+	}
+	if got := f.linkDirNames(); !slices.Equal(got, []string{"alpha.raw", "beta.raw"}) {
+		t.Errorf("link dir = %v, want [alpha.raw beta.raw]", got)
+	}
+}
+
+// A restore that fails is an error, in the transfer's result and in the error
+// UpdateFeatures returns, and the backup stays for an operator to recover.
+func TestUpdateFeatures_RestoreFailureIsReported(t *testing.T) {
+	f := newFeatureLinkFixture(t, func(r sysext.PathSysextRunner) sysext.PathSysextRunner {
+		return failingLinkRunner{PathSysextRunner: r, failComponent: "beta"}
+	}, "alpha", "beta")
+	f.makeRegularFileAtLink("alpha", "original image")
+
+	old := restoreRename
+	restoreRename = func(_, _ string) error { return errors.New("injected restore failure") }
+	t.Cleanup(func() { restoreRename = old })
+
+	results, err := f.update()
+	if err == nil {
+		t.Fatal("expected an error: the restore failed")
+	}
+	if !strings.Contains(err.Error(), "injected restore failure") {
+		t.Errorf("UpdateFeatures error = %v, want the restore failure", err)
+	}
+	alpha := resultsByComponent(t, results)["alpha"]
+	if !strings.Contains(alpha.Error, "injected restore failure") || !strings.Contains(alpha.Error, "the link may point at the new version") {
+		t.Errorf("alpha must report the restore failure, got %+v", alpha)
+	}
+	if strings.Contains(alpha.Error, "not linked") || alpha.Installed {
+		t.Errorf("alpha's link moved; it must not report not linked, got %+v", alpha)
+	}
+	if info, err := os.Lstat(filepath.Join(f.linkDir, "alpha.raw")); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("alpha.raw must still be the new symlink (info %v, err %v)", info, err)
+	}
+	backups := 0
+	for _, name := range f.linkDirNames() {
+		if strings.HasPrefix(name, ".alpha.raw.updex-backup-") {
+			backups++
+		}
+	}
+	if backups != 1 {
+		t.Errorf("link dir = %v, want the backup of the original file kept", f.linkDirNames())
+	}
+}
+
+// A regular file at a link path that cannot be backed up is refused before any
+// link moves.
+func TestUpdateFeatures_UnbackupableRegularFileIsRefused(t *testing.T) {
+	f := newFeatureLinkFixture(t, nil, "alpha", "beta")
+	f.makeRegularFileAtLink("alpha", "original image")
+
+	old := backupLink
+	backupLink = func(_, _ string) error { return errors.New("injected backup failure") }
+	t.Cleanup(func() { backupLink = old })
+
+	results, err := f.update()
+	if err == nil {
+		t.Fatal("expected an error: the regular file cannot be backed up")
+	}
+	for _, want := range []string{"is a regular file that updex cannot back up", "injected backup failure"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("UpdateFeatures error = %v, want %q", err, want)
+		}
+	}
+	by := resultsByComponent(t, results)
+	if !strings.Contains(by["alpha"].Error, "is a regular file that updex cannot back up") {
+		t.Errorf("alpha must report the refused backup, got %+v", by["alpha"])
+	}
+	if !strings.Contains(by["beta"].Error, "not linked") {
+		t.Errorf("beta must report not linked, got %+v", by["beta"])
+	}
+	if !regularFileAt(t, filepath.Join(f.linkDir, "alpha.raw"), "original image") {
+		t.Error("alpha.raw must keep the original regular file")
+	}
+	if got := f.linkTarget("beta"); got != "beta_1.0.0.raw" {
+		t.Errorf("beta link = %s; no link may move", got)
+	}
+	if got := f.linkDirNames(); !slices.Equal(got, []string{"alpha.raw", "beta.raw"}) {
+		t.Errorf("link dir = %v, want [alpha.raw beta.raw]", got)
+	}
+}
+
 // EnableFeature --now stages every transfer first and links none when one
 // fails.
 func TestEnableFeatureNow_TransfersLinkTogether(t *testing.T) {
