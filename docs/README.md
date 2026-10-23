@@ -70,6 +70,11 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
   `extensions`) under `/usr` and `/opt`; `/run/extensions` is an image search
   directory, not merged state, and an unknown merge state now requires
   `--force`
+- [ADR-0016](adr/0016-automatic-sysext-updates-apply-at-next-boot.md) —
+  *Proposed:* `frostyard-updex` ships `updex-update.timer` (every 6 h, AC
+  power only), snosi enables it; runs stage and link but never refresh, so
+  revisions apply at the next boot; vacuum keeps the linked and merged
+  images; `features rollback` records a rejected version
 
 ### Design
 
@@ -98,7 +103,9 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
 
 ### Plans
 
-*(none yet)*
+- [Automatic sysext updates](plans/0001-automatic-sysext-updates.md) —
+  phases and checks for ADR-0016: retention, packaged units, status,
+  rollback, release, snosi enablement, fleet check
 
 ### Process docs (uncategorized)
 
