@@ -211,6 +211,27 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 
 	results, err := client.UpdateFeatures(cmd.Context(), opts)
 
+	// ADR-0016: a scheduled run that finds another updex operation running
+	// is not a failure. systemd would otherwise mark updex-update.service
+	// failed for a run that only had to wait for the next one. An operator
+	// at a shell still gets the error.
+	if errors.Is(err, updex.ErrBusy) && runningUnderSystemd() {
+		if _, werr := fmt.Fprintf(cmd.ErrOrStderr(), "updex: %v; skipping this run\n", err); werr != nil {
+			return werr
+		}
+		if clix.JSONOutput {
+			// Keep stdout a JSON array for consumers that parse it.
+			_, jsonErr := clix.OutputJSON([]updex.UpdateFeaturesResult{})
+			return jsonErr
+		}
+		return nil
+	}
+
+	if errors.Is(err, updex.ErrBusy) && !clix.JSONOutput {
+		// Nothing ran: do not print "no enabled features" next to the error.
+		return err
+	}
+
 	if clix.JSONOutput {
 		// Never emit JSON `null` on stdout, even on the error path where the
 		// client returns a nil slice (e.g. domain load failure). Consumers

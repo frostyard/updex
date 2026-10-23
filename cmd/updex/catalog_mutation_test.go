@@ -239,7 +239,7 @@ func (fx *catalogCLIFixture) image() string {
 // its own mock runner; the fixture's globals are already in place.
 func (fx *catalogCLIFixture) install(t *testing.T, repo string) {
 	t.Helper()
-	client := updex.NewClient(updex.ClientConfig{SysextRunner: &sysext.MockRunner{}})
+	client := updex.NewClient(updex.ClientConfig{SysextRunner: &sysext.MockRunner{}, Paths: runtimePaths})
 	if _, err := client.CatalogAdd(t.Context(), catalogTestSysext, updex.CatalogAddOptions{Repo: repo}); err != nil {
 		t.Fatalf("seeding catalog add failed: %v", err)
 	}

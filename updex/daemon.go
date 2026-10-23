@@ -26,10 +26,18 @@ func (c *Client) daemonUnitPaths() []string {
 // EnableDaemon installs, enables, and starts the automatic update timer.
 // With opts.DryRun it reports the unit files and actions without writing any
 // file or calling systemctl; the already-installed precondition still applies.
+// Except in a dry run it holds the operation lock; when another updex
+// operation holds it, EnableDaemon changes nothing and returns an error that
+// wraps ErrBusy.
 func (c *Client) EnableDaemon(ctx context.Context, opts EnableDaemonOptions) (*DaemonActionResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("enable daemon: %w", err)
 	}
+	release, err := c.lockMutation(opts.DryRun)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if c.systemd.Exists(daemonUnitName) {
 		return nil, fmt.Errorf("timer already installed; run 'updex daemon disable' first to reinstall")
 	}
@@ -82,11 +90,18 @@ func (c *Client) EnableDaemon(ctx context.Context, opts EnableDaemonOptions) (*D
 // DisableDaemon stops, disables, and removes the automatic update timer.
 // With opts.DryRun it reports the unit files and actions without stopping,
 // disabling, or removing anything; the not-installed precondition still
-// applies.
+// applies. Except in a dry run it holds the operation lock; when another
+// updex operation holds it, DisableDaemon changes nothing and returns an error
+// that wraps ErrBusy.
 func (c *Client) DisableDaemon(ctx context.Context, opts DisableDaemonOptions) (*DaemonActionResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("disable daemon: %w", err)
 	}
+	release, err := c.lockMutation(opts.DryRun)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if !c.systemd.Exists(daemonUnitName) {
 		return nil, fmt.Errorf("timer not installed; nothing to disable")
 	}

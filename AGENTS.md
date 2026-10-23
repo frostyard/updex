@@ -218,7 +218,7 @@ Key packages:
 - `download/` — HTTP downloads with bounded retry for transient failures, SHA256 verification, and decompression (xz, gz, zstd)
 - `manifest/` — Fetches/parses SHA256SUMS manifests with bounded retry for transient failures and GPG verification (enabled by default per systemd-sysupdate); response bodies are capped at 4 MiB for manifests and 1 MiB for detached signatures
 - `version/` — Pattern matching (`@v` placeholder) and semantic version comparison
-- `sysext/` — systemd-sysext integration with mockable `Runner` interface, `/var/lib/extensions` link management, and read-only vacuum planning helpers
+- `sysext/` — systemd-sysext integration with mockable `Runner` interface, `/var/lib/extensions` link management, and the vacuum (`VacuumWith`/`PlanVacuumWith` over `VacuumPaths`: it keeps the linked and the merged version, see "Feature install and retention" below)
 - `systemd/` — Generates/installs systemd timer+service units, mockable `Runner` interface
 - `internal/retry/`, `internal/httpclient/`, `internal/testutil/` — HTTP retry policy, the shared default-HTTP-client constructor (`internal/httpclient.New`; enforces the HTTPS-to-HTTP redirect downgrade refusal used by `updex.NewClient`, `manifest.Fetch`, and `download.Download` when no caller-supplied client is given), and shared test helpers (HTTP test server)
 
@@ -234,6 +234,8 @@ updex/
 │   ├── results.go            # Structured SDK result types
 │   ├── domain.go             # Definition and component discovery
 │   ├── features.go           # Feature operations
+│   ├── install.go            # Stage/link/vacuum pipeline for a feature's transfers
+│   ├── lock.go               # ErrBusy and the operation lock (flock)
 │   └── catalog.go            # Catalog operations
 ├── cmd/
 │   ├── updex/                # Cobra commands and SDK adapters
@@ -342,6 +344,47 @@ compression format** is a decompressor in `download/decompress.go` plus
 detection in `download/download.go`; **transfer config parsing** changes go
 in the `config/` structs and parse functions. Always finish with
 `make fmt && make build`.
+
+### Feature install and retention (ADR-0016)
+
+- **A feature's transfers link together.** `installTransfers`
+  (`updex/install.go`) stages every transfer of a feature (`stageTransfer`:
+  select, download, verify; it never touches a link), and only when all
+  succeeded links them (`linkStaged`: snapshot each old link, link through
+  the runner, and on a failure restore the links already moved with an atomic
+  temp-symlink rename). A failed stage links nothing, keeps the downloaded
+  images for the next run (which relinks without downloading) and reports
+  `not linked: another transfer of feature <name> failed` on the other
+  transfers. `UpdateFeatures` and `EnableFeature{Now}` both use it. The vacuum
+  runs only after the feature's links succeeded.
+- **Retention.** The vacuum is `sysext.VacuumWith(t, sysext.VacuumPaths{...})`;
+  SDK code builds the paths with `Client.vacuumPaths()` from the client's
+  captured `sysextLinkDir` and `sysextHierarchies`. It keeps the linked version
+  (`LinkedVersionAt`), the merged version (`mergedVersionInHierarchy`,
+  `UnknownVersion` ignored), `ProtectVersion=`, `VacuumPaths.ProtectVersions`
+  (rollback, Phase 4), the legacy `CurrentSymlink` target and the newest
+  `InstancesMax` versions; protected versions are kept in addition to the newest `InstancesMax`. It
+  reads all of them before it deletes anything and fails without deleting when
+  the link or merged state is unreadable. Never call the compatibility
+  wrappers (`Vacuum`, `VacuumAt`, `PlanVacuumAfterInstallAt`) from SDK code:
+  they know neither the link nor the merged state.
+- **Operation lock.** Every mutating SDK operation (`UpdateFeatures`,
+  `EnableFeature`, `DisableFeature`, `CatalogAdd`, `CatalogRemove`,
+  `EnableDaemon`, `DisableDaemon`), except in a dry run, calls
+  `Client.lockMutation(dryRun)` first and `defer release()`: an exclusive,
+  non-blocking `flock` on `RuntimePaths.LockPath` (default
+  `/run/updex/lock`, `updex.DefaultLockPath`). A taken lock returns an error
+  wrapping `updex.ErrBusy`; updex never waits. The lock path is `Lstat`ed,
+  opened with `O_NOFOLLOW`, and refused when it is a symlink or not a regular
+  file (parent dir 0755, file 0600). Read-only operations never take it. A
+  method that calls another mutating method must call its unexported,
+  lock-free form (`CatalogAdd` → `enableFeature`, `CatalogRemove` →
+  `disableFeature`): a second `flock` from the same process would block on
+  itself. A new mutating operation takes the lock the same way.
+- **CLI.** `features update` that gets `ErrBusy` exits 0 with one stderr line
+  only when `runningUnderSystemd()` (non-empty `INVOCATION_ID`; the packaged
+  timer runs exactly `updex features update --no-refresh`); every other
+  command, and an interactive shell, treats `ErrBusy` as an error.
 
 ### Using the SDK programmatically
 
@@ -564,6 +607,8 @@ Key design points:
 
 - **The SDK must never import CLI packages.** No Cobra, no pflag, no
   `cmd/...` imports in `updex/` or the supporting packages.
+- **Mutating SDK methods take the operation lock** (see "Feature install and
+  retention"), unless they are a dry run; read-only methods never do.
 - **Structured returns.** SDK methods return typed structs, never
   preformatted strings; formatting belongs in `cmd/`.
 - **Context first.** Every public SDK method takes `context.Context` as its
@@ -605,6 +650,20 @@ Go 1.26. Use modern idioms: `any`, `slices`/`maps`/`cmp` packages, `t.Context()`
   `config.SearchRoots` with `t.Cleanup` restore, per
   [ADR-0009](docs/adr/0009-overridable-system-path-vars.md), is the
   superseded compatibility path).
+- Every mutating SDK operation takes the lock at `RuntimePaths.LockPath`, which
+  defaults to `/run/updex/lock` (not writable by the test user), so a test must
+  never rely on that default. Package `updex` tests get a temporary default
+  from `TestMain` (`updex/main_test.go` sets the unexported `lockPathDefault`
+  and empty temporary `sysext.MergedHierarchies`); tests run one after
+  another in one process, so one default lock file suffices. A test that runs
+  clients concurrently, or that tests the lock, gives each client its own
+  `RuntimePaths{LockPath: filepath.Join(t.TempDir(), "lock")}`. Hold the lock in
+  a test through `client.lockMutation(false)` and release it with the returned
+  function.
+- Vacuum and retention tests use temp staging, link and hierarchy directories
+  (`sysext.VacuumPaths`, or `RuntimePaths.SysextLinkDir`/`SysextHierarchies`),
+  so no test reads the host's `/var/lib/extensions`, `/usr/.systemd-sysext` or
+  `/opt/.systemd-sysext`.
 - Every `cmd/updex` handler test runs with the `runtimePaths` CLI seam
   (`cmd/updex/client.go`), which `newClient()` passes as
   `ClientConfig.Paths`. `TestMain` in `cmd/updex/main_test.go` points it at
@@ -614,7 +673,12 @@ Go 1.26. Use modern idioms: `any`, `slices`/`maps`/`cmp` packages, `t.Context()`
   `setRuntimePaths(t, updex.RuntimePaths{...})`, which restores the previous
   value with `t.Cleanup`. In production the seam stays the zero
   `updex.RuntimePaths`, so behaviour is unchanged;
-  `TestHandlerTestsDoNotReadHostMergedState` guards it.
+  `TestHandlerTestsDoNotReadHostMergedState` guards it. `TestMain` also sets a
+  temporary `LockPath` (and `setRuntimePaths` keeps it when a test sets its own
+  paths), so no handler test touches `/run/updex`; a handler test that builds
+  its own `updex.NewClient` must pass `Paths: runtimePaths`. Tests of the
+  `INVOCATION_ID` behaviour use `t.Setenv("INVOCATION_ID", ...)` and hold the
+  lock with a plain `flock` on `runtimePaths.LockPath`.
 - Run `make fmt` before running tests; for verbose output use `go test -v ./...`.
 
 ## Security

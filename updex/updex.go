@@ -83,6 +83,15 @@ type RuntimePaths struct {
 	// records the extensions merged by systemd-sysext. Zero value uses
 	// sysext.MergedHierarchies (/usr, /opt).
 	SysextHierarchies []string
+
+	// LockPath is the lock file every mutating operation holds while it
+	// runs (UpdateFeatures, EnableFeature, DisableFeature, CatalogAdd,
+	// CatalogRemove, EnableDaemon and DisableDaemon, except in a dry run).
+	// A second operation on the same file returns ErrBusy. Its parent
+	// directory is created with mode 0755 and the file with mode 0600 when
+	// missing; a symlink or other non-regular file is refused. Zero value
+	// uses DefaultLockPath (/run/updex/lock).
+	LockPath string
 }
 
 // DisableCatalogCache is a sentinel value for RuntimePaths.CatalogCacheDir
@@ -101,6 +110,7 @@ type runtimePaths struct {
 	sysextLinkDir      string
 	runExtensionsDir   string
 	sysextHierarchies  []string
+	lockPath           string
 }
 
 // resolveRuntimePaths converts a RuntimePaths (zero = default) to a fully
@@ -159,6 +169,12 @@ func resolveRuntimePaths(rp RuntimePaths) runtimePaths {
 		p.sysextHierarchies = slices.Clone(rp.SysextHierarchies)
 	} else {
 		p.sysextHierarchies = slices.Clone(sysext.MergedHierarchies)
+	}
+
+	if rp.LockPath != "" {
+		p.lockPath = rp.LockPath
+	} else {
+		p.lockPath = lockPathDefault
 	}
 
 	return p

@@ -186,7 +186,24 @@ func (c *Client) writeFeatureDropIn(f *config.Feature, enabled bool, dryRun bool
 }
 
 // EnableFeature enables a feature by creating a drop-in configuration file.
+// Except in a dry run it holds the operation lock; when another updex
+// operation holds it, EnableFeature changes nothing and returns an error that
+// wraps ErrBusy.
 func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeatureOptions) (*FeatureActionResult, error) {
+	release, err := c.lockMutation(opts.DryRun)
+	if err != nil {
+		result := &FeatureActionResult{Feature: name, Action: "enable", DryRun: opts.DryRun, Error: err.Error()}
+		c.warn("%s", result.Error)
+		return result, err
+	}
+	defer release()
+
+	return c.enableFeature(ctx, name, opts)
+}
+
+// enableFeature is EnableFeature for a caller that already holds the
+// operation lock.
+func (c *Client) enableFeature(ctx context.Context, name string, opts EnableFeatureOptions) (*FeatureActionResult, error) {
 	c.msg("Enabling %s", name)
 
 	result := &FeatureActionResult{
@@ -241,30 +258,33 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 		if len(featureTransfers) == 0 {
 			c.msg("No transfers associated with this feature")
 		} else {
-			for _, transfer := range featureTransfers {
-				c.msg("Processing %s", transfer.Component)
-
-				if opts.DryRun {
+			if opts.DryRun {
+				for _, transfer := range featureTransfers {
+					c.msg("Processing %s", transfer.Component)
 					c.msg("Would download: %s", transfer.Component)
 					result.DownloadedFiles = append(result.DownloadedFiles, transfer.Component+" (would download)")
-				} else {
-					// Use installTransfer which handles all the download logic
-					outcome, err := c.installTransfer(ctx, transfer, installTransferOptions{
-						NoRefresh: true, // refresh is batched at the end
-					})
-					if err != nil {
-						err = fmt.Errorf("failed to download %s: %w", transfer.Component, err)
+				}
+			} else {
+				// The feature's transfers are staged first and linked
+				// together: when one fails, none is linked.
+				installs := c.installTransfers(ctx, name, featureTransfers, installFeatureOptions{})
+				for _, in := range installs {
+					if in.err != nil && !in.notLinked {
+						err := fmt.Errorf("failed to download %s: %w", in.transfer.Component, in.err)
 						result.Error = err.Error()
 						c.warn("%s", result.Error)
 						return result, err
 					}
-					if outcome.Downloaded {
-						result.DownloadedFiles = append(result.DownloadedFiles, fmt.Sprintf("%s@%s", transfer.Component, outcome.Version))
-						c.msg("Downloaded %s version %s", transfer.Component, outcome.Version)
-					} else if outcome.Relinked {
-						c.msg("Linked staged version %s for %s", outcome.Version, transfer.Component)
-					} else {
-						c.msg("Version %s already installed and current for %s", outcome.Version, transfer.Component)
+				}
+				for _, in := range installs {
+					switch {
+					case in.outcome.Downloaded:
+						result.DownloadedFiles = append(result.DownloadedFiles, fmt.Sprintf("%s@%s", in.transfer.Component, in.outcome.Version))
+						c.msg("Downloaded %s version %s", in.transfer.Component, in.outcome.Version)
+					case in.outcome.Relinked:
+						c.msg("Linked staged version %s for %s", in.outcome.Version, in.transfer.Component)
+					default:
+						c.msg("Version %s already installed and current for %s", in.outcome.Version, in.transfer.Component)
 					}
 				}
 			}
@@ -305,7 +325,24 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 }
 
 // DisableFeature disables a feature by creating a drop-in configuration file.
+// Except in a dry run it holds the operation lock; when another updex
+// operation holds it, DisableFeature changes nothing and returns an error that
+// wraps ErrBusy.
 func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFeatureOptions) (*FeatureActionResult, error) {
+	release, err := c.lockMutation(opts.DryRun)
+	if err != nil {
+		result := &FeatureActionResult{Feature: name, Action: "disable", DryRun: opts.DryRun, Error: err.Error()}
+		c.warn("%s", result.Error)
+		return result, err
+	}
+	defer release()
+
+	return c.disableFeature(ctx, name, opts)
+}
+
+// disableFeature is DisableFeature for a caller that already holds the
+// operation lock.
+func (c *Client) disableFeature(ctx context.Context, name string, opts DisableFeatureOptions) (*FeatureActionResult, error) {
 	c.msg("Disabling %s", name)
 
 	result := &FeatureActionResult{
@@ -464,7 +501,26 @@ func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFe
 }
 
 // UpdateFeatures downloads and installs new versions for all enabled features.
+//
+// A feature's transfers link together: UpdateFeatures downloads every
+// transfer of a feature first and links them all only when every download
+// succeeded. When one fails, the feature keeps all its old links and the
+// images already downloaded stay on disk for the next run; the failing
+// transfer reports its error and the others report that they were not
+// linked. Other features continue. After the links succeeded, the vacuum
+// keeps the linked version, the merged version, ProtectVersion= and the
+// newest InstancesMax versions of each transfer.
+//
+// Except in a dry run, UpdateFeatures holds the operation lock; when another
+// updex operation holds it, UpdateFeatures changes nothing and returns an
+// error that wraps ErrBusy.
 func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions) ([]UpdateFeaturesResult, error) {
+	release, err := c.lockMutation(opts.DryRun)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	features, transfers, err := c.loadDomain(opts.Component)
 	if err != nil {
 		return nil, err
@@ -499,31 +555,34 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 			Results: make([]UpdateResult, 0),
 		}
 
-		for _, transfer := range featureTransfers {
-			c.msg("Processing %s/%s", f.Name, transfer.Component)
+		installs := c.installTransfers(ctx, f.Name, featureTransfers, installFeatureOptions{
+			DryRun:    opts.DryRun,
+			NoVacuum:  opts.NoVacuum,
+			Manifests: manifestCache,
+		})
 
+		for _, in := range installs {
+			transfer := in.transfer
 			result := UpdateResult{
 				Component: transfer.Component,
 				DryRun:    opts.DryRun,
 			}
 
-			outcome, err := c.installTransfer(ctx, transfer, installTransferOptions{
-				DryRun:         opts.DryRun,
-				NoVacuum:       opts.NoVacuum,
-				NoRefresh:      true, // refresh is batched at the end
-				CachedManifest: manifestCache[transfer.Source.Path],
-			})
-			if outcome.Manifest != nil {
-				manifestCache[transfer.Source.Path] = outcome.Manifest
-			}
-			if err != nil {
-				result.Error = err.Error()
+			if in.err != nil {
+				result.Error = in.err.Error()
+				if in.notLinked {
+					// The image is staged (or was already) but its link did
+					// not move; report what is on disk.
+					result.Version = in.outcome.Version
+					result.Downloaded = in.outcome.Downloaded
+				}
 				c.warn("%s", result.Error)
 				featureResult.Results = append(featureResult.Results, result)
 				hasErrors = true
 				continue
 			}
 
+			outcome := in.outcome
 			v := outcome.Version
 			result.Version = v
 			if outcome.Downloaded {
@@ -531,7 +590,11 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 				if opts.DryRun {
 					result.NextActionMessage = "Would download and install version " + v
 					if !opts.NoVacuum {
-						removed, _, err := sysext.PlanVacuumAfterInstallAt(transfer, v, c.paths.sysextLinkDir)
+						// The link moves to this version, so the plan does not
+						// protect the version it names now.
+						paths := c.vacuumPaths()
+						paths.LinkDir = ""
+						removed, _, err := sysext.PlanVacuumWith(transfer, v, paths)
 						if err != nil {
 							c.warn("failed to plan vacuum for %s: %v", transfer.Component, err)
 						}
@@ -552,8 +615,9 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 					// The image was already staged but the systemd-sysext link
 					// pointed elsewhere (another updater such as
 					// systemd-sysupdate advanced its own staging symlink without
-					// touching ours). The link now points at this version, so the
-					// host needs a refresh or reboot to run it.
+					// touching ours, or an earlier run downloaded it but did not
+					// link). The link now points at this version, so the host
+					// needs a refresh or reboot to run it.
 					result.NextActionMessage = "Reboot required to activate changes"
 					c.msg("Linked staged version %s", v)
 				} else {

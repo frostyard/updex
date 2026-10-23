@@ -100,6 +100,37 @@ exists it falls back to the staged image. A link still on an older image
 therefore shows an update, and `features update` repoints the link without
 downloading again and reports that a reboot activates it.
 
+**A feature's transfers update together:** `features update` (and
+`features enable --now`) downloads every transfer of a feature first and links
+them all only when every download succeeded. If one fails, the feature keeps
+all its old links, the images already downloaded stay on disk for the next run,
+and the table shows the failure on that transfer and
+`not linked: another transfer of feature <name> failed` on the others. Other
+features still update. If a link fails part-way, the links already moved are
+put back.
+
+**What the vacuum keeps:** after the links succeeded, `features update`
+removes old images but always keeps, per transfer, the image the link names
+(it merges at the next boot), the image merged now (the one the host runs),
+`ProtectVersion=`, and the newest `InstancesMax` images (default 2). A host
+that has linked a new revision but has not rebooted yet therefore keeps up to
+3 images per transfer. If updex cannot read the link or the merged state, it
+deletes nothing and warns.
+
+**One updex operation at a time:** every command that changes state
+(`features update`, `features enable`, `features disable`, `catalog add`,
+`catalog remove`, `daemon enable`, `daemon disable`) takes an exclusive lock on
+`/run/updex/lock` and never waits for it. Dry runs and read-only commands
+(`features list`, `features check`, `components`, `catalog list`,
+`daemon status`) do not take it. When another updex operation holds the lock:
+
+- in an interactive shell the command prints
+  `another updex operation is running` and exits non-zero;
+- `updex features update` run by systemd (the environment variable
+  `INVOCATION_ID` is set, as for the timer's service) logs one line to stderr
+  (`skipping this run`) and exits 0, because the next scheduled run tries
+  again. Every other command still fails.
+
 ### Catalogs
 
 ```bash
