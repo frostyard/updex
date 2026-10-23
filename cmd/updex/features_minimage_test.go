@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/frostyard/clix"
 	"github.com/frostyard/updex/v2/internal/testutil"
+	"github.com/frostyard/updex/v2/sysext"
 	"github.com/frostyard/updex/v2/updex"
 )
 
@@ -19,12 +21,13 @@ import (
 
 type cliFakeBootc struct {
 	out   string
+	err   error
 	calls int
 }
 
 func (f *cliFakeBootc) Status(context.Context) ([]byte, error) {
 	f.calls++
-	return []byte(f.out), nil
+	return []byte(f.out), f.err
 }
 
 // minImageHost stages alpha 1.0.0 (linked) and alpha 2.0.0, whose image sets
@@ -175,5 +178,68 @@ func TestRunFeaturesList_MinImageVersion_Footer(t *testing.T) {
 	}
 	if got := features[0].TransferStatus[0].NeedsImage; got != "needs image >= 20270101000000" {
 		t.Errorf("list JSON needs_image = %q", got)
+	}
+}
+
+// TestRunFeaturesUpdate_RefreshSkipped pins the refresh gate in the update
+// handler: a pending link that only a newer image could run keeps the
+// refresh from running, because the refresh merges into the running image.
+// The text says so and the JSON carries refresh_skipped.
+func TestRunFeaturesUpdate_RefreshSkipped(t *testing.T) {
+	h := newStatusHost(t)
+	h.feature(t, "alpha", true, "2.0.0", "2.0.0")
+	h.feature(t, "beta", false, "2.0.0", "1.0.0", "2.0.0")
+	h.merge(t, map[string]string{"alpha": "2.0.0", "beta": "1.0.0"})
+	// beta is linked to an image whose minimum image version the running
+	// image does not meet.
+	image := testutil.SysextImage(t, "beta", "ID=_any\nSYSEXT_ID=beta\nUPDEX_MIN_IMAGE_VERSION=20270101000000\n")
+	if err := os.WriteFile(filepath.Join(h.targetDir, "beta_2.0.0.raw"), image, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	osRelease := filepath.Join(t.TempDir(), "os-release")
+	if err := os.WriteFile(osRelease, []byte("ID=snow\nIMAGE_VERSION=20261001000000\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	runner := &sysext.MockRunner{}
+	setRuntimePaths(t, updex.RuntimePaths{
+		DefinitionRoots:   []string{t.TempDir()},
+		OSReleasePaths:    []string{osRelease},
+		SysextLinkDir:     h.linkDir,
+		SysextHierarchies: []string{h.hierarchy},
+		RunExtensionsDir:  filepath.Join(t.TempDir(), "run-extensions"),
+		RollbackDir:       h.rollbackDir,
+	})
+	oldRunner, oldBootc, oldNoRefresh, oldEUID := sysextRunner, bootcRunner, noRefresh, getEUID
+	t.Cleanup(func() { sysextRunner, bootcRunner, noRefresh, getEUID = oldRunner, oldBootc, oldNoRefresh, oldEUID })
+	sysextRunner, bootcRunner, noRefresh = runner, &cliFakeBootc{err: exec.ErrNotFound}, false
+	getEUID = func() int { return 0 }
+
+	want := "refresh skipped: beta needs image >= 20270101000000 (running image 20261001000000); it takes effect at the next boot"
+
+	out, err := h.run(t, false, runFeaturesUpdate)
+	if err != nil {
+		t.Fatalf("a skipped refresh must exit 0: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, want) {
+		t.Errorf("update output lacks %q:\n%s", want, out)
+	}
+	if runner.RefreshCalled {
+		t.Error("the refresh must not run")
+	}
+
+	out, err = h.run(t, true, runFeaturesUpdate)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var results []updex.UpdateFeaturesResult
+	if err := json.Unmarshal([]byte(out), &results); err != nil || len(results) != 1 {
+		t.Fatalf("update JSON: %v\n%s", err, out)
+	}
+	if got := results[0].RefreshSkipped; got != want {
+		t.Errorf("refresh_skipped = %q, want %q", got, want)
+	}
+	if runner.RefreshCalled {
+		t.Error("the refresh must not run")
 	}
 }

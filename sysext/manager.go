@@ -761,6 +761,23 @@ func LinkVersionAt(t *config.Transfer, sysextDir, ver string) error {
 	return fmt.Errorf("version %s of %s is not on disk", ver, t.Component)
 }
 
+// StagedImageAt returns the path of the staged image of exactly version for
+// the transfer: the file LinkVersionAt links for that version. defaultDir is
+// the fallback directory for a transfer that omits Target.Path. It reports ""
+// with a nil error when no staged file has that version. It reads no image.
+func StagedImageAt(t *config.Transfer, defaultDir, ver string) (string, error) {
+	files, err := installedVersionFilesAt(t, defaultDir)
+	if err != nil {
+		return "", err
+	}
+	for _, f := range files {
+		if f.version == ver {
+			return filepath.Join(targetDirAt(t, defaultDir), f.filename), nil
+		}
+	}
+	return "", nil
+}
+
 // linkImageAt points <sysextDir>/<SysextLinkName(t)> at the staged file
 // filename (a base name in the transfer's target directory).
 func linkImageAt(t *config.Transfer, sysextDir, filename string) error {

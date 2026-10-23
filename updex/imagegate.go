@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/frostyard/updex/v2/config"
 	"github.com/frostyard/updex/v2/imagecompat"
@@ -24,6 +25,13 @@ import (
 // not call it: the gate protects an update from a revision that needs a
 // newer base, and an older revision needs at most the same base as the one
 // the host already runs.
+//
+// The link gate answers "may the next boot run this image". A
+// systemd-sysext refresh is a different question: it merges into the base the
+// host runs now, not into the one that boots next. A staged deployment that is
+// newer than the booted one can therefore allow a link the running base cannot
+// run, so every refresh updex runs is gated separately against the running
+// image version (see refreshGate).
 
 // nextBootImage resolves the IMAGE_VERSION of the image that boots next once
 // per operation and keeps the answer, so an operation that meets no image
@@ -205,4 +213,192 @@ func (c *Client) stagedImageGate(ctx context.Context, feature string, t *config.
 		return imageGate{}, nil // held by a rollback: update links nothing
 	}
 	return c.minImageGate(ctx, feature, t, nb)
+}
+
+// runningImage resolves the IMAGE_VERSION of the running image once per
+// operation and keeps it, so an operation that meets no sysext with the key
+// never reads os-release, and one that meets several reads it once. The zero
+// value is ready to use. It is not safe for concurrent use; an operation
+// handles its sysexts one after another.
+type runningImage struct {
+	resolved bool
+	version  string
+}
+
+// get returns the running image version, reading the booted os-release
+// files on the first call only. It runs no command: on a bootc host the
+// booted os-release describes the running deployment, and bootc is needed
+// only for the next-boot question (nextBootImage).
+func (r *runningImage) get(c *Client) string {
+	if !r.resolved {
+		r.version = imagecompat.BootedImageVersion(c.paths.osReleasePaths)
+		r.resolved = true
+	}
+	return r.version
+}
+
+// refreshLink is one sysext that a systemd-sysext refresh merges with a
+// version other than the running one: a link the operation moved, or a
+// pending link elsewhere on the host that the host-wide refresh activates
+// too.
+type refreshLink struct {
+	// component names the sysext, for the report.
+	component string
+	// transfer describes the sysext, so its staged image can be found.
+	transfer *config.Transfer
+	// version is the linked version the refresh would merge.
+	version string
+}
+
+// refreshBlocker names the sysext that keeps the refresh from running: the
+// running base image cannot run it.
+type refreshBlocker struct {
+	component string
+	// needs is "needs image >= <value>" when the linked image sets the key.
+	needs string
+	// err is the failure that kept the image from being checked. Like the
+	// link gate, the refresh check fails closed on it.
+	err error
+	// running is the running IMAGE_VERSION that was compared. Empty when the
+	// image has no key or could not be read.
+	running string
+}
+
+// reason renders the blocker for an error message, without the advice that
+// differs per command.
+func (b refreshBlocker) reason() string {
+	if b.err != nil {
+		return fmt.Sprintf("cannot check %s: %v", b.component, b.err)
+	}
+	running := b.running
+	if running == "" {
+		running = "unknown"
+	}
+	return fmt.Sprintf("%s %s (running image %s)", b.component, b.needs, running)
+}
+
+// skipped renders the blocker as the RefreshSkipped text of the operations
+// that keep their links and leave activation to the next boot.
+func (b refreshBlocker) skipped() string {
+	return "refresh skipped: " + b.reason() + "; it takes effect at the next boot"
+}
+
+// refreshGate decides whether a systemd-sysext refresh may run now, and
+// returns why it may not, or nil when it may.
+//
+// Every link the refresh would merge with a version other than the running
+// one is read like the link gate reads a staged image, but compared with the
+// running image version instead of the next-boot one:
+//
+//   - No key in the extension-release file: it may be merged.
+//   - imagecompat.ErrUnsupportedImage: it may be merged, for the same reason
+//     the link gate fails open on it (only snosi sets the key, and snosi
+//     ships EROFS).
+//   - Any other read error: blocked. Such an image has an EROFS filesystem
+//     and may carry a key that cannot be honoured, so it fails closed.
+//   - Key set: blocked when imagecompat.CheckMinImageVersion against the
+//     running version is not ok, which includes a running version that is
+//     missing or not numeric.
+//
+// The links are only read. Keeping them is always correct for the next boot;
+// this gate decides about activating them now.
+func (c *Client) refreshGate(links []refreshLink, ri *runningImage) *refreshBlocker {
+	for _, link := range links {
+		if b := c.refreshLinkBlocker(link, ri); b != nil {
+			return b
+		}
+	}
+	return nil
+}
+
+// refreshLinkBlocker checks one link and returns nil when the running base
+// can merge it.
+func (c *Client) refreshLinkBlocker(link refreshLink, ri *runningImage) *refreshBlocker {
+	path, err := sysext.StagedImageAt(link.transfer, c.paths.sysextLinkDir, link.version)
+	if err != nil {
+		return &refreshBlocker{component: link.component, err: fmt.Errorf("cannot find the linked image: %w", err)}
+	}
+	if path == "" {
+		// The link names no staged image, so systemd-sysext has nothing to
+		// merge and nothing to check. Other code reports a link that moved
+		// to a version this function cannot find.
+		c.debug("%s: no staged image for version %s, refresh check skipped", link.component, link.version)
+		return nil
+	}
+
+	// The component is the only name hint available here: a pending link of
+	// another feature is found through its transfer, not through the feature
+	// name. An image with several extension-release files and no match is a
+	// read error, so it fails closed.
+	release, err := imagecompat.ReadExtensionRelease(path, link.transfer.Component)
+	switch {
+	case errors.Is(err, imagecompat.ErrUnsupportedImage):
+		c.debug("%s: image format not readable, refresh check skipped: %v", link.component, err)
+		return nil
+	case err != nil:
+		return &refreshBlocker{component: link.component, err: fmt.Errorf("cannot read the extension-release file: %w", err)}
+	}
+
+	if _, set := imagecompat.MinImageVersion(release); !set {
+		return nil
+	}
+	running := ri.get(c)
+	c.debug("%s: running image version %q", link.component, running)
+	if ok, needs := imagecompat.CheckMinImageVersion(release, running); !ok {
+		return &refreshBlocker{component: link.component, needs: needs, running: running}
+	}
+	return nil
+}
+
+// ownPendingLinks lists the links of own whose merged state a refresh
+// changes to the version they name: linked to a version the host does not
+// run. It is the own half of pendingActivationLinks. A transfer whose state
+// cannot be read is a warning, as in pendingActivationLinks, and is skipped.
+func (c *Client) ownPendingLinks(own []*config.Transfer) []refreshLink {
+	var links []refreshLink
+	for _, t := range own {
+		status := c.transferStatus(t)
+		if status.Error != "" {
+			c.warn("could not determine whether a refresh activates %s: %s", t.Component, status.Error)
+			continue
+		}
+		if status.PendingReboot {
+			links = append(links, refreshLink{component: t.Component, transfer: t, version: status.LinkedVersion})
+		}
+	}
+	return links
+}
+
+// activationLinks returns the links a refresh would activate from pending:
+// a deactivation merges nothing, so it needs no check.
+func activationLinks(pending []pendingActivationLink) []refreshLink {
+	var links []refreshLink
+	for _, p := range pending {
+		if p.Deactivate {
+			continue
+		}
+		links = append(links, refreshLink{component: p.Component, transfer: p.transfer, version: p.LinkedVersion})
+	}
+	return links
+}
+
+// refreshGateFor is the gate for a command's refresh: the pending links of
+// own (the transfers the command worked on), then the other pending
+// activations that the host-wide refresh merges as well.
+func (c *Client) refreshGateFor(own []*config.Transfer, pending []pendingActivationLink, ri *runningImage) *refreshBlocker {
+	links := slices.Concat(c.ownPendingLinks(own), activationLinks(pending))
+	return c.refreshGate(links, ri)
+}
+
+// activationsOf returns the report form of pending activations, nil when
+// there are none.
+func activationsOf(pending []pendingActivationLink) []PendingActivation {
+	if len(pending) == 0 {
+		return nil
+	}
+	out := make([]PendingActivation, len(pending))
+	for i, p := range pending {
+		out[i] = p.PendingActivation
+	}
+	return out
 }

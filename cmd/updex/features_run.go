@@ -189,6 +189,9 @@ func runFeaturesEnable(cmd *cobra.Command, args []string) error {
 				} else if !featureEnableNow {
 					fmt.Printf("Run 'updex features update' to download extensions.\n")
 				}
+				if result.RefreshSkipped != "" {
+					fmt.Printf("%s. Reboot to activate it.\n", result.RefreshSkipped)
+				}
 			}
 		}
 	}
@@ -366,7 +369,21 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 
 	// Both failures matter: the SDK error decides the exit status, and the
 	// output error says the table the operator is reading is incomplete.
-	return errors.Join(err, table.Flush(), writeNeedsImageUpdate(out, results))
+	return errors.Join(err, table.Flush(), writeNeedsImageUpdate(out, results), writeRefreshSkipped(out, results))
+}
+
+// writeRefreshSkipped prints the reason a run did not refresh systemd-sysext:
+// the refresh merges into the running image, and a sysext it would activate
+// needs a newer one (ADR-0016). The text is host-wide, so the first result
+// that carries it is enough. It prints nothing when the refresh ran or was
+// not requested.
+func writeRefreshSkipped(out io.Writer, results []updex.UpdateFeaturesResult) error {
+	for _, fr := range results {
+		if fr.RefreshSkipped != "" {
+			return writeLine(out, fr.RefreshSkipped)
+		}
+	}
+	return nil
 }
 
 // writeNeedsImageUpdate prints, under the update table, why each transfer

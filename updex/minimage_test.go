@@ -85,8 +85,30 @@ type minComp struct {
 	versions map[string][]byte
 }
 
+// countingRunner links through the real runner, into the client's captured
+// link directory, and counts the refresh and unmerge calls, so no test runs
+// systemd-sysext.
+type countingRunner struct {
+	*sysext.DefaultRunner
+	refreshes int
+	unmerges  int
+}
+
+func (r *countingRunner) Refresh() error {
+	r.refreshes++
+	return nil
+}
+
+func (r *countingRunner) Unmerge() error {
+	r.unmerges++
+	return nil
+}
+
 // minImageHost is a rootless host with fixture transfers, a link directory,
 // and an os-release file the client reads through RuntimePaths.OSReleasePaths.
+// That one file is both the booted os-release (the running image) and the
+// next-boot fallback, so a test that gives bootc a staged deployment reads
+// the running image from it.
 type minImageHost struct {
 	t         *testing.T
 	root      string
@@ -95,6 +117,7 @@ type minImageHost struct {
 	osRelease string
 	bootc     *fakeBootc
 	out       *bytes.Buffer
+	runner    *countingRunner
 	client    *Client
 }
 
@@ -127,6 +150,7 @@ func newMinImageHost(t *testing.T, bootc *fakeBootc, osRelease string, comps ...
 		linkDir:   t.TempDir(),
 		bootc:     bootc,
 		out:       &bytes.Buffer{},
+		runner:    &countingRunner{DefaultRunner: &sysext.DefaultRunner{}},
 	}
 	h.osRelease = filepath.Join(t.TempDir(), "os-release")
 	h.writeOSRelease(osRelease)
@@ -153,7 +177,7 @@ func newMinImageHost(t *testing.T, bootc *fakeBootc, osRelease string, comps ...
 			RunExtensionsDir:  t.TempDir(),
 			RollbackDir:       filepath.Join(t.TempDir(), "rollback"),
 		},
-		SysextRunner: &sysext.DefaultRunner{},
+		SysextRunner: h.runner,
 		Progress:     reporter.NewTextReporter(h.out),
 	}
 	if bootc != nil {
@@ -164,10 +188,17 @@ func newMinImageHost(t *testing.T, bootc *fakeBootc, osRelease string, comps ...
 }
 
 // preinstall stages version of component and links it, as an earlier run did.
+// The staged bytes are not an image, so the gate reads no release file.
 func (h *minImageHost) preinstall(component, version string, link bool) {
 	h.t.Helper()
+	h.preinstallImage(component, version, []byte("old image "+version), link)
+}
+
+// preinstallImage stages data as version of component and links it.
+func (h *minImageHost) preinstallImage(component, version string, data []byte, link bool) {
+	h.t.Helper()
 	path := filepath.Join(h.targetDir, component+"_"+version+".raw")
-	if err := os.WriteFile(path, []byte("old image "+version), 0o644); err != nil {
+	if err := os.WriteFile(path, data, 0o644); err != nil {
 		h.t.Fatal(err)
 	}
 	if link {
@@ -678,5 +709,352 @@ func TestRollbackFeature_DoesNotCheckMinImageVersion(t *testing.T) {
 	}
 	if h.bootc.calls != 0 {
 		t.Errorf("bootc ran %d times during a rollback", h.bootc.calls)
+	}
+}
+
+// ---- The refresh gate: the running image, not the next-boot one ----
+//
+// A systemd-sysext refresh merges into the image the host runs now. A staged
+// bootc deployment that is new enough for a sysext does not make the running
+// base new enough, so the link is right for the next boot while the refresh
+// is skipped.
+
+const (
+	// stagedNewer is the staged deployment of the reproduction: new enough
+	// for the sysext, unlike the booted image.
+	stagedNewer = "20261101000000"
+	// minNeedsStaged is a UPDEX_MIN_IMAGE_VERSION the booted image
+	// (osRelease20261001) does not meet and the staged deployment does.
+	minNeedsStaged = "20261022021319"
+)
+
+// updateWithRefresh runs UpdateFeatures with the refresh on and returns the
+// whole result slice.
+func (h *minImageHost) updateWithRefresh(opts UpdateFeaturesOptions) ([]UpdateFeaturesResult, error) {
+	h.t.Helper()
+	if opts.NoRefresh {
+		h.t.Fatal("updateWithRefresh needs the refresh on")
+	}
+	return h.client.UpdateFeatures(h.t.Context(), opts)
+}
+
+// TestUpdateFeatures_RefreshGate_RunningImageTooOld is the reproduction: the
+// sysext needs 20261022021319, the booted image is 20261001000000 and the
+// staged deployment is 20261101000000. The link moves (the next boot can run
+// it), and the refresh, which would merge it into the booted image, is
+// skipped with an explicit result. It is not an error.
+func TestUpdateFeatures_RefreshGate_RunningImageTooOld(t *testing.T) {
+	h := newMinImageHost(t, bootcStaged(stagedNewer), osRelease20261001,
+		minComp{name: "tool", feature: "toolfeature", versions: map[string][]byte{newVersion: sysextImage(t, "tool", minNeedsStaged)}})
+	h.preinstall("tool", oldVersion, true)
+
+	results, err := h.updateWithRefresh(UpdateFeaturesOptions{NoVacuum: true})
+	if err != nil {
+		t.Fatalf("UpdateFeatures: %v (a skipped refresh is not an error)", err)
+	}
+	if got := h.linked("tool"); got != newVersion {
+		t.Errorf("linked version = %q, want %q, which the next boot can run", got, newVersion)
+	}
+	if h.runner.refreshes != 0 {
+		t.Errorf("the refresh ran %d times, want 0", h.runner.refreshes)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %+v", results)
+	}
+	skipped := results[0].RefreshSkipped
+	for _, want := range []string{"refresh skipped", "tool needs image >= " + minNeedsStaged, "running image 20261001000000", "next boot"} {
+		if !strings.Contains(skipped, want) {
+			t.Errorf("RefreshSkipped = %q, want it to contain %q", skipped, want)
+		}
+	}
+	if r := results[0].Results[0]; r.Error != "" || r.NeedsImage != "" || !r.Installed {
+		t.Errorf("transfer result = %+v, want installed without an error", r)
+	}
+	if !strings.Contains(h.out.String(), "refresh skipped") {
+		t.Errorf("reporter output does not warn about the skipped refresh: %q", h.out.String())
+	}
+	if h.bootc.calls != 1 {
+		t.Errorf("bootc ran %d times, want 1", h.bootc.calls)
+	}
+}
+
+// A running image that meets the minimum links and refreshes as before.
+func TestUpdateFeatures_RefreshGate_RunningImageNewEnough(t *testing.T) {
+	h := newMinImageHost(t, bootcNotInstalled(), osRelease20261001,
+		minComp{name: "tool", feature: "toolfeature", versions: map[string][]byte{newVersion: sysextImage(t, "tool", "20260901000000")}})
+	h.preinstall("tool", oldVersion, true)
+
+	results, err := h.updateWithRefresh(UpdateFeaturesOptions{NoVacuum: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.linked("tool") != newVersion {
+		t.Errorf("linked = %q, want %s", h.linked("tool"), newVersion)
+	}
+	if h.runner.refreshes != 1 {
+		t.Errorf("the refresh ran %d times, want 1", h.runner.refreshes)
+	}
+	if results[0].RefreshSkipped != "" {
+		t.Errorf("RefreshSkipped = %q, want empty", results[0].RefreshSkipped)
+	}
+}
+
+// EnableFeature with Now installs and links, then skips only the refresh.
+func TestEnableFeature_Now_RefreshGate_RunningImageTooOld(t *testing.T) {
+	h := newMinImageHost(t, bootcStaged(stagedNewer), osRelease20261001,
+		minComp{name: "tool", feature: "toolfeature", versions: map[string][]byte{newVersion: sysextImage(t, "tool", minNeedsStaged)}})
+	h.preinstall("tool", oldVersion, true)
+
+	result, err := h.client.EnableFeature(t.Context(), "toolfeature", EnableFeatureOptions{Now: true})
+	if err != nil {
+		t.Fatalf("EnableFeature: %v (a skipped refresh is not an error)", err)
+	}
+	if !result.Success {
+		t.Error("Success = false, want true: the feature is enabled and linked")
+	}
+	if h.linked("tool") != newVersion {
+		t.Errorf("linked = %q, want %s", h.linked("tool"), newVersion)
+	}
+	if h.runner.refreshes != 0 {
+		t.Errorf("the refresh ran %d times, want 0", h.runner.refreshes)
+	}
+	if !strings.Contains(result.RefreshSkipped, "tool needs image >= "+minNeedsStaged) {
+		t.Errorf("RefreshSkipped = %q", result.RefreshSkipped)
+	}
+	if !strings.Contains(result.NextActionMessage, "Reboot") {
+		t.Errorf("NextActionMessage = %q, want it to say to reboot", result.NextActionMessage)
+	}
+}
+
+// A pending link of another feature, linked earlier and not merged, is
+// activated by the same host-wide refresh: the update for an unrelated
+// feature skips the refresh and names that component.
+func TestUpdateFeatures_RefreshGate_OtherPendingLink(t *testing.T) {
+	other := sysextImage(t, "other", "20270101000000")
+	h := newMinImageHost(t, bootcNotInstalled(), osRelease20261001,
+		minComp{name: "mine", feature: "minefeat", versions: map[string][]byte{newVersion: sysextImage(t, "mine", "")}},
+		minComp{name: "other", feature: "otherfeat", versions: map[string][]byte{newVersion: other}})
+	h.preinstall("mine", oldVersion, true)
+	h.preinstallImage("other", newVersion, other, true)
+	// The other feature is disabled: the update does not touch it, but the
+	// refresh would still activate its pending link.
+	createFeatureFile(t, filepath.Join(h.root, "sysupdate.d"), "otherfeat", false)
+
+	results, err := h.updateWithRefresh(UpdateFeaturesOptions{NoVacuum: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.linked("mine") != newVersion {
+		t.Errorf("mine linked = %q, want %s", h.linked("mine"), newVersion)
+	}
+	if h.runner.refreshes != 0 {
+		t.Errorf("the refresh ran %d times, want 0", h.runner.refreshes)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %+v", results)
+	}
+	if !strings.Contains(results[0].RefreshSkipped, "other needs image >= 20270101000000") {
+		t.Errorf("RefreshSkipped = %q, want it to name other", results[0].RefreshSkipped)
+	}
+}
+
+// A disable with Now unmerges before its refresh, so skipping the refresh is
+// not an option. An unsafe pending link elsewhere refuses the whole command
+// before anything changes.
+func TestDisableFeature_Now_RefreshGate_RefusesBeforeUnmerge(t *testing.T) {
+	other := sysextImage(t, "other", "20270101000000")
+	h := newMinImageHost(t, bootcNotInstalled(), osRelease20261001,
+		minComp{name: "tool", feature: "toolfeature", versions: map[string][]byte{newVersion: sysextImage(t, "tool", "")}},
+		minComp{name: "other", feature: "otherfeat", versions: map[string][]byte{newVersion: other}})
+	h.preinstall("tool", oldVersion, true)
+	h.preinstallImage("other", newVersion, other, true)
+	createFeatureFile(t, filepath.Join(h.root, "sysupdate.d"), "otherfeat", false)
+
+	result, err := h.client.DisableFeature(t.Context(), "toolfeature", DisableFeatureOptions{Now: true, Force: true})
+	if err == nil {
+		t.Fatalf("DisableFeature: want an error, got %+v", result)
+	}
+	if !strings.Contains(result.Error, "other needs image >= 20270101000000") || !strings.Contains(result.Error, "without --now") {
+		t.Errorf("result.Error = %q", result.Error)
+	}
+	if h.runner.unmerges != 0 || h.runner.refreshes != 0 {
+		t.Errorf("unmerge ran %d times and refresh %d times, want neither", h.runner.unmerges, h.runner.refreshes)
+	}
+	if h.linked("tool") != oldVersion {
+		t.Errorf("tool link = %q, want the old %q", h.linked("tool"), oldVersion)
+	}
+	if !h.staged("tool", oldVersion) {
+		t.Error("a staged image was removed")
+	}
+	if _, err := os.Stat(filepath.Join(h.root, "sysupdate.d", "toolfeature.feature.d")); err == nil {
+		t.Error("the disable drop-in was written, want nothing changed")
+	}
+}
+
+// A rollback with Now keeps its record and links when the refresh is unsafe,
+// and says the rollback takes effect at the next boot.
+func TestRollbackFeature_Now_RefreshGate_RunningImageTooOld(t *testing.T) {
+	other := sysextImage(t, "other", "20270101000000")
+	h := newMinImageHost(t, bootcNotInstalled(), osRelease20261001,
+		minComp{name: "tool", feature: "toolfeature", versions: map[string][]byte{oldVersion: nil}},
+		minComp{name: "other", feature: "otherfeat", versions: map[string][]byte{newVersion: other}})
+	h.preinstallImage("tool", oldVersion, sysextImage(t, "tool", ""), false)
+	h.preinstallImage("tool", newVersion, sysextImage(t, "tool", ""), true)
+	h.preinstallImage("other", newVersion, other, true)
+	createFeatureFile(t, filepath.Join(h.root, "sysupdate.d"), "otherfeat", false)
+
+	result, err := h.client.RollbackFeature(t.Context(), "toolfeature", RollbackFeatureOptions{Now: true})
+	if err != nil {
+		t.Fatalf("RollbackFeature: %v", err)
+	}
+	if !result.Success || result.Refreshed {
+		t.Errorf("result = %+v, want success without a refresh", result)
+	}
+	if h.linked("tool") != oldVersion {
+		t.Errorf("linked = %q, want the rolled-back %q", h.linked("tool"), oldVersion)
+	}
+	if _, err := os.Stat(filepath.Join(h.client.paths.rollbackDir, "toolfeature")); err != nil {
+		t.Errorf("the rollback record is missing: %v", err)
+	}
+	if h.runner.refreshes != 0 {
+		t.Errorf("the refresh ran %d times, want 0", h.runner.refreshes)
+	}
+	if !strings.Contains(result.RefreshSkipped, "other needs image >= 20270101000000") {
+		t.Errorf("RefreshSkipped = %q", result.RefreshSkipped)
+	}
+	if !strings.Contains(result.NextActionMessage, "Reboot") {
+		t.Errorf("NextActionMessage = %q, want it to say to reboot", result.NextActionMessage)
+	}
+}
+
+// An image without an EROFS filesystem has no key updex can honour, so the
+// refresh runs (the fail-open rule of the link gate).
+func TestUpdateFeatures_RefreshGate_UnsupportedImageRunsRefresh(t *testing.T) {
+	noise := make([]byte, 8192)
+	if _, err := rand.Read(noise); err != nil {
+		t.Fatal(err)
+	}
+	h := newMinImageHost(t, bootcNotInstalled(), osRelease20261001,
+		minComp{name: "tool", feature: "toolfeature", versions: map[string][]byte{newVersion: noise}},
+		minComp{name: "other", feature: "otherfeat", versions: map[string][]byte{newVersion: noise}})
+	h.preinstall("tool", oldVersion, true)
+	h.preinstallImage("other", newVersion, noise, true)
+	createFeatureFile(t, filepath.Join(h.root, "sysupdate.d"), "otherfeat", false)
+
+	results, err := h.updateWithRefresh(UpdateFeaturesOptions{NoVacuum: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.linked("tool") != newVersion {
+		t.Errorf("linked = %q, want %s", h.linked("tool"), newVersion)
+	}
+	if h.runner.refreshes != 1 {
+		t.Errorf("the refresh ran %d times, want 1", h.runner.refreshes)
+	}
+	if results[0].RefreshSkipped != "" {
+		t.Errorf("RefreshSkipped = %q, want empty", results[0].RefreshSkipped)
+	}
+}
+
+// The timer path (--no-refresh) is unchanged: it refreshes nothing, so it
+// checks nothing and reports nothing skipped.
+func TestUpdateFeatures_NoRefresh_DoesNotCheckTheRunningImage(t *testing.T) {
+	other := sysextImage(t, "other", "20270101000000")
+	h := newMinImageHost(t, bootcNotInstalled(), osRelease20261001,
+		minComp{name: "tool", feature: "toolfeature", versions: map[string][]byte{newVersion: sysextImage(t, "tool", "")}},
+		minComp{name: "other", feature: "otherfeat", versions: map[string][]byte{newVersion: other}})
+	h.preinstall("tool", oldVersion, true)
+	h.preinstallImage("other", newVersion, other, true)
+	createFeatureFile(t, filepath.Join(h.root, "sysupdate.d"), "otherfeat", false)
+
+	results, err := h.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.runner.refreshes != 0 {
+		t.Errorf("the refresh ran %d times, want 0", h.runner.refreshes)
+	}
+	for _, fr := range results {
+		if fr.RefreshSkipped != "" {
+			t.Errorf("RefreshSkipped = %q, want empty with --no-refresh", fr.RefreshSkipped)
+		}
+		if len(fr.PendingActivations) != 0 {
+			t.Errorf("PendingActivations = %+v, want empty with --no-refresh", fr.PendingActivations)
+		}
+	}
+}
+
+// A linked image with an EROFS filesystem whose release file cannot be read
+// fails closed, as in the link gate: the refresh is skipped, not run.
+func TestUpdateFeatures_RefreshGate_UnreadableReleaseSkipsRefresh(t *testing.T) {
+	broken := unreadableReleaseImage(t, "other")
+	h := newMinImageHost(t, bootcNotInstalled(), osRelease20261001,
+		minComp{name: "tool", feature: "toolfeature", versions: map[string][]byte{newVersion: sysextImage(t, "tool", "")}},
+		minComp{name: "other", feature: "otherfeat", versions: map[string][]byte{newVersion: broken}})
+	h.preinstall("tool", oldVersion, true)
+	h.preinstallImage("other", newVersion, broken, true)
+	createFeatureFile(t, filepath.Join(h.root, "sysupdate.d"), "otherfeat", false)
+
+	results, err := h.updateWithRefresh(UpdateFeaturesOptions{NoVacuum: true})
+	if err != nil {
+		t.Fatalf("UpdateFeatures: %v (a skipped refresh is not an error)", err)
+	}
+	if h.runner.refreshes != 0 {
+		t.Errorf("the refresh ran %d times, want 0", h.runner.refreshes)
+	}
+	skipped := results[0].RefreshSkipped
+	if !strings.Contains(skipped, "cannot check other") || !strings.Contains(skipped, "extension-release") {
+		t.Errorf("RefreshSkipped = %q", skipped)
+	}
+}
+
+// A running image whose IMAGE_VERSION cannot be read fails closed too: the
+// key is set, so the refresh is skipped and says the running image is
+// unknown.
+func TestUpdateFeatures_RefreshGate_RunningImageUnknown(t *testing.T) {
+	other := sysextImage(t, "other", "20260901000000")
+	h := newMinImageHost(t, bootcNotInstalled(), "ID=snow\n",
+		minComp{name: "tool", feature: "toolfeature", versions: map[string][]byte{newVersion: sysextImage(t, "tool", "")}},
+		minComp{name: "other", feature: "otherfeat", versions: map[string][]byte{newVersion: other}})
+	h.preinstall("tool", oldVersion, true)
+	h.preinstallImage("other", newVersion, other, true)
+	createFeatureFile(t, filepath.Join(h.root, "sysupdate.d"), "otherfeat", false)
+
+	results, err := h.updateWithRefresh(UpdateFeaturesOptions{NoVacuum: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.runner.refreshes != 0 {
+		t.Errorf("the refresh ran %d times, want 0", h.runner.refreshes)
+	}
+	if got := results[0].RefreshSkipped; !strings.Contains(got, "other needs image >= 20260901000000") || !strings.Contains(got, "running image unknown") {
+		t.Errorf("RefreshSkipped = %q", got)
+	}
+}
+
+// A dry run reports what a real run would do with the links on disk: it sets
+// RefreshSkipped for a pending link the running image cannot merge, and
+// refreshes nothing.
+func TestUpdateFeatures_RefreshGate_DryRunReportsSkip(t *testing.T) {
+	other := sysextImage(t, "other", "20270101000000")
+	h := newMinImageHost(t, bootcNotInstalled(), osRelease20261001,
+		minComp{name: "tool", feature: "toolfeature", versions: map[string][]byte{newVersion: sysextImage(t, "tool", "")}},
+		minComp{name: "other", feature: "otherfeat", versions: map[string][]byte{newVersion: other}})
+	h.preinstall("tool", oldVersion, true)
+	h.preinstallImage("other", newVersion, other, true)
+	createFeatureFile(t, filepath.Join(h.root, "sysupdate.d"), "otherfeat", false)
+
+	results, err := h.updateWithRefresh(UpdateFeaturesOptions{DryRun: true, NoVacuum: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.runner.refreshes != 0 {
+		t.Errorf("a dry run refreshed %d times", h.runner.refreshes)
+	}
+	if !strings.Contains(results[0].RefreshSkipped, "other needs image >= 20270101000000") {
+		t.Errorf("RefreshSkipped = %q", results[0].RefreshSkipped)
+	}
+	if h.linked("tool") != oldVersion {
+		t.Errorf("a dry run moved a link to %q", h.linked("tool"))
 	}
 }

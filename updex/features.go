@@ -338,24 +338,32 @@ func (c *Client) enableFeature(ctx context.Context, name string, opts EnableFeat
 
 			// A refresh activates every pending link on the host, not only
 			// this feature's: say which others, before it runs (or would).
+			//
+			// The refresh also merges into the running image, not into the
+			// one that boots next: a link that only the next boot can run
+			// must not be activated now, so the refresh is skipped and the
+			// links stay.
 			if !opts.NoRefresh {
-				result.PendingActivations = c.pendingActivations(transfers, featureTransfers)
+				pendingLinks := c.pendingActivationLinks(transfers, featureTransfers)
+				result.PendingActivations = activationsOf(pendingLinks)
 				c.warnPendingActivations(result.PendingActivations, opts.DryRun)
-			}
-
-			// Refresh if we downloaded (unless --no-refresh or --dry-run)
-			if !opts.NoRefresh && !opts.DryRun {
-				c.msg("Refreshing sysext")
-				if err := c.runner.Refresh(); err != nil {
-					// The drop-in is written and the images are staged and
-					// linked; only activation failed. Report it rather than
-					// claiming success (see FeatureActionResult.RefreshError).
-					err = fmt.Errorf("sysext refresh failed: %w", err)
-					c.warn("%s", err)
-					result.RefreshError = err.Error()
-					result.Error = err.Error()
-					result.NextActionMessage = fmt.Sprintf("Feature '%s' enabled and %d extension(s) downloaded, but systemd-sysext refresh failed; run 'systemd-sysext refresh' (or reboot) to activate them", name, len(result.DownloadedFiles))
-					return result, err
+				if blocker := c.refreshGateFor(featureTransfers, pendingLinks, &runningImage{}); blocker != nil {
+					result.RefreshSkipped = blocker.skipped()
+					c.warn("%s", result.RefreshSkipped)
+				} else if !opts.DryRun {
+					// Refresh if we downloaded (unless --no-refresh or --dry-run)
+					c.msg("Refreshing sysext")
+					if err := c.runner.Refresh(); err != nil {
+						// The drop-in is written and the images are staged and
+						// linked; only activation failed. Report it rather than
+						// claiming success (see FeatureActionResult.RefreshError).
+						err = fmt.Errorf("sysext refresh failed: %w", err)
+						c.warn("%s", err)
+						result.RefreshError = err.Error()
+						result.Error = err.Error()
+						result.NextActionMessage = fmt.Sprintf("Feature '%s' enabled and %d extension(s) downloaded, but systemd-sysext refresh failed; run 'systemd-sysext refresh' (or reboot) to activate them", name, len(result.DownloadedFiles))
+						return result, err
+					}
 				}
 			}
 		}
@@ -377,6 +385,17 @@ func (c *Client) enableFeature(ctx context.Context, name string, opts EnableFeat
 	result.NotLinked = notLinked
 	if len(notLinked) > 0 {
 		result.NextActionMessage += fmt.Sprintf("; not linked, the old links stay: %s", strings.Join(notLinked, ", "))
+	}
+	if result.RefreshSkipped != "" {
+		if opts.DryRun {
+			// Keep the dry-run text: the links have not moved yet.
+			result.NextActionMessage += fmt.Sprintf("; %s", result.RefreshSkipped)
+		} else {
+			result.NextActionMessage = fmt.Sprintf("Feature '%s' enabled. %s. Reboot to activate it.", name, result.RefreshSkipped)
+			if len(notLinked) > 0 {
+				result.NextActionMessage += fmt.Sprintf("; not linked, the old links stay: %s", strings.Join(notLinked, ", "))
+			}
+		}
 	}
 
 	return result, nil
@@ -466,6 +485,26 @@ func (c *Client) disableFeature(ctx context.Context, name string, opts DisableFe
 		}
 	}
 
+	// A refresh merges into the running image, not into the one that boots
+	// next. The unmerge below makes a refresh mandatory: skipping it would
+	// leave every sysext on the host unmerged. So when a pending link elsewhere
+	// on the host needs a newer image than the running one, the refresh cannot
+	// run safely, and this refusal comes before anything changes: no
+	// drop-in, no unmerge, no file removal, no refresh. The operator runs the
+	// command without --now instead, which leaves every link for the next
+	// boot.
+	var pendingLinks []pendingActivationLink
+	if willRemoveFiles && opts.Now && !opts.NoRefresh {
+		pendingLinks = c.pendingActivationLinks(transfers, featureTransfers)
+		if blocker := c.refreshGate(activationLinks(pendingLinks), &runningImage{}); blocker != nil {
+			errMsg := fmt.Sprintf("cannot disable %[1]s with --now: %[2]s; run 'updex features disable %[1]s' without --now and reboot. Nothing was changed.", name, blocker.reason())
+			result.Error = errMsg
+			result.NextActionMessage = fmt.Sprintf("Run 'updex features disable %s' without --now and reboot: the refresh after an unmerge would activate a sysext the running image cannot run.", name)
+			c.warn("%s", errMsg)
+			return result, errors.New(errMsg)
+		}
+	}
+
 	// Create drop-in directory and file
 	dropInFile, err := c.writeFeatureDropIn(f, false, opts.DryRun)
 	if err != nil {
@@ -480,10 +519,11 @@ func (c *Client) disableFeature(ctx context.Context, name string, opts DisableFe
 	// Handle --now (or --remove for backward compat): remove files and unmerge
 	if willRemoveFiles && len(featureTransfers) > 0 {
 		// Read the other pending links before the unmerge: it clears the
-		// merged state, after which every link would look pending.
+		// merged state, after which every link would look pending. The check
+		// above already read them, and nothing changed since.
 		var pending []PendingActivation
 		if opts.Now && !opts.NoRefresh {
-			pending = c.pendingActivations(transfers, featureTransfers)
+			pending = activationsOf(pendingLinks)
 		}
 
 		// If --now is specified, unmerge first (unless dry-run)
@@ -763,18 +803,32 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 	// transfers are the enabled features' (the operator asked to update them,
 	// and the refresh is what applies them); list the others, such as a
 	// disabled feature whose link still names a newer image.
+	//
+	// The refresh also merges into the running image, not into the one that
+	// boots next: a link that only the next boot can run must not be
+	// activated now, so the refresh is skipped and the links stay.
+	refreshSkipped := ""
 	if !opts.NoRefresh {
-		pending := c.pendingActivations(transfers, ownTransfers)
+		pendingLinks := c.pendingActivationLinks(transfers, ownTransfers)
+		pending := activationsOf(pendingLinks)
 		c.warnPendingActivations(pending, opts.DryRun)
+		if blocker := c.refreshGateFor(ownTransfers, pendingLinks, &runningImage{}); blocker != nil {
+			refreshSkipped = blocker.skipped()
+			c.warn("%s", refreshSkipped)
+		}
 		for i := range allResults {
 			allResults[i].PendingActivations = pending
+			allResults[i].RefreshSkipped = refreshSkipped
 		}
 	}
 
 	var refreshErr error
-	if opts.DryRun {
+	switch {
+	case refreshSkipped != "":
+		c.msg("Skipping sysext refresh: %s", refreshSkipped)
+	case opts.DryRun:
 		c.msg("Dry run: skipping sysext refresh")
-	} else if !opts.NoRefresh {
+	case !opts.NoRefresh:
 		if err := c.runner.Refresh(); err != nil {
 			// Installs and links are on disk but not activated. Results stay
 			// populated (Installed=true is accurate); the error tells the
@@ -782,7 +836,7 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 			refreshErr = fmt.Errorf("sysext refresh failed: %w", err)
 			c.warn("%s", refreshErr)
 		}
-	} else {
+	default:
 		c.msg("Skipping sysext refresh (--no-refresh)")
 	}
 

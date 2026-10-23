@@ -109,6 +109,15 @@ type UpdateFeaturesResult struct {
 	// dry run: would activate). Empty with NoRefresh. The list is host-wide:
 	// every element of the result slice carries the same list.
 	PendingActivations []PendingActivation `json:"pending_activations,omitzero"`
+	// RefreshSkipped says why the systemd-sysext refresh did not run (a dry
+	// run: why it would not run): the refresh merges into the running image,
+	// and a sysext it would activate needs a newer image version than the
+	// running one (ADR-0016, "Minimum image version"). The links are correct
+	// for the next boot and stay, so the change takes effect at the next
+	// boot instead. It is not an error. Empty when the refresh ran, was not
+	// requested (NoRefresh), or nothing blocked it. The text is host-wide:
+	// every element of the result slice carries the same text.
+	RefreshSkipped string `json:"refresh_skipped,omitempty"`
 }
 
 // CheckFeaturesResult represents the result of checking all enabled features.
@@ -209,6 +218,12 @@ type FeatureActionResult struct {
 	// `systemd-sysext refresh` of this action activates as well (a dry run:
 	// would activate). Set only when the action runs, or would run, a refresh.
 	PendingActivations []PendingActivation `json:"pending_activations,omitzero"`
+	// RefreshSkipped says why the refresh of an enable with Now did not run
+	// (a dry run: why it would not run): a sysext the refresh would activate
+	// needs a newer image version than the running one (ADR-0016). The
+	// feature is enabled and linked for the next boot, so it takes effect at
+	// the next boot instead. It is not an error.
+	RefreshSkipped string `json:"refresh_skipped,omitempty"`
 }
 
 // RollbackTransfer reports what RollbackFeature did, or would do, for one
@@ -250,6 +265,12 @@ type RollbackFeatureResult struct {
 	// PendingActivations lists the sysexts outside this feature that the
 	// refresh activates as well (a dry run: would activate).
 	PendingActivations []PendingActivation `json:"pending_activations,omitzero"`
-	Error              string              `json:"error,omitempty"`
-	NextActionMessage  string              `json:"next_action_message,omitempty"`
+	// RefreshSkipped says why the refresh of a rollback with Now did not run
+	// (a dry run: why it would not run): a sysext the refresh would activate
+	// needs a newer image version than the running one (ADR-0016). The
+	// record and the links stay, so the rollback takes effect at the next
+	// boot instead. It is not an error.
+	RefreshSkipped    string `json:"refresh_skipped,omitempty"`
+	Error             string `json:"error,omitempty"`
+	NextActionMessage string `json:"next_action_message,omitempty"`
 }

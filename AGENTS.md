@@ -220,7 +220,7 @@ Key packages:
 - `version/` — Pattern matching (`@v` placeholder) and semantic version comparison
 - `sysext/` — systemd-sysext integration with mockable `Runner` interface, `/var/lib/extensions` link management, and the vacuum (`VacuumWith`/`PlanVacuumWith` over `VacuumPaths`: it keeps the linked and the merged version, see "Feature install and retention" below)
 - `systemd/` — Generates/installs systemd timer+service units, mockable `Runner` interface
-- `imagecompat/` — Minimum-image-version check (ADR-0016): reads `extension-release.*` from a staged sysext image without mounting it (pure-Go GPT + EROFS reader, `ReadExtensionRelease`), finds the next-boot `IMAGE_VERSION` (`NextBootImageVersion`: `bootc status --json` through the mockable `BootcRunner`, else the booted `os-release`) and compares both as numbers (`CheckMinImageVersion`, key `UPDEX_MIN_IMAGE_VERSION`). No CLI imports; treats the image as untrusted input
+- `imagecompat/` — Minimum-image-version check (ADR-0016): reads `extension-release.*` from a staged sysext image without mounting it (pure-Go GPT + EROFS reader, `ReadExtensionRelease`), finds the next-boot `IMAGE_VERSION` (`NextBootImageVersion`: `bootc status --json` through the mockable `BootcRunner`, else the booted `os-release`) and the running one (`BootedImageVersion`, os-release only, no bootc) and compares both as numbers (`CheckMinImageVersion`, key `UPDEX_MIN_IMAGE_VERSION`). No CLI imports; treats the image as untrusted input
 - `internal/retry/`, `internal/httpclient/`, `internal/testutil/` — HTTP retry policy, the shared default-HTTP-client constructor (`internal/httpclient.New`; enforces the HTTPS-to-HTTP redirect downgrade refusal used by `updex.NewClient`, `manifest.Fetch`, and `download.Download` when no caller-supplied client is given), and shared test helpers (HTTP test server)
 
 Entry point: `cmd/updex-cli/main.go` → `cmd/updex/root.go`
@@ -428,6 +428,29 @@ in the `config/` structs and parse functions. Always finish with
   `ClientConfig.BootcRunner` (nil = the real bootc; tests inject a fake, never
   the real one). `CheckFeatures` and `Features` run the same gate read-only
   for a staged unlinked image.
+- **Refresh gate: the running image, checked before every refresh updex
+  runs** (`refreshGate` in `updex/imagegate.go`; ADR-0016). The link gate above
+  asks whether the *next boot* can run a link; a `systemd-sysext refresh`
+  merges into the base the host runs *now*, whose `IMAGE_VERSION` comes from
+  the booted os-release (`imagecompat.BootedImageVersion` on the client's
+  `Paths.OSReleasePaths`, cached per operation in `runningImage`; never
+  `bootc`). Before the refresh in `UpdateFeatures` (without `NoRefresh`),
+  `EnableFeature{Now}`, `RollbackFeature{Now}` and `DisableFeature{Now}`, every
+  sysext the refresh would merge with a version other than the running one
+  must pass: the operation's own pending links (`ownPendingLinks`) and the
+  host's other pending activations (`pendingActivationLinks` + `activationLinks`;
+  deactivations need no check). Each linked image is read with
+  `sysext.StagedImageAt` + `imagecompat.ReadExtensionRelease` and judged by the
+  link gate's fail-open/fail-closed rules, compared with the running version.
+  Unsafe: `UpdateFeatures` and `EnableFeature{Now}` keep their links and skip
+  the refresh (`RefreshSkipped`, JSON `refresh_skipped`, text `refresh skipped:
+  <component> needs image >= <value> (running image <running>); it takes effect
+  at the next boot`, a warning, reboot advice; not an error); so does
+  `RollbackFeature{Now}` (record and links stay). `DisableFeature{Now}` unmerges
+  *before* its refresh, so it refuses the whole command before `Unmerge`, with
+  nothing changed, and tells the operator to run it without `--now` and reboot.
+  `NoRefresh` (the timer) runs no check. A new refresh call site must go
+  through `refreshGate`/`refreshGateFor`.
 - **CLI.** `features update` that gets `ErrBusy` exits 0 with one stderr line
   only when `runningUnderSystemd()` (non-empty `INVOCATION_ID`; the packaged
   timer runs exactly `updex features update --no-refresh`); every other

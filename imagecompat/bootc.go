@@ -205,6 +205,23 @@ func NextBootImageVersion(ctx context.Context, opts Options) (string, Source, er
 	return osReleaseImageVersion(paths), SourceBootedOSRelease, nil
 }
 
+// BootedImageVersion returns IMAGE_VERSION from the first readable os-release
+// file in paths, or "" when none is readable or none sets it. The zero value
+// of paths means DefaultOSReleasePaths.
+//
+// It describes the running image: on a bootc host /etc/os-release and
+// /usr/lib/os-release belong to the booted deployment, not to a staged one.
+// It runs no command, so it is safe where bootc must not be called. A
+// systemd-sysext refresh merges into this image, so it is what an immediate
+// activation is compared with, unlike NextBootImageVersion, which describes
+// the image that boots next.
+func BootedImageVersion(paths []string) string {
+	if len(paths) == 0 {
+		paths = DefaultOSReleasePaths
+	}
+	return osReleaseImageVersion(paths)
+}
+
 // osReleaseImageVersion returns IMAGE_VERSION from the first readable file,
 // or "" when there is none.
 func osReleaseImageVersion(paths []string) string {

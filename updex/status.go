@@ -143,7 +143,15 @@ func (c *Client) transferStatus(t *config.Transfer) TransferStatus {
 	return status
 }
 
-// pendingActivations lists the transfers, outside own, whose merged state a
+// pendingActivationLink is a pending activation with the transfer that
+// describes it, so a caller can read the linked image (the refresh gate) as
+// well as report the activation.
+type pendingActivationLink struct {
+	PendingActivation
+	transfer *config.Transfer
+}
+
+// pendingActivationLinks lists the transfers, outside own, whose merged state a
 // systemd-sysext refresh changes in addition to what the calling operation
 // changed: a link that names a version the host does not run (activation),
 // and a merged sysext with no link (deactivation). own is the operation's own
@@ -157,15 +165,15 @@ func (c *Client) transferStatus(t *config.Transfer) TransferStatus {
 // whose definitions live in a normal sysupdate.d root while the run works in
 // another directory. Transfers are matched by link name and the first one
 // seen wins (scoped before the host's own), so a transfer that both describe
-// is listed once. Only the warning reads this wide; the operation's update
-// scope stays scoped. When the host definitions cannot be read, the failure is
-// a warning and scoped is used alone.
+// is listed once. Only this read is this wide; the operation's update scope
+// stays scoped. When the host definitions cannot be read, the failure is a
+// warning and scoped is used alone.
 //
 // Only links of transfers that updex's definitions describe are visible: a
 // link made by hand for an image with no transfer is not listed. A transfer
 // whose state cannot be read is reported as a warning and skipped, and the
 // refresh is not prevented.
-func (c *Client) pendingActivations(scoped, own []*config.Transfer) []PendingActivation {
+func (c *Client) pendingActivationLinks(scoped, own []*config.Transfer) []pendingActivationLink {
 	domain := scoped
 	// Name-collision warnings of the full union are dropped: this is a read
 	// for the warning only, not the domain the caller operates on.
@@ -183,7 +191,7 @@ func (c *Client) pendingActivations(scoped, own []*config.Transfer) []PendingAct
 		}
 	}
 
-	var pending []PendingActivation
+	var pending []pendingActivationLink
 	seen := make(map[string]bool)
 	for _, t := range domain {
 		name := sysext.SysextLinkName(t)
@@ -198,16 +206,22 @@ func (c *Client) pendingActivations(scoped, own []*config.Transfer) []PendingAct
 		}
 		switch {
 		case status.PendingReboot:
-			pending = append(pending, PendingActivation{
-				Component:      t.Component,
-				RunningVersion: status.RunningVersion,
-				LinkedVersion:  status.LinkedVersion,
+			pending = append(pending, pendingActivationLink{
+				transfer: t,
+				PendingActivation: PendingActivation{
+					Component:      t.Component,
+					RunningVersion: status.RunningVersion,
+					LinkedVersion:  status.LinkedVersion,
+				},
 			})
 		case status.Error == "" && deactivationPending(status.RunningVersion, status.LinkedVersion):
-			pending = append(pending, PendingActivation{
-				Component:      t.Component,
-				RunningVersion: status.RunningVersion,
-				Deactivate:     true,
+			pending = append(pending, pendingActivationLink{
+				transfer: t,
+				PendingActivation: PendingActivation{
+					Component:      t.Component,
+					RunningVersion: status.RunningVersion,
+					Deactivate:     true,
+				},
 			})
 		}
 	}

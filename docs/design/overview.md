@@ -667,6 +667,58 @@ revision needs at most the base the host already runs.
 not held by a rollback, and show `needs image >= X`. They never download, so
 they say nothing about an image that is only published.
 
+### Refresh gate: the running image (ADR-0016)
+
+The link gate above answers "may the next boot run this image". A
+`systemd-sysext refresh` asks a different question: it merges into the base
+the host runs **now**. On a bootc host `/etc/os-release` and
+`/usr/lib/os-release` describe the booted deployment, so
+`imagecompat.BootedImageVersion` reads the running image version from them,
+without `bootc` and once per operation (`runningImage`, like `nextBootImage`).
+A staged deployment that is newer than the booted one can therefore allow a
+link the running base cannot run:
+
+```
+booted IMAGE_VERSION=20261001000000, staged deployment=20261101000000
+sysext UPDEX_MIN_IMAGE_VERSION=20261022021319
+link gate (next boot 20261101000000): new enough ──▶ link 2.0.0
+refresh gate (running 20261001000000): too old ──▶ keep the link, skip the refresh
+```
+
+`refreshGate` (`updex/imagegate.go`) runs before every refresh updex starts:
+`UpdateFeatures` without `NoRefresh`, `EnableFeature{Now}`,
+`RollbackFeature{Now}`, and `DisableFeature{Now}`. It checks every sysext the
+refresh would merge with a version other than the running one: the operation's
+own pending links (`ownPendingLinks`) and the other pending activations of the
+host (`pendingActivationLinks`, whose transfers are kept so the image can be
+found; deactivations merge nothing and are skipped). Each linked image
+(`sysext.StagedImageAt` → `imagecompat.ReadExtensionRelease`) is judged by the
+same fail-open/fail-closed rules as the link gate, compared with the running
+version: key absent or `ErrUnsupportedImage` is safe; another read error is
+unsafe; a key the running image does not meet, or a missing or non-numeric
+running version, is unsafe. The link gate is unchanged, so a link the next
+boot can run is still linked; only the immediate refresh waits.
+
+What an unsafe result does differs by command, because only some of them can
+leave the host consistent without a refresh:
+
+- `UpdateFeatures` and `EnableFeature{Now}` keep their links and skip the
+  refresh: `RefreshSkipped` (`refresh_skipped`) says `<component> needs image
+  >= <value> (running image <running>)`, a warning goes to the journal, and
+  the next action is a reboot. It is not an error, so the timer's replacement
+  (`features update --no-refresh`, which never checks) and an interactive run
+  behave the same way.
+- `RollbackFeature{Now}` keeps the record and the links and skips the
+  refresh, also with `RefreshSkipped`, and says the rollback takes effect at
+  the next boot.
+- `DisableFeature{Now}` cannot skip its refresh: it unmerges first, so a
+  skipped refresh would leave every sysext unmerged. The check runs before
+  the `Unmerge`, and an unsafe result refuses the whole command — no drop-in,
+  no unmerge, no file removal, no refresh — and asks for a run without
+  `--now` and a reboot.
+- A dry run reports the same text for the first two and the same refusal for
+  a disable, and refreshes nothing.
+
 **Sandbox.** The service runs with `SandboxDirectives` (`ProtectSystem=full`,
 `RestrictNamespaces=yes`, `SystemCallFilter=@system-service`). Reading the
 image needs only `open` and `pread`; `bootc status --json` runs inside the same

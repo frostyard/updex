@@ -213,6 +213,25 @@ the same for a staged image that is not linked: `needs image >= <value>` in the
 download, so they cannot tell about a newer image that is only published.
 Without the key nothing changes. An image with no EROFS filesystem at all (for
 example a squashfs sysext from another catalog) is treated as having no key.
+
+**The link and an immediate refresh are checked against different images.**
+The link is what the next boot merges, so it is checked against the next-boot
+image. A `systemd-sysext refresh` merges into the image the host runs now: on a
+bootc host `/etc/os-release` and `/usr/lib/os-release` describe the booted
+deployment, not a staged one. Before every refresh it runs (`features update`
+without `--no-refresh`, `features enable --now`, `features rollback --now`),
+updex therefore compares the key of every sysext the refresh would merge with
+the running image's `IMAGE_VERSION` too. When that check fails, including when
+the running version is missing or not numeric, updex **keeps the links** (they
+are right for the next boot), **skips the refresh**, and says so:
+`refresh skipped: <component> needs image >= <value> (running image <running>);
+it takes effect at the next boot` (JSON `refresh_skipped`). This is not an
+error: the command exits 0 and the change takes effect at the next boot. An
+image with no EROFS filesystem is treated as having no key here as well.
+`features disable --now` is the exception: it unmerges before its refresh, so
+skipping the refresh would leave every sysext unmerged; it refuses the whole
+command instead, changes nothing, and tells you to run it without `--now` and
+reboot. The timer runs with `--no-refresh` and is unchanged.
 An image that has an EROFS filesystem but whose extension-release file cannot
 be read (a failed EROFS open, a failed open, stat or read of the file, a
 missing file, several without a match, over 64 KiB), an image the link step
