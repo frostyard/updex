@@ -1,6 +1,6 @@
 # 0007 — The auto-update daemon stages updates but never activates them
 
-- **Status:** Accepted
+- **Status:** Superseded by [0016](0016-automatic-sysext-updates-apply-at-next-boot.md)
 - **Date:** 2026-08-12
 
 ## Context

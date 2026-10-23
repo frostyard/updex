@@ -38,7 +38,7 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
   definitions track the running OS release
 - [ADR-0007](adr/0007-daemon-stages-never-activates.md) — the auto-update
   daemon stages downloads (`features update --no-refresh`, daily + jitter)
-  but never activates them
+  but never activates them; superseded by ADR-0016
 - [ADR-0008](adr/0008-bounded-retry-no-resume.md) — bounded whole-attempt
   retries (3 attempts, 1s exponential; 5xx+429 transient); checksum mismatch
   is fatal, no resume
@@ -70,6 +70,12 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
   `extensions`) under `/usr` and `/opt`; `/run/extensions` is an image search
   directory, not merged state, and an unknown merge state now requires
   `--force`
+- [ADR-0016](adr/0016-automatic-sysext-updates-apply-at-next-boot.md) —
+  `frostyard-updex` ships `updex-update.timer` (every 6 h, AC
+  power only), snosi enables it; runs stage and link but never refresh, so
+  revisions apply at the next boot; vacuum keeps the linked and merged
+  images; a revision with `UPDEX_MIN_IMAGE_VERSION` waits for a new enough
+  image; `features rollback` records a rejected version
 
 ### Design
 
@@ -98,7 +104,9 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
 
 ### Plans
 
-*(none yet)*
+- [Automatic sysext updates](plans/0001-automatic-sysext-updates.md) —
+  phases and checks for ADR-0016: retention, packaged units, status,
+  rollback, minimum image version, release, snosi enablement, fleet check
 
 ### Process docs (uncategorized)
 
