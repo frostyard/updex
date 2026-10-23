@@ -223,7 +223,7 @@ func TestRunFeaturesCheck_TextMarksFailedComponent(t *testing.T) {
 		}
 	}
 	fields := strings.Fields(row)
-	if len(fields) != 5 || fields[4] != "error" {
+	if len(fields) != 7 || fields[6] != "error" {
 		t.Errorf("expected UPDATE column 'error' for the failed component, got row %q", row)
 	}
 }

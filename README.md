@@ -98,7 +98,46 @@ version with the version the systemd-sysext link in `/var/lib/extensions`
 points to, because that link is the image systemd-sysext merges. If no usable link
 exists it falls back to the staged image. A link still on an older image
 therefore shows an update, and `features update` repoints the link without
-downloading again and reports that a reboot activates it.
+downloading again and reports that a reboot activates it. The JSON field
+`current_version` keeps this meaning.
+
+**Running and linked versions:** `features check` and `features list` show,
+for each transfer, two more versions:
+
+- `RUNNING` (JSON `running_version`): the version merged now, read from the
+  `.systemd-sysext` metadata that systemd-sysext keeps under `/usr` and `/opt`.
+  `-` (empty in JSON) means the image is not merged; `unknown` means it is
+  merged but the metadata records no version.
+- `LINKED` (JSON `linked_version`): the version that
+  `/var/lib/extensions/<name>.<ext>` names, which the next boot merges. `-`
+  (empty) means there is no usable link (absent, dangling, or foreign).
+
+When `LINKED` differs from `RUNNING`, an update is pending a reboot. The JSON
+field `pending_reboot` is `true` and the text output ends with a
+`PENDING REBOOT: ...` line that names each transfer (`docker: r1 -> r2`;
+`not merged` when nothing runs). A host that cannot tell (`RUNNING` is
+`unknown`, or the state could not be read) is not marked. `features check`
+puts the two columns between `CURRENT` and `NEWEST`; `features list` appends
+them after `TRANSFERS` and adds a `transfer_status` array to each feature in
+JSON (`component`, `running_version`, `linked_version`, `pending_reboot`,
+`error`). A feature with several transfers shows one value per transfer in
+the order of `TRANSFERS`, for example `2.0.0, -`, and `error` replaces both
+values of a transfer whose state could not be read (the rest of the listing
+still prints; `features check` reports it as that row's `error`).
+
+**Refresh warning:** `features update` (without `--no-refresh`),
+`features enable --now` and `features disable --now` run
+`systemd-sysext refresh`, which activates every linked-but-not-merged sysext on
+the host, not only the ones you asked about. Before the refresh, updex warns
+and lists the others (`systemd-sysext refresh will also activate 1 sysext(s)
+that are linked but not merged: beta: 1.0.0 -> 2.0.0`). The JSON result carries
+the same list as `pending_activations` (`component`, `running_version`,
+`linked_version`). For `update`, the enabled features are the run's own, so the
+list holds transfers that are not part of an enabled feature, such as a disabled
+feature whose link still names a newer image. With `--dry-run` it says what the
+refresh would activate. With `--no-refresh` nothing is listed, because nothing
+is refreshed. The warning does not prevent the activation. It sees only links
+of transfers that updex's definitions describe.
 
 **A feature's transfers update together:** `features update` (and
 `features enable --now`) downloads every transfer of a feature first and links

@@ -120,6 +120,7 @@ CLI (cmd/daemon.go) ─┘                version, sysext, systemd
 - `t.TempDir()` for filesystem operations, `t.Context()` for context
 - `tests/e2e/` builds and runs the real CLI subprocess for argument, exit-code, output, custom-config, and read-only HTTP checks in its dedicated PR job. `cmd/updex/integration_test.go` runs the full Cobra/clix command in-process so package search roots can point at temporary default component and catalog trees; these tests run in both the PR Unit Tests and Race Detection jobs. Keep mutating subprocess paths behind parser failures so CI does not require root.
 - `sysext/link_test.go` pins the `/var/lib/extensions` link lifecycle through `LinkToSysextAt` (explicit dir, no global mutation): newest-by-version selection, replacing symlinks/dangling links/regular files, staging-dir symlinks ignored, `Target.Path` fallback, metadata rejection (component, patterns, `@v`), empty/missing/non-matching staging sets, a conflicting destination directory preserved on error, sysext-dir creation failure (parent is a regular file), and removal failure (read-only dir, skipped as root). Every failing case asserts no new symlink is left behind. It also pins that `DefaultRunner` implements `PathSysextRunner` and links into the explicit dir, not `SysextDir`, and (`TestLinkedVersionAt`) what the link read side reports: absent, a regular file, a dangling link, a foreign image name, relative and absolute targets, a compressed target name, and an unusable target pattern.
+- `updex/status_test.go` pins the status read with `ClientConfig.Paths` temp trees (`statusCases`: link ahead of running, linked and not merged, in sync, dangling link, no link, `unknown`, metadata of another image) through both `Features` and `CheckFeatures`, the unreadable-merged-state paths, the JSON key shape, and the refresh warning for `UpdateFeatures`, `EnableFeature` and `DisableFeature` (other pending link listed and the mock refresh still called; nothing pending lists nothing; `NoRefresh` lists nothing; dry run says "would"; component scope still sees other components). `cmd/updex/features_status_test.go` runs the handlers over `setRuntimePaths` temp hierarchies (text columns, the pending footer, JSON). `tests/e2e/` cannot redirect the real binary's link directory or hierarchies, so its `TestE2E_FeaturesStatusJSONShape` pins only the reachable shape (keys present, empty values, no pending marker).
 - CLI handler seams: `cmd/updex` exposes four package-level test seams so mutating handlers can run rootless in-process — `getEUID` (swap for `func() int { return 0 }` to pass `requireRoot`), `sysextRunner` (nil in production so `newClient` gets the SDK default; set to a `*sysext.MockRunner` to observe `Refresh`/`Unmerge`), `systemdManager` (nil in production; set to a temporary `systemd.NewTestManager` for daemon wrappers), and `runtimePaths` (zero in production so the SDK resolves its usual paths; `newClient` passes it as `ClientConfig.Paths`). `TestMain` in `cmd/updex/main_test.go` points `runtimePaths` at temporary `SysextHierarchies` and an absent `RunExtensionsDir` in one `os.MkdirTemp` tree, so no CLI test reads the host's `/usr/.systemd-sysext`, `/opt/.systemd-sysext`, or `/run/extensions` — the follow-up to the ADR-0015 merged-state detection that could otherwise make a `features disable --now` or `catalog remove` test depend on a real merged image (for example `docker`); a test that needs other paths calls `setRuntimePaths`, and `TestHandlerTestsDoNotReadHostMergedState` guards the seam. `cmd/updex/features_mutation_test.go` uses the first two with temporary `config.SearchRoots` (drop-ins land under `roots[0]`), a temporary `sysext.SysextDir`, and a fake HTTP source to cover `runFeaturesEnable`/`runFeaturesDisable` end-to-end: `--now`, `--force`, `--no-refresh`, `--component`, dry-run, and text/JSON result shapes, including a real JSON+silent download whose stdout must decode as exactly one result object. `cmd/updex/catalog_mutation_test.go` does the same for `runCatalogAdd`/`runCatalogRemove`, additionally pointing `catalog.ConfigRoots`, `catalog.CacheDir`, and `catalog.TargetPath` at temp dirs and serving `<name>/<name>.conf`, `SHA256SUMS`, and the image from one `httptest.Server` (configure two `.catalog` files against it to exercise `[REPO/]NAME` / `--repo` disambiguation); remove cases seed the post-add state through the SDK's `CatalogAdd`.
 
 ### CLI output
@@ -626,6 +627,19 @@ service (`ProtectSystem=full`) can write `/run`.
 - `UpdateAvailable` is `version.Compare(newest, CurrentVersion) > 0` over that value, so an older linked image against a newer available one reports an update, which the next `features update` resolves by relinking without a download.
 - A link-inspection failure (a failed `Lstat`/`Readlink`, or an unusable target pattern) is reported as that component's `CheckResult.Error` (`failed to inspect sysext link: …`) with `NewestVersion` kept, the same partial-results shape as a manifest failure.
 
+### Status: running and linked (ADR-0016)
+
+Two different things can be called "the version of a sysext", and they differ for a while after every update:
+
+- **running** — what systemd-sysext merged at its last merge or refresh. Only the `.systemd-sysext` metadata under the hierarchies (`/usr`, `/opt`; the client's `sysextHierarchies`) says so ([ADR-0015](../adr/0015-detect-merged-sysexts-from-hierarchy-metadata.md)). `sysext.MergedVersionIn` reads just that, so a legacy `CurrentSymlink` or an image in `/run/extensions` (both count as "active" in `GetActiveVersionWith`, which exists to guard destructive operations) does not count as merged. `unknown` is a valid value.
+- **linked** — what `<SysextLinkDir>/<component>.<ext>` names (`sysext.LinkedVersionAt`). The next boot, or the next `systemd-sysext refresh`, merges it.
+
+`updex/status.go` holds `TransferStatus` (both values per transfer), the pending rule, and the refresh-warning helpers. `Features` attaches a `TransferStatus` to every `FeatureInfo` (enabled or not); `CheckFeatures` copies the values into `CheckResult` (`running_version`, `linked_version`, `pending_reboot`) and keeps `current_version` as before (link, else staging). Unreadable state is local to one transfer: a warning in `Features`, that row's `Error` in `CheckFeatures`.
+
+*Pending reboot* means linked is non-empty and differs from running. It is not asserted when running is `unknown` (no comparison is possible) or when the state could not be read. The CLI shows it as a `PENDING REBOOT:` footer under the `RUNNING`/`LINKED` columns of `features check` and `features list`.
+
+The same helper drives the **refresh warning**: a refresh activates every pending link, not only the operation's own, so `UpdateFeatures` (without `--no-refresh`), `EnableFeature --now` and `DisableFeature --now` list the *other* pending transfers (those outside the operation's own transfers, matched by link name) through the reporter before refreshing, and put them in `PendingActivations` on the result. With `--dry-run` the same list says what would be activated. The domain is the whole host even for a `--component` run. `DisableFeature` reads it before `Unmerge`, which clears the merged state. See `docs/specs/sdk-api.md` ("Refresh warning") for the exact rules. The timer path (`--no-refresh`) never lists anything because it never refreshes.
+
 ### Enable/disable feature
 
 `00-updex.conf` is the single drop-in updex owns; administrator drop-ins
@@ -657,7 +671,9 @@ The daemon stages updates but never activates them (decision recorded in
 ```
 updex features list                     List all features with status (alias: updex feature)
                                          CATALOG column shows provenance: a catalog
-                                         name, image:<id>, local:etc|usr|run, or unknown
+                                         name, image:<id>, local:etc|usr|run, or unknown;
+                                         RUNNING (merged now) and LINKED (next boot)
+                                         hold one value per transfer, in TRANSFERS order
 updex features enable <name>            Enable a feature
   --now                                 Download extensions immediately
 updex features disable <name>           Disable a feature (without --now the
@@ -669,7 +685,10 @@ updex features update                   Download and install new versions
   --dry-run                             Preview update work without filesystem/sysext changes
 updex features check                    Check for available updates; CURRENT is the version
                                          the systemd-sysext link points to (staging
-                                         fallback when there is no usable link); a
+                                         fallback when there is no usable link);
+                                         RUNNING is the merged version, LINKED the one the
+                                         next boot merges (PENDING REBOOT line when they
+                                         differ); a
                                          component that cannot be checked is reported
                                          with UPDATE=error (JSON `error`) and the
                                          command exits non-zero

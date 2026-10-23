@@ -79,6 +79,14 @@ OUTPUT COLUMNS:
   ENABLED      - yes/no/masked
   CATALOG      - Where the feature came from (see below)
   TRANSFERS    - Associated transfer configurations
+  RUNNING      - Version merged now, per transfer (see below)
+  LINKED       - Version the next boot merges, per transfer (see below)
+
+RUNNING and LINKED show one value per transfer, in the order of TRANSFERS,
+joined by ", ". "-" means no version (not merged, or not linked), "unknown"
+means merged with no recorded version, and "error" means the state could not
+be read. A transfer whose LINKED differs from its RUNNING has an update
+pending a reboot; a PENDING REBOOT line lists them.
 
 CATALOG VALUES:
   <name>       - Added by 'updex catalog add' from that catalog
@@ -188,6 +196,10 @@ OPTIONS:
   --no-refresh  Skip running systemd-sysext refresh after update
   --no-vacuum   Skip removing old versions after update
 
+Unless --no-refresh is set, a warning first lists the other sysexts (those
+outside the enabled features, such as a disabled feature) that are linked to a
+version the host does not run and that the refresh activates too.
+
 Use --dry-run (global flag) to preview downloads, installs, refreshes, and
 vacuum removals without modifying filesystem or sysext state.
 
@@ -220,6 +232,18 @@ func newFeaturesCheckCmd() *cobra.Command {
 
 Iterates over all enabled features and their associated transfers,
 comparing installed versions against the newest available versions.
+
+OUTPUT COLUMNS:
+  CURRENT  - Version the systemd-sysext link names (staged version when
+             there is no usable link)
+  RUNNING  - Version merged now ("-" when not merged, "unknown" when merged
+             with no recorded version)
+  LINKED   - Version the next boot merges ("-" when there is no usable link)
+  NEWEST   - Newest available version
+  UPDATE   - yes, no, or error
+
+A transfer whose LINKED differs from its RUNNING has an update pending a
+reboot; a PENDING REBOOT line lists them.
 
 This is a read-only operation that does not download or install anything.`,
 		Example: `  # Check for updates

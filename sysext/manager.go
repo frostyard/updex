@@ -204,6 +204,32 @@ func GetActiveVersionWith(t *config.Transfer, p ActiveStatePaths) (string, error
 	return "", nil
 }
 
+// MergedVersionIn reports the version of the transfer's image that the
+// merged-state metadata under hierarchies records, or "" when no hierarchy
+// records it. UnknownVersion reports a merged image whose metadata names no
+// version. It reads only the hierarchy metadata (what systemd-sysext merged
+// at its last merge or refresh): unlike GetActiveVersionWith it ignores a
+// legacy CurrentSymlink and the runtime image search directory, which name an
+// image that is staged or will merge, not one that is merged now. The first
+// hierarchy that records the image wins. A read error returns
+// "read merged state: ...".
+func MergedVersionIn(t *config.Transfer, hierarchies []string) (string, error) {
+	patterns, err := parseTargetPatterns(t)
+	if err != nil {
+		return "", err
+	}
+	for _, hierarchy := range hierarchies {
+		v, err := mergedVersionInHierarchy(t, patterns, hierarchy)
+		if err != nil {
+			return "", err
+		}
+		if v != "" {
+			return v, nil
+		}
+	}
+	return "", nil
+}
+
 // mergedExtensionEntry is the part of a systemd-sysext origin entry that
 // records the merged image's path.
 type mergedExtensionEntry struct {

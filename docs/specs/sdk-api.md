@@ -271,6 +271,8 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 
 Lists all configured features with their enabled/masked status and associated transfers. `opts` is variadic for backward compatibility with the pre-component-scoping signature (`Features(ctx)`): only `opts[0]` is read when present, so callers may either omit `opts` entirely or pass a single `FeaturesOptions{}`.
 
+Each `FeatureInfo` also carries `TransferStatus`, one `TransferStatus` per transfer in `Transfers` order (see [TransferStatus](#transferstatus)): the version merged now (`RunningVersion`) and the version the `/var/lib/extensions` link names (`LinkedVersion`). `Features` reads both for every feature, enabled or not. A transfer whose state cannot be read keeps the value that could be read, carries the failure in `TransferStatus.Error`, and produces a reporter warning; the listing never fails for it.
+
 **FeaturesOptions:**
 | Field | Type | Description |
 |-------|------|-------------|
@@ -364,6 +366,17 @@ When the link step relinked because the image was already staged and current, it
 | `NoVacuum` | `bool` | Skip removing old versions |
 | `Component` | `string` | Scope to one named component; `""` = default union |
 
+### Refresh warning
+
+`UpdateFeatures` (without `NoRefresh`), `EnableFeature` with `Now`, and `DisableFeature` with `Now` end in `systemd-sysext refresh`, which merges every link on the host that names a version other than the running one. Before the refresh (or, with `DryRun`, in place of it) each of them lists, through the reporter as one warning, the *other* pending sysexts, and records them in the result's `PendingActivations` (`[]PendingActivation`, JSON `pending_activations`, `omitzero`). The warning is advice: it never stops the refresh. `NoRefresh` lists nothing.
+
+- A transfer is *pending* when `LinkedVersion` is non-empty, differs from `RunningVersion`, and `RunningVersion` is not `unknown`, and its state was read without error (see [TransferStatus](#transferstatus)).
+- *Own* transfers are excluded, matched by link name (`SysextLinkName`), because the link is what the refresh activates. For `EnableFeature` and `DisableFeature` they are the named feature's transfers. For `UpdateFeatures` they are the transfers of every enabled, unmasked feature: the operator asked to update those, and the refresh is what applies them, including a link that an earlier run (the timer) already moved. What remains is the "other" set, for example a disabled feature whose link still names a newer image, and any ungated transfer.
+- The set is computed over the whole host's definitions, even when `Component` scopes the call, because the refresh does not honour that scope. With a `Definitions` override only that directory is read. A link made by hand for an image that no transfer describes is not visible.
+- `DisableFeature` reads the pending state *before* `Unmerge`, which clears the merged state and would make every link look pending, and warns just before the refresh.
+- A transfer whose state cannot be read is skipped with a warning (`could not determine whether a refresh activates …`).
+- `UpdateFeaturesResult.PendingActivations` is host-wide: every element of the returned slice carries the same list. With no enabled features the slice is empty and only the warning reports it.
+
 ### CheckFeatures
 
 ```go
@@ -373,6 +386,8 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 Checks for available updates without downloading. Manifests are cached by source URL, same as `UpdateFeatures`.
 
 `CurrentVersion` is the version the host actually runs: the version that the systemd-sysext link `<SysextLinkDir>/<component>.<ext>` points to, read by `sysext.LinkedVersionAt`. That link is the image systemd-sysext merges, so it wins over the staging directory, where another updater (for example `systemd-sysupdate`) can stage a newer image and advance its own legacy `CurrentSymlink` without touching the link updex made. When no usable link exists (absent, not a symlink, dangling, or naming an image the transfer's target patterns do not match), `CheckFeatures` keeps the staging-based current version that `sysext.GetInstalledVersions` reports: the legacy `CurrentSymlink` target, else the newest staged file. `UpdateAvailable` is then `version.Compare(newest, CurrentVersion) > 0`. A link that points at an older image than the newest staged file therefore reports an update, and the next `UpdateFeatures` relinks without downloading (see [UpdateFeatures](#updatefeatures)).
+
+`CheckResult.RunningVersion`, `LinkedVersion` and `PendingReboot` come from the same per-transfer read as `Features` (see [TransferStatus](#transferstatus)). `LinkedVersion` is what `sysext.LinkedVersionAt` reports; with a usable link it equals `CurrentVersion`, and `CurrentVersion` keeps its staging-based fallback when there is none. `RunningVersion` comes from `sysext.MergedVersionIn`, which reads only the hierarchy metadata under the client's `SysextHierarchies`: a legacy `CurrentSymlink` or an image in `/run/extensions` does not make an image "running". A failure to read the merged state is reported like a link-inspection failure: that component's `Error` (`failed to read merged state: …`), with `NewestVersion`, `RunningVersion` and `LinkedVersion` kept where known. A manifest failure keeps the status values too. The status is read before the manifest fetch.
 
 Per-transfer failures are reported, never dropped: when a component's manifest cannot be fetched or verified (network/HTTP error, GPG signature failure, invalid source pattern), or its installed versions cannot be listed, `CheckFeatures` appends a `CheckResult` for that component with `Error` set (and `UpdateAvailable=false`), keeps checking the remaining transfers, and after the loop returns the collected results together with the aggregate error `one or more components failed to check` — the same shape as `UpdateFeatures`. Consumers must therefore treat a non-nil error as "the results are partial", not "no results", and use `CheckResult.Error` to tell "could not check" from "no update". A source that lists no matching versions is not an error: that component is simply absent from `Results`.
 
@@ -469,6 +484,8 @@ type FeatureInfo struct {
     Origin        string   `json:"origin"`
     OriginName    string   `json:"origin_name,omitempty"`
     Transfers     []string `json:"transfers,omitzero"`
+
+    TransferStatus []TransferStatus `json:"transfer_status,omitzero"` // same order as Transfers
 }
 ```
 
@@ -488,6 +505,28 @@ having to disambiguate a catalog legitimately named `image` or `local`:
 feature. The CLI renders this as the CATALOG column via `formatOrigin`:
 bare name for catalogs, `kind:name` otherwise.
 
+### TransferStatus
+
+```go
+type TransferStatus struct {
+    Component      string `json:"component"`
+    RunningVersion string `json:"running_version"` // merged now; "" = not merged; "unknown" = merged, no recorded version
+    LinkedVersion  string `json:"linked_version"`  // the /var/lib/extensions link names it; "" = no usable link
+    PendingReboot  bool   `json:"pending_reboot,omitempty"`
+    Error          string `json:"error,omitempty"`
+}
+
+type PendingActivation struct {
+    Component      string `json:"component"`
+    RunningVersion string `json:"running_version"`
+    LinkedVersion  string `json:"linked_version"`
+}
+```
+
+Defined in `updex/status.go` (ADR-0016, "Status and logs"). `RunningVersion` is read from the merged-state metadata under the client's `sysextHierarchies` ([ADR-0015](../adr/0015-detect-merged-sysexts-from-hierarchy-metadata.md)) with `sysext.MergedVersionIn`; `LinkedVersion` from `sysext.LinkedVersionAt` with the client's `SysextLinkDir`. The JSON keys `running_version` and `linked_version` are always present: an empty string means none, so a consumer can tell "not merged" from an absent key of an older updex.
+
+`PendingReboot` is true when the next boot changes what the host runs: `LinkedVersion` is non-empty and differs from `RunningVersion`. It is false when `RunningVersion` is `unknown` (the two cannot be compared; a false alarm on every host with old-style metadata would hide real ones) and when `Error` is set. `Error` carries `failed to read merged state: …` and/or `failed to inspect sysext link: …`; the value that could be read stays set. The CLI renders `RunningVersion` and `LinkedVersion` as the `RUNNING` and `LINKED` columns (`-` for empty, `error` when `Error` is set) and lists the pending transfers in a `PENDING REBOOT:` footer.
+
 ### FeatureActionResult
 
 ```go
@@ -503,6 +542,8 @@ type FeatureActionResult struct {
     DryRun            bool     `json:"dry_run,omitempty"`
     Unmerged          bool     `json:"unmerged,omitempty"`
     RefreshError      string   `json:"refresh_error,omitempty"` // set when only the final systemd-sysext refresh failed
+
+    PendingActivations []PendingActivation `json:"pending_activations,omitzero"` // other sysexts the refresh activates (see Refresh warning)
 }
 ```
 
@@ -516,6 +557,8 @@ type FeatureActionResult struct {
 type UpdateFeaturesResult struct {
     Feature string         `json:"feature"`
     Results []UpdateResult `json:"results"`
+
+    PendingActivations []PendingActivation `json:"pending_activations,omitzero"` // host-wide; see Refresh warning
 }
 
 type UpdateResult struct {
@@ -542,8 +585,11 @@ type CheckFeaturesResult struct {
 
 type CheckResult struct {
     Component       string `json:"component"`
-    CurrentVersion  string `json:"current_version,omitempty"`
+    CurrentVersion  string `json:"current_version,omitempty"` // link, else staging; kept for compatibility
     NewestVersion   string `json:"newest_version"`
+    RunningVersion  string `json:"running_version"`           // merged now; always present
+    LinkedVersion   string `json:"linked_version"`            // the link names it; always present
+    PendingReboot   bool   `json:"pending_reboot,omitempty"`  // LinkedVersion != RunningVersion
     UpdateAvailable bool   `json:"update_available"`
     Error           string `json:"error,omitempty"` // set when the component could not be checked
 }
@@ -635,6 +681,7 @@ recorded in [ADR-0008](../adr/0008-bounded-retry-no-resume.md).
 - `PathSysextRunner` interface — `SysextRunner` plus `LinkToSysextAt(*config.Transfer, sysextDir string) error`. `updex.Client` links only through this interface, with the `SysextLinkDir` it captured at construction; a runner implementing only `SysextRunner` is refused with `updex.ErrLegacySysextRunner` rather than redirected to the package-global `SysextDir`. `DefaultRunner` and `MockRunner` both implement it; `MockRunner.LinkToSysextAtDir` records the directory it was given (and `LinkToSysextCalled` is set by either entry point)
 - `GetInstalledVersions(t *config.Transfer) ([]string, string, error)` — List installed + current version
 - `LinkedVersionAt(t *config.Transfer, sysextDir string) (string, error)` — Version of the image the systemd-sysext link `<sysextDir>/<SysextLinkName(t)>` points to; `""` with a nil error when the link is absent, not a symlink, dangling, or names an image the transfer's target patterns do not match. A relative link target is resolved against `sysextDir`. `CheckFeatures` uses it for `CurrentVersion`; `GetInstalledVersions` stays staging-based because `stageTransfer` relies on that to skip a re-download
+- `MergedVersionIn(t *config.Transfer, hierarchies []string) (string, error)` — Version of the transfer's image that the `.systemd-sysext` metadata under `hierarchies` records (`UnknownVersion` when the metadata records the image without a version, `""` when not merged; first hierarchy that records it wins; a read error returns `read merged state: …`). Unlike `GetActiveVersionWith` it ignores a legacy `CurrentSymlink` and `/run/extensions`, so it answers "merged now", not "active or about to be". `updex.Client` uses it for `RunningVersion`
 - `GetActiveVersion(t *config.Transfer) (string, error)` — Get the version considered active by updex: first a legacy `CurrentSymlink`, then an image name under each `MergedHierarchies` entry's `.systemd-sysext` metadata, then an image name in `RunExtensionsDir` (`/run/extensions`, the runtime image search directory)
 - `GetActiveVersionWith(t *config.Transfer, p ActiveStatePaths) (string, error)` — Explicit-path variant used by `updex.Client`; `p.Hierarchies` are the hierarchies whose `.systemd-sysext/origin` JSON records merged images. An `origin` entry match returns the version from the recorded source path. When `origin` is absent, malformed, or does not name the image, the older `.systemd-sysext/extensions` name list is also checked, and a match there returns `UnknownVersion` (`"unknown"`) because it records no version. A read error returns `read merged state: …`
 - `ActiveStatePaths` — `DefaultDir` (fallback for `Target.Path`; used only to locate a legacy `CurrentSymlink`), `RunExtensionsDir` (image search directory; empty skips the check), `Hierarchies` (merged-state hierarchies; empty skips the check)

@@ -395,6 +395,93 @@ func TestE2E_FeaturesListAndCheck(t *testing.T) {
 	}
 }
 
+// TestE2E_FeaturesStatusJSONShape pins the RUNNING/LINKED fields through the
+// real binary. The binary reads the host's /var/lib/extensions and the
+// .systemd-sysext metadata under /usr and /opt, and no flag redirects them, so
+// this test can reach only the "not linked, not merged" state: it uses a
+// component name no host links or merges, and asserts the shape (the keys are
+// always present, an empty string means none, and no pending marker appears).
+// The states with a linked or merged version are covered in-process, with
+// temporary hierarchies, by the handler tests in cmd/updex.
+func TestE2E_FeaturesStatusJSONShape(t *testing.T) {
+	const component = "updexe2enostatus"
+	configDir := t.TempDir()
+
+	server := newFakeTransferServer(t, component+"_1.0.0.raw", []byte("fake sysext content"))
+	defer server.Close()
+
+	writeFile(t, filepath.Join(configDir, "statusfeature.feature"), "[Feature]\nDescription=Status\nEnabled=true\n")
+	writeFile(t, filepath.Join(configDir, component+".transfer"), ""+
+		"[Transfer]\nFeatures=statusfeature\nVerify=false\n\n"+
+		"[Source]\nType=url-file\nPath="+server.URL+"\nMatchPattern="+component+"_@v.raw\n\n"+
+		"[Target]\nPath="+t.TempDir()+"\nMatchPattern="+component+"_@v.raw\n")
+
+	checkJSON := runUpdexCommand(t, "-C", configDir, "--silent", "--json", "features", "check")
+	if checkJSON.err != nil {
+		t.Fatalf("features check --json failed: %v\n%s", checkJSON.err, checkJSON.stderr)
+	}
+	var checked []struct {
+		Feature string           `json:"feature"`
+		Results []map[string]any `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(checkJSON.stdout), &checked); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, checkJSON.stdout)
+	}
+	if len(checked) != 1 || len(checked[0].Results) != 1 {
+		t.Fatalf("unexpected check JSON: %s", checkJSON.stdout)
+	}
+	result := checked[0].Results[0]
+	for key, want := range map[string]any{
+		"component": component, "newest_version": "1.0.0", "update_available": true,
+		"running_version": "", "linked_version": "",
+	} {
+		if got, ok := result[key]; !ok || got != want {
+			t.Errorf("check result %q = %v (present %v), want %v: %s", key, got, ok, want, checkJSON.stdout)
+		}
+	}
+	if _, ok := result["pending_reboot"]; ok {
+		t.Errorf("pending_reboot must be absent when nothing is linked: %s", checkJSON.stdout)
+	}
+
+	listJSON := runUpdexCommand(t, "-C", configDir, "--silent", "--json", "features", "list")
+	if listJSON.err != nil {
+		t.Fatalf("features list --json failed: %v\n%s", listJSON.err, listJSON.stderr)
+	}
+	var listed []struct {
+		Name           string           `json:"name"`
+		Transfers      []string         `json:"transfers"`
+		TransferStatus []map[string]any `json:"transfer_status"`
+	}
+	if err := json.Unmarshal([]byte(listJSON.stdout), &listed); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, listJSON.stdout)
+	}
+	if len(listed) != 1 || len(listed[0].TransferStatus) != 1 {
+		t.Fatalf("unexpected list JSON: %s", listJSON.stdout)
+	}
+	status := listed[0].TransferStatus[0]
+	for key, want := range map[string]any{"component": component, "running_version": "", "linked_version": ""} {
+		if got, ok := status[key]; !ok || got != want {
+			t.Errorf("transfer_status %q = %v (present %v), want %v: %s", key, got, ok, want, listJSON.stdout)
+		}
+	}
+
+	// The text tables carry the new columns.
+	for _, args := range [][]string{{"features", "check"}, {"features", "list"}} {
+		out, err := runUpdex(t, append([]string{"-C", configDir}, args...)...)
+		if err != nil {
+			t.Fatalf("updex %v failed: %v\n%s", args, err, out)
+		}
+		for _, want := range []string{"RUNNING", "LINKED"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("updex %v output missing column %q:\n%s", args, want, out)
+			}
+		}
+		if strings.Contains(out, "PENDING REBOOT") {
+			t.Errorf("updex %v output has a pending marker with nothing linked:\n%s", args, out)
+		}
+	}
+}
+
 // helpLongFlag matches one FLAGS-block line of `updex --help` and captures
 // its long flag name, tolerating an optional shorthand in front of it. Only
 // the leading flag column is considered, so a description mentioning another

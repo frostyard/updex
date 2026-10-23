@@ -3,6 +3,8 @@ package updex
 import (
 	"errors"
 	"fmt"
+	"io"
+	"strings"
 
 	"github.com/frostyard/clix"
 	"github.com/frostyard/updex/v2/updex"
@@ -31,7 +33,8 @@ func runFeaturesList(cmd *cobra.Command, args []string) error {
 	}
 
 	table := newTextTable(out)
-	table.Rowf("FEATURE\tDESCRIPTION\tENABLED\tCATALOG\tTRANSFERS\n")
+	table.Rowf("FEATURE\tDESCRIPTION\tENABLED\tCATALOG\tTRANSFERS\tRUNNING\tLINKED\n")
+	var pending []updex.PendingActivation
 	for _, f := range features {
 		status := "no"
 		if f.Masked {
@@ -51,10 +54,64 @@ func runFeaturesList(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		table.Rowf("%s\t%s\t%s\t%s\t%s\n", f.Name, f.Description, status, formatOrigin(f), transfersStr)
+		running, linked := formatTransferVersions(f.TransferStatus)
+		table.Rowf("%s\t%s\t%s\t%s\t%s\t%s\t%s\n", f.Name, f.Description, status, formatOrigin(f), transfersStr, running, linked)
+
+		for _, ts := range f.TransferStatus {
+			if ts.PendingReboot {
+				pending = append(pending, updex.PendingActivation{
+					Component:      ts.Component,
+					RunningVersion: ts.RunningVersion,
+					LinkedVersion:  ts.LinkedVersion,
+				})
+			}
+		}
 	}
 
-	return table.Flush()
+	// Both failures matter: see runFeaturesUpdate.
+	return errors.Join(table.Flush(), writePendingReboot(out, pending))
+}
+
+// formatTransferVersions renders a feature's per-transfer versions for the
+// RUNNING and LINKED columns. One transfer shows its value. Several show one
+// value per transfer, in the order of the TRANSFERS column, joined by ", ".
+// "-" stands for no version (not merged, or not linked), and "error" for a
+// transfer whose merged state or link could not be read (the SDK warns).
+// A feature with no transfers shows "-".
+func formatTransferVersions(statuses []updex.TransferStatus) (running, linked string) {
+	if len(statuses) == 0 {
+		return "-", "-"
+	}
+	runs := make([]string, len(statuses))
+	links := make([]string, len(statuses))
+	for i, s := range statuses {
+		runs[i], links[i] = dashIfEmpty(s.RunningVersion), dashIfEmpty(s.LinkedVersion)
+		if s.Error != "" {
+			runs[i], links[i] = "error", "error"
+		}
+	}
+	return strings.Join(runs, ", "), strings.Join(links, ", ")
+}
+
+func dashIfEmpty(v string) string {
+	if v == "" {
+		return "-"
+	}
+	return v
+}
+
+// writePendingReboot prints the footer that marks sysexts whose linked
+// version is not the running one: they take effect at the next boot (or the
+// next systemd-sysext refresh). It prints nothing when pending is empty.
+func writePendingReboot(out io.Writer, pending []updex.PendingActivation) error {
+	if len(pending) == 0 {
+		return nil
+	}
+	items := make([]string, len(pending))
+	for i, p := range pending {
+		items[i] = p.String()
+	}
+	return writeLine(out, fmt.Sprintf("PENDING REBOOT: %d sysext(s) linked to a version that is not running: %s", len(pending), strings.Join(items, ", ")))
 }
 
 // formatOrigin renders a feature's origin for the CATALOG column: a bare
@@ -304,7 +361,8 @@ func runFeaturesCheck(cmd *cobra.Command, args []string) error {
 	}
 
 	table := newTextTable(out)
-	table.Rowf("FEATURE\tCOMPONENT\tCURRENT\tNEWEST\tUPDATE\n")
+	table.Rowf("FEATURE\tCOMPONENT\tCURRENT\tRUNNING\tLINKED\tNEWEST\tUPDATE\n")
+	var pending []updex.PendingActivation
 	for _, fr := range results {
 		for _, r := range fr.Results {
 			current := r.CurrentVersion
@@ -325,11 +383,18 @@ func runFeaturesCheck(cmd *cobra.Command, args []string) error {
 			case r.UpdateAvailable:
 				update = "yes"
 			}
-			table.Rowf("%s\t%s\t%s\t%s\t%s\n", fr.Feature, r.Component, current, newest, update)
+			table.Rowf("%s\t%s\t%s\t%s\t%s\t%s\t%s\n", fr.Feature, r.Component, current, dashIfEmpty(r.RunningVersion), dashIfEmpty(r.LinkedVersion), newest, update)
+			if r.PendingReboot {
+				pending = append(pending, updex.PendingActivation{
+					Component:      r.Component,
+					RunningVersion: r.RunningVersion,
+					LinkedVersion:  r.LinkedVersion,
+				})
+			}
 		}
 	}
 
 	// See runFeaturesUpdate: the SDK error and the output error are reported
 	// together so neither is lost.
-	return errors.Join(err, table.Flush())
+	return errors.Join(err, table.Flush(), writePendingReboot(out, pending))
 }
