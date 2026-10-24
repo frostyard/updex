@@ -2,6 +2,7 @@ package imagecompat
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -76,6 +77,15 @@ var (
 	ErrReleaseFileTooLarge = errors.New("extension-release file is too large")
 )
 
+// ReadOptions configures ReadExtensionRelease.
+type ReadOptions struct {
+	// ErofsDumpRunner reads a compressed EROFS image, which go-erofs cannot
+	// open, with the erofs-utils "dump.erofs" program. The zero value uses
+	// DefaultErofsDumpRunner; a host without dump.erofs >= 1.8.5 then fails
+	// closed. updex passes ClientConfig.ErofsDumpRunner here.
+	ErofsDumpRunner ErofsDumpRunner
+}
+
 // ReadExtensionRelease reads and parses the extension-release file of the
 // staged sysext image at path, without mounting the image.
 //
@@ -86,23 +96,33 @@ var (
 // is an EROFS candidate only when its superblock at offset 1024 has the
 // EROFS magic; a region without the magic is skipped.
 //
-// The call fails closed once a candidate has the EROFS magic: such a
-// candidate that gives no release file yields ErrUnreadableRelease,
-// ErrNoExtensionRelease, ErrAmbiguousExtensionRelease or
-// ErrReleaseFileTooLarge, never ErrUnsupportedImage. When several candidates
-// have the magic, the first one that gives a release file is used; when none
-// does, the error of the first EROFS candidate is returned. Only when no
-// candidate has the magic is the error ErrUnsupportedImage.
+// An uncompressed candidate is read with the pure-Go reader (go-erofs). A
+// compressed candidate, which go-erofs refuses, is read with the erofs-utils
+// program that ReadOptions.ErofsDumpRunner runs, so a compressed image is
+// checked too instead of being skipped. That fallback needs erofs-utils >=
+// 1.8.5; without it, or when it fails, the read fails closed with an error
+// that wraps ErrUnreadableRelease or ErrReleaseFileTooLarge, and never
+// ErrUnsupportedImage.
 //
-// In usr/lib/extension-release.d, a single extension-release.* file is used.
-// When there are several, the file named extension-release.<name> is used;
-// without a match the call fails with ErrAmbiguousExtensionRelease.
+// Once a candidate has the EROFS magic, its failures are fail-closed errors:
+// ErrUnreadableRelease, ErrReleaseFileTooLarge, ErrNoExtensionRelease,
+// ErrAmbiguousExtensionRelease, ErrErofsToolUnavailable, or a plain error
+// from the fallback's runner. When several candidates have the magic, the
+// first one that gives a release file is used; when none does, the error of
+// the first EROFS candidate is returned. Only when no candidate has the
+// magic is the error ErrUnsupportedImage.
+//
+// In usr/lib/extension-release.d, a single extension-release.* regular file
+// is used. When there are several, the file named extension-release.<name>
+// is used; without a match the call fails with
+// ErrAmbiguousExtensionRelease.
 //
 // The image is treated as untrusted input even though its SHA256 was
 // verified: every read is bounded, the GPT values must point inside the
-// file, at most 16 partitions are opened, and the extension-release file
-// must not be larger than MaxReleaseFileSize.
-func ReadExtensionRelease(path, name string) (map[string]string, error) {
+// file, at most 16 partitions are opened, the extension-release file must
+// not be larger than MaxReleaseFileSize, and the fallback validates every
+// directory entry name that the tool lists before it uses it in a path.
+func ReadExtensionRelease(ctx context.Context, path, name string, opts ReadOptions) (map[string]string, error) {
 	f, size, err := openRegular(path)
 	if err != nil {
 		return nil, err
@@ -113,12 +133,22 @@ func ReadExtensionRelease(path, name string) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	fallback := &erofsFallback{runner: opts.ErofsDumpRunner}
+	if fallback.runner == nil {
+		fallback.runner = DefaultErofsDumpRunner{}
+	}
 	var firstErr error
 	for _, r := range regions {
 		if !hasEROFSMagic(f, r) {
 			continue
 		}
-		release, err := readCandidateRelease(f, r, name)
+		var release map[string]string
+		var err error
+		if compressedSuperblock(f, r) {
+			release, err = fallback.readRelease(ctx, f, path, r, name)
+		} else {
+			release, err = readCandidateRelease(f, r, name)
+		}
 		if err == nil {
 			return release, nil
 		}
@@ -207,19 +237,24 @@ func openRegular(path string) (*os.File, int64, error) {
 }
 
 // pickReleaseFile selects the extension-release file name from the entries
-// of usr/lib/extension-release.d.
+// of usr/lib/extension-release.d that the pure-Go reader listed. Directories
+// are not files; the other rules are those of pickReleaseName.
 func pickReleaseFile(entries []fs.DirEntry, name string) (string, error) {
 	var candidates []string
 	for _, e := range entries {
-		n := e.Name()
-		if !strings.HasPrefix(n, extensionReleasePrefix) || len(n) == len(extensionReleasePrefix) {
+		if e.IsDir() || !isReleaseName(e.Name()) {
 			continue
 		}
-		if e.IsDir() {
-			continue
-		}
-		candidates = append(candidates, n)
+		candidates = append(candidates, e.Name())
 	}
+	return pickReleaseName(candidates, name)
+}
+
+// pickReleaseName selects the extension-release file to read from the names
+// of the regular extension-release files in usr/lib/extension-release.d: the
+// only one, or the one named extension-release.<name> when there are several.
+// The pure-Go reader and the dump.erofs fallback share these rules.
+func pickReleaseName(candidates []string, name string) (string, error) {
 	switch len(candidates) {
 	case 0:
 		return "", ErrNoExtensionRelease
@@ -234,6 +269,12 @@ func pickReleaseFile(entries []fs.DirEntry, name string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("%w (%d files)", ErrAmbiguousExtensionRelease, len(candidates))
+}
+
+// isReleaseName reports whether n is an "extension-release.<x>" name with
+// something after the prefix.
+func isReleaseName(n string) bool {
+	return strings.HasPrefix(n, extensionReleasePrefix) && len(n) > len(extensionReleasePrefix)
 }
 
 // readBounded reads a file of the image and refuses one larger than

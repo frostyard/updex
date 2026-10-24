@@ -635,7 +635,9 @@ revision needs at most the base the host already runs.
   every later problem is an error that does not match `ErrUnsupportedImage`:
   a failed EROFS open, a missing `usr/lib/extension-release.d`
   (`ErrNoExtensionRelease`), a release file that cannot be opened, inspected
-  or read or a recovered parser panic (`ErrUnreadableRelease`), a file over
+  or read or a recovered parser panic (`ErrUnreadableRelease`), a compressed
+  image whose `dump.erofs` fallback is missing, older than erofs-utils 1.8.5,
+  or fails (`ErrErofsToolUnavailable`, `ErrUnreadableRelease`), a file over
   64 KiB (`ErrReleaseFileTooLarge`). Such an image is snosi-shaped and cannot
   be judged; a silent fallback to the booted os-release could be older than
   the staged image and link a revision that breaks the next boot.
@@ -870,18 +872,72 @@ the file in pure Go, with plain `ReadAt` on the staged file:
    inside the file becomes a candidate (at most 16 are opened); no GUID filter,
    because snosi uses the root partition types but another builder may not.
    Without a GPT, the whole file is the candidate (a bare EROFS image).
-3. Open each candidate with `github.com/erofs/go-erofs` through an
-   `io.SectionReader` (so the filesystem cannot read outside its partition);
-   the first one that has `usr/lib/extension-release.d` wins.
-4. Pick the file: the only `extension-release.*`, else the one named
+3. Read each candidate that has the magic. An uncompressed filesystem is
+   opened with `github.com/erofs/go-erofs` through an `io.SectionReader` (so
+   the filesystem cannot read outside its partition); the first candidate
+   that has `usr/lib/extension-release.d` wins. go-erofs refuses a compressed
+   filesystem (`unsupported compressed filesystem`), so a compressed
+   candidate is read with the erofs-utils `dump.erofs` program instead, which
+   prints a file out of an image without mounting it.
+4. Pick the file: the only regular `extension-release.*`, else the one named
    `extension-release.<name>`; read it with a 64 KiB cap and parse it with
-   `ParseOSRelease`.
+   `ParseOSRelease`. Both readers apply these rules.
 
-An image that is not GPT-with-EROFS or bare EROFS (for example squashfs, or
-EROFS with internal compression, which go-erofs does not read) returns
-`ErrUnsupportedImage`; the caller decides. The image's SHA256 was verified
-earlier, but the reader treats it as untrusted: a parser panic is turned into
-an error, so one bad image cannot end the run for the other features.
+**Compression, decided from the superblock, not from an error message.** The
+candidate is compressed when the EROFS superblock's `feature_incompat` (a
+little-endian uint32 at byte 80) has `EROFS_FEATURE_INCOMPAT_LZ4_0PADDING`
+(0x1) or `EROFS_FEATURE_INCOMPAT_COMPR_CFGS` (0x2), or when
+`available_compr_algs` (a little-endian uint16 at byte 84, a union with
+`lz4_max_distance`) is not zero. mkfs.erofs writes `feature_incompat=0x1,
+available_compr_algs=0xffff` for lz4/lz4hc and `0x3, 0x8` for zstd, and
+nothing for an uncompressed image. Reading the fields is deterministic and
+does not depend on go-erofs' wording. An uncompressed image always takes the
+pure-Go path: all frostyard sysexts are uncompressed, so the fallback only
+runs for an image that would otherwise fail.
+
+**The `dump.erofs` fallback.** `imagecompat.ErofsDumpRunner` is the seam.
+`DefaultErofsDumpRunner` runs the real program found in `PATH`;
+`updex.ClientConfig.ErofsDumpRunner` carries one runner per client, and the
+link gate, the refresh gate and the status reads (`features list`,
+`features check`) all pass it to `imagecompat.ReadExtensionRelease`. The
+command is `dump.erofs --offset=<partition offset> --cat
+--path=/usr/lib/extension-release.d/extension-release.<name> <image>`; the
+name comes from `dump.erofs --offset=<n> --ls
+--path=/usr/lib/extension-release.d <image>` first, so a directory or a
+symbolic link named like the release file is never printed as the file.
+
+The subprocess is bounded and cancellable:
+
+- `exec.CommandContext` with the caller's context kills it, and
+  `WaitDelay` (2 s) keeps a killed tool that still holds the pipe from hanging
+  the caller; one command is also capped at two minutes, because the timer
+  runs with no deadline of its own. No shell is used.
+- The environment is minimal: `PATH` and `LC_ALL=C`, so the messages and the
+  version line have one form whatever the caller's locale.
+- Output limits: 64 KiB for `--cat` (the same as `MaxReleaseFileSize`,
+  beyond which the read is `ErrReleaseFileTooLarge`), 256 KiB for `--ls`
+  (`MaxErofsDumpListSize`), 4 KiB for `-V`. Over a bound fails closed.
+- erofs-utils prints some failures on stderr and still exits 0 (a missing
+  inode is `<E> erofs: read inode failed @ <path>`), so a stderr line that
+  starts with `<E>` is an error; `<W>` lines are ignored.
+- `dump.erofs -V` runs before the first use and must report at least
+  `ErofsUtilsMinVersion` (1.8.5, which added `--cat`; `--offset` and `--ls`
+  came with 1.8). An older or unparseable version fails closed with
+  `dump.erofs <version> is too old; erofs-utils >= 1.8.5 is required to read
+  compressed EROFS images`.
+- Every name that `--ls` lists is validated before it reaches a path:
+  printable ASCII, no `/`, at most 255 bytes; `../x` or `a/b` fails closed.
+- `dump.erofs` opens the image path itself, so after the read the path must
+  still name the file the caller opened (`os.SameFile`); a swap fails closed.
+
+An image that is not GPT-with-EROFS or bare EROFS (for example squashfs)
+returns `ErrUnsupportedImage`; the caller decides. A compressed EROFS image
+is not an unsupported image: it is read through the fallback, and a host
+without a new enough `dump.erofs` fails closed with `ErrErofsToolUnavailable`
+rather than skipping the check. The image's SHA256 was verified earlier, but
+both readers treat it as untrusted: a parser panic in go-erofs is turned into
+an error and every fallback output is bounded and validated, so one bad image
+cannot end the run for the other features.
 
 `NextBootImageVersion` does not mount either: it runs `bootc status --json`
 and reads `.status.staged.image.version` (bootc's `Host` schema:

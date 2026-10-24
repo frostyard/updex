@@ -290,6 +290,16 @@ type ClientConfig struct {
 	// UPDEX_MIN_IMAGE_VERSION. Set this in tests to inject a fake.
 	BootcRunner imagecompat.BootcRunner
 
+	// ErofsDumpRunner is an optional runner for the erofs-utils
+	// "dump.erofs" program, which reads the extension-release file of a
+	// compressed EROFS image without mounting it (ADR-0016). go-erofs reads
+	// uncompressed images; a compressed one is read through this runner. If
+	// nil, the real dump.erofs found in PATH is used, and a missing or too
+	// old one (erofs-utils < 1.8.5) makes the minimum image version check
+	// fail closed with imagecompat.ErrErofsToolUnavailable. One runner per
+	// client; set this in tests to inject a fake.
+	ErofsDumpRunner imagecompat.ErofsDumpRunner
+
 	// SystemdManager is an optional manager for systemd unit files and
 	// systemctl operations. If nil, a production manager for
 	// /etc/systemd/system and the real systemctl command is used. Tests can
@@ -338,6 +348,11 @@ func NewClient(cfg ClientConfig) *Client {
 	if hc == nil {
 		hc = httpclient.New(10 * time.Minute)
 	}
+	er := cfg.ErofsDumpRunner
+	if er == nil {
+		er = imagecompat.DefaultErofsDumpRunner{}
+	}
+	cfg.ErofsDumpRunner = er
 	return &Client{
 		config:     cfg,
 		paths:      resolveRuntimePaths(cfg.Paths),

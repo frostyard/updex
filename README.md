@@ -43,6 +43,18 @@ workflow, rather than trusting only a checksum served alongside it. The
 The packaged CLI needs no Go toolchain. It needs a systemd-based Linux system
 with `systemd-sysext`; commands that modify system state require root.
 
+The packages for deb, rpm and apk depend on `erofs-utils >= 1.8.5`. A
+standalone binary from the tarball needs it on the host when a configured
+sysext ships a **compressed** EROFS image: updex reads that image's
+`extension-release` file with `dump.erofs` from erofs-utils, without mounting
+the image, because the pure-Go reader handles uncompressed images only. All
+frostyard sysexts are uncompressed, so an uncompressed-only setup needs
+nothing. Without a new enough `dump.erofs`, an update of a compressed sysext
+fails closed: nothing is linked, and the error says
+`erofs-utils >= 1.8.5 is required to read compressed EROFS images; install
+erofs-utils`. See the
+[packaging and maintainer guide](docs/design/packaging-and-maintainers.md).
+
 ### Build from source
 
 With [Go 1.26.10](https://go.dev/doc/install) and `make`, run `make build` to
@@ -236,6 +248,10 @@ the same for a staged image that is not linked: `needs image >= <value>` in the
 download, so they cannot tell about a newer image that is only published.
 Without the key nothing changes. An image with no EROFS filesystem at all (for
 example a squashfs sysext from another catalog) is treated as having no key.
+An uncompressed EROFS image is read in pure Go. A compressed one is read with
+`dump.erofs` from erofs-utils >= 1.8.5, which prints the file out of the image;
+a host without that fails closed for such an image instead of skipping the
+check (see [Installation](#installation)).
 
 **The link and an immediate refresh are checked against different images.**
 The link is what the next boot merges, so it is checked against the next-boot
@@ -261,9 +277,10 @@ command instead, changes nothing, and tells you to run it without `--now` and
 reboot. The timer runs with `--no-refresh` and is unchanged.
 An image that has an EROFS filesystem but whose extension-release file cannot
 be read (a failed EROFS open, a failed open, stat or read of the file, a
-missing file, several without a match, over 64 KiB), an image the link step
-could not resolve, or a `bootc` that is installed but fails, is an error for
-the features concerned: nothing is linked for them. A queued rollback whose
+missing file, several without a match, over 64 KiB, or a compressed image
+whose `dump.erofs` fallback is missing, too old or fails), an image the link
+step could not resolve, or a `bootc` that is installed but fails, is an error
+for the features concerned: nothing is linked for them. A queued rollback whose
 version `bootc` does not report is an error too.
 
 **What the vacuum keeps:** after the links succeeded, `features update`

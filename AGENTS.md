@@ -44,6 +44,10 @@ repo-specific guidance belongs in this file or `docs/`:
   pin; CI, `mise`, and Snowcat workers all read it — the module's minimum is
   `go 1.26.6`)
 - `make`
+- Optional for the end-to-end compressed-image test:
+  [`erofs-utils`](https://git.kernel.org/pub/scm/linux/kernel/git/xiang/erofs-utils.git)
+  >= 1.8.5 (`mkfs.erofs` and `dump.erofs`). The unit tests use a fake
+  `dump.erofs` runner and skip this test when the tools are absent.
 - Optional: [`mise`](https://mise.jdx.dev/) to provision every other pinned
   tool: `mise install` reads [`mise.toml`](mise.toml) and verifies each
   download against [`mise.lock`](mise.lock) (core ADR-0043). Today that is
@@ -220,7 +224,7 @@ Key packages:
 - `version/` — Pattern matching (`@v` placeholder) and semantic version comparison
 - `sysext/` — systemd-sysext integration with mockable `Runner` interface, `/var/lib/extensions` link management, and the vacuum (`VacuumWith`/`PlanVacuumWith` over `VacuumPaths`: it keeps the linked and the merged version, see "Feature install and retention" below)
 - `systemd/` — Generates/installs systemd timer+service units, mockable `Runner` interface
-- `imagecompat/` — Minimum-image-version check (ADR-0016): reads `extension-release.*` from a staged sysext image without mounting it (pure-Go GPT + EROFS reader, `ReadExtensionRelease`), finds the next-boot `IMAGE_VERSION` (`NextBootImageVersion`: `bootc status --json` through the mockable `BootcRunner`, else the booted `os-release`) and the running one (`BootedImageVersion`, os-release only, no bootc) and compares both as numbers (`CheckMinImageVersion`, key `UPDEX_MIN_IMAGE_VERSION`). No CLI imports; treats the image as untrusted input
+- `imagecompat/` — Minimum-image-version check (ADR-0016): reads `extension-release.*` from a staged sysext image without mounting it (pure-Go GPT + EROFS reader for uncompressed images, `dump.erofs` fallback for compressed ones, `ReadExtensionRelease`), finds the next-boot `IMAGE_VERSION` (`NextBootImageVersion`: `bootc status --json` through the mockable `BootcRunner`, else the booted `os-release`) and the running one (`BootedImageVersion`, os-release only, no bootc) and compares both as numbers (`CheckMinImageVersion`, key `UPDEX_MIN_IMAGE_VERSION`). No CLI imports; treats the image as untrusted input
 - `internal/retry/`, `internal/httpclient/`, `internal/testutil/` — HTTP retry policy, the shared default-HTTP-client constructor (`internal/httpclient.New`; enforces the HTTPS-to-HTTP redirect downgrade refusal used by `updex.NewClient`, `manifest.Fetch`, and `download.Download` when no caller-supplied client is given), and shared test helpers (HTTP test server)
 
 Entry point: `cmd/updex-cli/main.go` → `cmd/updex/root.go`
@@ -288,7 +292,11 @@ afterwards.
 | `github.com/ulikunitz/xz`                 | XZ decompression            |
 | `github.com/klauspost/compress/zstd`      | Zstd decompression          |
 | `github.com/ProtonMail/go-crypto/openpgp` | GPG verification            |
-| `github.com/erofs/go-erofs`               | Read an EROFS sysext image without mounting it (`imagecompat/`; pure Go, Apache-2.0) |
+| `github.com/erofs/go-erofs`               | Read an uncompressed EROFS sysext image without mounting it (`imagecompat/`; pure Go, Apache-2.0) |
+
+Runtime, not a Go dependency: `erofs-utils` >= 1.8.5 (`dump.erofs`) reads a
+compressed EROFS image (`imagecompat/`). The packages declare it; a standalone
+binary needs it on the host. The unit tests do not run it.
 
 ### CLI commands
 
@@ -446,6 +454,37 @@ in the `config/` structs and parse functions. Always finish with
   `ClientConfig.BootcRunner` (nil = the real bootc; tests inject a fake, never
   the real one). `CheckFeatures` and `Features` run the same gate read-only
   for a staged unlinked image.
+- **Compressed EROFS images: `dump.erofs` fallback, fail closed**
+  (`imagecompat/erofs.go`). go-erofs reads uncompressed EROFS only and refuses
+  a compressed filesystem at open. A candidate whose superblock says it is
+  compressed (`feature_incompat` at superblock byte 80 has
+  `LZ4_0PADDING`/`COMPR_CFGS`, or `available_compr_algs` at byte 84 is not
+  zero) is read with the erofs-utils `dump.erofs` program instead: `--ls` the
+  release directory, validate every listed name, then `--cat` the selected
+  file, all through `imagecompat.ErofsDumpRunner`
+  (`ClientConfig.ErofsDumpRunner`, nil = `DefaultErofsDumpRunner`, one runner
+  per client, passed to the link gate, the refresh gate and the status
+  reads). The command runs with `exec.CommandContext` (the caller's context,
+  a two-minute cap, `WaitDelay` 2 s), no shell, a minimal env (`PATH`,
+  `LC_ALL=C`), and bounds:
+  64 KiB for `--cat` (`MaxReleaseFileSize`), `MaxErofsDumpListSize` (256 KiB)
+  for `--ls`, 4 KiB for `-V`. `dump.erofs -V` runs before the first use and
+  must be at least `imagecompat.ErofsUtilsMinVersion` (1.8.5, which added
+  `--cat`; `--offset` and `--ls` came with 1.8). Missing, too old, failing,
+  timed out, oversized, or a name that is not printable ASCII without a slash
+  all fail closed: the error wraps `ErrUnreadableRelease` (and
+  `ErrErofsToolUnavailable` for missing/too old) and never
+  `ErrUnsupportedImage`, so the check is never silently skipped. A `<E>` line
+  on the tool's stderr is an error even with exit status 0, and the image path
+  must still name the opened file after the read (`os.SameFile`). Tests use a
+  fake runner (or a stand-in `dump.erofs` script); the end-to-end test runs
+  real `mkfs.erofs -zlz4hc` and `dump.erofs` when the host has erofs-utils >=
+  1.8.5 and skips otherwise.
+- **Packaging dependency.** The deb, rpm and apk packages declare
+  `erofs-utils` >= 1.8.5 (`.goreleaser.yaml` `nfpms.depends` and per-format
+  `overrides`, one syntax each); `updex/packaging_erofs_contract_test.go` pins
+  all three against `imagecompat.ErofsUtilsMinVersion`. The standalone binary
+  needs erofs-utils on the host for a compressed sysext only.
 - **Refresh gate: the running image, checked before every refresh updex
   runs** (`refreshGate` in `updex/imagegate.go`; ADR-0016). The link gate above
   asks whether the *next boot* can run a link; a `systemd-sysext refresh`

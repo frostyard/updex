@@ -563,7 +563,7 @@ func (c *Client) RollbackFeature(ctx context.Context, name string, opts Rollback
 				links = append(links, refreshLink{component: p.transfer.Component, transfer: p.transfer, version: p.entry.ToVersion})
 			}
 			links = append(links, activationLinks(pendingLinks)...)
-			if blocker := c.refreshGate(links, &runningImage{}); blocker != nil {
+			if blocker := c.refreshGate(ctx, links, &runningImage{}); blocker != nil {
 				result.RefreshSkipped = blocker.skipped()
 				c.warn("%s", result.RefreshSkipped)
 			}
@@ -633,7 +633,7 @@ func (c *Client) RollbackFeature(ctx context.Context, name string, opts Rollback
 		pendingLinks := c.pendingActivationLinks(transfers, featureTransfers)
 		result.PendingActivations = activationsOf(pendingLinks)
 		c.warnPendingActivations(result.PendingActivations, false)
-		if blocker := c.refreshGateFor(featureTransfers, pendingLinks, &runningImage{}); blocker != nil {
+		if blocker := c.refreshGateFor(ctx, featureTransfers, pendingLinks, &runningImage{}); blocker != nil {
 			result.RefreshSkipped = blocker.skipped()
 			c.warn("%s", result.RefreshSkipped)
 		} else {

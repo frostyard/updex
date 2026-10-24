@@ -123,7 +123,7 @@ func TestReadExtensionRelease(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ReadExtensionRelease(writeImage(t, tt.image), tt.hint)
+			got, err := ReadExtensionRelease(t.Context(), writeImage(t, tt.image), tt.hint, ReadOptions{})
 			if tt.wantErr != nil {
 				if !errors.Is(err, tt.wantErr) {
 					t.Fatalf("error = %v, want %v", err, tt.wantErr)
@@ -153,16 +153,16 @@ func TestReadExtensionReleaseRefusesNonRegular(t *testing.T) {
 	if err := os.Symlink(image, link); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ReadExtensionRelease(link, "tool"); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+	if _, err := ReadExtensionRelease(t.Context(), link, "tool", ReadOptions{}); err == nil || !strings.Contains(err.Error(), "not a regular file") {
 		t.Errorf("symlink: error = %v, want a refusal", err)
 	}
-	if _, err := ReadExtensionRelease(dir, "tool"); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+	if _, err := ReadExtensionRelease(t.Context(), dir, "tool", ReadOptions{}); err == nil || !strings.Contains(err.Error(), "not a regular file") {
 		t.Errorf("directory: error = %v, want a refusal", err)
 	}
-	if _, err := ReadExtensionRelease(filepath.Join(dir, "missing.raw"), "tool"); !errors.Is(err, os.ErrNotExist) {
+	if _, err := ReadExtensionRelease(t.Context(), filepath.Join(dir, "missing.raw"), "tool", ReadOptions{}); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("missing file: error = %v, want not-exist", err)
 	}
-	if _, err := ReadExtensionRelease(image, "tool"); err != nil {
+	if _, err := ReadExtensionRelease(t.Context(), image, "tool", ReadOptions{}); err != nil {
 		t.Errorf("regular file: %v", err)
 	}
 }
@@ -172,7 +172,7 @@ func TestReadExtensionReleaseRefusesNonRegular(t *testing.T) {
 func TestReadExtensionReleaseTruncated(t *testing.T) {
 	image := testutil.BuildGPT(t, testutil.GPTOptions{}, testutil.GPTPartition{TypeGUID: testutil.RootX86GUID, Data: testutil.BuildEROFS(t, testutil.SysextFiles("tool", "SYSEXT_ID=tool\n"))})
 	for cut := 1 << 20; cut < len(image); cut += 4096 {
-		_, err := ReadExtensionRelease(writeImage(t, image[:cut]), "tool")
+		_, err := ReadExtensionRelease(t.Context(), writeImage(t, image[:cut]), "tool", ReadOptions{})
 		if err == nil {
 			t.Fatalf("cut at %d: read succeeded", cut)
 		}
@@ -186,7 +186,7 @@ func TestReadExtensionReleaseRealImage(t *testing.T) {
 	if _, err := os.Stat(path); err != nil {
 		t.Skipf("no real image: %v", err)
 	}
-	got, err := ReadExtensionRelease(path, "1password-cli")
+	got, err := ReadExtensionRelease(t.Context(), path, "1password-cli", ReadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,7 @@ func TestReadExtensionReleaseUnreadableFile(t *testing.T) {
 			replaceOpenEROFS(t, func(io.ReaderAt) (fs.FS, error) {
 				return brokenReleaseFS{step: step}, nil
 			})
-			_, err := ReadExtensionRelease(writeImage(t, image), "tool")
+			_, err := ReadExtensionRelease(t.Context(), writeImage(t, image), "tool", ReadOptions{})
 			wantFailClosed(t, err)
 		})
 	}
@@ -297,7 +297,7 @@ func TestReadExtensionReleaseUnreadableFile(t *testing.T) {
 		replaceOpenEROFS(t, func(io.ReaderAt) (fs.FS, error) {
 			return nil, errors.New("injected EROFS open failure")
 		})
-		_, err := ReadExtensionRelease(writeImage(t, image), "tool")
+		_, err := ReadExtensionRelease(t.Context(), writeImage(t, image), "tool", ReadOptions{})
 		wantFailClosed(t, err)
 	})
 }
@@ -307,7 +307,7 @@ func TestReadExtensionReleaseUnreadableFile(t *testing.T) {
 func TestReadExtensionReleaseParserPanic(t *testing.T) {
 	image := testutil.BuildEROFS(t, testutil.SysextFiles("tool", "SYSEXT_ID=tool\n"))
 	replaceOpenEROFS(t, func(io.ReaderAt) (fs.FS, error) { panic("injected parser panic") })
-	_, err := ReadExtensionRelease(writeImage(t, image), "tool")
+	_, err := ReadExtensionRelease(t.Context(), writeImage(t, image), "tool", ReadOptions{})
 	wantFailClosed(t, err)
 }
 
@@ -326,7 +326,7 @@ func TestReadExtensionReleaseNoParserWithoutMagic(t *testing.T) {
 	squashfs := make([]byte, 64<<10)
 	copy(squashfs, "hsqs")
 	for name, image := range map[string][]byte{"random bytes": noise, "squashfs": squashfs} {
-		_, err := ReadExtensionRelease(writeImage(t, image), "tool")
+		_, err := ReadExtensionRelease(t.Context(), writeImage(t, image), "tool", ReadOptions{})
 		if !errors.Is(err, ErrUnsupportedImage) {
 			t.Errorf("%s: error = %v, want ErrUnsupportedImage", name, err)
 		}
@@ -357,7 +357,7 @@ func TestReadExtensionReleaseLaterCandidateWins(t *testing.T) {
 	}
 	t.Cleanup(func() { openEROFS = prev })
 
-	got, err := ReadExtensionRelease(writeImage(t, image), "tool")
+	got, err := ReadExtensionRelease(t.Context(), writeImage(t, image), "tool", ReadOptions{})
 	if err != nil {
 		t.Fatalf("error = %v, want the second partition's release file", err)
 	}

@@ -33,6 +33,12 @@ import (
 // run, so every refresh updex runs is gated separately against the running
 // image version (see refreshGate).
 
+// readOptions builds the imagecompat options that read an extension-release
+// file with this client's dump.erofs runner (imagecompat.ReadOptions).
+func (c *Client) readOptions() imagecompat.ReadOptions {
+	return imagecompat.ReadOptions{ErofsDumpRunner: c.config.ErofsDumpRunner}
+}
+
 // nextBootImage resolves the IMAGE_VERSION of the image that boots next once
 // per operation and keeps the answer, so an operation that meets no image
 // with the key never runs bootc, and one that meets several runs it once.
@@ -80,9 +86,10 @@ type imageGate struct {
 //     that updex could honour; refusing it would stop every non-snosi sysext
 //     from updating.
 //   - Any other read error (an EROFS image whose release file cannot be read,
-//     no extension-release file, several without a match, too large): an
-//     error. This fails closed, because such an image has an EROFS filesystem
-//     and may carry a key updex cannot honour.
+//     no extension-release file, several without a match, too large, or a
+//     compressed EROFS image whose read needs a dump.erofs that is missing or
+//     too old): an error. This fails closed, because such an image has an
+//     EROFS filesystem and may carry a key updex cannot honour.
 //   - No staged image that the link step could link (sysext.LinkTargetAt
 //     fails, for example on a target pattern with a compression suffix): an
 //     error. This fails closed too: the gate never depends on the link step
@@ -103,9 +110,9 @@ func (c *Client) minImageGate(ctx context.Context, feature string, t *config.Tra
 	// The transfer's component names the sysext in snosi's catalog; the
 	// feature name is the second guess when an image holds several
 	// extension-release files.
-	release, err := imagecompat.ReadExtensionRelease(path, t.Component)
+	release, err := imagecompat.ReadExtensionRelease(ctx, path, t.Component, c.readOptions())
 	if errors.Is(err, imagecompat.ErrAmbiguousExtensionRelease) && feature != t.Component {
-		release, err = imagecompat.ReadExtensionRelease(path, feature)
+		release, err = imagecompat.ReadExtensionRelease(ctx, path, feature, c.readOptions())
 	}
 	switch {
 	case errors.Is(err, imagecompat.ErrUnsupportedImage):
@@ -307,9 +314,9 @@ func (b refreshBlocker) skipped() string {
 //
 // The links are only read. Keeping them is always correct for the next boot;
 // this gate decides about activating them now.
-func (c *Client) refreshGate(links []refreshLink, ri *runningImage) *refreshBlocker {
+func (c *Client) refreshGate(ctx context.Context, links []refreshLink, ri *runningImage) *refreshBlocker {
 	for _, link := range links {
-		if b := c.refreshLinkBlocker(link, ri); b != nil {
+		if b := c.refreshLinkBlocker(ctx, link, ri); b != nil {
 			return b
 		}
 	}
@@ -319,7 +326,7 @@ func (c *Client) refreshGate(links []refreshLink, ri *runningImage) *refreshBloc
 // refreshLinkBlocker checks one link and returns nil when the running base
 // can merge it. A link whose state could not be read is blocked: without the
 // merged version, updex cannot tell what the refresh would merge.
-func (c *Client) refreshLinkBlocker(link refreshLink, ri *runningImage) *refreshBlocker {
+func (c *Client) refreshLinkBlocker(ctx context.Context, link refreshLink, ri *runningImage) *refreshBlocker {
 	if link.stateErr != nil {
 		return &refreshBlocker{component: link.component, err: fmt.Errorf("cannot read the state of %s: %w", link.component, link.stateErr)}
 	}
@@ -339,7 +346,7 @@ func (c *Client) refreshLinkBlocker(link refreshLink, ri *runningImage) *refresh
 	// another feature is found through its transfer, not through the feature
 	// name. An image with several extension-release files and no match is a
 	// read error, so it fails closed.
-	release, err := imagecompat.ReadExtensionRelease(path, link.transfer.Component)
+	release, err := imagecompat.ReadExtensionRelease(ctx, path, link.transfer.Component, c.readOptions())
 	switch {
 	case errors.Is(err, imagecompat.ErrUnsupportedImage):
 		c.debug("%s: image format not readable, refresh check skipped: %v", link.component, err)
@@ -397,9 +404,9 @@ func activationLinks(pending []pendingActivationLink) []refreshLink {
 // refreshGateFor is the gate for a command's refresh: the pending links of
 // own (the transfers the command worked on), then the other pending
 // activations that the host-wide refresh merges as well.
-func (c *Client) refreshGateFor(own []*config.Transfer, pending []pendingActivationLink, ri *runningImage) *refreshBlocker {
+func (c *Client) refreshGateFor(ctx context.Context, own []*config.Transfer, pending []pendingActivationLink, ri *runningImage) *refreshBlocker {
 	links := slices.Concat(c.ownPendingLinks(own), activationLinks(pending))
-	return c.refreshGate(links, ri)
+	return c.refreshGate(ctx, links, ri)
 }
 
 // activationsOf returns the report form of pending activations, nil when

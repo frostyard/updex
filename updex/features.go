@@ -356,7 +356,7 @@ func (c *Client) enableFeature(ctx context.Context, name string, opts EnableFeat
 				pendingLinks := c.pendingActivationLinks(transfers, featureTransfers)
 				result.PendingActivations = activationsOf(pendingLinks)
 				c.warnPendingActivations(result.PendingActivations, opts.DryRun)
-				if blocker := c.refreshGateFor(featureTransfers, pendingLinks, &runningImage{}); blocker != nil {
+				if blocker := c.refreshGateFor(ctx, featureTransfers, pendingLinks, &runningImage{}); blocker != nil {
 					result.RefreshSkipped = blocker.skipped()
 					c.warn("%s", result.RefreshSkipped)
 				} else if !opts.DryRun {
@@ -509,7 +509,7 @@ func (c *Client) disableFeature(ctx context.Context, name string, opts DisableFe
 	var pendingLinks []pendingActivationLink
 	if willRemoveFiles && len(featureTransfers) > 0 && !opts.NoRefresh {
 		pendingLinks = c.pendingActivationLinks(transfers, featureTransfers)
-		if blocker := c.refreshGate(activationLinks(pendingLinks), &runningImage{}); blocker != nil {
+		if blocker := c.refreshGate(ctx, activationLinks(pendingLinks), &runningImage{}); blocker != nil {
 			errMsg := fmt.Sprintf("cannot disable %[1]s with --now: %[2]s; run 'updex features disable %[1]s' without --now and reboot. Nothing was changed.", name, blocker.reason())
 			result.Error = errMsg
 			result.NextActionMessage = fmt.Sprintf("Run 'updex features disable %s' without --now and reboot: the refresh after an unmerge would activate a sysext the running image cannot run.", name)
@@ -822,7 +822,7 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 		pendingLinks := c.pendingActivationLinks(transfers, ownTransfers)
 		pending := activationsOf(pendingLinks)
 		c.warnPendingActivations(pending, opts.DryRun)
-		if blocker := c.refreshGateFor(ownTransfers, pendingLinks, &runningImage{}); blocker != nil {
+		if blocker := c.refreshGateFor(ctx, ownTransfers, pendingLinks, &runningImage{}); blocker != nil {
 			refreshSkipped = blocker.skipped()
 			c.warn("%s", refreshSkipped)
 		}

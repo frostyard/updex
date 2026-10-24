@@ -313,6 +313,17 @@ os-release style file; see extension-release.d(5)). The image is read without
 mounting it: a GPT disk image holding an EROFS partition (the snosi shape), or
 a bare EROFS image. `systemd-sysext` ignores the key.
 
+An uncompressed EROFS image is read by the pure-Go reader. A compressed EROFS
+image (lz4, lz4hc, zstd, ...) is read with the erofs-utils `dump.erofs`
+program, which prints the file without mounting. That fallback needs
+erofs-utils **1.8.5** or newer, because it uses `--cat`; `--offset` and `--ls`
+exist since 1.8. A host without a new enough `dump.erofs` cannot check a
+compressed image and fails closed: the feature is not linked and the error
+says `erofs-utils >= 1.8.5 is required to read compressed EROFS images;
+install erofs-utils`. Uncompressed images need no erofs-utils. The packaged
+`updex` (deb, rpm, apk) depends on erofs-utils; a standalone binary needs it
+on the host when any configured sysext ships a compressed image.
+
 | Key | Description |
 |-----|-------------|
 | `UPDEX_MIN_IMAGE_VERSION` | The lowest `IMAGE_VERSION` of the base image that this sysext revision works with ([ADR-0016](../adr/0016-automatic-sysext-updates-apply-at-next-boot.md), "Minimum image version"). Absent: no check. Digits only (`^[0-9]+$`, for example a 14-digit snosi timestamp `20261022021319`); no sign, no space, not empty |
@@ -358,7 +369,8 @@ broken GPT), `imagecompat.ErrUnsupportedImage` says so and the image is
 treated as having no key: it is linked. Once a candidate has the magic, every
 later problem is an error and the feature is not linked: a failed EROFS open,
 a release file that cannot be opened, inspected or read, no release file,
-several without a match, a file over 64 KiB, or a parser failure.
+several without a match, a file over 64 KiB, a parser failure, or a
+compressed image whose `dump.erofs` fallback is missing, too old, or fails.
 
 ## Version Comparison
 

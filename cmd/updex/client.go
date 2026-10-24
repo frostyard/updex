@@ -31,6 +31,12 @@ var systemdManager *systemd.Manager
 // setRuntimePaths, so no handler test reads the host's merged-sysext state.
 var runtimePaths updex.RuntimePaths
 
+// erofsDumpRunner is the dump.erofs runner handed to every CLI-constructed
+// client (the compressed-image fallback of the minimum image version check,
+// ADR-0016). It stays nil in production so the SDK runs the real dump.erofs;
+// tests set a fake, so no test depends on the host's erofs-utils.
+var erofsDumpRunner imagecompat.ErofsDumpRunner
+
 // bootcRunner is the bootc runner handed to every CLI-constructed client (the
 // minimum image version check, ADR-0016). It stays nil in production so the
 // SDK runs the real bootc; tests set a fake, so no test runs bootc.
@@ -39,14 +45,15 @@ var bootcRunner imagecompat.BootcRunner
 // newClient creates a new updex client with the appropriate progress reporter.
 func newClient() *updex.Client {
 	clientConfig := updex.ClientConfig{
-		Definitions:    definitions,
-		Verify:         verify,
-		Verbose:        clix.Verbose,
-		Progress:       clix.NewReporter(),
-		SysextRunner:   sysextRunner,
-		BootcRunner:    bootcRunner,
-		SystemdManager: systemdManager,
-		Paths:          runtimePaths,
+		Definitions:     definitions,
+		Verify:          verify,
+		Verbose:         clix.Verbose,
+		Progress:        clix.NewReporter(),
+		SysextRunner:    sysextRunner,
+		BootcRunner:     bootcRunner,
+		ErofsDumpRunner: erofsDumpRunner,
+		SystemdManager:  systemdManager,
+		Paths:           runtimePaths,
 	}
 	if !clix.JSONOutput && !clix.Silent {
 		clientConfig.OnDownloadProgress = newProgressBar
