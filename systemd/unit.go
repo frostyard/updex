@@ -64,6 +64,19 @@ type ServiceConfig struct {
 // /var/lib/extensions.d staging directory, the /var/lib/extensions link
 // directory, and hand-written transfers with a Target.Path elsewhere under
 // /var keep working. No CapabilityBoundingSet is set.
+//
+// The syscall filter allows @mount in addition to @system-service, because
+// the minimum image version check (ADR-0016) runs "bootc status --json", and
+// bootc remounts /sysroot read-write with mount(8) for that command
+// (frostyard/updex#463). Without @mount, seccomp kills that mount with SIGSYS
+// and the check fails closed on every run. The remount stays in the service's
+// own mount namespace: ProtectSystem= gives the service one, systemd does not
+// propagate mounts from it to the host, and bootc then uses it instead of
+// unsharing its own (which RestrictNamespaces=yes would refuse). @mount does
+// not widen what a compromised updex can do on the host: it runs as root,
+// can reach the systemd manager over AF_UNIX, and links sysext images that
+// systemd-sysext merges into /usr. The sandbox contains bugs, not an
+// attacker with code execution in updex.
 var SandboxDirectives = []string{
 	"NoNewPrivileges=yes",
 	"ProtectSystem=full",
@@ -82,7 +95,7 @@ var SandboxDirectives = []string{
 	"MemoryDenyWriteExecute=yes",
 	"SystemCallArchitectures=native",
 	"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
-	"SystemCallFilter=@system-service",
+	"SystemCallFilter=@system-service @mount",
 }
 
 // writeComment writes comment as the first line of a unit file when it is
