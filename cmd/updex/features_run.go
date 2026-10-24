@@ -36,6 +36,7 @@ func runFeaturesList(cmd *cobra.Command, args []string) error {
 	table.Rowf("FEATURE\tDESCRIPTION\tENABLED\tCATALOG\tTRANSFERS\tRUNNING\tLINKED\n")
 	var pending []updex.PendingActivation
 	var held []string
+	var needsImage []string
 	for _, f := range features {
 		status := "no"
 		if f.Masked {
@@ -65,6 +66,9 @@ func runFeaturesList(cmd *cobra.Command, args []string) error {
 			case ts.RollbackRejected != "":
 				held = append(held, fmt.Sprintf("%s (rejected %s)", ts.Component, ts.RollbackRejected))
 			}
+			if ts.NeedsImage != "" {
+				needsImage = append(needsImage, fmt.Sprintf("%s (%s)", ts.Component, ts.NeedsImage))
+			}
 			if ts.PendingReboot {
 				pending = append(pending, updex.PendingActivation{
 					Component:      ts.Component,
@@ -76,7 +80,7 @@ func runFeaturesList(cmd *cobra.Command, args []string) error {
 	}
 
 	// Both failures matter: see runFeaturesUpdate.
-	return errors.Join(table.Flush(), writePendingReboot(out, pending), writeHeldByRollback(out, held))
+	return errors.Join(table.Flush(), writePendingReboot(out, pending), writeHeldByRollback(out, held), writeNeedsImage(out, needsImage, ""))
 }
 
 // writeHeldByRollback prints the footer that marks transfers a rollback
@@ -187,6 +191,9 @@ func runFeaturesEnable(cmd *cobra.Command, args []string) error {
 					printDownloadedFiles(result.DownloadedFiles)
 				} else if !featureEnableNow {
 					fmt.Printf("Run 'updex features update' to download extensions.\n")
+				}
+				if result.RefreshSkipped != "" {
+					fmt.Printf("%s. Reboot to activate it.\n", result.RefreshSkipped)
 				}
 			}
 		}
@@ -337,6 +344,16 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 			status := "error"
 			if r.Error != "" {
 				status = r.Error
+			} else if r.NeedsImage != "" {
+				// ADR-0016: not an error; the old link stays.
+				status = r.NeedsImage
+				if r.DryRun {
+					status = "would not link: " + status
+				} else {
+					status = "not linked: " + status
+				}
+			} else if r.NotLinked {
+				status = "not linked: another transfer needs a newer image"
 			} else if r.Held {
 				// NextActionMessage names what holds the feature, also when
 				// another component of the record is the reason.
@@ -357,7 +374,53 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 
 	// Both failures matter: the SDK error decides the exit status, and the
 	// output error says the table the operator is reading is incomplete.
-	return errors.Join(err, table.Flush())
+	return errors.Join(err, table.Flush(), writeNeedsImageUpdate(out, results), writeRefreshSkipped(out, results))
+}
+
+// writeRefreshSkipped prints the reason a run did not refresh systemd-sysext:
+// the refresh merges into the running image, and a sysext it would activate
+// needs a newer one (ADR-0016). The text is host-wide, so the first result
+// that carries it is enough. It prints nothing when the refresh ran or was
+// not requested.
+func writeRefreshSkipped(out io.Writer, results []updex.UpdateFeaturesResult) error {
+	for _, fr := range results {
+		if fr.RefreshSkipped != "" {
+			return writeLine(out, fr.RefreshSkipped)
+		}
+	}
+	return nil
+}
+
+// writeNeedsImageUpdate prints, under the update table, why each transfer
+// that needs a newer base image was not linked, with the next-boot image
+// version that was compared. It prints nothing when no transfer needs one.
+func writeNeedsImageUpdate(out io.Writer, results []updex.UpdateFeaturesResult) error {
+	var errs []error
+	for _, fr := range results {
+		for _, r := range fr.Results {
+			if r.NeedsImage == "" {
+				continue
+			}
+			errs = append(errs, writeLine(out, fmt.Sprintf("%s/%s: %s", fr.Feature, r.Component, r.NextActionMessage)))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// writeNeedsImage prints the footer that marks staged images that
+// `features update` does not link because they need a newer base image
+// (ADR-0016). items are "<component> (needs image >= X)". nextBoot is the
+// next-boot image version that was compared, or empty. It prints nothing
+// when items is empty.
+func writeNeedsImage(out io.Writer, items []string, nextBoot string) error {
+	if len(items) == 0 {
+		return nil
+	}
+	line := fmt.Sprintf("NEEDS NEWER IMAGE: %d staged sysext(s) that 'updex features update' does not link until the host image is new enough: %s", len(items), strings.Join(items, ", "))
+	if nextBoot != "" {
+		line += fmt.Sprintf(" (next-boot image %s)", nextBoot)
+	}
+	return writeLine(out, line)
 }
 
 func runFeaturesCheck(cmd *cobra.Command, args []string) error {
@@ -387,8 +450,16 @@ func runFeaturesCheck(cmd *cobra.Command, args []string) error {
 	table := newTextTable(out)
 	table.Rowf("FEATURE\tCOMPONENT\tCURRENT\tRUNNING\tLINKED\tNEWEST\tUPDATE\n")
 	var pending []updex.PendingActivation
+	var needsImage []string
+	nextBoot := ""
 	for _, fr := range results {
 		for _, r := range fr.Results {
+			if r.NeedsImage != "" {
+				needsImage = append(needsImage, fmt.Sprintf("%s (%s)", r.Component, r.NeedsImage))
+			}
+			if r.NextBootImageVersion != "" {
+				nextBoot = r.NextBootImageVersion
+			}
 			current := r.CurrentVersion
 			if current == "" {
 				current = "-"
@@ -404,6 +475,9 @@ func runFeaturesCheck(cmd *cobra.Command, args []string) error {
 			switch {
 			case r.Error != "":
 				update = "error"
+			case r.NeedsImage != "":
+				// A staged image waits for a newer host image (ADR-0016).
+				update = r.NeedsImage
 			case r.UpdateAvailable:
 				update = "yes"
 			case r.RollbackHeldBy != "":
@@ -424,7 +498,7 @@ func runFeaturesCheck(cmd *cobra.Command, args []string) error {
 
 	// See runFeaturesUpdate: the SDK error and the output error are reported
 	// together so neither is lost.
-	return errors.Join(err, table.Flush(), writePendingReboot(out, pending))
+	return errors.Join(err, table.Flush(), writePendingReboot(out, pending), writeNeedsImage(out, needsImage, nextBoot))
 }
 
 func runFeaturesRollback(cmd *cobra.Command, args []string) error {

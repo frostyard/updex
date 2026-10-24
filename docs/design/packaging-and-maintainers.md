@@ -91,6 +91,30 @@ See the [Sysext Catalogs](../../README.md#sysext-catalogs) section of the
 README and the [configuration reference](../specs/config-reference.md) for the
 full `.catalog` file format.
 
+### 4. `erofs-utils` >= 1.8.5 for compressed sysext images
+
+`updex` reads a sysext's `extension-release` file without mounting the image.
+An uncompressed EROFS image is read in pure Go and needs nothing else. A
+compressed EROFS image (lz4, lz4hc, zstd, ...) is read with `dump.erofs` from
+[erofs-utils](https://git.kernel.org/pub/scm/linux/kernel/git/xiang/erofs-utils.git),
+which prints the file out of the image. The command line it uses needs
+erofs-utils **1.8.5** (`--cat` arrived in 1.8.5; `--offset` and `--ls` in
+1.8):
+
+- the packaged `updex` for deb, rpm and apk declares the dependency
+  (`erofs-utils (>= 1.8.5)`, `erofs-utils >= 1.8.5`, `erofs-utils>=1.8.5`
+  respectively; see `.goreleaser.yaml`);
+- a standalone binary from the release tarball needs erofs-utils >= 1.8.5 on
+  the host;
+- without it, an update of a compressed sysext fails closed: nothing is
+  linked, and the error says `erofs-utils >= 1.8.5 is required to read
+  compressed EROFS images; install erofs-utils`. Uncompressed sysexts are
+  unaffected.
+
+All frostyard sysexts are uncompressed today, so the dependency is a
+correctness guarantee for third-party or future compressed images, not a
+requirement for the common case.
+
 ## Recommended package post-install steps
 
 A package (RPM `%post`, deb `postinst`, or an image build step) should perform
@@ -164,6 +188,9 @@ Administrators:
 - The packaged CLI does **not** require Go or `make` at runtime. It requires a
   systemd-based Linux system with `systemd-sysext`; operations that modify
   system state need root.
+- The package dependency on erofs-utils (>= 1.8.5) is what lets the minimum
+  image version check read a compressed EROFS sysext. Do not drop it: without
+  the tool such an image fails closed and cannot be updated.
 - `updex` owns only the `00-updex.conf` feature drop-in and the
   `/var/lib/extensions` symlink for the sysexts it manages. Administrator
   drop-ins always override and always survive, so it is safe for a package to

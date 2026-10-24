@@ -1,6 +1,7 @@
 package updex
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -42,6 +43,13 @@ type TransferStatus struct {
 	// than the record's own resumes when that feature updates or the record
 	// is cleared (see RollbackHeldBy).
 	RollbackRejected string `json:"rollback_rejected,omitempty"`
+
+	// NeedsImage is "needs image >= <value>" when the newest staged image of
+	// this transfer is not linked and its UPDEX_MIN_IMAGE_VERSION is higher
+	// than the next-boot image version, so `features update` leaves the old
+	// link (ADR-0016). Set by Features and CheckFeatures; empty when the image
+	// has no key, is old enough, or no unlinked image is staged.
+	NeedsImage string `json:"needs_image,omitempty"`
 
 	// RollbackHeldBy names why a rollback record holds this transfer although
 	// the transfer itself could advance. For the feature's own record: its
@@ -138,9 +146,20 @@ func deactivationPending(running, linked string) bool {
 
 // activationPending reports whether a link to linked changes what the host
 // runs, given the merged version running. An "unknown" merged version cannot
-// be compared, so it is not reported as pending.
+// be compared, so it is not reported as pending. The refresh gate does not use
+// this display flag: it checks every link whose merged version it cannot prove
+// equal (see refreshPending).
 func activationPending(running, linked string) bool {
 	return linked != "" && linked != running && running != sysext.UnknownVersion
+}
+
+// refreshPending reports whether a link to linked is a candidate for the
+// running-base refresh check: it names a usable link and its merged version is
+// not known to equal it. Unlike activationPending, an unknown merged version is
+// a candidate: updex cannot prove that the running base already runs the
+// linked image, so the gate checks it and fails closed.
+func refreshPending(running, linked string) bool {
+	return linked != "" && linked != running
 }
 
 // transferStatus reads the merged and linked versions of one transfer. A read
@@ -169,7 +188,22 @@ func (c *Client) transferStatus(t *config.Transfer) TransferStatus {
 	return status
 }
 
-// pendingActivations lists the transfers, outside own, whose merged state a
+// pendingActivationLink is a pending activation with the transfer that
+// describes it, so a caller can read the linked image (the refresh gate) as
+// well as report the activation.
+type pendingActivationLink struct {
+	PendingActivation
+	transfer *config.Transfer
+	// reported is true when the entry is a pending activation for the results
+	// and the warning. A link whose merged version is unknown is a refresh-gate
+	// candidate that the display does not list.
+	reported bool
+	// stateErr is set when the merged state or the link could not be read. The
+	// refresh gate then fails closed instead of running.
+	stateErr error
+}
+
+// pendingActivationLinks lists the transfers, outside own, whose merged state a
 // systemd-sysext refresh changes in addition to what the calling operation
 // changed: a link that names a version the host does not run (activation),
 // and a merged sysext with no link (deactivation). own is the operation's own
@@ -183,15 +217,19 @@ func (c *Client) transferStatus(t *config.Transfer) TransferStatus {
 // whose definitions live in a normal sysupdate.d root while the run works in
 // another directory. Transfers are matched by link name and the first one
 // seen wins (scoped before the host's own), so a transfer that both describe
-// is listed once. Only the warning reads this wide; the operation's update
-// scope stays scoped. When the host definitions cannot be read, the failure is
-// a warning and scoped is used alone.
+// is listed once. Only this read is this wide; the operation's update scope
+// stays scoped. When the host definitions cannot be read, the failure is a
+// warning and scoped is used alone.
 //
 // Only links of transfers that updex's definitions describe are visible: a
-// link made by hand for an image with no transfer is not listed. A transfer
-// whose state cannot be read is reported as a warning and skipped, and the
-// refresh is not prevented.
-func (c *Client) pendingActivations(scoped, own []*config.Transfer) []PendingActivation {
+// link made by hand for an image with no transfer is not listed. The display
+// lists a link only when its merged version differs from the linked one (an
+// "unknown" merged version cannot be compared and is not shown). The refresh
+// gate is stricter: every entry that is not a deactivation is also a gate
+// candidate, including one whose merged version is unknown, and a transfer
+// whose state cannot be read is a candidate with stateErr so the gate fails
+// closed.
+func (c *Client) pendingActivationLinks(scoped, own []*config.Transfer) []pendingActivationLink {
 	domain := scoped
 	// Name-collision warnings of the full union are dropped: this is a read
 	// for the warning only, not the domain the caller operates on.
@@ -209,7 +247,7 @@ func (c *Client) pendingActivations(scoped, own []*config.Transfer) []PendingAct
 		}
 	}
 
-	var pending []PendingActivation
+	var pending []pendingActivationLink
 	seen := make(map[string]bool)
 	for _, t := range domain {
 		name := sysext.SysextLinkName(t)
@@ -219,21 +257,49 @@ func (c *Client) pendingActivations(scoped, own []*config.Transfer) []PendingAct
 		seen[name] = true
 
 		status := c.transferStatus(t)
-		if status.Error != "" {
-			c.warn("could not determine whether a refresh activates %s: %s", t.Component, status.Error)
-		}
 		switch {
-		case status.PendingReboot:
-			pending = append(pending, PendingActivation{
-				Component:      t.Component,
-				RunningVersion: status.RunningVersion,
-				LinkedVersion:  status.LinkedVersion,
+		case status.Error != "":
+			c.warn("could not determine whether a refresh activates %s: %s", t.Component, status.Error)
+			// The gate cannot prove the refresh is safe without the state.
+			pending = append(pending, pendingActivationLink{
+				transfer: t,
+				stateErr: errors.New(status.Error),
+				PendingActivation: PendingActivation{
+					Component:      t.Component,
+					RunningVersion: status.RunningVersion,
+					LinkedVersion:  status.LinkedVersion,
+				},
 			})
-		case status.Error == "" && deactivationPending(status.RunningVersion, status.LinkedVersion):
-			pending = append(pending, PendingActivation{
-				Component:      t.Component,
-				RunningVersion: status.RunningVersion,
-				Deactivate:     true,
+		case status.PendingReboot:
+			pending = append(pending, pendingActivationLink{
+				transfer: t,
+				reported: true,
+				PendingActivation: PendingActivation{
+					Component:      t.Component,
+					RunningVersion: status.RunningVersion,
+					LinkedVersion:  status.LinkedVersion,
+				},
+			})
+		case refreshPending(status.RunningVersion, status.LinkedVersion):
+			// The merged version is unknown, so the display cannot say what the
+			// refresh changes; the gate still checks the link.
+			pending = append(pending, pendingActivationLink{
+				transfer: t,
+				PendingActivation: PendingActivation{
+					Component:      t.Component,
+					RunningVersion: status.RunningVersion,
+					LinkedVersion:  status.LinkedVersion,
+				},
+			})
+		case deactivationPending(status.RunningVersion, status.LinkedVersion):
+			pending = append(pending, pendingActivationLink{
+				transfer: t,
+				reported: true,
+				PendingActivation: PendingActivation{
+					Component:      t.Component,
+					RunningVersion: status.RunningVersion,
+					Deactivate:     true,
+				},
 			})
 		}
 	}

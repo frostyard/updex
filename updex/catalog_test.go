@@ -904,8 +904,12 @@ func TestCatalogAdd_CompressedTargetPatternRollback(t *testing.T) {
 	})
 
 	_, err := client.CatalogAdd(t.Context(), name, CatalogAddOptions{})
-	if !errors.Is(err, linkErr) {
-		t.Fatalf("CatalogAdd error = %v, want injected link failure", err)
+	// A target pattern with a compression suffix never matches the
+	// decompressed file, so sysext.LinkTargetAt fails and the minimum image
+	// version gate fails closed with that error before the link step. The
+	// rollback is the same as for an injected link failure.
+	if errors.Is(err, linkErr) || !strings.Contains(err.Error(), "cannot check the minimum image version") {
+		t.Fatalf("CatalogAdd error = %v, want the minimum image version gate's error", err)
 	}
 	if _, err := os.Stat(filepath.Join(targetDir, name+"-1.0.0.raw")); !os.IsNotExist(err) {
 		t.Errorf("compressed-pattern rollback left decompressed image: %v", err)

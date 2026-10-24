@@ -99,6 +99,14 @@ func newCatalogCLIFixture(t *testing.T) *catalogCLIFixture {
 	catalog.CacheDir = t.TempDir()
 	catalog.TargetPath = fx.targetDir
 	sysext.SysextDir = fx.sysextDir
+	// The CLI client reads paths through runtimePaths, not the compatibility
+	// variables: point the seam at this fixture too.
+	setRuntimePaths(t, updex.RuntimePaths{
+		DefinitionRoots:    fx.roots,
+		CatalogConfigRoots: []string{fx.catalogRoot},
+		CatalogTargetPath:  fx.targetDir,
+		SysextLinkDir:      fx.sysextDir,
+	})
 
 	rawName := fmt.Sprintf("%s-%s.raw", catalogTestSysext, catalogTestVersion)
 	rawContent := []byte("fake sysext image for " + catalogTestSysext)

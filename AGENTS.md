@@ -44,6 +44,10 @@ repo-specific guidance belongs in this file or `docs/`:
   pin; CI, `mise`, and Snowcat workers all read it — the module's minimum is
   `go 1.26.6`)
 - `make`
+- Optional for the end-to-end compressed-image test:
+  [`erofs-utils`](https://git.kernel.org/pub/scm/linux/kernel/git/xiang/erofs-utils.git)
+  >= 1.8.5 (`mkfs.erofs` and `dump.erofs`). The unit tests use a fake
+  `dump.erofs` runner and skip this test when the tools are absent.
 - Optional: [`mise`](https://mise.jdx.dev/) to provision every other pinned
   tool: `mise install` reads [`mise.toml`](mise.toml) and verifies each
   download against [`mise.lock`](mise.lock) (core ADR-0043). Today that is
@@ -249,6 +253,7 @@ Key packages:
 - `version/` — Pattern matching (`@v` placeholder) and semantic version comparison
 - `sysext/` — systemd-sysext integration with mockable `Runner` interface, `/var/lib/extensions` link management, and the vacuum (`VacuumWith`/`PlanVacuumWith` over `VacuumPaths`: it keeps the linked and the merged version, see "Feature install and retention" below)
 - `systemd/` — Generates/installs systemd timer+service units, mockable `Runner` interface
+- `imagecompat/` — Minimum-image-version check (ADR-0016): reads `extension-release.*` from a staged sysext image without mounting it (pure-Go GPT + EROFS reader for uncompressed images, `dump.erofs` fallback for compressed ones, `ReadExtensionRelease`), finds the next-boot `IMAGE_VERSION` (`NextBootImageVersion`: `bootc status --json` through the mockable `BootcRunner`, else the booted `os-release`) and the running one (`BootedImageVersion`, os-release only, no bootc) and compares both as numbers (`CheckMinImageVersion`, key `UPDEX_MIN_IMAGE_VERSION`). No CLI imports; treats the image as untrusted input
 - `internal/retry/`, `internal/httpclient/`, `internal/testutil/` — HTTP retry policy, the shared default-HTTP-client constructor (`internal/httpclient.New`; enforces the HTTPS-to-HTTP redirect downgrade refusal used by `updex.NewClient`, `manifest.Fetch`, and `download.Download` when no caller-supplied client is given), and shared test helpers (HTTP test server)
 
 Entry point: `cmd/updex-cli/main.go` → `cmd/updex/root.go`
@@ -283,6 +288,7 @@ updex/
 ├── manifest/                 # SHA256SUMS handling and GPG verification
 ├── sysext/                   # systemd-sysext integration
 ├── systemd/                  # Timer and service unit management
+├── imagecompat/              # Minimum image version: extension-release reader, bootc version, check
 ├── version/                  # Pattern matching and version comparison
 ├── internal/
 │   ├── retry/                # Internal HTTP retry policy
@@ -315,6 +321,11 @@ afterwards.
 | `github.com/ulikunitz/xz`                 | XZ decompression            |
 | `github.com/klauspost/compress/zstd`      | Zstd decompression          |
 | `github.com/ProtonMail/go-crypto/openpgp` | GPG verification            |
+| `github.com/erofs/go-erofs`               | Read an uncompressed EROFS sysext image without mounting it (`imagecompat/`; pure Go, Apache-2.0) |
+
+Runtime, not a Go dependency: `erofs-utils` >= 1.8.5 (`dump.erofs`) reads a
+compressed EROFS image (`imagecompat/`). The packages declare it; a standalone
+binary needs it on the host. The unit tests do not run it.
 
 ### CLI commands
 
@@ -475,6 +486,83 @@ in the `config/` structs and parse functions. Always finish with
   version uses `sysext.LinkVersionAt` through `sysext.VersionSysextRunner` (a
   runner without it gets `ErrLegacySysextRunner`), and moves links all or none
   with `Client.linkAllOrNone`.
+- **Minimum image version (ADR-0016).** **Every path that moves a link to a
+  newer image checks `UPDEX_MIN_IMAGE_VERSION` through `installTransfers`**
+  (`gateMinImage` in `updex/imagegate.go`, between the stage step and the link
+  step): `UpdateFeatures` and `EnableFeature{Now}`, on the download path and on
+  the already-staged relink path. A new link path must go through
+  `installTransfers`, or it can link a revision that needs a newer base.
+  `RollbackFeature` does not check: it links an older image on purpose. An image
+  that needs a newer base blocks the whole feature without an error (no link,
+  no vacuum, the images stay staged; `UpdateResult.NeedsImage`); a read error
+  or a failing bootc is an error and also links nothing; an image
+  `imagecompat.ErrUnsupportedImage` is treated as "key absent". bootc runs
+  once per operation (`nextBootImage`), only when an image has the key, through
+  `ClientConfig.BootcRunner` (nil = the real bootc; tests inject a fake, never
+  the real one). `CheckFeatures` and `Features` run the same gate read-only
+  for a staged unlinked image.
+- **Compressed EROFS images: `dump.erofs` fallback, fail closed**
+  (`imagecompat/erofs.go`). go-erofs reads uncompressed EROFS only and refuses
+  a compressed filesystem at open. A candidate whose superblock says it is
+  compressed (`feature_incompat` at superblock byte 80 has
+  `LZ4_0PADDING`/`COMPR_CFGS`, or `available_compr_algs` at byte 84 is not
+  zero) is read with the erofs-utils `dump.erofs` program instead: `--ls` the
+  release directory, validate every listed name, then `--cat` the selected
+  file, all through `imagecompat.ErofsDumpRunner`
+  (`ClientConfig.ErofsDumpRunner`, nil = `DefaultErofsDumpRunner`, one runner
+  per client, passed to the link gate, the refresh gate and the status
+  reads). The command runs with `exec.CommandContext` (the caller's context,
+  a two-minute cap, `WaitDelay` 2 s), no shell, a minimal env (`PATH`,
+  `LC_ALL=C`), and bounds:
+  64 KiB for `--cat` (`MaxReleaseFileSize`), `MaxErofsDumpListSize` (256 KiB)
+  for `--ls`, 4 KiB for `-V`. `dump.erofs -V` runs before the first use and
+  must be at least `imagecompat.ErofsUtilsMinVersion` (1.8.5, which added
+  `--cat`; `--offset` and `--ls` came with 1.8). Missing, too old, failing,
+  timed out, oversized, or a name that is not printable ASCII without a slash
+  all fail closed: the error wraps `ErrUnreadableRelease` (and
+  `ErrErofsToolUnavailable` for missing/too old) and never
+  `ErrUnsupportedImage`, so the check is never silently skipped. A `<E>` line
+  on the tool's stderr is an error even with exit status 0, and the image path
+  must still name the opened file after the read (`os.SameFile`). Tests use a
+  fake runner (or a stand-in `dump.erofs` script); the end-to-end test runs
+  real `mkfs.erofs -zlz4hc` and `dump.erofs` when the host has erofs-utils >=
+  1.8.5 and skips otherwise.
+- **Packaging dependency.** The deb, rpm and apk packages declare
+  `erofs-utils` >= 1.8.5 (`.goreleaser.yaml` `nfpms.dependencies` and per-format
+  `overrides`, one syntax each); `updex/packaging_erofs_contract_test.go` pins
+  all three against `imagecompat.ErofsUtilsMinVersion`. The standalone binary
+  needs erofs-utils on the host for a compressed sysext only.
+- **Refresh gate: the running image, checked before every refresh updex
+  runs** (`refreshGate` in `updex/imagegate.go`; ADR-0016). The link gate above
+  asks whether the *next boot* can run a link; a `systemd-sysext refresh`
+  merges into the base the host runs *now*, whose `IMAGE_VERSION` comes from
+  the booted os-release (`imagecompat.BootedImageVersion` on the client's
+  `Paths.OSReleasePaths`, cached per operation in `runningImage`; never
+  `bootc`). Before the refresh in `UpdateFeatures` (without `NoRefresh`),
+  `EnableFeature{Now}`, `RollbackFeature{Now}` and `DisableFeature{Now}`, every
+  sysext the refresh would merge must pass: the operation's own links
+  (`ownPendingLinks`) and the host's other pending activations
+  (`pendingActivationLinks` + `activationLinks`; deactivations need no check).
+  A candidate is every transfer with a usable link (`LinkedVersion != ""`)
+  whose merged version is not known to equal it — `RunningVersion !=
+  LinkedVersion`, including `sysext.UnknownVersion` and `""`. The display flag
+  `TransferStatus.PendingReboot` and the refresh warning stay narrower: an
+  unknown merged version cannot be compared, so it is neither reported as
+  pending nor listed in `PendingActivations`. A transfer whose state cannot be
+  read (`TransferStatus.Error`: merged state or link unreadable) is unsafe
+  (fail closed) with the reason `cannot read the state of <component>`.
+  Each linked image is read with
+  `sysext.StagedImageAt` + `imagecompat.ReadExtensionRelease` and judged by the
+  link gate's fail-open/fail-closed rules, compared with the running version.
+  Unsafe: `UpdateFeatures` and `EnableFeature{Now}` keep their links and skip
+  the refresh (`RefreshSkipped`, JSON `refresh_skipped`, text `refresh skipped:
+  <component> needs image >= <value> (running image <running>); it takes effect
+  at the next boot`, a warning, reboot advice; not an error); so does
+  `RollbackFeature{Now}` (record and links stay). `DisableFeature{Now}` unmerges
+  *before* its refresh, so it refuses the whole command before `Unmerge`, with
+  nothing changed, and tells the operator to run it without `--now` and reboot.
+  `NoRefresh` (the timer) runs no check. A new refresh call site must go
+  through `refreshGate`/`refreshGateFor`.
 - **CLI.** `features update` that gets `ErrBusy` exits 0 with one stderr line
   only when `runningUnderSystemd()` (non-empty `INVOCATION_ID`; the packaged
   timer runs exactly `updex features update --no-refresh`); every other
@@ -746,36 +834,53 @@ Go 1.26. Use modern idioms: `any`, `slices`/`maps`/`cmp` packages, `t.Context()`
   superseded compatibility path).
 - Every mutating SDK operation takes the lock at `RuntimePaths.LockPath`, which
   defaults to `/run/updex/lock` (not writable by the test user), so a test must
-  never rely on that default. Package `updex` tests get a temporary default
-  from `TestMain` (`updex/main_test.go` sets the unexported `lockPathDefault`
-  and `rollbackDirDefault`, and empty temporary `sysext.MergedHierarchies`), so
-  no test touches `/run/updex` or `/var/lib/updex`; tests run one after
-  another in one process, so one default lock file suffices. A test that runs
-  clients concurrently, or that tests the lock, gives each client its own
+  never rely on that default. Package `updex` tests get temporary defaults from
+  `TestMain` (`updex/main_test.go` sets the unexported `lockPathDefault` and
+  `rollbackDirDefault`, `definitionRootsDefault`, `osReleasePathsDefault`,
+  `catalogConfigRootsDefault`, `catalogTargetPathDefault`,
+  `sysextLinkDirDefault`, `runExtensionsDirDefault`, and empty temporary
+  `sysext.MergedHierarchies`), so no test touches `/run/updex`,
+  `/var/lib/updex`, `/etc`, `/run`, `/usr/lib`, `/var/lib/extensions`,
+  `/var/lib/extensions.d`, or `/run/extensions`; tests run one after another
+  in one process, so one default lock file suffices.
+  `resolveRuntimePaths` applies those defaults only while the matching
+  compatibility variable (`config.SearchRoots`, `config.OSReleasePaths`,
+  `catalog.ConfigRoots`, `catalog.TargetPath`, `sysext.SysextDir`) still holds
+  its production value, so a test that replaces one itself keeps that value;
+  `sysext.RunExtensionsDir` is a constant, so the test default always replaces
+  it. A test that runs clients concurrently,
+  or that tests the lock, gives each client its own
   `RuntimePaths{LockPath: filepath.Join(t.TempDir(), "lock")}`. Hold the lock in
   a test through `client.lockMutation(false)` and release it with the returned
-  function.
+  function. `TestDefaultClientPathsAreTemporary` guards the defaults: it fails
+  when a client constructed without `Paths` resolves any path that is not
+  inside `os.TempDir()`.
 - Vacuum and retention tests use temp staging, link and hierarchy directories
   (`sysext.VacuumPaths`, or `RuntimePaths.SysextLinkDir`/`SysextHierarchies`),
   so no test reads the host's `/var/lib/extensions`, `/usr/.systemd-sysext` or
   `/opt/.systemd-sysext`.
 - Every `cmd/updex` handler test runs with the `runtimePaths` CLI seam
   (`cmd/updex/client.go`), which `newClient()` passes as
-  `ClientConfig.Paths`. `TestMain` in `cmd/updex/main_test.go` points it at
-  temporary hierarchies in one `os.MkdirTemp` tree, so no CLI test reads the
-  host's `/usr/.systemd-sysext`, `/opt/.systemd-sysext` or
-  `/run/extensions`. A test that needs other paths calls
-  `setRuntimePaths(t, updex.RuntimePaths{...})`, which restores the previous
-  value with `t.Cleanup`. In production the seam stays the zero
-  `updex.RuntimePaths`, so behaviour is unchanged;
-  `TestHandlerTestsDoNotReadHostMergedState` guards it. `TestMain` also sets a
-  temporary `LockPath` and `RollbackDir` (and `setRuntimePaths` keeps them when
-  a test sets its own paths), so no handler test touches `/run/updex` or
-  `/var/lib/updex`; a test that inspects rollback records sets its own
-  `RollbackDir`; a handler test that builds
-  its own `updex.NewClient` must pass `Paths: runtimePaths`. Tests of the
+  `ClientConfig.Paths`. `TestMain` in `cmd/updex/main_test.go` sets every field
+  of it in one `os.MkdirTemp` tree — temporary definition roots, os-release
+  paths, catalog config roots and target, sysext link dir, hierarchies, and
+  runtime search dir — so no CLI test reads the host's
+  `/usr/.systemd-sysext`, `/opt/.systemd-sysext`, `/run/extensions`, `/etc`,
+  `/run`, `/usr`, `/var/lib/extensions`, or `/var/lib/extensions.d`. A test
+  that needs other paths calls `setRuntimePaths(t, updex.RuntimePaths{...})`,
+  which restores the previous value with `t.Cleanup` and keeps the temporary
+  `TestMain` value for every field the test leaves zero. In production the
+  seam stays the zero `updex.RuntimePaths`, so behaviour is unchanged;
+  `TestHandlerTestsDoNotReadHostMergedState` and
+  `TestHandlerTestsDoNotReadHostPaths` guard it. `TestMain` also sets a
+  temporary `LockPath` and `RollbackDir`, so no handler test touches
+  `/run/updex` or `/var/lib/updex`; a test that inspects rollback records sets
+  its own `RollbackDir`; a handler test that builds its own
+  `updex.NewClient` must pass `Paths: runtimePaths`. Tests of the
   `INVOCATION_ID` behaviour use `t.Setenv("INVOCATION_ID", ...)` and hold the
-  lock with a plain `flock` on `runtimePaths.LockPath`.
+  lock with a plain `flock` on `runtimePaths.LockPath`. No test may read the
+  host's definitions or images, and a test that points a compatibility variable
+  at a temp tree must also point the `runtimePaths` seam at it.
 - Run `make fmt` before running tests; for verbose output use `go test -v ./...`.
 
 ## Security

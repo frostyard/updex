@@ -91,7 +91,7 @@ internal/testutil/              HTTP test server helpers (module-internal)
 ```
 CLI (cmd/features*) ─┐
 CLI (cmd/catalog.go) ├→ SDK (updex/) → config, catalog, manifest, download,
-CLI (cmd/daemon.go) ─┘                version, sysext, systemd
+CLI (cmd/daemon.go) ─┘                version, sysext, systemd, imagecompat
 ```
 
 ## Key Patterns
@@ -596,6 +596,157 @@ continue. A transfer whose link moved but whose restore failed reports
 new version` instead of `not linked`. `EnableFeature{Now}` uses the same
 helper and returns the first own error as `failed to download <component>: …`.
 
+### Minimum image version (ADR-0016)
+
+A sysext delta is valid only against a base that has what the delta omits, and
+a host can run an old image for weeks. `installTransfers` therefore checks each
+image whose link would move, between the stage step and the link step
+(`gateMinImage`, `updex/imagegate.go`):
+
+```
+stage ──▶ for each transfer that would link: read the staged image
+            (sysext.LinkTargetAt → imagecompat.ReadExtensionRelease)
+          ├─ key absent ─────────────────────────────▶ link
+          ├─ no EROFS filesystem found (ErrUnsupportedImage) ──▶ link   (fail open)
+          ├─ other read error / LinkTargetAt fails / bootc fails ──▶ error,
+          │                                 link nothing (fail closed)
+          └─ key set ─ next-boot IMAGE_VERSION (once per operation)
+                       ├─ new enough ────────────────▶ link
+                       └─ too old / missing / not digits ▶ link nothing of the
+                          feature, keep links and images, no vacuum,
+                          report `needs image >= X` (not an error)
+```
+
+The check sits on the shared path, so it covers a fresh download and the
+relink path alike: an image that was blocked stays staged, the next run finds
+it already current and the link missing, and the check runs again, so it links
+once the host image is new enough (a reboot into a newer deployment, or a new
+staged one). `UpdateFeatures` and `EnableFeature{Now}` both go through it.
+`RollbackFeature` does not: it links an older image on purpose, and an older
+revision needs at most the base the host already runs.
+
+**Fail open or closed, and why.**
+
+- *Too old, or the version is missing or not numeric:* a normal outcome, not
+  an error. The timer must not mark `updex-update.service` failed because a
+  revision waits for a newer base; the feature stays on its old links.
+- *`ErrUnsupportedImage` (no EROFS filesystem at all: a squashfs sysext,
+  random bytes, an invalid GPT): fail open.* Only snosi sets the key and snosi
+  ships EROFS. Failing closed would stop every sysext from another catalog
+  (squashfs, say) from updating, for a key it cannot carry. Each candidate
+  region is classed by the EROFS superblock magic (`0xE0F5E1E2` at offset
+  1024) before go-erofs is asked, so "no EROFS found" is the only thing this
+  error means.
+- *An EROFS filesystem found, and anything else wrong with that candidate:*
+  fail closed (an error, nothing linked). Once a candidate has the magic,
+  every later problem is an error that does not match `ErrUnsupportedImage`:
+  a failed EROFS open, a missing `usr/lib/extension-release.d`
+  (`ErrNoExtensionRelease`), a release file that cannot be opened, inspected
+  or read or a recovered parser panic (`ErrUnreadableRelease`), a compressed
+  image whose `dump.erofs` fallback is missing, older than erofs-utils 1.8.5,
+  or fails (`ErrErofsToolUnavailable`, `ErrUnreadableRelease`), a file over
+  64 KiB (`ErrReleaseFileTooLarge`). Such an image is snosi-shaped and cannot
+  be judged; a silent fallback to the booted os-release could be older than
+  the staged image and link a revision that breaks the next boot.
+- *A `sysext.LinkTargetAt` failure (no image the link step could link, for
+  example a target pattern with a compression suffix):* fail closed. The gate
+  must not depend on the link step failing later.
+- *bootc installed but failing:* fail closed, and only for features whose
+  image has the key. bootc runs once per operation, and never when no image
+  has the key.
+- *bootc not installed:* fall back to the booted `os-release` (not an
+  image-based host).
+- *Next boot is a queued rollback (`bootc status --json` reports
+  `status.rollbackQueued: true`):* the rollback deployment's image version is
+  the next-boot version (`SourceRollback`), ahead of the staged deployment. A
+  queued rollback without a version is an error: the next boot is known to be
+  the rollback, its version is not.
+
+**Residual risks.** Two are accepted:
+
+- When the staged deployment fails to finalize at shutdown, the host boots the
+  old image, but the link is one the staged image allowed. The check cannot
+  see that.
+- While a feature is blocked, no vacuum runs for it, so each newer blocked
+  revision stays staged (about 1 GB for incus) until the host image catches
+  up.
+
+`features check` and `features list` run the same gate read-only
+(`stagedImageGate`) for a staged image that is newer than the linked one and
+not held by a rollback, and show `needs image >= X`. They never download, so
+they say nothing about an image that is only published.
+
+### Refresh gate: the running image (ADR-0016)
+
+The link gate above answers "may the next boot run this image". A
+`systemd-sysext refresh` asks a different question: it merges into the base
+the host runs **now**. On a bootc host `/etc/os-release` and
+`/usr/lib/os-release` describe the booted deployment, so
+`imagecompat.BootedImageVersion` reads the running image version from them,
+without `bootc` and once per operation (`runningImage`, like `nextBootImage`).
+A staged deployment that is newer than the booted one can therefore allow a
+link the running base cannot run:
+
+```
+booted IMAGE_VERSION=20261001000000, staged deployment=20261101000000
+sysext UPDEX_MIN_IMAGE_VERSION=20261022021319
+link gate (next boot 20261101000000): new enough ──▶ link 2.0.0
+refresh gate (running 20261001000000): too old ──▶ keep the link, skip the refresh
+```
+
+`refreshGate` (`updex/imagegate.go`) runs before every refresh updex starts:
+`UpdateFeatures` without `NoRefresh`, `EnableFeature{Now}`,
+`RollbackFeature{Now}`, and `DisableFeature{Now}`. It checks every sysext the
+refresh would merge: the operation's own links (`ownPendingLinks`) and the
+other pending activations of the host (`pendingActivationLinks`, whose
+transfers are kept so the image can be found; deactivations merge nothing and
+are skipped). A candidate is every transfer with a usable link
+(`LinkedVersion != ""`) whose merged version is not known to equal it
+(`RunningVersion != LinkedVersion`, including `unknown` and `""`, the
+fail-closed rule). The display flag `TransferStatus.PendingReboot` and the
+refresh warning stay narrower: an unknown merged version is neither reported
+as pending nor listed in `PendingActivations`. A transfer whose merged or
+linked state cannot be read is unsafe too, with the reason `cannot read the
+state of <component>`. Each linked image
+(`sysext.StagedImageAt` → `imagecompat.ReadExtensionRelease`) is judged by the
+same fail-open/fail-closed rules as the link gate, compared with the running
+version: key absent or `ErrUnsupportedImage` is safe; another read error is
+unsafe; a key the running image does not meet, or a missing or non-numeric
+running version, is unsafe. The link gate is unchanged, so a link the next
+boot can run is still linked; only the immediate refresh waits.
+
+What an unsafe result does differs by command, because only some of them can
+leave the host consistent without a refresh:
+
+- `UpdateFeatures` and `EnableFeature{Now}` keep their links and skip the
+  refresh: `RefreshSkipped` (`refresh_skipped`) says `<component> needs image
+  >= <value> (running image <running>)`, a warning goes to the journal, and
+  the next action is a reboot. It is not an error, so the timer's replacement
+  (`features update --no-refresh`, which never checks) and an interactive run
+  behave the same way.
+- `RollbackFeature{Now}` keeps the record and the links and skips the
+  refresh, also with `RefreshSkipped`, and says the rollback takes effect at
+  the next boot.
+- `DisableFeature{Now}` cannot skip its refresh: it unmerges first, so a
+  skipped refresh would leave every sysext unmerged. The check runs before
+  the `Unmerge`, and an unsafe result refuses the whole command — no drop-in,
+  no unmerge, no file removal, no refresh — and asks for a run without
+  `--now` and a reboot.
+- A dry run reports the same text for the first two and the same refusal for
+  a disable, and refreshes nothing.
+
+**Sandbox.** The service runs with `SandboxDirectives` (`ProtectSystem=full`,
+`RestrictNamespaces=yes`, `SystemCallFilter=@system-service`). Reading the
+image needs only `open` and `pread`; `bootc status --json` runs inside the same
+sandbox. **This is not verified on a host.** An operator checks it with
+`systemd-run -p` set to the same directives (for example
+`systemd-run --wait --pty -p NoNewPrivileges=yes -p ProtectSystem=full
+-p RestrictNamespaces=yes -p SystemCallFilter=@system-service
+-p MemoryDenyWriteExecute=yes /usr/bin/updex features check`) on a host with a
+staged unlinked image and `bootc`: `features check` should print the
+`needs image` line or no error. A bootc that the sandbox blocks shows as the
+component's `Error` (fail closed).
+
 ### Retention (vacuum)
 
 ADR-0016. After a feature's links succeeded, `sysext.VacuumWith` keeps, for
@@ -728,6 +879,99 @@ packaged timer runs exactly `updex features update --no-refresh`, so it cannot
 take a flag); in an interactive shell it is an error and the exit status is
 non-zero. The lock covers `systemd-sysext refresh` as well. The sandboxed
 service (`ProtectSystem=full`) can write `/run`.
+
+### Reading a sysext's extension-release without mounting (`imagecompat/`)
+
+ADR-0016 ("Minimum image version") needs one value from inside a downloaded
+image: `UPDEX_MIN_IMAGE_VERSION` in `usr/lib/extension-release.d/extension-release.<name>`.
+The obvious tools cannot run in the auto-update service, which has
+`RestrictNamespaces=yes` and `SystemCallFilter=@system-service` (see
+`systemd.SandboxDirectives`): it cannot mount, so `systemd-dissect`, `mount`
+and loop devices all fail. `imagecompat.ReadExtensionRelease` therefore reads
+the file in pure Go, with plain `ReadAt` on the staged file:
+
+1. `Lstat` and `O_NOFOLLOW` open; refuse anything that is not a regular file.
+2. Look for a GPT header at LBA 1 for 512-byte sectors, then for 4096-byte
+   sectors (`EFI PART`). A GPT is validated before it is trusted: header size,
+   header CRC32, entry count (at most 256) and size (128 to 1024, multiple of
+   8), the entry array inside the file, the array CRC32. Every used partition
+   inside the file becomes a candidate (at most 16 are opened); no GUID filter,
+   because snosi uses the root partition types but another builder may not.
+   Without a GPT, the whole file is the candidate (a bare EROFS image).
+3. Read each candidate that has the magic. An uncompressed filesystem is
+   opened with `github.com/erofs/go-erofs` through an `io.SectionReader` (so
+   the filesystem cannot read outside its partition); the first candidate
+   that has `usr/lib/extension-release.d` wins. go-erofs refuses a compressed
+   filesystem (`unsupported compressed filesystem`), so a compressed
+   candidate is read with the erofs-utils `dump.erofs` program instead, which
+   prints a file out of an image without mounting it.
+4. Pick the file: the only regular `extension-release.*`, else the one named
+   `extension-release.<name>`; read it with a 64 KiB cap and parse it with
+   `ParseOSRelease`. Both readers apply these rules.
+
+**Compression, decided from the superblock, not from an error message.** The
+candidate is compressed when the EROFS superblock's `feature_incompat` (a
+little-endian uint32 at byte 80) has `EROFS_FEATURE_INCOMPAT_LZ4_0PADDING`
+(0x1) or `EROFS_FEATURE_INCOMPAT_COMPR_CFGS` (0x2), or when
+`available_compr_algs` (a little-endian uint16 at byte 84, a union with
+`lz4_max_distance`) is not zero. mkfs.erofs writes `feature_incompat=0x1,
+available_compr_algs=0xffff` for lz4/lz4hc and `0x3, 0x8` for zstd, and
+nothing for an uncompressed image. Reading the fields is deterministic and
+does not depend on go-erofs' wording. An uncompressed image always takes the
+pure-Go path: all frostyard sysexts are uncompressed, so the fallback only
+runs for an image that would otherwise fail.
+
+**The `dump.erofs` fallback.** `imagecompat.ErofsDumpRunner` is the seam.
+`DefaultErofsDumpRunner` runs the real program found in `PATH`;
+`updex.ClientConfig.ErofsDumpRunner` carries one runner per client, and the
+link gate, the refresh gate and the status reads (`features list`,
+`features check`) all pass it to `imagecompat.ReadExtensionRelease`. The
+command is `dump.erofs --offset=<partition offset> --cat
+--path=/usr/lib/extension-release.d/extension-release.<name> <image>`; the
+name comes from `dump.erofs --offset=<n> --ls
+--path=/usr/lib/extension-release.d <image>` first, so a directory or a
+symbolic link named like the release file is never printed as the file.
+
+The subprocess is bounded and cancellable:
+
+- `exec.CommandContext` with the caller's context kills it, and
+  `WaitDelay` (2 s) keeps a killed tool that still holds the pipe from hanging
+  the caller; one command is also capped at two minutes, because the timer
+  runs with no deadline of its own. No shell is used.
+- The environment is minimal: `PATH` and `LC_ALL=C`, so the messages and the
+  version line have one form whatever the caller's locale.
+- Output limits: 64 KiB for `--cat` (the same as `MaxReleaseFileSize`,
+  beyond which the read is `ErrReleaseFileTooLarge`), 256 KiB for `--ls`
+  (`MaxErofsDumpListSize`), 4 KiB for `-V`. Over a bound fails closed.
+- erofs-utils prints some failures on stderr and still exits 0 (a missing
+  inode is `<E> erofs: read inode failed @ <path>`), so a stderr line that
+  starts with `<E>` is an error; `<W>` lines are ignored.
+- `dump.erofs -V` runs before the first use and must report at least
+  `ErofsUtilsMinVersion` (1.8.5, which added `--cat`; `--offset` and `--ls`
+  came with 1.8). An older or unparseable version fails closed with
+  `dump.erofs <version> is too old; erofs-utils >= 1.8.5 is required to read
+  compressed EROFS images`.
+- Every name that `--ls` lists is validated before it reaches a path:
+  printable ASCII, no `/`, at most 255 bytes; `../x` or `a/b` fails closed.
+- `dump.erofs` opens the image path itself, so after the read the path must
+  still name the file the caller opened (`os.SameFile`); a swap fails closed.
+
+An image that is not GPT-with-EROFS or bare EROFS (for example squashfs)
+returns `ErrUnsupportedImage`; the caller decides. A compressed EROFS image
+is not an unsupported image: it is read through the fallback, and a host
+without a new enough `dump.erofs` fails closed with `ErrErofsToolUnavailable`
+rather than skipping the check. The image's SHA256 was verified earlier, but
+both readers treat it as untrusted: a parser panic in go-erofs is turned into
+an error and every fallback output is bounded and validated, so one bad image
+cannot end the run for the other features.
+
+`NextBootImageVersion` does not mount either: it runs `bootc status --json`
+and reads `.status.staged.image.version` (bootc's `Host` schema:
+`status.staged` and `status.booted` are `BootEntry` objects or null, and
+`image.version` is a string or null), else the booted `IMAGE_VERSION` from
+`os-release`. A missing bootc falls back; a bootc that fails does not
+(fail closed). `CheckMinImageVersion` compares digit strings as numbers
+without conversion.
 
 ### Feature check (end-to-end)
 
@@ -931,6 +1175,7 @@ Global flags:
 | `github.com/ulikunitz/xz` | XZ decompression |
 | `github.com/klauspost/compress` | ZSTD decompression |
 | `github.com/ProtonMail/go-crypto` | GPG signature verification (openpgp) |
+| `github.com/erofs/go-erofs` | EROFS reader for `imagecompat/` (Apache-2.0, pure Go, standard library only) |
 
 ## CI and Releases
 

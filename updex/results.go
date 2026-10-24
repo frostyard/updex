@@ -81,6 +81,16 @@ type CheckResult struct {
 	// grp')". While it is set, UpdateAvailable is false.
 	RollbackHeldBy  string `json:"rollback_held_by,omitempty"`
 	UpdateAvailable bool   `json:"update_available"`
+	// NeedsImage is "needs image >= <value>" when the newest staged image of
+	// this component is not linked and `features update` would not link it
+	// because its UPDEX_MIN_IMAGE_VERSION is higher than the next-boot image
+	// version (ADR-0016). It is set only for an image that is already staged:
+	// a check never downloads, so it cannot tell for a newer published image.
+	// It is not an error.
+	NeedsImage string `json:"needs_image,omitempty"`
+	// NextBootImageVersion is the IMAGE_VERSION of the image that boots next,
+	// when the check had to read it (a staged unlinked image sets the key).
+	NextBootImageVersion string `json:"next_boot_image_version,omitempty"`
 	// Error is set when the component could not be checked (manifest fetch,
 	// signature verification, pattern failure, or installed-version listing).
 	// UpdateAvailable is always false in that case; other fields may be empty,
@@ -114,6 +124,20 @@ type UpdateResult struct {
 	// is held only because another transfer of its feature, and no record
 	// component, is the reason.
 	RejectedVersion string `json:"rejected_version,omitempty"`
+	// NeedsImage is "needs image >= <value>" when this transfer's staged image
+	// has an UPDEX_MIN_IMAGE_VERSION higher than the IMAGE_VERSION of the image
+	// that boots next (ADR-0016). Nothing of the feature was linked: the old
+	// links stay and the image stays staged until a later run finds the host
+	// image new enough. It is not an error; Installed is false. In a dry run
+	// it is set only for an image that is already staged.
+	NeedsImage string `json:"needs_image,omitempty"`
+	// NotLinked is true on the other transfers of a feature that NeedsImage
+	// kept unlinked, because a feature's transfers link together.
+	// NextActionMessage names the transfer that needs the newer image.
+	NotLinked bool `json:"not_linked,omitempty"`
+	// NextBootImageVersion is the next-boot IMAGE_VERSION that the check
+	// compared, when it was read.
+	NextBootImageVersion string `json:"next_boot_image_version,omitempty"`
 }
 
 // UpdateFeaturesResult represents the result of updating all enabled features.
@@ -126,6 +150,15 @@ type UpdateFeaturesResult struct {
 	// dry run: would activate). Empty with NoRefresh. The list is host-wide:
 	// every element of the result slice carries the same list.
 	PendingActivations []PendingActivation `json:"pending_activations,omitzero"`
+	// RefreshSkipped says why the systemd-sysext refresh did not run (a dry
+	// run: why it would not run): the refresh merges into the running image,
+	// and a sysext it would activate needs a newer image version than the
+	// running one (ADR-0016, "Minimum image version"). The links are correct
+	// for the next boot and stay, so the change takes effect at the next
+	// boot instead. It is not an error. Empty when the refresh ran, was not
+	// requested (NoRefresh), or nothing blocked it. The text is host-wide:
+	// every element of the result slice carries the same text.
+	RefreshSkipped string `json:"refresh_skipped,omitempty"`
 }
 
 // CheckFeaturesResult represents the result of checking all enabled features.
@@ -209,6 +242,11 @@ type FeatureActionResult struct {
 	DownloadedFiles   []string `json:"downloaded_files,omitzero"`
 	DryRun            bool     `json:"dry_run,omitempty"`
 	Unmerged          bool     `json:"unmerged,omitempty"`
+	// NotLinked lists, for an enable with Now, the images that were
+	// downloaded but not linked because they need a newer base image than the
+	// one that boots next (ADR-0016): "<component> of feature <name> needs
+	// image >= <value>". The feature's old links stay. It is not an error.
+	NotLinked []string `json:"not_linked,omitzero"`
 	// RefreshError is set when every requested filesystem change succeeded
 	// but the final `systemd-sysext refresh` failed. Success is false and
 	// Error carries the same message; NextActionMessage says how to finish
@@ -221,6 +259,12 @@ type FeatureActionResult struct {
 	// `systemd-sysext refresh` of this action activates as well (a dry run:
 	// would activate). Set only when the action runs, or would run, a refresh.
 	PendingActivations []PendingActivation `json:"pending_activations,omitzero"`
+	// RefreshSkipped says why the refresh of an enable with Now did not run
+	// (a dry run: why it would not run): a sysext the refresh would activate
+	// needs a newer image version than the running one (ADR-0016). The
+	// feature is enabled and linked for the next boot, so it takes effect at
+	// the next boot instead. It is not an error.
+	RefreshSkipped string `json:"refresh_skipped,omitempty"`
 }
 
 // RollbackTransfer reports what RollbackFeature did, or would do, for one
@@ -262,6 +306,12 @@ type RollbackFeatureResult struct {
 	// PendingActivations lists the sysexts outside this feature that the
 	// refresh activates as well (a dry run: would activate).
 	PendingActivations []PendingActivation `json:"pending_activations,omitzero"`
-	Error              string              `json:"error,omitempty"`
-	NextActionMessage  string              `json:"next_action_message,omitempty"`
+	// RefreshSkipped says why the refresh of a rollback with Now did not run
+	// (a dry run: why it would not run): a sysext the refresh would activate
+	// needs a newer image version than the running one (ADR-0016). The
+	// record and the links stay, so the rollback takes effect at the next
+	// boot instead. It is not an error.
+	RefreshSkipped    string `json:"refresh_skipped,omitempty"`
+	Error             string `json:"error,omitempty"`
+	NextActionMessage string `json:"next_action_message,omitempty"`
 }

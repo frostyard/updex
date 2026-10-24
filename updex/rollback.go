@@ -607,8 +607,20 @@ func (c *Client) RollbackFeature(ctx context.Context, name string, opts Rollback
 		result.Success = true
 		result.NextActionMessage = fmt.Sprintf("Dry run complete. Would roll back feature '%s'", name)
 		if opts.Now && !opts.NoRefresh {
-			result.PendingActivations = c.pendingActivations(transfers, featureTransfers)
+			// The planned links are what a real run would activate; the
+			// links on disk still name the versions a run rolls back from.
+			pendingLinks := c.pendingActivationLinks(transfers, featureTransfers)
+			result.PendingActivations = activationsOf(pendingLinks)
 			c.warnPendingActivations(result.PendingActivations, true)
+			links := make([]refreshLink, 0, len(plans))
+			for _, p := range plans {
+				links = append(links, refreshLink{component: p.transfer.Component, transfer: p.transfer, version: p.entry.ToVersion})
+			}
+			links = append(links, activationLinks(pendingLinks)...)
+			if blocker := c.refreshGate(ctx, links, &runningImage{}); blocker != nil {
+				result.RefreshSkipped = blocker.skipped()
+				c.warn("%s", result.RefreshSkipped)
+			}
 		}
 		return result, nil
 	}
@@ -667,25 +679,38 @@ func (c *Client) RollbackFeature(ctx context.Context, name string, opts Rollback
 	}
 	c.msg("Rolled back %s", name)
 
+	// The refresh merges into the running image, not into the one that boots
+	// next: a link that only the next boot can run must not be activated now.
+	// The record and the links are already written and stay correct for the
+	// next boot, so only the refresh is skipped.
 	if opts.Now && !opts.NoRefresh {
-		result.PendingActivations = c.pendingActivations(transfers, featureTransfers)
+		pendingLinks := c.pendingActivationLinks(transfers, featureTransfers)
+		result.PendingActivations = activationsOf(pendingLinks)
 		c.warnPendingActivations(result.PendingActivations, false)
-		c.msg("Refreshing sysext")
-		if err := c.runner.Refresh(); err != nil {
-			err = fmt.Errorf("sysext refresh failed: %w", err)
-			result.RefreshError = err.Error()
-			result.NextActionMessage = fmt.Sprintf("Feature '%s' rolled back and recorded, but systemd-sysext refresh failed; run 'systemd-sysext refresh' (or reboot) to activate it", name)
-			return fail(err)
+		if blocker := c.refreshGateFor(ctx, featureTransfers, pendingLinks, &runningImage{}); blocker != nil {
+			result.RefreshSkipped = blocker.skipped()
+			c.warn("%s", result.RefreshSkipped)
+		} else {
+			c.msg("Refreshing sysext")
+			if err := c.runner.Refresh(); err != nil {
+				err = fmt.Errorf("sysext refresh failed: %w", err)
+				result.RefreshError = err.Error()
+				result.NextActionMessage = fmt.Sprintf("Feature '%s' rolled back and recorded, but systemd-sysext refresh failed; run 'systemd-sysext refresh' (or reboot) to activate it", name)
+				return fail(err)
+			}
+			result.Refreshed = true
 		}
-		result.Refreshed = true
 	}
 
 	result.Success = true
 	holdText := fmt.Sprintf("'updex features update' will not link %s or older; it resumes when a newer version is published, or after 'updex features rollback --clear %s'.",
 		rejectedSummary(result.Transfers), name)
-	if result.Refreshed {
+	switch {
+	case result.Refreshed:
 		result.NextActionMessage = fmt.Sprintf("Feature '%s' rolled back and refreshed. %s", name, holdText)
-	} else {
+	case result.RefreshSkipped != "":
+		result.NextActionMessage = fmt.Sprintf("Feature '%s' rolled back and recorded. %s. Reboot to activate it. %s", name, result.RefreshSkipped, holdText)
+	default:
 		result.NextActionMessage = fmt.Sprintf("Feature '%s' rolled back. It takes effect at the next boot (or run 'systemd-sysext refresh', or use --now). %s", name, holdText)
 	}
 	return result, nil

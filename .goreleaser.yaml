@@ -135,6 +135,22 @@ nfpms:
       - dst: /usr/bin/instex
         type: "symlink"
         src: /usr/bin/updex
+    # The CLI reads a compressed EROFS sysext image with erofs-utils'
+    # dump.erofs, without mounting it (ADR-0016); --cat, which prints the
+    # extension-release file, needs erofs-utils 1.8.5. Each format writes a
+    # dependency in its own syntax.
+    dependencies:
+      - erofs-utils (>= 1.8.5)
+    overrides:
+      deb:
+        dependencies:
+          - erofs-utils (>= 1.8.5)
+      rpm:
+        dependencies:
+          - erofs-utils >= 1.8.5
+      apk:
+        dependencies:
+          - erofs-utils>=1.8.5
     formats:
       - deb
       - rpm

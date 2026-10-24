@@ -43,6 +43,18 @@ workflow, rather than trusting only a checksum served alongside it. The
 The packaged CLI needs no Go toolchain. It needs a systemd-based Linux system
 with `systemd-sysext`; commands that modify system state require root.
 
+The packages for deb, rpm and apk depend on `erofs-utils >= 1.8.5`. A
+standalone binary from the tarball needs it on the host when a configured
+sysext ships a **compressed** EROFS image: updex reads that image's
+`extension-release` file with `dump.erofs` from erofs-utils, without mounting
+the image, because the pure-Go reader handles uncompressed images only. All
+frostyard sysexts are uncompressed, so an uncompressed-only setup needs
+nothing. Without a new enough `dump.erofs`, an update of a compressed sysext
+fails closed: nothing is linked, and the error says
+`erofs-utils >= 1.8.5 is required to read compressed EROFS images; install
+erofs-utils`. See the
+[packaging and maintainer guide](docs/design/packaging-and-maintainers.md).
+
 ### Build from source
 
 With [Go 1.26.10](https://go.dev/doc/install) and `make`, run `make build` to
@@ -218,6 +230,66 @@ the hold, because every transfer must have a version newer than its rejected
 one. A rollback across an image update can need the older OS image too: an
 older sysext revision may expect a file that a newer base image dropped (the
 newer revision then carried it). Roll back the image as well in that case.
+
+**Minimum image version:** a sysext revision that needs a newer base image
+can set `UPDEX_MIN_IMAGE_VERSION=<digits>` in its
+`usr/lib/extension-release.d/extension-release.<name>` (snosi sets it by hand,
+only on a revision that depends on a base change; `systemd-sysext` ignores the
+key). After the download and before the link, `features update` (and
+`features enable --now`) reads the key from the downloaded image, without
+mounting it, and compares it with the `IMAGE_VERSION` of the image that boots
+next: the rollback deployment when `bootc status --json` reports a queued
+rollback (`rollbackQueued`), else the staged deployment, else the booted
+`/etc/os-release`. Both values must be digits only (snosi uses
+14-digit timestamps) and are compared as numbers. When the host image is older
+than the minimum, or either value is missing or not a number, updex links
+**nothing** of that feature (its transfers link together), keeps the old links
+and the downloaded images, and reports `needs image >= <value>`. This is not an
+error: other features continue and the run exits 0. The image stays staged, so
+the next run checks it again and links it once the host image is new enough
+(after the host stages or boots a newer image). The update table shows
+`not linked: needs image >= <value>`, and the JSON result has `needs_image`
+(and `not_linked` on the feature's other transfers). `features check` shows
+the same for a staged image that is not linked: `needs image >= <value>` in the
+`UPDATE` column (JSON `needs_image`, `next_boot_image_version`) and a
+`NEEDS NEWER IMAGE:` line; `features list` ends with the same line. They never
+download, so they cannot tell about a newer image that is only published.
+Without the key nothing changes. An image with no EROFS filesystem at all (for
+example a squashfs sysext from another catalog) is treated as having no key.
+An uncompressed EROFS image is read in pure Go. A compressed one is read with
+`dump.erofs` from erofs-utils >= 1.8.5, which prints the file out of the image;
+a host without that fails closed for such an image instead of skipping the
+check (see [Installation](#installation)).
+
+**The link and an immediate refresh are checked against different images.**
+The link is what the next boot merges, so it is checked against the next-boot
+image. A `systemd-sysext refresh` merges into the image the host runs now: on a
+bootc host `/etc/os-release` and `/usr/lib/os-release` describe the booted
+deployment, not a staged one. Before every refresh it runs (`features update`
+without `--no-refresh`, `features enable --now`, `features rollback --now`),
+updex therefore compares the key of every sysext the refresh would merge with
+the running image's `IMAGE_VERSION` too. It checks every link whose merged
+version it cannot prove equal to the linked version, including a merged image
+whose version the metadata does not record (`unknown`). A merged state or link
+that cannot be read stops the refresh as well: updex fails closed. When that
+check fails, including when
+the running version is missing or not numeric, updex **keeps the links** (they
+are right for the next boot), **skips the refresh**, and says so:
+`refresh skipped: <component> needs image >= <value> (running image <running>);
+it takes effect at the next boot` (JSON `refresh_skipped`). This is not an
+error: the command exits 0 and the change takes effect at the next boot. An
+image with no EROFS filesystem is treated as having no key here as well.
+`features disable --now` is the exception: it unmerges before its refresh, so
+skipping the refresh would leave every sysext unmerged; it refuses the whole
+command instead, changes nothing, and tells you to run it without `--now` and
+reboot. The timer runs with `--no-refresh` and is unchanged.
+An image that has an EROFS filesystem but whose extension-release file cannot
+be read (a failed EROFS open, a failed open, stat or read of the file, a
+missing file, several without a match, over 64 KiB, or a compressed image
+whose `dump.erofs` fallback is missing, too old or fails), an image the link
+step could not resolve, or a `bootc` that is installed but fails, is an error
+for the features concerned: nothing is linked for them. A queued rollback whose
+version `bootc` does not report is an error too.
 
 **What the vacuum keeps:** after the links succeeded, `features update`
 removes old images but always keeps, per transfer, the image the link names
