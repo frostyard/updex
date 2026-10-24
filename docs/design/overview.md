@@ -780,7 +780,8 @@ nothing when any transfer of the feature blocks it:
   closed on it. Written with a temp file plus rename after `Lstat` checks of the
   directory and file; the feature name goes through `catalog.ValidateSysextName`
   first. The record names only the rolled-back feature; its hold covers every
-  feature that shares a transfer with it (see "Update path").
+  feature that shares a transfer with it: those features are held, and only the
+  rolled-back feature advances the shared transfers (see "Update path").
 - **Order.** Record first, then the links (`linkAllOrNone` with
   `sysext.LinkVersionAt`), then the optional refresh. A crash between the record
   and the links leaves a hold on the current link, which is harmless; the other
@@ -794,37 +795,55 @@ nothing when any transfer of the feature blocks it:
   reject, the highest rejected version wins (`version.Compare`). An unreadable
   applicable record fails closed for that feature only (nothing downloaded or
   linked, an error on every transfer, naming the feature whose record failed).
-  A record still holds when any component it rejects has no available version
-  newer than the rejected one (`rollbackHoldReason`). That covers every
-  component the record names, also one outside the feature's transfers: its
-  transfer is looked up in the loaded domain and its versions are read through
-  the call's manifest cache. A component without a transfer in the domain, or
-  whose versions cannot be read, holds too (fail closed); a version lookup that
-  fails is an error for the feature, like an unreadable record. When a record
-  still holds, the whole feature is held: no download, no link, so the stage
-  step's "already staged, relink" branch can never point the link back at the
-  newest staged image, which is the rejected one. Held is a result state
-  (`UpdateResult.Held`, `RejectedVersion`, and `NextActionMessage`), not an
-  error; a transfer held only because another component of the record has not
-  advanced says so (`held by rollback of grp: beta has no version newer than
-  2.0.0`). A newer revision is staged and linked together as usual only when no
-  applicable record still holds, so a shared transfer advances only when the
-  whole record can advance; the vacuum then runs with the rejected version in
-  `VacuumPaths.ProtectVersions`, and afterwards every applicable record is
-  deleted whose every rejected version is behind a link now
-  (`sysext.LinkedVersionAt`; a component of the record outside this feature's
-  transfers is looked up in the loaded domain, and a record whose component has
-  no transfer or no readable link stays). `EnableFeature{Now}` shares this path.
+  **Only the feature that wrote a record advances the transfers its record
+  names.** When a record of another feature G applies, the whole feature is
+  held: no download, no link, `UpdateResult.Held`, and `NextActionMessage`
+  `held by rollback of grp: it advances only when grp updates (or run 'updex
+  features rollback --clear grp')`. G's transfers link all or none and its
+  record is deleted only after that link, so the hold keeps the rolled-back
+  feature whole in every processing order and after any download or link
+  failure in G; a sharing feature never links an image G staged in a failed
+  run. The hold lasts while the record exists, also when G is disabled or
+  masked, and updex never clears the record by itself. If two features that
+  share a transfer both have a record, each holds the other until one record is
+  cleared.
+  For G's own record, a record still holds when any component it rejects has no
+  available version newer than the rejected one (`rollbackHoldReason`). That
+  covers every component the record names, also one outside the feature's
+  transfers: its transfer is looked up in the loaded domain and its versions
+  are read through the call's manifest cache. A component without a transfer in
+  the domain, or whose versions cannot be read, holds too (fail closed); a
+  version lookup that fails is an error for the feature, like an unreadable
+  record. When the record still holds, the whole feature is held: no download,
+  no link, so the stage step's "already staged, relink" branch can never point
+  the link back at the newest staged image, which is the rejected one. Held is
+  a result state (`UpdateResult.Held`, `RejectedVersion`, and
+  `NextActionMessage`), not an error; a transfer held only because another
+  component of the record has not advanced says so (`held by rollback of grp:
+  beta has no version newer than 2.0.0`). A newer revision is staged and linked
+  together as usual only when the feature's own record does not hold; the
+  vacuum then runs with the rejected version in `VacuumPaths.ProtectVersions`,
+  and afterwards the record is deleted when every version it rejects is behind
+  a link now (`sysext.LinkedVersionAt`; a component of the record outside this
+  feature's transfers is looked up in the loaded domain, and a record whose
+  component has no transfer or no readable link stays).
+  `deleteFinishedRollbackRecords` deletes only the processed feature's record,
+  so a record is deleted only by an update of the feature that owns it.
+  `EnableFeature{Now}` shares this path.
 - **Status.** `TransferStatus.RollbackRejected` and `CheckResult.RollbackRejected`
   (JSON `rollback_rejected`), from the same `collectRollbackHolds`, for every
   feature that shares the transfer; `UpdateAvailable` is false while the newest
   version is not newer than the rejected one. `RollbackHeldBy` (JSON
-  `rollback_held_by`) names the record component that holds the transfer
-  although it could advance, from the same `rollbackHoldReason` the update path
-  uses, so status matches what an update does; `UpdateAvailable` is false while
-  it is set. `Features` reads manifests only when a record applies, because the
-  hold needs the newest versions; both status calls stay read-only. The CLI
-  marks the transfer `held (rejected X)` or `held (by rollback of …)` in
+  `rollback_held_by`) names why the record holds the transfer although it could
+  advance, from the same decision the update path makes: the record component
+  with no newer version for the feature's own record
+  (`rollbackHoldReason`), or `<owner>: it advances only when <owner> updates
+  (or run 'updex features rollback --clear <owner>')` for a record of another
+  feature (`rollbackHolds.ownersOtherThan`). `UpdateAvailable` is false while
+  it is set. `Features` reads manifests only when the feature's own record
+  applies, because its hold needs the newest versions; a record of another
+  feature is decided without them, and both status calls stay read-only. The
+  CLI marks the transfer `held (rejected X)` or `held (by rollback of …)` in
   `features check` and with a `HELD BY ROLLBACK:` footer in `features list`.
 - **`--now`** refreshes through the runner after listing the other pending
   activations; without it the rollback applies at the next boot. `--clear`

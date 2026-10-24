@@ -48,8 +48,9 @@ type CheckResult struct {
 	RollbackRejected string `json:"rollback_rejected,omitempty"`
 	// RollbackHeldBy names why a record holds the feature although this
 	// component could advance (see TransferStatus.RollbackHeldBy), for
-	// example "grp: beta has no version newer than 2.0.0". While it is set,
-	// UpdateAvailable is false.
+	// example "grp: beta has no version newer than 2.0.0" or "grp: it
+	// advances only when grp updates (or run 'updex features rollback --clear
+	// grp')". While it is set, UpdateAvailable is false.
 	RollbackHeldBy  string `json:"rollback_held_by,omitempty"`
 	UpdateAvailable bool   `json:"update_available"`
 	// NeedsImage is "needs image >= <value>" when the newest staged image of
@@ -79,18 +80,21 @@ type UpdateResult struct {
 	Error             string   `json:"error,omitempty"`
 	NextActionMessage string   `json:"next_action_message,omitempty"`
 	RemovedVersions   []string `json:"removed_versions,omitzero"`
-	// Held is true when the rollback records that apply to the transfers
-	// hold the feature: some component they name has no version newer than
-	// the one it rejects, so nothing was downloaded or linked and every old
-	// link stays. It is not an error. A record of any feature that shares a
-	// transfer counts, not only the feature being updated, and a component
-	// the record names outside this feature's transfers counts too. Version
-	// is the version the link names; NextActionMessage says what holds the
-	// feature.
+	// Held is true when a rollback record holds the feature, so nothing was
+	// downloaded or linked and every old link stays. It is not an error. A
+	// record of any feature that shares a transfer counts, not only the
+	// feature being updated; a record of another feature holds the feature
+	// while only that feature advances the transfers its record names, and
+	// the hold lasts while its record exists, also when that feature is
+	// disabled or masked. The feature's own record holds while a component
+	// it names, inside this feature or not, has no version newer than the
+	// one it rejects. Version is the version the link names;
+	// NextActionMessage says what holds the feature.
 	Held bool `json:"held_by_rollback,omitempty"`
 	// RejectedVersion is the highest version the applicable rollback
 	// records reject for this transfer, when Held. Empty when the transfer
-	// is held only because another transfer of its feature is.
+	// is held only because another transfer of its feature, and no record
+	// component, is the reason.
 	RejectedVersion string `json:"rejected_version,omitempty"`
 	// NeedsImage is "needs image >= <value>" when this transfer's staged image
 	// has an UPDEX_MIN_IMAGE_VERSION higher than the IMAGE_VERSION of the image

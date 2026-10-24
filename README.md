@@ -199,23 +199,31 @@ A transfer can belong to more than one feature (`Features=` or
 `RequisiteFeatures=` in its `.transfer` file). The hold covers **every**
 feature that shares a transfer: `features update`, `features enable --now`,
 `features check` and `features list` read the rollback records of all of them,
-whether or not a feature is enabled, so updating through another feature
-cannot link the rejected version again. When several records reject the same
+whether or not a feature is enabled. When several records reject the same
 transfer, the highest rejected version applies. If one of those records cannot
 be read, updates link nothing for every feature that shares the transfer and
-name the feature whose record failed. The record is deleted once every version
-it rejects is behind a link, whichever feature's update got there first.
+name the feature whose record failed.
 
-A shared transfer advances only when the whole record that applies to it can
-advance. The record covers every component it names, also one that the feature
-being updated does not use: each of them must have a version newer than the one
-the record rejects. So a feature that shares only one transfer of a
-rolled-back feature stays held while another component of that record has no
-newer version, and the message names it, for example `held by rollback of
-grp: beta has no version newer than 2.0.0`. A component the record names whose
-transfer is not in the loaded definitions (for example with `-C` or a narrowed
-`--component`) also keeps the hold, because updex cannot tell whether a newer
-version exists; `features check` shows it as `rollback_held_by`.
+While a rollback record of feature G exists, only G advances the transfers its
+record names: G's transfers link all or none, and G's record is deleted only
+after that link. Any other feature that shares such a transfer is held as a
+whole instead: nothing is downloaded or linked for it, `features update` exits
+0, and the message says `held by rollback of grp: it advances only when grp
+updates (or run 'updex features rollback --clear grp')`. So the all-or-none
+guarantee holds in every processing order, and after a download or link failure
+in G: an image that G's failed run staged is never linked by the other
+feature. The hold lasts while the record exists, also when G is disabled or
+masked; updex never clears the record by itself. `features rollback --clear G`,
+or a successful update of G, ends it. If two features that share a transfer
+both have a rollback record, each is held by the other's record; clear one of
+them so the other can advance. `features check` shows it as
+`rollback_held_by`.
+
+G's own update resumes when every component its record names, including one
+that G's current transfers do not use, has a version newer than the rejected
+one. A component the record names whose transfer is not in the loaded
+definitions (for example with `-C` or a narrowed `--component`) holds too,
+because updex cannot tell whether a newer version exists.
 
 A publisher that bumps only one component of a multi-transfer feature keeps
 the hold, because every transfer must have a version newer than its rejected

@@ -179,10 +179,11 @@ type transferInstall struct {
 	// when the image has no key.
 	nextBootImage string
 
-	// held reports that a rollback record holds the feature: nothing newer
-	// than the rejected version is published, so nothing was downloaded or
-	// linked and every old link stays. It is not an error. outcome.Version is
-	// the version the link names.
+	// held reports that a rollback record holds the feature: either another
+	// feature's record names one of its transfers (only that feature advances
+	// it), or no version newer than the rejected one is published. Nothing
+	// was downloaded or linked and every old link stays. It is not an error.
+	// outcome.Version is the version the link names.
 	held bool
 
 	// rejected is the highest version a rollback record that applies to this
@@ -192,28 +193,26 @@ type transferInstall struct {
 
 	// heldVersion is the version the applicable records reject for this
 	// transfer. It is empty when no record names this component and the
-	// transfer is held only because another transfer of its feature is.
+	// transfer is held only because another transfer of its feature, or a
+	// record of another feature, holds the feature.
 	heldVersion string
 
-	// heldReason says why a record holds the whole feature when this
-	// transfer's own rejected version is not the reason, for example
-	// "grp: beta has no version newer than 2.0.0". Empty when heldVersion
-	// is the reason, and when the transfer is not held.
+	// heldReason says why the feature is held when this transfer's own
+	// rejected version is not the reason: for its own record, for example
+	// "grp: beta has no version newer than 2.0.0", and for another
+	// feature's record, "grp: it advances only when grp updates (or run
+	// 'updex features rollback --clear grp')". Empty when heldVersion is
+	// the reason, and when the transfer is not held.
 	heldReason string
 }
 
-// heldMessage renders why the rollback holds this transfer: the record's
-// component and version when the transfer itself is the reason, else the
-// record and component that keep the whole feature from advancing.
-func (in transferInstall) heldMessage(feature string) string {
-	switch {
-	case in.heldReason != "":
+// heldMessage renders why the rollback holds this transfer: the reason that
+// holds the whole feature, else the transfer's own rejected version.
+func (in transferInstall) heldMessage() string {
+	if in.heldReason != "" {
 		return "held by rollback of " + in.heldReason
-	case in.heldVersion != "":
-		return "held by rollback: rejected " + in.heldVersion
-	default:
-		return "held by rollback: another transfer of feature " + feature + " is held"
 	}
+	return "held by rollback: rejected " + in.heldVersion
 }
 
 // errNotLinked builds the error that a transfer reports when another
@@ -254,6 +253,10 @@ type installFeatureOptions struct {
 // installTransfers installs the transfers of one feature so that they link
 // together (ADR-0016): it stages every transfer first, then links them all.
 //
+//   - A rollback record of another feature that names one of the transfers
+//     holds the whole feature: only the feature that wrote the record
+//     advances it, and nothing is downloaded or linked here. The hold lasts
+//     while the record exists, also when its feature is disabled or masked.
 //   - If any transfer fails to stage (version lookup, download or
 //     verification), no transfer is linked. Every old link stays, and the
 //     images that were downloaded stay on disk for the next run, which
@@ -317,11 +320,22 @@ func (c *Client) installTransfers(ctx context.Context, feature string, transfers
 	for i, transfer := range transfers {
 		results[i].rejected = holds.rejected[transfer.Component]
 	}
-	if len(holds.records) > 0 {
-		// A record covers every component it names, also one outside this
-		// feature's transfers, so the feature stays whole whatever the
-		// other component's newest version is.
-		reason, err := c.rollbackHoldReason(ctx, transfers, opts.Domain, holds, manifests)
+	// A record written by another feature applies to one of these transfers,
+	// so only the feature that wrote it advances that transfer: a record and
+	// its feature's links move together only when that feature itself updates
+	// (ADR-0016). Holding the whole feature here keeps the rolled-back
+	// feature whole whatever happens to the owner's downloads or links, and
+	// in whatever order the features are processed.
+	if owners := holds.ownersOtherThan(feature); len(owners) > 0 {
+		c.holdFeatureOwnedBy(transfers, holds, owners[0], results)
+		return results
+	}
+	if rec := holds.records[feature]; rec != nil {
+		// The feature's own record holds only while some component it names
+		// has no newer version. It covers every component it names, also one
+		// outside this feature's transfers, so the feature stays whole
+		// whatever the other component's newest version is.
+		reason, err := c.rollbackHoldReason(ctx, rec, transfers, opts.Domain, manifests)
 		if err != nil {
 			// The versions that decide whether the record still holds
 			// cannot be read: link nothing, as for an unreadable record.
@@ -401,16 +415,16 @@ func (c *Client) installTransfers(ctx context.Context, feature string, transfers
 		}
 	}
 
-	// A newer version than the one rejected is linked for every component an
-	// applicable record names: that rollback is over.
-	c.deleteFinishedRollbackRecords(transfers, opts.Domain, holds)
+	// A newer version than the one rejected is linked for every component of
+	// the feature's own record: that rollback is over.
+	c.deleteFinishedRollbackRecords(feature, transfers, opts.Domain, holds)
 
 	return results
 }
 
-// holdFeature reports that an applicable rollback record holds the feature,
-// so nothing is downloaded or linked for any of its transfers: the feature
-// never ends split between a new and an old revision. The transfer whose own
+// holdFeature reports that the feature's own rollback record holds it, so
+// nothing is downloaded or linked for any of its transfers: the feature never
+// ends split between a new and an old revision. The transfer whose own
 // rejected version is the reason reports that version; the others report the
 // record component that keeps the whole feature from advancing.
 func (c *Client) holdFeature(transfers []*config.Transfer, holds rollbackHolds, reason *rollbackHoldReason, results []transferInstall) {
@@ -424,6 +438,26 @@ func (c *Client) holdFeature(transfers []*config.Transfer, holds rollbackHolds, 
 		if reason.component != transfer.Component {
 			results[i].heldReason = reason.String()
 		}
+		results[i].outcome = installOutcome{Version: linked}
+	}
+}
+
+// holdFeatureOwnedBy reports that a rollback record of another feature
+// applies to one of the transfers, so only that feature advances it: nothing
+// is downloaded or linked for this feature, and every transfer says why. The
+// hold lasts while the record exists, also when the feature that wrote it is
+// disabled or masked; an update through that feature, or `updex features
+// rollback --clear <feature>`, ends it.
+func (c *Client) holdFeatureOwnedBy(transfers []*config.Transfer, holds rollbackHolds, owner string, results []transferInstall) {
+	reason := rollbackOwnerHold{feature: owner}.String()
+	for i, transfer := range transfers {
+		linked, err := sysext.LinkedVersionAt(transfer, c.paths.sysextLinkDir)
+		if err != nil {
+			linked = ""
+		}
+		results[i].held = true
+		results[i].heldVersion = holds.rejected[transfer.Component]
+		results[i].heldReason = reason
 		results[i].outcome = installOutcome{Version: linked}
 	}
 }

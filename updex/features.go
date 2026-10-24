@@ -58,17 +58,26 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 		var transferNames []string
 		var statuses []TransferStatus
 		// The records of every feature that shares one of the transfers
-		// apply, not only this feature's own (ADR-0016), and a record
-		// still holds when any component it names has no newer version.
+		// apply, not only this feature's own (ADR-0016). A record of another
+		// feature holds the whole feature: only the feature that wrote it
+		// advances the transfers it names. The feature's own record holds
+		// only while a component it names has no newer version.
 		holds := c.collectRollbackHolds(featureTransfers)
-		reason, holdErr := c.rollbackHoldReason(ctx, featureTransfers, transfers, holds, manifests)
+		owner := ""
+		var reason *rollbackHoldReason
+		var holdErr error
+		if owners := holds.ownersOtherThan(f.Name); len(owners) > 0 {
+			owner = rollbackOwnerHold{feature: owners[0]}.String()
+		} else if rec := holds.records[f.Name]; rec != nil {
+			reason, holdErr = c.rollbackHoldReason(ctx, rec, featureTransfers, transfers, manifests)
+		}
 		for _, t := range featureTransfers {
 			transferNames = append(transferNames, t.Component)
 
 			// A transfer whose merged state or link cannot be read is
 			// reported as a warning, and keeps its other value, so one bad
 			// transfer never breaks the listing.
-			status := c.featureTransferStatus(t, holds, reason, holdErr)
+			status := c.featureTransferStatus(t, holds, reason, owner, holdErr)
 			if status.Error != "" {
 				c.warn("%s: %s", t.Component, status.Error)
 			}
@@ -333,7 +342,7 @@ func (c *Client) enableFeature(ctx context.Context, name string, opts EnableFeat
 							notLinked = append(notLinked, reason)
 						}
 					case in.held:
-						c.msg("%s: %s; nothing was downloaded or linked", in.transfer.Component, in.heldMessage(name))
+						c.msg("%s: %s; nothing was downloaded or linked", in.transfer.Component, in.heldMessage())
 					case in.outcome.Downloaded:
 						result.DownloadedFiles = append(result.DownloadedFiles, fmt.Sprintf("%s@%s", in.transfer.Component, in.outcome.Version))
 						c.msg("Downloaded %s version %s", in.transfer.Component, in.outcome.Version)
@@ -754,7 +763,7 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 				result.RejectedVersion = in.heldVersion
 				result.Version = in.outcome.Version
 				result.Installed = in.outcome.Version != ""
-				result.NextActionMessage = in.heldMessage(f.Name)
+				result.NextActionMessage = in.heldMessage()
 				c.msg("%s/%s: %s", f.Name, transfer.Component, result.NextActionMessage)
 				featureResult.Results = append(featureResult.Results, result)
 				continue
@@ -899,18 +908,28 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 		}
 
 		// Every rollback record that applies to these transfers counts, not
-		// only this feature's own (ADR-0016), and a record still holds when
-		// any component it names, inside this feature or not, has no newer
-		// version. The decision is the same one installTransfers makes.
+		// only this feature's own (ADR-0016). A record of another feature
+		// holds the whole feature, because only the feature that wrote it
+		// advances the transfers it names; the feature's own record still
+		// holds when any component it names, inside this feature or not, has
+		// no newer version. The decision is the same one installTransfers
+		// makes.
 		holds := c.collectRollbackHolds(featureTransfers)
-		reason, holdErr := c.rollbackHoldReason(ctx, featureTransfers, transfers, holds, manifestCache)
+		owner := ""
+		var reason *rollbackHoldReason
+		var holdErr error
+		if owners := holds.ownersOtherThan(f.Name); len(owners) > 0 {
+			owner = rollbackOwnerHold{feature: owners[0]}.String()
+		} else if rec := holds.records[f.Name]; rec != nil {
+			reason, holdErr = c.rollbackHoldReason(ctx, rec, featureTransfers, transfers, manifestCache)
+		}
 		for _, transfer := range featureTransfers {
 			c.msg("Checking %s/%s", f.Name, transfer.Component)
 
 			// What the host runs and what its next boot merges. A failure to
 			// read either is reported after the manifest check below, in this
 			// component's Error, with the values that could be read.
-			status := c.featureTransferStatus(transfer, holds, reason, holdErr)
+			status := c.featureTransferStatus(transfer, holds, reason, owner, holdErr)
 
 			available, m, _, err := c.getAvailableVersions(ctx, transfer, manifestCache[transfer.Source.Path])
 			if m != nil {
