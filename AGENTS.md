@@ -494,7 +494,7 @@ in the `config/` structs and parse functions. Always finish with
   real `mkfs.erofs -zlz4hc` and `dump.erofs` when the host has erofs-utils >=
   1.8.5 and skips otherwise.
 - **Packaging dependency.** The deb, rpm and apk packages declare
-  `erofs-utils` >= 1.8.5 (`.goreleaser.yaml` `nfpms.depends` and per-format
+  `erofs-utils` >= 1.8.5 (`.goreleaser.yaml` `nfpms.dependencies` and per-format
   `overrides`, one syntax each); `updex/packaging_erofs_contract_test.go` pins
   all three against `imagecompat.ErofsUtilsMinVersion`. The standalone binary
   needs erofs-utils on the host for a compressed sysext only.

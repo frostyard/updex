@@ -126,17 +126,17 @@ nfpms:
     # dump.erofs, without mounting it (ADR-0016); --cat, which prints the
     # extension-release file, needs erofs-utils 1.8.5. Each format writes a
     # dependency in its own syntax.
-    depends:
+    dependencies:
       - erofs-utils (>= 1.8.5)
     overrides:
       deb:
-        depends:
+        dependencies:
           - erofs-utils (>= 1.8.5)
       rpm:
-        depends:
+        dependencies:
           - erofs-utils >= 1.8.5
       apk:
-        depends:
+        dependencies:
           - erofs-utils>=1.8.5
     formats:
       - deb

@@ -24,10 +24,10 @@ func TestPackagesRequireErofsUtils(t *testing.T) {
 	var config struct {
 		Nfpms []struct {
 			Formats []string `yaml:"formats"`
-			Depends []string `yaml:"depends"`
+			Depends []string `yaml:"dependencies"`
 			// Overrides is keyed by package format; only depends is pinned.
 			Overrides map[string]struct {
-				Depends []string `yaml:"depends"`
+				Depends []string `yaml:"dependencies"`
 			} `yaml:"overrides"`
 		} `yaml:"nfpms"`
 	}
@@ -56,18 +56,18 @@ func TestPackagesRequireErofsUtils(t *testing.T) {
 		}
 		override, ok := pkg.Overrides[format]
 		if !ok {
-			t.Errorf("nfpms.overrides has no %q entry; want depends %q", format, want)
+			t.Errorf("nfpms.overrides has no %q entry; want dependencies %q", format, want)
 			continue
 		}
 		if got := dependsOf(override.Depends, "erofs-utils"); got != want {
-			t.Errorf("%s depends = %q, want %q (nfpm syntax per format)", format, got, want)
+			t.Errorf("%s dependencies = %q, want %q (nfpm syntax per format)", format, got, want)
 		}
 	}
 
 	// The base list applies to a format without an override; keep it valid deb
 	// syntax so a new format never ships without the dependency.
 	if got := dependsOf(pkg.Depends, "erofs-utils"); !strings.Contains(got, "erofs-utils") {
-		t.Errorf("nfpms.depends = %q, want the erofs-utils dependency as a fallback", got)
+		t.Errorf("nfpms.dependencies = %q, want the erofs-utils dependency as a fallback", got)
 	}
 }
 
