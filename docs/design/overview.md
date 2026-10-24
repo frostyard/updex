@@ -980,11 +980,15 @@ an error and every fallback output is bounded and validated, so one bad image
 cannot end the run for the other features.
 
 `NextBootImageVersion` does not mount either: it runs `bootc status --json`
-and reads `.status.staged.image.version` (bootc's `Host` schema:
-`status.staged` and `status.booted` are `BootEntry` objects or null, and
-`image.version` is a string or null), else the booted `IMAGE_VERSION` from
-`os-release`. A missing bootc falls back; a bootc that fails does not
-(fail closed). `CheckMinImageVersion` compares digit strings as numbers
+(bootc's `Host` schema: `status.rollback`, `status.staged` and
+`status.booted` are `BootEntry` objects or null, and `image.version` is a
+string or null) and takes, in order: `.status.rollback.image.version` when
+`status.rollbackQueued` is true; else `.status.staged.image.version` when
+`status.staged` is not null; else the booted `IMAGE_VERSION` from
+`os-release`. A queued rollback or a staged deployment without an image
+version is an error (`ErrStagedWithoutVersion` for the staged one), never a
+fallback. A missing bootc falls back; a bootc that fails does not (fail
+closed). `CheckMinImageVersion` compares digit strings as numbers
 without conversion.
 
 ### Feature check (end-to-end)
