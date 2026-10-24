@@ -240,7 +240,7 @@ the one exception: it is a systemd mask (`systemctl mask`), which updex never
 removes. Disable classifies it as masked, leaves it in place, and reports it in
 `MaskedFiles` and in the message with the command that undoes it, for example
 `; updex-update.timer is masked (run 'systemctl unmask updex-update.timer' to
-undo)`. Every other symlink is still refused. A masked timer still counts as
+undo)`; with both units masked, one command names both (`systemctl unmask updex-update.timer updex-update.service`). Every other symlink is still refused. A masked timer still counts as
 installed, so disable stops and disables it without the "timer not installed"
 error. Packaged units are never touched. It returns "timer not installed"
 when neither directory has the timer. Every step is attempted, and stop,

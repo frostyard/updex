@@ -663,6 +663,25 @@ func TestDisableDaemonMasked(t *testing.T) {
 		}
 	})
 
+	t.Run("both units masked: one unmask command", func(t *testing.T) {
+		runner := &systemd.MockSystemctlRunner{}
+		client, unitPath := newDaemonTestClient(t, runner)
+		timerPath := maskUnit(t, unitPath, ".timer")
+		servicePath := maskUnit(t, unitPath, ".service")
+
+		result, err := client.DisableDaemon(t.Context(), DisableDaemonOptions{})
+		if err != nil {
+			t.Fatalf("DisableDaemon() error = %v", err)
+		}
+		if want := []string{timerPath, servicePath}; !slices.Equal(result.MaskedFiles, want) {
+			t.Errorf("DisableDaemon() MaskedFiles = %v, want %v", result.MaskedFiles, want)
+		}
+		wantNote := "; updex-update.timer and updex-update.service are masked (run 'systemctl unmask updex-update.timer updex-update.service' to undo)"
+		if !strings.HasSuffix(result.Message, wantNote) {
+			t.Errorf("DisableDaemon() Message = %q, want suffix %q", result.Message, wantNote)
+		}
+	})
+
 	t.Run("a lone masked timer counts as installed", func(t *testing.T) {
 		runner := &systemd.MockSystemctlRunner{}
 		client, unitPath := newDaemonTestClient(t, runner)

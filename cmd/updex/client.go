@@ -13,6 +13,7 @@ import (
 	"github.com/frostyard/updex/v2/systemd"
 	"github.com/frostyard/updex/v2/updex"
 	"github.com/schollz/progressbar/v3"
+	"golang.org/x/term"
 )
 
 // sysextRunner is the systemd-sysext runner handed to every CLI-constructed
@@ -65,7 +66,7 @@ func newClient() *updex.Client {
 // newReporter returns the progress reporter for the current output mode.
 //
 // Silent mode discards every event. JSON mode writes the progress and warning
-// events as JSON Lines to stderr, so stdout carries exactly one JSON document:
+// events as JSON Lines to stderr, so stdout carries only one JSON document:
 // the command's result. Text mode keeps clix's text reporter, which already
 // writes to stderr. clix.NewReporter() must not be used for JSON mode because
 // it writes its JSON Lines to stdout.
@@ -87,8 +88,14 @@ func newReporter() reporter.Reporter {
 // stderrIsTerminal reports whether standard error is a terminal. It is a
 // variable so a test can choose the answer without a real terminal.
 var stderrIsTerminal = func() bool {
-	info, err := os.Stderr.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
+	return isTerminal(os.Stderr)
+}
+
+// isTerminal reports whether f is a terminal. A character device is not
+// enough (/dev/null is one), so it asks the terminal driver (term.IsTerminal,
+// an ioctl on the descriptor).
+func isTerminal(f *os.File) bool {
+	return term.IsTerminal(int(f.Fd()))
 }
 
 // downloadProgressEnabled reports whether downloads get a progress bar: only

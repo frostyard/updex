@@ -468,11 +468,14 @@ its transfer.
 
 ## JSON output
 
-Every `--json` command prints exactly one JSON document on stdout: the
-command's result. Progress and warning events are JSON Lines on stderr, for
-example `{"type":"message","message":"Installed version 2.0.0",...}`, so a
-consumer can read stderr for live progress and still parse stdout with one
-`json.Unmarshal`. The interactive download bar is off in JSON mode, and in
+With `--json`, stdout carries only the command's result, as one JSON
+document. Progress and warning events are JSON Lines on stderr, for example
+`{"type":"message","message":"Installed version 2.0.0",...}`, so a consumer
+can read stderr for live progress and still parse stdout with one
+`json.Unmarshal`. A command that fails before it has a result (for example a
+missing root privilege, or `daemon disable` with no timer installed) can print
+nothing on stdout; it exits non-zero and writes the error to stderr. Check the
+exit status before you parse stdout. The interactive download bar is off in JSON mode, and in
 text mode it appears only when stderr is a terminal (under systemd the journal
 would otherwise receive raw carriage-return text).
 

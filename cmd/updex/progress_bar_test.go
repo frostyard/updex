@@ -2,6 +2,8 @@ package updex
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -126,4 +128,49 @@ func TestNewReporterGoesToStderr(t *testing.T) {
 			t.Fatalf("newReporter() = %T, want *reporter.TextReporter", newReporter())
 		}
 	})
+}
+
+// TestIsTerminal verifies the real terminal check behind stderrIsTerminal: a
+// character device that is not a terminal (/dev/null), a pipe and a regular
+// file are not terminals; a pseudo-terminal is.
+func TestIsTerminal(t *testing.T) {
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = devNull.Close() }()
+	if info, err := devNull.Stat(); err != nil || info.Mode()&os.ModeCharDevice == 0 {
+		t.Fatalf("%s is not a character device: %v", os.DevNull, err)
+	}
+	if isTerminal(devNull) {
+		t.Errorf("isTerminal(%s) = true, want false: a character device is not a terminal", os.DevNull)
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close(); _ = w.Close() }()
+	if isTerminal(w) {
+		t.Error("isTerminal(pipe) = true, want false")
+	}
+
+	regular, err := os.Create(filepath.Join(t.TempDir(), "stderr.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = regular.Close() }()
+	if isTerminal(regular) {
+		t.Error("isTerminal(regular file) = true, want false")
+	}
+
+	// The master side of a pseudo-terminal answers the terminal ioctl.
+	ptmx, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
+	if err != nil {
+		t.Skipf("no pseudo-terminal available: %v", err)
+	}
+	defer func() { _ = ptmx.Close() }()
+	if !isTerminal(ptmx) {
+		t.Error("isTerminal(/dev/ptmx) = false, want true")
+	}
 }

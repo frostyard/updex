@@ -406,13 +406,16 @@ func maskedNote(masked []string) string {
 		return ""
 	}
 	names := make([]string, len(masked))
-	unmask := make([]string, len(masked))
 	for i, path := range masked {
-		name := filepath.Base(path)
-		names[i] = name
-		unmask[i] = "systemctl unmask " + name
+		names[i] = filepath.Base(path)
 	}
-	return fmt.Sprintf("; %s is masked (run '%s' to undo)", strings.Join(names, " and "), strings.Join(unmask, " and "))
+	verb := "is"
+	if len(names) > 1 {
+		verb = "are"
+	}
+	// One command for every mask: "and" between two commands would read as
+	// unit names to a shell.
+	return fmt.Sprintf("; %s %s masked (run 'systemctl unmask %s' to undo)", strings.Join(names, " and "), verb, strings.Join(names, " "))
 }
 
 // daemonUnitFileInUse returns the path of the unit file that systemd uses
