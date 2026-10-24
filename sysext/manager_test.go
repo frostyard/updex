@@ -1148,3 +1148,330 @@ func TestGetActiveVersionInIgnoresMergedState(t *testing.T) {
 		t.Errorf("GetActiveVersionIn() = %q, want empty", got)
 	}
 }
+
+// TestVacuumWithProtectsLinkedAndMergedVersions covers the ADR-0016
+// retention contract: the vacuum keeps the linked version, the merged
+// version, ProtectVersion=, explicit protected versions, the legacy
+// CurrentSymlink target and the newest InstancesMax versions, and it deletes
+// nothing when it cannot read the link or the merged state.
+func TestVacuumWithProtectsLinkedAndMergedVersions(t *testing.T) {
+	const pattern = "myext_@v.raw"
+
+	// fixture is the on-disk state of one case.
+	type fixture struct {
+		stagingDir string
+		paths      VacuumPaths
+	}
+
+	// stage writes one staged image per version and returns the fixture with
+	// its (still empty) link directory and one hierarchy.
+	stage := func(t *testing.T, versions ...string) fixture {
+		t.Helper()
+		stagingDir := t.TempDir()
+		for _, v := range versions {
+			if err := os.WriteFile(filepath.Join(stagingDir, "myext_"+v+".raw"), []byte("image"), 0o644); err != nil {
+				t.Fatalf("write staged image: %v", err)
+			}
+		}
+		return fixture{
+			stagingDir: stagingDir,
+			paths: VacuumPaths{
+				DefaultDir:  stagingDir,
+				LinkDir:     t.TempDir(),
+				Hierarchies: []string{t.TempDir()},
+			},
+		}
+	}
+	linkTo := func(t *testing.T, f fixture, target string) {
+		t.Helper()
+		if err := os.Symlink(target, filepath.Join(f.paths.LinkDir, "myext.raw")); err != nil {
+			t.Fatalf("create sysext link: %v", err)
+		}
+	}
+	linkVersion := func(t *testing.T, f fixture, v string) {
+		t.Helper()
+		linkTo(t, f, filepath.Join(f.stagingDir, "myext_"+v+".raw"))
+	}
+	merged := func(t *testing.T, f fixture, v string) {
+		t.Helper()
+		origin := `{"extensions":{"myext":{"path":"` + filepath.Join(f.stagingDir, "myext_"+v+".raw") + `"}}}`
+		writeMergedStateFile(t, f.paths.Hierarchies[0], "origin", origin)
+	}
+
+	tests := []struct {
+		name         string
+		versions     []string
+		instancesMax int
+		protect      string
+		setup        func(t *testing.T, f *fixture)
+		wantKept     []string
+		wantRemoved  []string
+		wantErr      string
+	}{
+		{
+			name:     "linked is the newest",
+			versions: []string{"1.0.0", "2.0.0", "3.0.0"},
+			setup: func(t *testing.T, f *fixture) {
+				linkVersion(t, *f, "3.0.0")
+			},
+			wantKept:    []string{"3.0.0", "2.0.0"},
+			wantRemoved: []string{"1.0.0"},
+		},
+		{
+			name:     "merged is older than InstancesMax and is kept",
+			versions: []string{"1.0.0", "2.0.0", "3.0.0", "4.0.0"},
+			setup: func(t *testing.T, f *fixture) {
+				linkVersion(t, *f, "4.0.0")
+				merged(t, *f, "1.0.0")
+			},
+			wantKept:    []string{"4.0.0", "3.0.0", "1.0.0"},
+			wantRemoved: []string{"2.0.0"},
+		},
+		{
+			name:     "linked and merged differ: newest 2 and an older merged image make 3",
+			versions: []string{"1.0.0", "2.0.0", "3.0.0"},
+			setup: func(t *testing.T, f *fixture) {
+				linkVersion(t, *f, "3.0.0")
+				merged(t, *f, "1.0.0")
+			},
+			wantKept: []string{"3.0.0", "2.0.0", "1.0.0"},
+		},
+		{
+			name:     "linked and merged both older than the newest are kept",
+			versions: []string{"1.0.0", "2.0.0", "3.0.0", "4.0.0", "5.0.0"},
+			setup: func(t *testing.T, f *fixture) {
+				linkVersion(t, *f, "2.0.0")
+				merged(t, *f, "1.0.0")
+			},
+			wantKept:    []string{"5.0.0", "4.0.0", "2.0.0", "1.0.0"},
+			wantRemoved: []string{"3.0.0"},
+		},
+		{
+			name:     "merged is absent",
+			versions: []string{"1.0.0", "2.0.0", "3.0.0"},
+			setup: func(t *testing.T, f *fixture) {
+				linkVersion(t, *f, "3.0.0")
+			},
+			wantKept:    []string{"3.0.0", "2.0.0"},
+			wantRemoved: []string{"1.0.0"},
+		},
+		{
+			name:     "link is absent",
+			versions: []string{"1.0.0", "2.0.0", "3.0.0"},
+			setup: func(t *testing.T, f *fixture) {
+				merged(t, *f, "1.0.0")
+			},
+			wantKept: []string{"3.0.0", "2.0.0", "1.0.0"},
+		},
+		{
+			name:     "dangling link protects nothing",
+			versions: []string{"1.0.0", "2.0.0", "3.0.0"},
+			setup: func(t *testing.T, f *fixture) {
+				// The link names version 1.0.0 but its target does not exist.
+				linkTo(t, *f, filepath.Join(t.TempDir(), "gone", "myext_1.0.0.raw"))
+			},
+			wantKept:    []string{"3.0.0", "2.0.0"},
+			wantRemoved: []string{"1.0.0"},
+		},
+		{
+			name:     "merged version that is not staged takes no slot",
+			versions: []string{"1.0.0", "2.0.0", "3.0.0"},
+			setup: func(t *testing.T, f *fixture) {
+				linkVersion(t, *f, "3.0.0")
+				merged(t, *f, "9.0.0")
+			},
+			wantKept:    []string{"3.0.0", "2.0.0"},
+			wantRemoved: []string{"1.0.0"},
+		},
+		{
+			name:     "merged image with unknown version protects nothing",
+			versions: []string{"1.0.0", "2.0.0", "3.0.0"},
+			setup: func(t *testing.T, f *fixture) {
+				linkVersion(t, *f, "3.0.0")
+				writeMergedStateFile(t, f.paths.Hierarchies[0], "extensions", "myext\n")
+			},
+			wantKept:    []string{"3.0.0", "2.0.0"},
+			wantRemoved: []string{"1.0.0"},
+		},
+		{
+			name:         "ProtectVersion is kept",
+			versions:     []string{"1.0.0", "2.0.0", "3.0.0"},
+			instancesMax: 1,
+			protect:      "1.0.0",
+			setup: func(t *testing.T, f *fixture) {
+				linkVersion(t, *f, "3.0.0")
+			},
+			wantKept:    []string{"3.0.0", "1.0.0"},
+			wantRemoved: []string{"2.0.0"},
+		},
+		{
+			name:         "extra protected versions are kept",
+			versions:     []string{"1.0.0", "2.0.0", "3.0.0"},
+			instancesMax: 1,
+			setup: func(t *testing.T, f *fixture) {
+				linkVersion(t, *f, "3.0.0")
+				f.paths.ProtectVersions = []string{"", "2.0.0"}
+			},
+			wantKept:    []string{"3.0.0", "2.0.0"},
+			wantRemoved: []string{"1.0.0"},
+		},
+		{
+			name:         "InstancesMax 1 keeps only the newest, the linked and the merged image",
+			versions:     []string{"1.0.0", "2.0.0", "3.0.0", "4.0.0"},
+			instancesMax: 1,
+			setup: func(t *testing.T, f *fixture) {
+				linkVersion(t, *f, "4.0.0")
+				merged(t, *f, "2.0.0")
+			},
+			wantKept:    []string{"4.0.0", "2.0.0"},
+			wantRemoved: []string{"3.0.0", "1.0.0"},
+		},
+		{
+			name:     "empty LinkDir and Hierarchies skip the protection",
+			versions: []string{"1.0.0", "2.0.0", "3.0.0"},
+			setup: func(t *testing.T, f *fixture) {
+				linkVersion(t, *f, "1.0.0")
+				merged(t, *f, "1.0.0")
+				f.paths.LinkDir = ""
+				f.paths.Hierarchies = nil
+			},
+			wantKept:    []string{"3.0.0", "2.0.0"},
+			wantRemoved: []string{"1.0.0"},
+		},
+		{
+			name:     "unreadable merged state fails and deletes nothing",
+			versions: []string{"1.0.0", "2.0.0", "3.0.0"},
+			setup: func(t *testing.T, f *fixture) {
+				linkVersion(t, *f, "3.0.0")
+				// A directory where the origin file belongs cannot be read.
+				if err := os.MkdirAll(filepath.Join(f.paths.Hierarchies[0], MergedStateDirName, "origin"), 0o755); err != nil {
+					t.Fatalf("create origin directory: %v", err)
+				}
+			},
+			wantErr: "read merged version",
+		},
+		{
+			name:     "unreadable link fails and deletes nothing",
+			versions: []string{"1.0.0", "2.0.0", "3.0.0"},
+			setup: func(t *testing.T, f *fixture) {
+				// A regular file as the link directory makes Lstat fail with
+				// ENOTDIR, not ENOENT.
+				notDir := filepath.Join(t.TempDir(), "file")
+				if err := os.WriteFile(notDir, []byte("x"), 0o644); err != nil {
+					t.Fatalf("write file: %v", err)
+				}
+				f.paths.LinkDir = notDir
+			},
+			wantErr: "read linked version",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := stage(t, tt.versions...)
+			tt.setup(t, &f)
+
+			transfer := &config.Transfer{
+				Component: "myext",
+				Transfer: config.TransferSection{
+					InstancesMax:   tt.instancesMax,
+					ProtectVersion: tt.protect,
+				},
+				Target: config.TargetSection{Path: f.stagingDir, MatchPattern: pattern},
+			}
+
+			listStaged := func() []string {
+				entries, err := os.ReadDir(f.stagingDir)
+				if err != nil {
+					t.Fatalf("read staging dir: %v", err)
+				}
+				var names []string
+				for _, e := range entries {
+					names = append(names, e.Name())
+				}
+				return names
+			}
+			before := listStaged()
+
+			// The plan reports the same decision and removes nothing.
+			planRemoved, planKept, planErr := PlanVacuumWith(transfer, "", f.paths)
+			if got := listStaged(); !slices.Equal(got, before) {
+				t.Fatalf("PlanVacuumWith changed the staging dir: %v -> %v", before, got)
+			}
+
+			removed, kept, err := VacuumWith(transfer, f.paths)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("VacuumWith() error = %v, want %q", err, tt.wantErr)
+				}
+				if planErr == nil {
+					t.Error("PlanVacuumWith() error = nil, want the same failure")
+				}
+				if got := listStaged(); !slices.Equal(got, before) {
+					t.Errorf("a failed vacuum changed the staging dir: %v -> %v", before, got)
+				}
+				return
+			}
+			if err != nil || planErr != nil {
+				t.Fatalf("VacuumWith() error = %v, PlanVacuumWith() error = %v", err, planErr)
+			}
+
+			sortVersions := func(s []string) []string {
+				s = slices.Clone(s)
+				slices.Sort(s)
+				return s
+			}
+			if got, want := sortVersions(kept), sortVersions(tt.wantKept); !slices.Equal(got, want) {
+				t.Errorf("kept = %v, want %v", got, want)
+			}
+			if got, want := sortVersions(removed), sortVersions(tt.wantRemoved); !slices.Equal(got, want) {
+				t.Errorf("removed = %v, want %v", got, want)
+			}
+			if !slices.Equal(sortVersions(planKept), sortVersions(kept)) || !slices.Equal(sortVersions(planRemoved), sortVersions(removed)) {
+				t.Errorf("plan (%v kept, %v removed) differs from vacuum (%v kept, %v removed)", planKept, planRemoved, kept, removed)
+			}
+
+			// The files on disk match the report.
+			for _, v := range tt.wantKept {
+				if _, err := os.Stat(filepath.Join(f.stagingDir, "myext_"+v+".raw")); err != nil {
+					t.Errorf("kept version %s is not on disk: %v", v, err)
+				}
+			}
+			for _, v := range tt.wantRemoved {
+				if _, err := os.Stat(filepath.Join(f.stagingDir, "myext_"+v+".raw")); !os.IsNotExist(err) {
+					t.Errorf("removed version %s is still on disk (err = %v)", v, err)
+				}
+			}
+		})
+	}
+}
+
+// TestVacuumWithKeepsLegacyCurrentSymlinkTarget verifies the legacy
+// CurrentSymlink still protects its target next to the new protections.
+func TestVacuumWithKeepsLegacyCurrentSymlinkTarget(t *testing.T) {
+	stagingDir := t.TempDir()
+	for _, v := range []string{"1.0.0", "2.0.0", "3.0.0"} {
+		if err := os.WriteFile(filepath.Join(stagingDir, "myext_"+v+".raw"), []byte("image"), 0o644); err != nil {
+			t.Fatalf("write staged image: %v", err)
+		}
+	}
+	if err := os.Symlink("myext_1.0.0.raw", filepath.Join(stagingDir, "myext.raw")); err != nil {
+		t.Fatalf("create current symlink: %v", err)
+	}
+
+	transfer := &config.Transfer{
+		Component: "myext",
+		Transfer:  config.TransferSection{InstancesMax: 1},
+		Target:    config.TargetSection{Path: stagingDir, MatchPattern: "myext_@v.raw", CurrentSymlink: "myext.raw"},
+	}
+	removed, kept, err := VacuumWith(transfer, VacuumPaths{DefaultDir: stagingDir, LinkDir: t.TempDir(), Hierarchies: []string{t.TempDir()}})
+	if err != nil {
+		t.Fatalf("VacuumWith() error = %v", err)
+	}
+	if len(removed) != 1 || removed[0] != "2.0.0" {
+		t.Errorf("removed = %v, want [2.0.0]", removed)
+	}
+	if len(kept) != 2 {
+		t.Errorf("kept = %v, want 3.0.0 and 1.0.0", kept)
+	}
+}

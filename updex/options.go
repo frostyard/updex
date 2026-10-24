@@ -59,16 +59,10 @@ type EnableFeatureOptions struct {
 	Component string
 }
 
-// installTransferOptions configures the installTransfer operation.
+// installTransferOptions configures the stageTransfer operation.
 type installTransferOptions struct {
 	// DryRun skips filesystem and sysext mutations.
 	DryRun bool
-
-	// NoVacuum skips removing old versions after install.
-	NoVacuum bool
-
-	// NoRefresh skips running systemd-sysext refresh after install.
-	NoRefresh bool
 
 	// CachedManifest, if non-nil, is used instead of fetching the manifest over HTTP.
 	CachedManifest *manifest.Manifest

@@ -33,9 +33,14 @@ updex/                          Public SDK (Client + methods)
                                 domain for every SDK method (Definitions
                                 override vs. one component vs. the default
                                 union); Components(), ComponentInfo, FeaturesOptions
-  install.go                    installTransfer() — complete install pipeline
-                                (download, symlink, sysext link, refresh, vacuum)
+  install.go                    installTransfers() — a feature's install pipeline:
+                                stageTransfer() per transfer (select, download,
+                                verify), then linkStaged() links all or none
+                                (snapshot + restore), then the vacuum
                                 Reuses parsed patterns from getAvailableVersions
+  lock.go                       ErrBusy, acquireLock() — the exclusive,
+                                non-blocking flock every mutating operation holds
+                                (RuntimePaths.LockPath, default /run/updex/lock)
   list.go                       getAvailableVersions() — returns versions,
                                 manifest, and parsed patterns for caller reuse
   options.go                    Option structs for all operations (each
@@ -64,6 +69,8 @@ manifest/                       SHA256SUMS manifest fetch/parse + GPG verify
 version/                        Pattern matching (@v placeholder) + version compare
 sysext/                         systemd-sysext runner, extension symlinks,
                                 installed/active version discovery, vacuum planning
+                                (VacuumWith / PlanVacuumWith: keeps linked, merged,
+                                ProtectVersion, newest InstancesMax)
 systemd/                        systemd timer/service generation + systemctl management
 internal/retry/                 bounded retry policy shared by download/ and manifest/
                                 (module-internal, ADR-0008)
@@ -123,8 +130,8 @@ CLI (cmd/daemon.go) ─┘                version, sysext, systemd
 
 ### Dry-run behavior
 
-- `UpdateFeaturesOptions.DryRun` is threaded through `UpdateFeatures` into `installTransfer`, which is the choke point before downloads, legacy staging-symlink cleanup, `/var/lib/extensions` linking, refresh, and vacuum deletion
-- Update dry-runs still perform read-only work: load configs, fetch manifests, resolve versions, inspect installed files, and, unless `NoVacuum` is set, call `sysext.PlanVacuumAfterInstall` to populate `UpdateResult.RemovedVersions`
+- `UpdateFeaturesOptions.DryRun` is threaded through `UpdateFeatures` into `installTransfers`; `stageTransfer` is the choke point before downloads and legacy staging-symlink cleanup, and a dry run never reaches the link step, refresh, or vacuum deletion. A dry run takes no operation lock (see "Operation lock")
+- Update dry-runs still perform read-only work: load configs, fetch manifests, resolve versions, inspect installed files, and, unless `NoVacuum` is set, call `sysext.PlanVacuumWith` (with the would-install version as the active version, the client's hierarchies for the merged version, and no `LinkDir`, because the link moves to the new version) to populate `UpdateResult.RemovedVersions`
 - In update dry-run results, `Downloaded=true` means "would download", `Installed=false` means no install occurred, and `DryRun=true` disambiguates the status for JSON consumers
 - In non-dry-run update results, `Downloaded=true` means a new file was fetched and installed. `Installed=true` is also set for already-current components, so use `Downloaded` to distinguish "changed" from "already up to date". A component that was already staged but whose systemd-sysext link had to be repointed also keeps `Downloaded=false`; it is distinguished by `NextActionMessage` (`Reboot required to activate changes`) and by the `Linked staged version <version>` progress message.
 - Enable/disable dry-runs are lighter previews: enabling with `--now` lists associated transfer components without manifest/version resolution, while disabling with `--now` performs active-version checks but records component-level "would remove" entries rather than enumerating every file
@@ -473,7 +480,7 @@ Design decisions (verified with the user, 2026-08):
 - **After `add`, nothing knows about catalogs.** The generated `.feature`
   is `Enabled=false`; `CatalogAdd` then calls
   `EnableFeature{Now, Component: repo.Component}` so enabling goes through
-  the standard drop-in and the download reuses `installTransfer`. All
+  the standard drop-in and the download reuses `installTransfers`. `CatalogAdd` and `CatalogRemove` take the operation lock themselves and call the unexported `enableFeature`/`disableFeature`, so the lock is never taken twice. All
   `features` operations and the daemon manage the sysext via the normal
   union domain. `CatalogRemove` is the only catalog-aware teardown:
   `DisableFeature{Now, Force}` (unmerge + image/link removal, `--force`
@@ -529,24 +536,103 @@ Design decisions (verified with the user, 2026-08):
 3. For each transfer:
    - Fetch `SHA256SUMS` manifest from source URL (+ GPG verify if configured); transient network failures during request or body read and HTTP 5xx/429 are retried up to 3 attempts with exponential backoff, while TLS/cert errors, unsupported protocols, 4xx other than 429, and checksum mismatches fail immediately (retry policy recorded in [ADR-0008](../adr/0008-bounded-retry-no-resume.md)). Manifests are cached by source URL across transfers so that multiple transfers sharing the same source make only one HTTP request
    - The manifest cache key is only the source URL path, but each cached `manifest.Manifest` carries `Verified`, and a transfer that requires verification (`ClientConfig.Verify` or `Verify=true`) never consumes an unverified cached manifest: it refetches with verification and the verified manifest replaces the cache entry (a verified manifest may serve unverified transfers, never the reverse). Mixed per-transfer `Verify` settings on one shared source therefore cost at most one extra fetch and can never downgrade verification.
-   - Parse source patterns and extract available versions using pattern matching (`@v` placeholder); parsed patterns are returned to callers so `installTransfer` reuses them without re-parsing. The candidate list is returned lexically sorted so that, with the stable `version.Sort`, selection stays deterministic even if two versions compare equal
+   - Parse source patterns and extract available versions using pattern matching (`@v` placeholder); parsed patterns are returned to callers so `stageTransfer` reuses them without re-parsing. The candidate list is returned lexically sorted so that, with the stable `version.Sort`, selection stays deterministic even if two versions compare equal
    - Select newest version via `version.Sort` (semver where possible, Debian/dpkg ordering for versions with `:`, `~`, or `+`, string fallback otherwise)
    - Skip if already installed (check target directory)
    - Download file, retrying the same transient request/body-read failures and HTTP 5xx/429 from scratch without range/resume requests. Each attempt uses a new temp file and invokes `OnDownloadProgress` again, so progress writers must be attempt-local. The raw payload read from the server is capped at 16 GiB by default (`download.DefaultMaxDownloadSize`, twice `DefaultMaxDecompressedSize`, overridable per call with `WithMaxDownloadSize`): an over-limit `Content-Length` is rejected before any bytes are streamed, and the read itself is bounded with `io.LimitReader` in case `Content-Length` is absent or understated. Crossing the cap either way returns `download.ErrDownloadTooLarge`. SHA256 is verified against the compressed bytes before decompression.
    - Decompress if needed (xz, gz, zstd — detected from filename), with decompressed output capped at 8 GiB by default (`download.DefaultMaxDecompressedSize`, overridable per call with `WithMaxDecompressedSize`). Crossing the cap returns `download.ErrDecompressedTooLarge`, removes both compressed and decompressed temporary files, and leaves the target path untouched. The installed filename is derived from the target patterns via `buildTargetFilename`: the first pattern that produces a name without a compression suffix wins, and if every target pattern is a compressed variant the suffix is stripped, so the on-disk name always matches the decompressed content regardless of which source pattern matched
    - fsync the file before the rename on every path (the verified temp file, and the decompressed output when the download was compressed), so a crash after install cannot leave a zero-length or partial image behind the sysext link
    - Atomically rename to final path; on cross-device rename failure, copy to a temp file on the destination filesystem, sync it, chmod it, then rename
-   - Remove any legacy `CurrentSymlink` in the target directory when the transfer defines one. The ordering in `installTransfer` is load-bearing: (1) fetch available versions and select the newest candidate, (2) call `sysext.GetInstalledVersions` while any legacy `CurrentSymlink` still exists, (3) remove the legacy staging symlink, (4) only then return early if the selected version was already both installed and current. `GetInstalledVersions` can still use a legacy `CurrentSymlink` to distinguish "newest version is staged but not current" from "already current"; deleting that symlink first makes the newest staged file look current and can skip the required `/var/lib/extensions/<component>.<ext>` relink. Because cleanup runs before any already-current return, stale staging symlinks are removed even when no download is required. The already-current return also repairs the sysext link (`sysext.LinkIsCurrentAt`): when `<SysextLinkDir>/<component>.<ext>` is missing, dangling, not a symlink, or resolves to another image, `installTransfer` relinks through the runner (`restored sysext link for <component>`) and still reports no download; a correct link is left untouched, and a `GetInstalledVersions` failure on this path is returned as `failed to inspect installed versions: …` rather than falling through into a download. A relink is reported to the caller separately from the download flag (an unexported `Relinked` field on `installTransfer`'s outcome, so no exported result type changed): `UpdateFeatures` keeps `Downloaded=false` and `Installed=true`, sets `NextActionMessage` to `Reboot required to activate changes`, and prints `Linked staged version <version>` instead of `Version <version> already installed and current`. Without that hint the operator cannot tell that the image the host runs changed and needs a refresh or reboot — the case seen on 2026-10-23, where `systemd-sysupdate` advanced its own staging symlink to a newer image while the updex link still pointed at the older one.
-   - Create or replace `/var/lib/extensions/<component>.<ext>` pointing to the newest staged image path; the link name is derived from the transfer filename component and the target pattern extension with compression suffixes stripped. This is a hard error because `systemd-sysext refresh` cannot see the staged image without it. `LinkToSysextAt` replaces the link atomically — a temp symlink (`<link>.tmp-<pid>-<nanos>`) beside it renamed over the old one — so `systemd-sysext` never observes a moment with no link; a failed replacement removes the temp and leaves the old link as it was, and a directory at the link path is preserved (rename refuses it)
-   - Vacuum old versions per `InstancesMax`; the active symlink target and `ProtectVersion` are always kept. Non-dry-run `UpdateResult.RemovedVersions` is not populated because the install path calls `sysext.Vacuum`, while dry-run uses `PlanVacuumAfterInstall`
-4. Call `systemd-sysext refresh` to reload all extensions (unless `--no-refresh`). Callers batch this — `installTransfer` is called with `NoRefresh: true` per-component, and a single refresh runs at the end. A failed refresh is never swallowed: `UpdateFeatures` returns `sysext refresh failed: …` (joined with the per-component aggregate error if any) while keeping the results populated, `EnableFeature{Now}` returns the same error with `FeatureActionResult.RefreshError`/`Error` set and `Success=false`, and `installTransfer` itself (for direct callers that do not batch) returns the error after the image is installed and linked and vacuum has run. With `--dry-run`, the same manifest/version resolution runs, but `installTransfer` returns before download; `UpdateFeatures` reports would-download/would-install results and read-only vacuum removals, then skips the final refresh.
+   - Remove any legacy `CurrentSymlink` in the target directory when the transfer defines one. The ordering in `stageTransfer` is load-bearing: (1) fetch available versions and select the newest candidate, (2) call `sysext.GetInstalledVersions` while any legacy `CurrentSymlink` still exists, (3) remove the legacy staging symlink, (4) only then return early if the selected version was already both installed and current. `GetInstalledVersions` can still use a legacy `CurrentSymlink` to distinguish "newest version is staged but not current" from "already current"; deleting that symlink first makes the newest staged file look current and can skip the required `/var/lib/extensions/<component>.<ext>` relink. Because cleanup runs before any already-current return, stale staging symlinks are removed even when no download is required. The already-current return also repairs the sysext link (`sysext.LinkIsCurrentAt`): when `<SysextLinkDir>/<component>.<ext>` is missing, dangling, not a symlink, or resolves to another image, the link step (`linkStaged`) relinks through the runner (`restored sysext link for <component>`) and still reports no download; a correct link is left untouched, and a `GetInstalledVersions` failure on this path is returned as `failed to inspect installed versions: …` rather than falling through into a download. A relink is reported to the caller separately from the download flag (an unexported `Relinked` field on the install outcome, so no exported result type changed): `UpdateFeatures` keeps `Downloaded=false` and `Installed=true`, sets `NextActionMessage` to `Reboot required to activate changes`, and prints `Linked staged version <version>` instead of `Version <version> already installed and current`. Without that hint the operator cannot tell that the image the host runs changed and needs a refresh or reboot — the case seen on 2026-10-23, where `systemd-sysupdate` advanced its own staging symlink to a newer image while the updex link still pointed at the older one.
+   - Link step, after every transfer of the feature staged successfully (see "Feature transfers link together" below): create or replace `/var/lib/extensions/<component>.<ext>` pointing to the newest staged image path; the link name is derived from the transfer filename component and the target pattern extension with compression suffixes stripped. This is a hard error because `systemd-sysext refresh` cannot see the staged image without it. `LinkToSysextAt` replaces the link atomically — a temp symlink (`<link>.tmp-<pid>-<nanos>`) beside it renamed over the old one — so `systemd-sysext` never observes a moment with no link; a failed replacement removes the temp and leaves the old link as it was, and a directory at the link path is preserved (rename refuses it)
+   - Vacuum old versions of each transfer, only after the feature's links succeeded (see "Retention" below). Non-dry-run `UpdateResult.RemovedVersions` is not populated because the install path calls `sysext.VacuumWith` without reporting its result; dry-run uses `PlanVacuumWith`
+4. Call `systemd-sysext refresh` to reload all extensions (unless `--no-refresh`). The install pipeline never refreshes; a single refresh runs at the end of `UpdateFeatures` and `EnableFeature{Now}`. A failed refresh is never swallowed: `UpdateFeatures` returns `sysext refresh failed: …` (joined with the per-component aggregate error if any) while keeping the results populated, `EnableFeature{Now}` returns the same error with `FeatureActionResult.RefreshError`/`Error` set and `Success=false`. With `--dry-run`, the same manifest/version resolution runs, but `stageTransfer` returns before download; `UpdateFeatures` reports would-download/would-install results and read-only vacuum removals, then skips the final refresh.
+
+### Feature transfers link together
+
+ADR-0016: a feature's transfers must never end a run split between the new
+and the old revision. `installTransfers` (`updex/install.go`) runs per feature
+in two steps:
+
+1. **Stage.** `stageTransfer` selects the newest version, and downloads and
+   verifies it into the staging directory for every transfer of the feature.
+   It never changes a link. Staging continues after a failure, so each
+   transfer reports its own state.
+2. **Link.** Only when every transfer staged, `linkStaged` snapshots each
+   old link (`Lstat` + `Readlink`; an absent link is recorded as absent; a
+   regular file at the link path is backed up as a hard link beside it,
+   `.<name>.raw.updex-backup-<pid>-<nanos>`, so its data can be put back; a
+   directory, FIFO or device there is refused, as is a regular file that
+   cannot be backed up, before any link moves), then links the transfers
+   through the client's runner one by one. When a link fails, it restores the
+   links this call already moved with the same atomic temp-symlink-plus-rename
+   that `sysext.LinkToSysextAt` uses (an absent link is removed again; a
+   backed-up regular file is renamed back over the link), reports the failure
+   joined with every restore failure (`errors.Join`), and keeps any backup a
+   failed restore could not put back. Backups are removed once the feature
+   linked.
+
+When a stage fails, no link is touched, the images already downloaded stay on
+disk (the next run finds them staged and current, and only relinks), and the
+vacuum does not run. The failing transfer reports its own error (for example
+`download failed: …`); every other transfer reports
+`not linked: another transfer of feature <name> failed`, with `Version` and
+`Downloaded` set from what was staged and `Installed=false`. After a failed
+link step, all transfers report the failing transfer's error or the same
+`not linked` text. `UpdateFeatures` returns `one or more components failed to
+update` joined with every failed transfer's error, and other features
+continue. A transfer whose link moved but whose restore failed reports
+`failed to restore sysext link for <component>: …; the link may point at the
+new version` instead of `not linked`. `EnableFeature{Now}` uses the same
+helper and returns the first own error as `failed to download <component>: …`.
+
+### Retention (vacuum)
+
+ADR-0016. After a feature's links succeeded, `sysext.VacuumWith` keeps, for
+each transfer: the version that the sysext link `<SysextLinkDir>/<link name>`
+names (`LinkedVersionAt`); the version merged now, read from the hierarchy
+metadata (`mergedVersionInHierarchy`, ADR-0015, over the client's
+`sysextHierarchies`; `UnknownVersion` protects nothing); `ProtectVersion=`;
+`VacuumPaths.ProtectVersions` (Phase 4 passes the rejected rollback version
+here); the legacy `CurrentSymlink` target; and the newest `InstancesMax`
+(default 2) versions. Protected versions are kept in addition to the newest
+`InstancesMax` (one among the newest counts as one of them), so a host that has linked a new revision but still runs an older one
+keeps up to 3 images per transfer. A dangling link protects nothing. The
+protected set is read before anything is deleted; a failure to read the link
+or the merged state fails the vacuum with every image still on disk, and
+`installTransfers` warns (`vacuum failed for <component>: …`) instead of
+guessing. The package-level `Vacuum`, `VacuumAt`, `VacuumWithDetails`,
+`PlanVacuumAfterInstall` and `PlanVacuumAfterInstallAt` remain compatibility
+wrappers that do not know the link or the hierarchies.
+
+### Operation lock
+
+Every mutating SDK operation (`UpdateFeatures`, `EnableFeature`,
+`DisableFeature`, `CatalogAdd`, `CatalogRemove`, `EnableDaemon`,
+`DisableDaemon`) holds an exclusive, non-blocking `flock` on
+`RuntimePaths.LockPath` (default `/run/updex/lock`, `updex.DefaultLockPath`)
+from its start until it returns (`acquireLock` in `updex/lock.go`, through
+`Client.lockMutation`). Dry runs and read-only operations (`Features`,
+`CheckFeatures`, `CatalogList`, `DaemonStatus`, `Components`) do not take it.
+When the lock is taken, the operation changes nothing and returns an error
+wrapping `updex.ErrBusy` (`another updex operation is running`); updex never
+waits. `acquireLock` creates the parent directory (0755) and the file (0600),
+`Lstat`s both first, refuses a symlink or non-regular file, and opens with
+`O_NOFOLLOW` (ADR-0005). The kernel drops the lock when the process exits, so
+there is no stale lock, and `/run` is cleared at boot. The CLI turns
+`ErrBusy` into exit status 0 with one stderr line only for `features update`
+when `INVOCATION_ID` is non-empty (systemd sets it for every service; the
+packaged timer runs exactly `updex features update --no-refresh`, so it cannot
+take a flag); in an interactive shell it is an error and the exit status is
+non-zero. The lock covers `systemd-sysext refresh` as well. The sandboxed
+service (`ProtectSystem=full`) can write `/run`.
 
 ### Feature check (end-to-end)
 
 `CheckFeatures` never writes; it resolves the newest available version exactly as the update path does, then compares it with the version the host actually runs.
 
 - `CurrentVersion` comes from `sysext.LinkedVersionAt` when the systemd-sysext link `<SysextLinkDir>/<component>.<ext>` resolves: that link is what systemd-sysext merges, so it is authoritative. This matters because a second updater on the same host (for example `systemd-sysupdate`) can stage a newer image in `/var/lib/extensions.d` and move its own legacy `CurrentSymlink` to it without touching the link updex made; comparing against staging then reported `Up to date` while the host kept running the older image.
-- When no usable link exists — absent, not a symlink, dangling, or naming an image the transfer's target patterns do not match — `CurrentVersion` keeps the staging-based value `sysext.GetInstalledVersions` reports (legacy `CurrentSymlink` target, else newest staged file). `GetInstalledVersions` itself stays staging-based: `installTransfer` depends on that to recognise a staged image and skip its re-download.
+- When no usable link exists — absent, not a symlink, dangling, or naming an image the transfer's target patterns do not match — `CurrentVersion` keeps the staging-based value `sysext.GetInstalledVersions` reports (legacy `CurrentSymlink` target, else newest staged file). `GetInstalledVersions` itself stays staging-based: `stageTransfer` depends on that to recognise a staged image and skip its re-download.
 - `UpdateAvailable` is `version.Compare(newest, CurrentVersion) > 0` over that value, so an older linked image against a newer available one reports an update, which the next `features update` resolves by relinking without a download.
 - A link-inspection failure (a failed `Lstat`/`Readlink`, or an unusable target pattern) is reported as that component's `CheckResult.Error` (`failed to inspect sysext link: …`) with `NewestVersion` kept, the same partial-results shape as a manifest failure.
 

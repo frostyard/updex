@@ -301,6 +301,33 @@ type versionFile struct {
 	filename string
 }
 
+// VacuumPaths names the places the vacuum reads to decide which staged
+// images it must keep, besides the newest InstancesMax versions and
+// ProtectVersion=. See VacuumWith.
+type VacuumPaths struct {
+	// DefaultDir is the fallback directory for a transfer that omits
+	// Target.Path. It also locates a legacy CurrentSymlink, whose target is
+	// always kept.
+	DefaultDir string
+
+	// LinkDir is the directory that holds the systemd-sysext link
+	// (<LinkDir>/<SysextLinkName(t)>). The version that link names is kept,
+	// because systemd-sysext merges it at the next boot. An empty value skips
+	// this protection.
+	LinkDir string
+
+	// Hierarchies are the hierarchies whose .systemd-sysext directory records
+	// the images merged now (ADR-0015). The version recorded there is kept,
+	// because the running system uses it. A merged image whose version the
+	// metadata does not record (UnknownVersion) protects nothing. An empty
+	// slice skips this protection.
+	Hierarchies []string
+
+	// ProtectVersions are further versions to keep, such as a version that a
+	// rollback rejected. Empty entries are ignored.
+	ProtectVersions []string
+}
+
 // PlanVacuumAfterInstall returns the versions that vacuum would remove/keep
 // after installing activeVersion, without deleting files.
 func PlanVacuumAfterInstall(t *config.Transfer, activeVersion string) (removed []string, kept []string, err error) {
@@ -308,9 +335,19 @@ func PlanVacuumAfterInstall(t *config.Transfer, activeVersion string) (removed [
 }
 
 // PlanVacuumAfterInstallAt is PlanVacuumAfterInstall with an explicit
-// fallback directory for transfers that omit Target.Path.
+// fallback directory for transfers that omit Target.Path. It does not protect
+// the linked or the merged version; prefer PlanVacuumWith.
 func PlanVacuumAfterInstallAt(t *config.Transfer, activeVersion, defaultDir string) (removed []string, kept []string, err error) {
-	return planVacuum(t, activeVersion, nil, false, defaultDir)
+	return PlanVacuumWith(t, activeVersion, VacuumPaths{DefaultDir: defaultDir})
+}
+
+// PlanVacuumWith reports what VacuumWith would remove and keep after
+// installing activeVersion, without deleting files. activeVersion is always
+// kept; it counts as installed even when its file is not on disk yet, so a
+// dry run can plan for a download. An empty activeVersion reads the legacy
+// CurrentSymlink instead.
+func PlanVacuumWith(t *config.Transfer, activeVersion string, p VacuumPaths) (removed []string, kept []string, err error) {
+	return planVacuum(t, activeVersion, false, p)
 }
 
 // Vacuum removes old versions according to InstancesMax
@@ -319,7 +356,8 @@ func Vacuum(t *config.Transfer) error {
 }
 
 // VacuumAt is Vacuum with an explicit fallback directory for transfers that
-// omit Target.Path.
+// omit Target.Path. It does not protect the linked or the merged version;
+// prefer VacuumWith.
 func VacuumAt(t *config.Transfer, defaultDir string) error {
 	_, _, err := vacuumWithDetailsAt(t, defaultDir)
 	return err
@@ -331,16 +369,76 @@ func VacuumWithDetails(t *config.Transfer) (removed []string, kept []string, err
 }
 
 func vacuumWithDetailsAt(t *config.Transfer, defaultDir string) (removed []string, kept []string, err error) {
-	return planVacuum(t, "", nil, true, defaultDir)
+	return VacuumWith(t, VacuumPaths{DefaultDir: defaultDir})
 }
 
-func planVacuum(t *config.Transfer, activeVersionOverride string, extraVersions []string, remove bool, defaultDir string) (removed []string, kept []string, err error) {
+// VacuumWith removes the transfer's staged images that nothing needs, and
+// returns the versions it removed and kept. It keeps, for the transfer:
+//
+//   - the version that the sysext link names (p.LinkDir);
+//   - the version merged now (p.Hierarchies);
+//   - p.ProtectVersions and the transfer's ProtectVersion=;
+//   - the newest InstancesMax versions (default 2); and
+//   - the version that the legacy CurrentSymlink names.
+//
+// Protected versions are kept in addition to the newest InstancesMax
+// versions; a protected version that is among the newest counts as one of
+// them. A host that has linked a new revision but still runs an older one
+// therefore keeps up to InstancesMax+1 images.
+//
+// The vacuum never guesses: when it cannot read the link or the merged-state
+// metadata, it returns an error and deletes nothing. A dangling link protects
+// nothing, because it names no image.
+func VacuumWith(t *config.Transfer, p VacuumPaths) (removed []string, kept []string, err error) {
+	return planVacuum(t, "", true, p)
+}
+
+// protectedVersions returns the versions the vacuum must keep for reasons
+// other than their rank: linked, merged and explicitly protected versions.
+// It reads the link and the merged-state metadata before the vacuum deletes
+// anything, and fails on a read error instead of guessing.
+func protectedVersions(t *config.Transfer, patterns []*version.Pattern, p VacuumPaths) (map[string]bool, error) {
+	protected := make(map[string]bool)
+
+	if t.Transfer.ProtectVersion != "" {
+		protected[t.Transfer.ProtectVersion] = true
+	}
+	for _, v := range p.ProtectVersions {
+		if v != "" {
+			protected[v] = true
+		}
+	}
+
+	if p.LinkDir != "" {
+		linked, err := LinkedVersionAt(t, p.LinkDir)
+		if err != nil {
+			return nil, fmt.Errorf("read linked version: %w", err)
+		}
+		if linked != "" {
+			protected[linked] = true
+		}
+	}
+
+	for _, hierarchy := range p.Hierarchies {
+		merged, err := mergedVersionInHierarchy(t, patterns, hierarchy)
+		if err != nil {
+			return nil, fmt.Errorf("read merged version: %w", err)
+		}
+		if merged != "" && merged != UnknownVersion {
+			protected[merged] = true
+		}
+	}
+
+	return protected, nil
+}
+
+func planVacuum(t *config.Transfer, activeVersionOverride string, remove bool, p VacuumPaths) (removed []string, kept []string, err error) {
 	patterns, err := parseTargetPatterns(t)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	targetDir := targetDirAt(t, defaultDir)
+	targetDir := targetDirAt(t, p.DefaultDir)
 
 	entries, err := os.ReadDir(targetDir)
 	if err != nil {
@@ -367,18 +465,19 @@ func planVacuum(t *config.Transfer, activeVersionOverride string, extraVersions 
 		}
 	}
 
-	for _, v := range extraVersions {
-		if v != "" && !seenVersions[v] {
-			installed = append(installed, versionFile{version: v})
-			seenVersions[v] = true
-		}
-	}
 	if activeVersionOverride != "" && !seenVersions[activeVersionOverride] {
 		installed = append(installed, versionFile{version: activeVersionOverride})
 	}
 
 	if len(installed) == 0 {
 		return nil, nil, nil
+	}
+
+	// Decide what is protected before anything is removed, so an unreadable
+	// link or merged state fails the vacuum with every image still on disk.
+	protected, err := protectedVersions(t, patterns, p)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// Sort by version (newest first)
@@ -416,8 +515,8 @@ func planVacuum(t *config.Transfer, activeVersionOverride string, extraVersions 
 			continue
 		}
 
-		// Always keep protected versions
-		if t.Transfer.ProtectVersion != "" && v == t.Transfer.ProtectVersion {
+		// Always keep the linked, merged and protected versions.
+		if protected[v] {
 			kept = append(kept, v)
 			continue
 		}

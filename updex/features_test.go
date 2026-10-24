@@ -2578,9 +2578,11 @@ func TestUpdateFeatures_SharedSource_VerifyTrueNeverUsesUnverifiedCache(t *testi
 			if _, statErr := os.Stat(filepath.Join(targetDir, tc.verified+"_1.0.0.raw")); !os.IsNotExist(statErr) {
 				t.Errorf("%s (Verify=true) must leave no file in the target dir, stat err = %v", tc.verified, statErr)
 			}
+			// The Verify=false sibling still downloads; the feature's transfers
+			// link together, so it reports that it was not linked.
 			u := byComponent[tc.unverified]
-			if u.Error != "" || !u.Downloaded {
-				t.Errorf("%s (Verify=false) must still download, got %+v", tc.unverified, u)
+			if !u.Downloaded || u.Installed || !strings.Contains(u.Error, "not linked") {
+				t.Errorf("%s (Verify=false) must still download but not be linked, got %+v", tc.unverified, u)
 			}
 			if _, statErr := os.Stat(filepath.Join(targetDir, tc.unverified+"_1.0.0.raw")); statErr != nil {
 				t.Errorf("%s (Verify=false) file missing from target dir: %v", tc.unverified, statErr)
