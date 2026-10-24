@@ -45,8 +45,12 @@ func TestMain(m *testing.M) {
 		// Every mutating handler takes this lock; the production default
 		// /run/updex/lock is never touched by a test.
 		LockPath: filepath.Join(root, "run-updex", "lock"),
+		// Rollback records live here; the production default
+		// /var/lib/updex/rollback is never touched by a test.
+		RollbackDir: filepath.Join(root, "var-updex", "rollback"),
 	}
 	testLockPath = runtimePaths.LockPath
+	testRollbackDir = runtimePaths.RollbackDir
 
 	code := m.Run()
 
@@ -57,7 +61,7 @@ func TestMain(m *testing.M) {
 }
 
 // testLockPath is the temporary lock file TestMain gives every handler test.
-var testLockPath string
+var testLockPath, testRollbackDir string
 
 // setRuntimePaths replaces the CLI runtime-path seam for one test and restores
 // the previous value on cleanup, so a test can point a handler at a fake
@@ -70,6 +74,9 @@ func setRuntimePaths(t *testing.T, rp updex.RuntimePaths) {
 	if rp.LockPath == "" {
 		// A test that sets its own paths still never reaches /run/updex.
 		rp.LockPath = testLockPath
+	}
+	if rp.RollbackDir == "" {
+		rp.RollbackDir = testRollbackDir
 	}
 	rp.DefinitionRoots = slices.Clone(rp.DefinitionRoots)
 	rp.OSReleasePaths = slices.Clone(rp.OSReleasePaths)
@@ -102,6 +109,10 @@ func TestHandlerTestsDoNotReadHostMergedState(t *testing.T) {
 
 	if runtimePaths.LockPath == "" || runtimePaths.LockPath == updex.DefaultLockPath {
 		t.Errorf("runtimePaths.LockPath = %q: handler tests would take the production lock", runtimePaths.LockPath)
+	}
+
+	if runtimePaths.RollbackDir == "" || runtimePaths.RollbackDir == updex.DefaultRollbackDir {
+		t.Errorf("runtimePaths.RollbackDir = %q: handler tests would write the production rollback records", runtimePaths.RollbackDir)
 	}
 
 	if runtimePaths.RunExtensionsDir == "" {

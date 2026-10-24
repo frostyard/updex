@@ -92,6 +92,13 @@ type RuntimePaths struct {
 	// missing; a symlink or other non-regular file is refused. Zero value
 	// uses DefaultLockPath (/run/updex/lock).
 	LockPath string
+
+	// RollbackDir is the directory that holds one rollback record per
+	// feature (<RollbackDir>/<feature>), written by RollbackFeature and read
+	// by every operation that links. Created with mode 0755 when missing; a
+	// symlink or other non-directory is refused. Zero value uses
+	// DefaultRollbackDir (/var/lib/updex/rollback).
+	RollbackDir string
 }
 
 // DisableCatalogCache is a sentinel value for RuntimePaths.CatalogCacheDir
@@ -111,6 +118,7 @@ type runtimePaths struct {
 	runExtensionsDir   string
 	sysextHierarchies  []string
 	lockPath           string
+	rollbackDir        string
 }
 
 // resolveRuntimePaths converts a RuntimePaths (zero = default) to a fully
@@ -175,6 +183,12 @@ func resolveRuntimePaths(rp RuntimePaths) runtimePaths {
 		p.lockPath = rp.LockPath
 	} else {
 		p.lockPath = lockPathDefault
+	}
+
+	if rp.RollbackDir != "" {
+		p.rollbackDir = rp.RollbackDir
+	} else {
+		p.rollbackDir = rollbackDirDefault
 	}
 
 	return p

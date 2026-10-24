@@ -164,6 +164,41 @@ type transferInstall struct {
 	// notLinked reports that err is errNotLinked: this transfer did nothing
 	// wrong, but its feature stayed on the old links.
 	notLinked bool
+
+	// held reports that a rollback record holds the feature: either another
+	// feature's record names one of its transfers (only that feature advances
+	// it), or no version newer than the rejected one is published. Nothing
+	// was downloaded or linked and every old link stays. It is not an error.
+	// outcome.Version is the version the link names.
+	held bool
+
+	// rejected is the highest version a rollback record that applies to this
+	// transfer rejects, whether or not the feature is held; the dry-run
+	// vacuum plan keeps it.
+	rejected string
+
+	// heldVersion is the version the applicable records reject for this
+	// transfer. It is empty when no record names this component and the
+	// transfer is held only because another transfer of its feature, or a
+	// record of another feature, holds the feature.
+	heldVersion string
+
+	// heldReason says why the feature is held when this transfer's own
+	// rejected version is not the reason: for its own record, for example
+	// "grp: beta has no version newer than 2.0.0", and for another
+	// feature's record, "grp: it advances only when grp updates (or run
+	// 'updex features rollback --clear grp')". Empty when heldVersion is
+	// the reason, and when the transfer is not held.
+	heldReason string
+}
+
+// heldMessage renders why the rollback holds this transfer: the reason that
+// holds the whole feature, else the transfer's own rejected version.
+func (in transferInstall) heldMessage() string {
+	if in.heldReason != "" {
+		return "held by rollback of " + in.heldReason
+	}
+	return "held by rollback: rejected " + in.heldVersion
 }
 
 // errNotLinked builds the error that a transfer reports when another
@@ -185,11 +220,23 @@ type installFeatureOptions struct {
 	// call and, when the caller keeps the map, across features. It may be
 	// nil.
 	Manifests map[string]*manifest.Manifest
+
+	// Domain is every transfer the calling operation loaded. A rollback
+	// record can name a component that this feature's transfers do not
+	// cover: the record holds the feature only while that component has no
+	// newer version, so its transfer and available versions are needed to
+	// decide the hold, and its link decides whether the record may be
+	// deleted.
+	Domain []*config.Transfer
 }
 
 // installTransfers installs the transfers of one feature so that they link
 // together (ADR-0016): it stages every transfer first, then links them all.
 //
+//   - A rollback record of another feature that names one of the transfers
+//     holds the whole feature: only the feature that wrote the record
+//     advances it, and nothing is downloaded or linked here. The hold lasts
+//     while the record exists, also when its feature is disabled or masked.
 //   - If any transfer fails to stage (version lookup, download or
 //     verification), no transfer is linked. Every old link stays, and the
 //     images that were downloaded stay on disk for the next run, which
@@ -223,6 +270,56 @@ func (c *Client) installTransfers(ctx context.Context, feature string, transfers
 	manifests := opts.Manifests
 	if manifests == nil {
 		manifests = make(map[string]*manifest.Manifest)
+	}
+
+	// A rollback record holds the transfers at an older version (ADR-0016).
+	// A transfer can belong to several features, so the records of every
+	// feature that names one of these transfers apply, whether that feature
+	// is enabled or not: a rollback of one feature must not be undone by an
+	// update through another that shares the transfer. When an applicable
+	// record cannot be read, nothing is downloaded or linked for the
+	// feature: the update cannot tell what was rejected.
+	holds := c.collectRollbackHolds(transfers)
+	if len(holds.errs) > 0 {
+		for i, transfer := range transfers {
+			if err := holds.errs[transfer.Component]; err != nil {
+				results[i].err = fmt.Errorf("not linking feature %s: %w", feature, err)
+			}
+		}
+		c.markNotLinked(feature, results)
+		return results
+	}
+	for i, transfer := range transfers {
+		results[i].rejected = holds.rejected[transfer.Component]
+	}
+	// A record written by another feature applies to one of these transfers,
+	// so only the feature that wrote it advances that transfer: a record and
+	// its feature's links move together only when that feature itself updates
+	// (ADR-0016). Holding the whole feature here keeps the rolled-back
+	// feature whole whatever happens to the owner's downloads or links, and
+	// in whatever order the features are processed.
+	if owners := holds.ownersOtherThan(feature); len(owners) > 0 {
+		c.holdFeatureOwnedBy(transfers, holds, owners[0], results)
+		return results
+	}
+	if rec := holds.records[feature]; rec != nil {
+		// The feature's own record holds only while some component it names
+		// has no newer version. It covers every component it names, also one
+		// outside this feature's transfers, so the feature stays whole
+		// whatever the other component's newest version is.
+		reason, err := c.rollbackHoldReason(ctx, rec, transfers, opts.Domain, manifests)
+		if err != nil {
+			// The versions that decide whether the record still holds
+			// cannot be read: link nothing, as for an unreadable record.
+			for i := range results {
+				results[i].err = fmt.Errorf("not linking feature %s: %w", feature, err)
+			}
+			return results
+		}
+		if reason != nil {
+			c.holdFeature(transfers, holds, reason, results)
+			return results
+		}
 	}
 
 	// Stage step.
@@ -262,16 +359,61 @@ func (c *Client) installTransfers(ctx context.Context, feature string, transfers
 		results[i].outcome.Relinked = staged[i].relink
 	}
 
-	// Vacuum only after the feature's links succeeded.
+	// Vacuum only after the feature's links succeeded. While the record
+	// exists it keeps the rejected version.
 	if !opts.NoVacuum {
 		for _, transfer := range transfers {
-			if _, _, err := sysext.VacuumWith(transfer, c.vacuumPaths()); err != nil {
+			if _, _, err := sysext.VacuumWith(transfer, c.vacuumPaths(holds.rejected[transfer.Component])); err != nil {
 				c.warn("vacuum failed for %s: %v", transfer.Component, err)
 			}
 		}
 	}
 
+	// A newer version than the one rejected is linked for every component of
+	// the feature's own record: that rollback is over.
+	c.deleteFinishedRollbackRecords(feature, transfers, opts.Domain, holds)
+
 	return results
+}
+
+// holdFeature reports that the feature's own rollback record holds it, so
+// nothing is downloaded or linked for any of its transfers: the feature never
+// ends split between a new and an old revision. The transfer whose own
+// rejected version is the reason reports that version; the others report the
+// record component that keeps the whole feature from advancing.
+func (c *Client) holdFeature(transfers []*config.Transfer, holds rollbackHolds, reason *rollbackHoldReason, results []transferInstall) {
+	for i, transfer := range transfers {
+		linked, err := sysext.LinkedVersionAt(transfer, c.paths.sysextLinkDir)
+		if err != nil {
+			linked = ""
+		}
+		results[i].held = true
+		results[i].heldVersion = holds.rejected[transfer.Component]
+		if reason.component != transfer.Component {
+			results[i].heldReason = reason.String()
+		}
+		results[i].outcome = installOutcome{Version: linked}
+	}
+}
+
+// holdFeatureOwnedBy reports that a rollback record of another feature
+// applies to one of the transfers, so only that feature advances it: nothing
+// is downloaded or linked for this feature, and every transfer says why. The
+// hold lasts while the record exists, also when the feature that wrote it is
+// disabled or masked; an update through that feature, or `updex features
+// rollback --clear <feature>`, ends it.
+func (c *Client) holdFeatureOwnedBy(transfers []*config.Transfer, holds rollbackHolds, owner string, results []transferInstall) {
+	reason := rollbackOwnerHold{feature: owner}.String()
+	for i, transfer := range transfers {
+		linked, err := sysext.LinkedVersionAt(transfer, c.paths.sysextLinkDir)
+		if err != nil {
+			linked = ""
+		}
+		results[i].held = true
+		results[i].heldVersion = holds.rejected[transfer.Component]
+		results[i].heldReason = reason
+		results[i].outcome = installOutcome{Version: linked}
+	}
 }
 
 // markNotLinked gives every transfer that has no error of its own the
@@ -287,12 +429,15 @@ func (c *Client) markNotLinked(feature string, results []transferInstall) {
 
 // vacuumPaths returns the paths the vacuum reads for a transfer: the staging
 // fallback and the link directory the client captured at construction, and
-// its merged-state hierarchies.
-func (c *Client) vacuumPaths() sysext.VacuumPaths {
+// its merged-state hierarchies. protect lists versions to keep besides, such
+// as the version a rollback record rejected for the transfer; empty entries
+// are ignored.
+func (c *Client) vacuumPaths(protect ...string) sysext.VacuumPaths {
 	return sysext.VacuumPaths{
-		DefaultDir:  c.paths.sysextLinkDir,
-		LinkDir:     c.paths.sysextLinkDir,
-		Hierarchies: c.paths.sysextHierarchies,
+		DefaultDir:      c.paths.sysextLinkDir,
+		LinkDir:         c.paths.sysextLinkDir,
+		Hierarchies:     c.paths.sysextHierarchies,
+		ProtectVersions: protect,
 	}
 }
 
@@ -403,6 +548,54 @@ func (s *linkSnapshot) restore() error {
 	return os.Remove(s.path)
 }
 
+// linkAllOrNone moves the link of every transfer with link(i, transfers[i]),
+// in order, all or none. It snapshots every old link first (see
+// snapshotLink: a regular file at a link path is backed up as a hard link,
+// any other non-symlink entry is refused), so a refusal changes nothing.
+// When a link fails, it restores the links already moved, including the
+// failing one, and returns the index of the failing transfer and the link
+// error joined with every restore failure. restoreFailed maps the indexes
+// (up to and including failed) whose restore failed to that failure: their link may still point at the new
+// version. Backups are removed at the end, except one whose restore failed,
+// which holds the only copy of the file. On success failed is -1.
+func (c *Client) linkAllOrNone(transfers []*config.Transfer, link func(i int, t *config.Transfer) error) (failed int, restoreFailed map[int]error, err error) {
+	snapshots := make([]linkSnapshot, 0, len(transfers))
+	defer func() { c.removeLinkBackups(snapshots) }()
+	for i, transfer := range transfers {
+		snap, err := snapshotLink(filepath.Join(c.paths.sysextLinkDir, sysext.SysextLinkName(transfer)))
+		if err != nil {
+			// Nothing is linked yet, so there is nothing to undo. The
+			// backups taken so far are redundant: the files they stand for
+			// were never replaced.
+			return i, nil, err
+		}
+		snapshots = append(snapshots, snap)
+	}
+
+	for i, transfer := range transfers {
+		if err := link(i, transfer); err != nil {
+			errs := []error{err}
+			for j := 0; j <= i; j++ {
+				rerr := snapshots[j].restore()
+				if rerr == nil {
+					continue
+				}
+				rerr = fmt.Errorf("failed to restore sysext link for %s: %w", transfers[j].Component, rerr)
+				c.warn("%s", rerr)
+				errs = append(errs, rerr)
+				// The failing transfer's link may have moved before link
+				// returned the error, so it is recorded too.
+				if restoreFailed == nil {
+					restoreFailed = make(map[int]error)
+				}
+				restoreFailed[j] = rerr
+			}
+			return i, restoreFailed, errors.Join(errs...)
+		}
+	}
+	return -1, nil, nil
+}
+
 // linkStaged is the link step: it points the systemd-sysext link of every
 // staged transfer that needs one at its newest image. When a link fails, it
 // restores the links this call already moved, records the failure on the
@@ -414,64 +607,41 @@ func (s *linkSnapshot) restore() error {
 // and any other entry is refused. So a refused feature keeps every link (and
 // every regular file) exactly as it was.
 func (c *Client) linkStaged(feature string, transfers []*config.Transfer, staged []stagedTransfer, results []transferInstall) error {
-	snapshots := make([]linkSnapshot, len(transfers))
+	var idx []int
+	var todo []*config.Transfer
 	for i, transfer := range transfers {
-		if !staged[i].link {
-			continue
+		if staged[i].link {
+			idx = append(idx, i)
+			todo = append(todo, transfer)
 		}
-		snap, err := snapshotLink(filepath.Join(c.paths.sysextLinkDir, sysext.SysextLinkName(transfer)))
-		if err != nil {
-			// Nothing is linked yet, so there is nothing to undo. The
-			// backups taken so far are redundant: the files they stand for
-			// were never replaced.
-			c.removeLinkBackups(snapshots)
-			results[i].err = err
-			c.markNotLinked(feature, results)
-			return err
-		}
-		snapshots[i] = snap
 	}
 
-	for i, transfer := range transfers {
-		if !staged[i].link {
-			continue
-		}
-		if err := c.linkToSysext(transfer); err != nil {
-			results[i].err = err
-			c.markNotLinked(feature, results)
-			errs := []error{err}
-			for j := 0; j <= i; j++ {
-				if !staged[j].link {
-					continue
-				}
-				rerr := snapshots[j].restore()
-				if rerr == nil {
-					continue
-				}
-				rerr = fmt.Errorf("failed to restore sysext link for %s: %w", transfers[j].Component, rerr)
-				c.warn("%s", rerr)
-				errs = append(errs, rerr)
-				// This transfer's link may have moved (an earlier transfer
-				// always did; the failing one may have changed its link
-				// before it returned the error): it may still point at the
-				// new version, so it must not read as not linked.
-				rerr = fmt.Errorf("%w; the link may point at the new version", rerr)
-				if j < i {
-					results[j].err = rerr
-				} else {
-					results[j].err = errors.Join(err, rerr)
-				}
-				results[j].notLinked = false
+	failed, restoreFailed, err := c.linkAllOrNone(todo, func(_ int, transfer *config.Transfer) error {
+		return c.linkToSysext(transfer)
+	})
+	if err != nil {
+		results[idx[failed]].err = err
+		c.markNotLinked(feature, results)
+		for j, rerr := range restoreFailed {
+			// This transfer's link may have moved and could not be put
+			// back: it may still point at the new version, so it must not
+			// read as not linked. The failing transfer keeps its link error
+			// too.
+			rerr = fmt.Errorf("%w; the link may point at the new version", rerr)
+			if j == failed {
+				results[idx[j]].err = errors.Join(err, rerr)
+			} else {
+				results[idx[j]].err = rerr
 			}
-			c.removeLinkBackups(snapshots)
-			return errors.Join(errs...)
+			results[idx[j]].notLinked = false
 		}
+		return err
+	}
+	for _, i := range idx {
 		if staged[i].relink {
-			c.msg("restored sysext link for %s", transfer.Component)
+			c.msg("restored sysext link for %s", transfers[i].Component)
 		}
 	}
-
-	c.removeLinkBackups(snapshots)
 	return nil
 }
 

@@ -35,6 +35,7 @@ func runFeaturesList(cmd *cobra.Command, args []string) error {
 	table := newTextTable(out)
 	table.Rowf("FEATURE\tDESCRIPTION\tENABLED\tCATALOG\tTRANSFERS\tRUNNING\tLINKED\n")
 	var pending []updex.PendingActivation
+	var held []string
 	for _, f := range features {
 		status := "no"
 		if f.Masked {
@@ -58,6 +59,12 @@ func runFeaturesList(cmd *cobra.Command, args []string) error {
 		table.Rowf("%s\t%s\t%s\t%s\t%s\t%s\t%s\n", f.Name, f.Description, status, formatOrigin(f), transfersStr, running, linked)
 
 		for _, ts := range f.TransferStatus {
+			switch {
+			case ts.RollbackHeldBy != "":
+				held = append(held, fmt.Sprintf("%s (held by rollback of %s)", ts.Component, ts.RollbackHeldBy))
+			case ts.RollbackRejected != "":
+				held = append(held, fmt.Sprintf("%s (rejected %s)", ts.Component, ts.RollbackRejected))
+			}
 			if ts.PendingReboot {
 				pending = append(pending, updex.PendingActivation{
 					Component:      ts.Component,
@@ -69,7 +76,17 @@ func runFeaturesList(cmd *cobra.Command, args []string) error {
 	}
 
 	// Both failures matter: see runFeaturesUpdate.
-	return errors.Join(table.Flush(), writePendingReboot(out, pending))
+	return errors.Join(table.Flush(), writePendingReboot(out, pending), writeHeldByRollback(out, held))
+}
+
+// writeHeldByRollback prints the footer that marks transfers a rollback
+// record holds: updates link nothing for the feature while the record applies.
+// It prints nothing when held is empty.
+func writeHeldByRollback(out io.Writer, held []string) error {
+	if len(held) == 0 {
+		return nil
+	}
+	return writeLine(out, fmt.Sprintf("HELD BY ROLLBACK: %d sysext(s) that 'updex features update' leaves alone while a rollback record applies: %s", len(held), strings.Join(held, ", ")))
 }
 
 // formatTransferVersions renders a feature's per-transfer versions for the
@@ -320,6 +337,13 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 			status := "error"
 			if r.Error != "" {
 				status = r.Error
+			} else if r.Held {
+				// NextActionMessage names what holds the feature, also when
+				// another component of the record is the reason.
+				status = r.NextActionMessage
+				if status == "" {
+					status = "held by rollback"
+				}
 			} else if r.DryRun && r.Downloaded {
 				status = "would download"
 			} else if r.Downloaded {
@@ -382,6 +406,10 @@ func runFeaturesCheck(cmd *cobra.Command, args []string) error {
 				update = "error"
 			case r.UpdateAvailable:
 				update = "yes"
+			case r.RollbackHeldBy != "":
+				update = "held (by rollback of " + r.RollbackHeldBy + ")"
+			case r.RollbackRejected != "":
+				update = "held (rejected " + r.RollbackRejected + ")"
 			}
 			table.Rowf("%s\t%s\t%s\t%s\t%s\t%s\t%s\n", fr.Feature, r.Component, current, dashIfEmpty(r.RunningVersion), dashIfEmpty(r.LinkedVersion), newest, update)
 			if r.PendingReboot {
@@ -397,4 +425,55 @@ func runFeaturesCheck(cmd *cobra.Command, args []string) error {
 	// See runFeaturesUpdate: the SDK error and the output error are reported
 	// together so neither is lost.
 	return errors.Join(err, table.Flush(), writePendingReboot(out, pending))
+}
+
+func runFeaturesRollback(cmd *cobra.Command, args []string) error {
+	// A dry run changes nothing and reads only world-readable state.
+	if !clix.DryRun {
+		if err := requireRoot(); err != nil {
+			return err
+		}
+	}
+
+	client := newClient()
+
+	result, err := client.RollbackFeature(cmd.Context(), args[0], updex.RollbackFeatureOptions{
+		To:        featureRollbackTo,
+		Now:       featureRollbackNow,
+		Clear:     featureRollbackClear,
+		DryRun:    clix.DryRun,
+		NoRefresh: noRefresh,
+		Component: featureComponent,
+	})
+
+	if clix.JSONOutput {
+		_, jsonErr := clix.OutputJSON(result)
+		return errors.Join(err, jsonErr)
+	}
+	if result == nil {
+		return err
+	}
+	// Nothing was changed: the returned error says why.
+	if err != nil && result.RefreshError == "" {
+		return err
+	}
+
+	out := cmd.OutOrStdout()
+	prefix := ""
+	if result.DryRun {
+		prefix = "[DRY RUN] "
+	}
+	var outErr error
+	if len(result.Transfers) > 0 {
+		table := newTextTable(out)
+		table.Rowf("FEATURE\tCOMPONENT\tFROM\tTO\tREJECTED\n")
+		for _, t := range result.Transfers {
+			table.Rowf("%s\t%s\t%s\t%s\t%s\n", result.Feature, t.Component, t.FromVersion, t.ToVersion, t.RejectedVersion)
+		}
+		outErr = table.Flush()
+	}
+	if result.RefreshError != "" {
+		return errors.Join(err, outErr, writeLine(out, fmt.Sprintf("Error: %s", result.RefreshError)), writeLine(out, result.NextActionMessage))
+	}
+	return errors.Join(outErr, writeLine(out, prefix+result.NextActionMessage))
 }

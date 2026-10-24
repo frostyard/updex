@@ -22,7 +22,13 @@ type MockRunner struct {
 	// was given. It stays empty when only the pathless LinkToSysext was
 	// called, so a test can tell the two apart.
 	LinkToSysextAtDir string
+	// LinkVersionAtCalls records the versions LinkVersionAt was asked to link.
+	LinkVersionAtCalls []string
+	// LinkVersionAtErr is returned by LinkVersionAt.
+	LinkVersionAtErr error
 }
+
+var _ VersionSysextRunner = (*MockRunner)(nil)
 
 // MockRunner is a PathSysextRunner: a compile-time reminder that dropping
 // LinkToSysextAt would turn every client using it into a refused legacy
@@ -55,4 +61,11 @@ func (m *MockRunner) LinkToSysextAt(_ *config.Transfer, sysextDir string) error 
 	m.LinkToSysextCalled = true
 	m.LinkToSysextAtDir = sysextDir
 	return m.LinkToSysextErr
+}
+
+// LinkVersionAt records version and reports LinkVersionAtErr. It creates no
+// link, like LinkToSysextAt.
+func (m *MockRunner) LinkVersionAt(_ *config.Transfer, _, version string) error {
+	m.LinkVersionAtCalls = append(m.LinkVersionAtCalls, version)
+	return m.LinkVersionAtErr
 }

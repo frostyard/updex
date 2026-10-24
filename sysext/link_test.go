@@ -542,3 +542,90 @@ func symlink(t *testing.T, target, linkPath string) {
 		t.Fatalf("symlink %s -> %s: %v", linkPath, target, err)
 	}
 }
+
+// TestLinkVersionAt links exactly the requested version, replaces an existing
+// link atomically, and changes nothing when the version is not staged.
+func TestLinkVersionAt(t *testing.T) {
+	staging, linkDir := t.TempDir(), t.TempDir()
+	stageImages(t, staging, "myext_1.0.0.raw", "myext_2.0.0.raw", "myext_3.0.0.raw")
+	tr := linkTransfer(staging)
+	link := filepath.Join(linkDir, "myext.raw")
+
+	// No existing link: the older version is linked, not the newest.
+	if err := LinkVersionAt(tr, linkDir, "2.0.0"); err != nil {
+		t.Fatalf("LinkVersionAt(2.0.0): %v", err)
+	}
+	if got, want := readLink(t, link), filepath.Join(staging, "myext_2.0.0.raw"); got != want {
+		t.Errorf("link = %s, want %s", got, want)
+	}
+
+	// Replacing an existing link.
+	if err := LinkVersionAt(tr, linkDir, "1.0.0"); err != nil {
+		t.Fatalf("LinkVersionAt(1.0.0): %v", err)
+	}
+	if got, want := readLink(t, link), filepath.Join(staging, "myext_1.0.0.raw"); got != want {
+		t.Errorf("link = %s, want %s", got, want)
+	}
+
+	// A version that is not staged changes nothing.
+	err := LinkVersionAt(tr, linkDir, "9.9.9")
+	if err == nil || !strings.Contains(err.Error(), "version 9.9.9 of myext is not on disk") {
+		t.Fatalf("error = %v", err)
+	}
+	if got, want := readLink(t, link), filepath.Join(staging, "myext_1.0.0.raw"); got != want {
+		t.Errorf("a failed LinkVersionAt moved the link to %s", got)
+	}
+
+	// No temp symlink is left behind.
+	entries, _ := os.ReadDir(linkDir)
+	if len(entries) != 1 {
+		t.Errorf("link dir holds %d entries, want 1", len(entries))
+	}
+
+	// A transfer with no link name is refused.
+	if err := LinkVersionAt(&config.Transfer{}, linkDir, "1.0.0"); err == nil {
+		t.Error("a transfer with no component must be refused")
+	}
+}
+
+func TestStagedVersionsAt(t *testing.T) {
+	staging := t.TempDir()
+	stageImages(t, staging, "myext_1.0.0.raw", "myext_10.0.0.raw", "myext_2.0.0.raw", "other_1.raw")
+	// A symlink in the staging directory is not a staged image.
+	if err := os.Symlink("myext_1.0.0.raw", filepath.Join(staging, "myext_3.0.0.raw")); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := StagedVersionsAt(linkTransfer(staging), staging)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"10.0.0", "2.0.0", "1.0.0"}; strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("StagedVersionsAt = %v, want %v (newest first)", got, want)
+	}
+
+	if got, err := StagedVersionsAt(linkTransfer(filepath.Join(staging, "absent")), staging); err != nil || got != nil {
+		t.Errorf("absent dir = %v, %v; want nil, nil", got, err)
+	}
+}
+
+// DefaultRunner and MockRunner can link a given version.
+func TestRunnersLinkVersion(t *testing.T) {
+	var _ VersionSysextRunner = &DefaultRunner{}
+	m := &MockRunner{}
+	if err := m.LinkVersionAt(linkTransfer(t.TempDir()), t.TempDir(), "1.0.0"); err != nil {
+		t.Fatal(err)
+	}
+	if len(m.LinkVersionAtCalls) != 1 || m.LinkVersionAtCalls[0] != "1.0.0" {
+		t.Errorf("calls = %v", m.LinkVersionAtCalls)
+	}
+
+	staging, linkDir := t.TempDir(), t.TempDir()
+	stageImages(t, staging, "myext_1.0.0.raw", "myext_2.0.0.raw")
+	if err := (&DefaultRunner{}).LinkVersionAt(linkTransfer(staging), linkDir, "1.0.0"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := readLink(t, filepath.Join(linkDir, "myext.raw")), filepath.Join(staging, "myext_1.0.0.raw"); got != want {
+		t.Errorf("link = %s, want %s", got, want)
+	}
+}

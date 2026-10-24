@@ -10,6 +10,10 @@ var (
 	featureEnableNow    bool
 	featureUpdateNoVac  bool
 	featureComponent    string
+
+	featureRollbackTo    string
+	featureRollbackNow   bool
+	featureRollbackClear bool
 )
 
 func newFeaturesCmd() *cobra.Command {
@@ -39,7 +43,8 @@ SUBCOMMANDS:
   enable   Enable a feature (optionally download immediately)
   disable  Disable a feature (optionally remove files)
   update   Download newest versions for all enabled features
-  check    Check for available updates across all enabled features`,
+  check    Check for available updates across all enabled features
+  rollback Link a feature to an older staged version and hold updates`,
 		Example: `  # List all features
   updex features list
 
@@ -63,6 +68,7 @@ SUBCOMMANDS:
 	cmd.AddCommand(newFeaturesDisableCmd())
 	cmd.AddCommand(newFeaturesUpdateCmd())
 	cmd.AddCommand(newFeaturesCheckCmd())
+	cmd.AddCommand(newFeaturesRollbackCmd())
 
 	return cmd
 }
@@ -254,4 +260,55 @@ This is a read-only operation that does not download or install anything.`,
 		Args: cobra.NoArgs,
 		RunE: runFeaturesCheck,
 	}
+}
+
+func newFeaturesRollbackCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "rollback FEATURE",
+		Short: "Roll a feature back to an older staged version",
+		Long: `Link every transfer of a feature to an older version that is still staged on
+disk, and record the version it rolled back from as rejected.
+
+By default each transfer goes to its own newest staged version older than the
+version its systemd-sysext link names. With --to, every transfer goes to that
+version. If any transfer has no such version on disk, nothing is changed and
+the command fails. The links move together: all or none.
+
+The record, /var/lib/updex/rollback/<feature>, keeps one rejected version per
+transfer. While it exists, 'updex features update' (and the timer) links
+nothing at or below the rejected version and downloads nothing for the
+feature; this is not an error. When a newer version is published, update
+downloads and links it as usual and deletes the record.
+
+The rollback takes effect at the next boot. With --now, it takes effect
+through a systemd-sysext refresh, which also activates other sysexts that are
+linked but not merged (a warning lists them).
+
+OPTIONS:
+  --to VERSION  Link this staged version instead of the next older one
+  --now         Refresh systemd-sysext now (skipped with --no-refresh)
+  --clear       Delete the feature's rollback record and change no link
+
+Use --dry-run (global flag) to preview. A dry run needs no root privileges.
+Otherwise root privileges are required.`,
+		Example: `  # Roll incus back to its previous staged version (applies at next boot)
+  sudo updex features rollback incus
+
+  # Roll back to a specific version and apply it now
+  sudo updex features rollback incus --to r4 --now
+
+  # Let updates resume without waiting for a newer version
+  sudo updex features rollback --clear incus
+
+  # Preview
+  updex --dry-run features rollback incus`,
+		Args: cobra.ExactArgs(1),
+		RunE: runFeaturesRollback,
+	}
+
+	cmd.Flags().StringVar(&featureRollbackTo, "to", "", "Link this staged version instead of the next older one")
+	cmd.Flags().BoolVar(&featureRollbackNow, "now", false, "Apply the rollback with a systemd-sysext refresh")
+	cmd.Flags().BoolVar(&featureRollbackClear, "clear", false, "Delete the rollback record and change no link")
+
+	return cmd
 }

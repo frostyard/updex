@@ -24,6 +24,14 @@ type PathSysextRunner interface {
 	LinkToSysextAt(t *config.Transfer, sysextDir string) error
 }
 
+// VersionSysextRunner optionally lets a runner link a specific staged
+// version instead of the newest one. A rollback needs it; a runner that
+// implements only PathSysextRunner is refused for that operation.
+type VersionSysextRunner interface {
+	PathSysextRunner
+	LinkVersionAt(t *config.Transfer, sysextDir, version string) error
+}
+
 // DefaultRunner executes real systemd-sysext commands
 type DefaultRunner struct{}
 
@@ -45,6 +53,10 @@ func (r *DefaultRunner) LinkToSysext(t *config.Transfer) error {
 
 func (r *DefaultRunner) LinkToSysextAt(t *config.Transfer, sysextDir string) error {
 	return LinkToSysextAt(t, sysextDir)
+}
+
+func (r *DefaultRunner) LinkVersionAt(t *config.Transfer, sysextDir, version string) error {
+	return LinkVersionAt(t, sysextDir, version)
 }
 
 // runSysextCommand executes a systemd-sysext subcommand

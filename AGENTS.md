@@ -265,6 +265,7 @@ updex/
 │   ├── features.go           # Feature operations
 │   ├── install.go            # Stage/link/vacuum pipeline for a feature's transfers
 │   ├── lock.go               # ErrBusy and the operation lock (flock)
+│   ├── rollback.go           # RollbackFeature and the rollback record
 │   └── catalog.go            # Catalog operations
 ├── cmd/
 │   ├── updex/                # Cobra commands and SDK adapters
@@ -317,10 +318,11 @@ afterwards.
 
 ### CLI commands
 
-- `features list|enable <name>|disable <name>|update|check` — manage
-  systemd-sysext features (list with status, enable/disable via drop-ins,
-  download and install updates for enabled features, check without
-  installing)
+- `features list|enable <name>|disable <name>|update|check|rollback <name>` —
+  manage systemd-sysext features (list with status, enable/disable via
+  drop-ins, download and install updates for enabled features, check without
+  installing, roll back to an older staged version and hold updates until a
+  newer one is published)
 - `components` — list discovered systemd-sysext components
 - `daemon enable|disable|status` — enable/disable/inspect the auto-update
   timer. The package ships the units in `/usr/lib/systemd/system`; `enable`
@@ -426,6 +428,53 @@ in the `config/` structs and parse functions. Always finish with
   lock-free form (`CatalogAdd` → `enableFeature`, `CatalogRemove` →
   `disableFeature`): a second `flock` from the same process would block on
   itself. A new mutating operation takes the lock the same way.
+- **Rollback record (ADR-0016).** `RollbackFeature` writes
+  `<RuntimePaths.RollbackDir>/<feature>` (default `/var/lib/updex/rollback`,
+  `updex.DefaultRollbackDir`): JSON `format` 1 with one rejected version per
+  transfer, written with a temp file plus rename after `Lstat` checks, feature
+  name validated with `catalog.ValidateSysextName`. **The hold covers every
+  feature that shares a transfer**, because a transfer can name several
+  features (`Transfer.Features` OR, `Transfer.RequisiteFeatures` AND).
+  `collectRollbackHolds` (`updex/rollback.go`) reads, once per call, the record
+  of every feature that names one of the transfers, enabled or not, and keeps
+  the highest rejected version per component; `installTransfers`,
+  `Features` and `CheckFeatures` all use it. **A record of another feature
+  holds the whole feature**: only the feature that wrote a record advances the
+  transfers its record names (`rollbackHolds.ownersOtherThan`,
+  `holdFeatureOwnedBy`), because its transfers link all or none and it deletes
+  the record only after that link. So no processing order and no download or
+  link failure can let a sharing feature link an image that the owner staged,
+  and the message is `held by rollback of <owner>: it advances only when
+  <owner> updates (or run 'updex features rollback --clear <owner>')`. The hold
+  lasts while the record exists, also when the owner is disabled or masked;
+  updex never clears a record by itself. If two features that share a transfer
+  both have a record, each holds the other and neither advances until one
+  record is cleared. For the feature's **own** record (the
+  only one left after that check), a record still holds only when it has no
+  component whose newest available version is newer than the one it rejects:
+  `rollbackHoldReason` checks every component the record names, also one
+  outside the feature's transfers (looked up in
+  `installFeatureOptions.Domain`, versions read through the call's manifest
+  cache). A component with no transfer in the domain, or one whose versions
+  cannot be read, holds too (fail closed); a version read error is the
+  feature's error, a missing transfer is part of the hold message. **Every path
+  that links honours
+  it**: `installTransfers` fails closed for the feature when any applicable
+  record is unreadable (nothing downloaded or linked, the error names the
+  feature whose record failed), holds the whole feature (no download, no link,
+  `UpdateResult.Held`, the message naming the component that holds or the
+  owner that must update) when a record holds, and otherwise stages, links,
+  vacuums with the rejected version in `VacuumPaths.ProtectVersions`, then
+  deletes the feature's own record when every version it rejects is behind a
+  link now (`deleteFinishedRollbackRecords` takes the feature name and skips
+  every other record, `sysext.LinkedVersionAt`; a component outside these
+  transfers is looked up in the loaded domain, and an unknown component keeps
+  the record). A new code
+  path that links a staged image must go through `installTransfers` (or read
+  the applicable records itself), or it can undo a rollback. Linking a given
+  version uses `sysext.LinkVersionAt` through `sysext.VersionSysextRunner` (a
+  runner without it gets `ErrLegacySysextRunner`), and moves links all or none
+  with `Client.linkAllOrNone`.
 - **CLI.** `features update` that gets `ErrBusy` exits 0 with one stderr line
   only when `runningUnderSystemd()` (non-empty `INVOCATION_ID`; the packaged
   timer runs exactly `updex features update --no-refresh`); every other
@@ -699,7 +748,8 @@ Go 1.26. Use modern idioms: `any`, `slices`/`maps`/`cmp` packages, `t.Context()`
   defaults to `/run/updex/lock` (not writable by the test user), so a test must
   never rely on that default. Package `updex` tests get a temporary default
   from `TestMain` (`updex/main_test.go` sets the unexported `lockPathDefault`
-  and empty temporary `sysext.MergedHierarchies`); tests run one after
+  and `rollbackDirDefault`, and empty temporary `sysext.MergedHierarchies`), so
+  no test touches `/run/updex` or `/var/lib/updex`; tests run one after
   another in one process, so one default lock file suffices. A test that runs
   clients concurrently, or that tests the lock, gives each client its own
   `RuntimePaths{LockPath: filepath.Join(t.TempDir(), "lock")}`. Hold the lock in
@@ -719,8 +769,10 @@ Go 1.26. Use modern idioms: `any`, `slices`/`maps`/`cmp` packages, `t.Context()`
   value with `t.Cleanup`. In production the seam stays the zero
   `updex.RuntimePaths`, so behaviour is unchanged;
   `TestHandlerTestsDoNotReadHostMergedState` guards it. `TestMain` also sets a
-  temporary `LockPath` (and `setRuntimePaths` keeps it when a test sets its own
-  paths), so no handler test touches `/run/updex`; a handler test that builds
+  temporary `LockPath` and `RollbackDir` (and `setRuntimePaths` keeps them when
+  a test sets its own paths), so no handler test touches `/run/updex` or
+  `/var/lib/updex`; a test that inspects rollback records sets its own
+  `RollbackDir`; a handler test that builds
   its own `updex.NewClient` must pass `Paths: runtimePaths`. Tests of the
   `INVOCATION_ID` behaviour use `t.Setenv("INVOCATION_ID", ...)` and hold the
   lock with a plain `flock` on `runtimePaths.LockPath`.

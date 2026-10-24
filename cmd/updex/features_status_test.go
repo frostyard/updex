@@ -23,6 +23,8 @@ type statusHost struct {
 	linkDir   string
 	hierarchy string
 	serverURL string
+
+	rollbackDir string
 }
 
 func newStatusHost(t *testing.T) *statusHost {
@@ -46,8 +48,11 @@ func newStatusHost(t *testing.T) *statusHost {
 		linkDir:   t.TempDir(),
 		hierarchy: t.TempDir(),
 		serverURL: server.URL,
+
+		rollbackDir: filepath.Join(t.TempDir(), "rollback"),
 	}
 	setRuntimePaths(t, updex.RuntimePaths{
+		RollbackDir:       h.rollbackDir,
 		SysextLinkDir:     h.linkDir,
 		SysextHierarchies: []string{h.hierarchy},
 		RunExtensionsDir:  filepath.Join(t.TempDir(), "run-extensions"),

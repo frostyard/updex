@@ -35,9 +35,67 @@ type TransferStatus struct {
 	// "unknown" (the two cannot be compared), and when Error is set.
 	PendingReboot bool `json:"pending_reboot,omitempty"`
 
-	// Error is set when the merged state or the link could not be read. The
-	// version that could be read is still reported.
+	// RollbackRejected is the highest version a rollback record that applies
+	// to this transfer rejects: `features update` links nothing at or below
+	// it. Empty when no record names the transfer. Every feature that shares
+	// the transfer sees it, not only the rolled-back one; a feature other
+	// than the record's own resumes when that feature updates or the record
+	// is cleared (see RollbackHeldBy).
+	RollbackRejected string `json:"rollback_rejected,omitempty"`
+
+	// RollbackHeldBy names why a rollback record holds this transfer although
+	// the transfer itself could advance. For the feature's own record: its
+	// feature and the record component with no newer version, for example
+	// "grp: beta has no version newer than 2.0.0". For a record of another
+	// feature that names the transfer: "grp: it advances only when grp
+	// updates (or run 'updex features rollback --clear grp')", because only
+	// the feature that wrote the record advances it. A feature's transfers
+	// link together, so one such reason holds all of them. Empty when the
+	// transfer's own RollbackRejected is the reason, and when no record
+	// holds the feature.
+	RollbackHeldBy string `json:"rollback_held_by,omitempty"`
+
+	// Error is set when the merged state or the link could not be read,
+	// when an applicable rollback record could not be read, or when a
+	// version lookup needed to decide whether a record still holds failed.
+	// The version that could be read is still reported.
 	Error string `json:"error,omitempty"`
+}
+
+// featureTransferStatus is transferStatus plus what the rollback records that
+// apply to the transfers (collected once by the caller) say about the
+// transfer. A record that cannot be read, and a version lookup that fails while
+// deciding whether a record still holds, are an Error on every transfer of the
+// feature, because the update path then links nothing for it. reason is the
+// feature's own record that still holds the feature, when one does. owner is
+// the reason from a record of another feature, which holds the whole feature
+// because only its feature advances the transfers it names; it is empty when
+// no other feature's record applies.
+func (c *Client) featureTransferStatus(t *config.Transfer, holds rollbackHolds, reason *rollbackHoldReason, owner string, holdErr error) TransferStatus {
+	status := c.transferStatus(t)
+	var problems []string
+	if err := holds.errs[t.Component]; err != nil {
+		problems = append(problems, err.Error())
+	}
+	if holdErr != nil {
+		problems = append(problems, holdErr.Error())
+	}
+	if len(problems) > 0 {
+		if status.Error != "" {
+			problems = append([]string{status.Error}, problems...)
+		}
+		status.Error = strings.Join(problems, "; ")
+		status.PendingReboot = false
+		return status
+	}
+	status.RollbackRejected = holds.rejected[t.Component]
+	switch {
+	case owner != "":
+		status.RollbackHeldBy = owner
+	case reason != nil && reason.component != t.Component:
+		status.RollbackHeldBy = reason.String()
+	}
+	return status
 }
 
 // PendingActivation names a sysext whose merged state a systemd-sysext
