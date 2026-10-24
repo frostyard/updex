@@ -288,8 +288,11 @@ be read (a failed EROFS open, a failed open, stat or read of the file, a
 missing file, several without a match, over 64 KiB, or a compressed image
 whose `dump.erofs` fallback is missing, too old or fails), an image the link
 step could not resolve, or a `bootc` that is installed but fails, is an error
-for the features concerned: nothing is linked for them. A queued rollback whose
-version `bootc` does not report is an error too.
+for the features concerned: nothing is linked for them. A queued rollback or a
+staged deployment whose version `bootc` does not report is an error too: bootc
+reads that version from the OCI manifest annotation
+`org.opencontainers.image.version` of the OS image, so an OS image without it
+blocks these features while an update is staged, until the reboot into it.
 
 **What the vacuum keeps:** after the links succeeded, `features update`
 removes old images but always keeps, per transfer, the image the link names

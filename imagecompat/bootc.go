@@ -30,6 +30,12 @@ const (
 	SourceBootedOSRelease Source = "booted-os-release"
 )
 
+// ErrStagedWithoutVersion is returned by NextBootImageVersion when bootc
+// reports a staged deployment, which boots next, without an image version.
+// bootc reads the version from the OCI manifest annotation
+// org.opencontainers.image.version of the staged image.
+var ErrStagedWithoutVersion = errors.New("bootc reports a staged deployment without an image version (the OS image needs the OCI manifest annotation org.opencontainers.image.version; the check runs again after the reboot into it)")
+
 // MaxBootcOutput is the most output of "bootc status --json" that is read.
 const MaxBootcOutput = 1 << 20
 
@@ -147,13 +153,22 @@ type bootcEntry struct {
 // bootc reports a staged deployment with an image version, that version wins
 // (SourceStaged). Otherwise it falls back to IMAGE_VERSION in the first
 // readable os-release file of Options.OSReleasePaths
-// (SourceBootedOSRelease). The fallback is used when bootc is not installed,
-// when there is no staged deployment, and when the staged image has no
-// version.
+// (SourceBootedOSRelease). The fallback is used only when bootc is not
+// installed or reports no staged deployment (status.staged is null or
+// absent): then the booted image is the one that boots next.
 //
 // A queued rollback whose entry or version is missing is an error, not a
 // fallback: the next boot is known to be the rollback, but its version is
-// not, and failing closed is the only safe answer.
+// not, and failing closed is the only safe answer. A staged deployment whose
+// image or version is missing is the same error (ErrStagedWithoutVersion,
+// frostyard/updex#464): the next boot is known to be the staged image, and
+// the booted os-release can be newer than it (a bootc switch to an older or
+// another image), so a fallback could link a revision that the next boot
+// cannot run. bootc fills image.version from the OCI manifest annotation
+// org.opencontainers.image.version, not from the config label of the same
+// name, so an OS image without that annotation always gives this error while
+// an update is staged; after the reboot that boots it, the staged entry is
+// gone and the booted os-release answers again.
 //
 // An empty version with a nil error means the version is unknown: no
 // os-release file is readable or it has no IMAGE_VERSION. CheckMinImageVersion
@@ -194,8 +209,12 @@ func NextBootImageVersion(ctx context.Context, opts Options) (string, Source, er
 			}
 			return version, SourceRollback, nil
 		}
-		if v := entryVersion(host.Status.Staged); v != "" {
-			return v, SourceStaged, nil
+		if host.Status.Staged != nil {
+			version := entryVersion(host.Status.Staged)
+			if version == "" {
+				return "", "", ErrStagedWithoutVersion
+			}
+			return version, SourceStaged, nil
 		}
 	case errors.Is(err, exec.ErrNotFound):
 		// bootc is not installed: not an image-based host.

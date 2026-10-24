@@ -74,9 +74,12 @@ func TestNextBootImageVersion(t *testing.T) {
 		{name: "rollback entry not queued is ignored", runner: &fakeBootc{out: `{"status":{"rollbackQueued":false,"rollback":{"image":{"version":"20260901000000"}},"staged":{"image":{"version":"20270101000000"}}}}`}, paths: []string{booted}, wantVer: "20270101000000", wantSource: SourceStaged},
 		{name: "rollback entry not queued, no staged deployment", runner: &fakeBootc{out: `{"status":{"rollbackQueued":false,"rollback":{"image":{"version":"20260901000000"}}}}`}, paths: []string{booted}, wantVer: "20261001000000", wantSource: SourceBootedOSRelease},
 		{name: "staged key absent", runner: &fakeBootc{out: `{"status":{}}`}, paths: []string{booted}, wantVer: "20261001000000", wantSource: SourceBootedOSRelease},
-		{name: "staged version null", runner: &fakeBootc{out: `{"status":{"staged":{"image":{"version":null}}}}`}, paths: []string{booted}, wantVer: "20261001000000", wantSource: SourceBootedOSRelease},
-		{name: "staged version empty", runner: &fakeBootc{out: `{"status":{"staged":{"image":{"version":""}}}}`}, paths: []string{booted}, wantVer: "20261001000000", wantSource: SourceBootedOSRelease},
-		{name: "staged image null", runner: &fakeBootc{out: `{"status":{"staged":{"image":null}}}`}, paths: []string{booted}, wantVer: "20261001000000", wantSource: SourceBootedOSRelease},
+		{name: "staged version null: fail closed", runner: &fakeBootc{out: `{"status":{"staged":{"image":{"version":null}}}}`}, paths: []string{booted}, wantErr: "staged deployment without an image version"},
+		{name: "staged version empty: fail closed", runner: &fakeBootc{out: `{"status":{"staged":{"image":{"version":""}}}}`}, paths: []string{booted}, wantErr: "staged deployment without an image version"},
+		{name: "staged image null: fail closed", runner: &fakeBootc{out: `{"status":{"staged":{"image":null}}}`}, paths: []string{booted}, wantErr: "staged deployment without an image version"},
+		{name: "staged entry without an image key: fail closed", runner: &fakeBootc{out: `{"status":{"staged":{}}}`}, paths: []string{booted}, wantErr: "staged deployment without an image version"},
+		{name: "staged version null while booted is newer: fail closed", runner: &fakeBootc{out: `{"status":{"staged":{"image":{"version":null}},"booted":{"image":{"version":"20261101000000"}}}}`}, paths: []string{writeOSRelease(t, "IMAGE_VERSION=20261101000000\n")}, wantErr: "staged deployment without an image version"},
+		{name: "staged null: booted os-release", runner: &fakeBootc{out: `{"status":{"staged":null,"rollbackQueued":false}}`}, paths: []string{booted}, wantVer: "20261001000000", wantSource: SourceBootedOSRelease},
 		{name: "bootc not installed", runner: &fakeBootc{err: notFound}, paths: []string{booted}, wantVer: "20261001000000", wantSource: SourceBootedOSRelease},
 		{name: "first readable os-release wins", runner: &fakeBootc{err: notFound}, paths: []string{missing, booted, noVersion}, wantVer: "20261001000000", wantSource: SourceBootedOSRelease},
 		{name: "os-release without IMAGE_VERSION", runner: &fakeBootc{err: notFound}, paths: []string{noVersion, booted}, wantVer: "", wantSource: SourceBootedOSRelease},
@@ -93,6 +96,9 @@ func TestNextBootImageVersion(t *testing.T) {
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("error = %v, want one with %q", err, tt.wantErr)
+				}
+				if strings.Contains(tt.wantErr, "staged deployment") && !errors.Is(err, ErrStagedWithoutVersion) {
+					t.Errorf("error = %v, want ErrStagedWithoutVersion", err)
 				}
 				if ver != "" {
 					t.Errorf("version = %q with an error", ver)
