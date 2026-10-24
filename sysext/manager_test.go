@@ -1475,3 +1475,51 @@ func TestVacuumWithKeepsLegacyCurrentSymlinkTarget(t *testing.T) {
 		t.Errorf("kept = %v, want 3.0.0 and 1.0.0", kept)
 	}
 }
+
+// TestMergedVersionIn pins that MergedVersionIn reads only the hierarchy
+// metadata: a legacy CurrentSymlink and an image in the runtime search
+// directory (both of which GetActiveVersionWith counts as active) do not make
+// an image "merged now".
+func TestMergedVersionIn(t *testing.T) {
+	staging := t.TempDir()
+	tr := linkTransfer(staging)
+	tr.Target.CurrentSymlink = "myext.raw"
+	stageImages(t, staging, "myext_1.raw", "myext_2.raw")
+	if err := os.Symlink(filepath.Join(staging, "myext_2.raw"), filepath.Join(staging, "myext.raw")); err != nil {
+		t.Fatal(err)
+	}
+
+	empty := t.TempDir()
+	if got, err := MergedVersionIn(tr, []string{empty}); err != nil || got != "" {
+		t.Errorf("no metadata: got %q, %v; want empty (the legacy symlink is not merged state)", got, err)
+	}
+	if got, err := MergedVersionIn(tr, nil); err != nil || got != "" {
+		t.Errorf("no hierarchies: got %q, %v", got, err)
+	}
+
+	first, second := t.TempDir(), t.TempDir()
+	writeMergedStateFile(t, second, "origin", `{"extensions":{"myext":{"path":"`+filepath.Join(staging, "myext_1.raw")+`"}}}`)
+	if got, err := MergedVersionIn(tr, []string{first, second}); err != nil || got != "1" {
+		t.Errorf("origin in the second hierarchy: got %q, %v; want 1", got, err)
+	}
+
+	names := t.TempDir()
+	writeMergedStateFile(t, names, "extensions", "myext\n")
+	if got, err := MergedVersionIn(tr, []string{names}); err != nil || got != UnknownVersion {
+		t.Errorf("name list only: got %q, %v; want %q", got, err, UnknownVersion)
+	}
+
+	bad := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(bad, MergedStateDirName, "origin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := MergedVersionIn(tr, []string{bad}); err == nil || !strings.Contains(err.Error(), "read merged state") {
+		t.Errorf("unreadable metadata: err = %v, want read merged state", err)
+	}
+
+	broken := linkTransfer(staging)
+	broken.Target.MatchPattern = ""
+	if _, err := MergedVersionIn(broken, []string{empty}); err == nil {
+		t.Error("a transfer without a target pattern must fail")
+	}
+}

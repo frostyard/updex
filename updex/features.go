@@ -46,8 +46,18 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 		// Get transfers associated with this feature
 		featureTransfers := config.GetTransfersForFeature(transfers, f.Name)
 		var transferNames []string
+		var statuses []TransferStatus
 		for _, t := range featureTransfers {
 			transferNames = append(transferNames, t.Component)
+
+			// A transfer whose merged state or link cannot be read is
+			// reported as a warning, and keeps its other value, so one bad
+			// transfer never breaks the listing.
+			status := c.transferStatus(t)
+			if status.Error != "" {
+				c.warn("%s: %s", t.Component, status.Error)
+			}
+			statuses = append(statuses, status)
 		}
 
 		origin, originName := featureOrigin(f.FilePath, imageName, c.paths.definitionRoots, c.config.Definitions != "")
@@ -62,6 +72,8 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 			Origin:        origin,
 			OriginName:    originName,
 			Transfers:     transferNames,
+
+			TransferStatus: statuses,
 		}
 		featureInfos = append(featureInfos, info)
 	}
@@ -289,6 +301,13 @@ func (c *Client) enableFeature(ctx context.Context, name string, opts EnableFeat
 				}
 			}
 
+			// A refresh activates every pending link on the host, not only
+			// this feature's: say which others, before it runs (or would).
+			if !opts.NoRefresh {
+				result.PendingActivations = c.pendingActivations(transfers, featureTransfers)
+				c.warnPendingActivations(result.PendingActivations, opts.DryRun)
+			}
+
 			// Refresh if we downloaded (unless --no-refresh or --dry-run)
 			if !opts.NoRefresh && !opts.DryRun {
 				c.msg("Refreshing sysext")
@@ -421,6 +440,13 @@ func (c *Client) disableFeature(ctx context.Context, name string, opts DisableFe
 
 	// Handle --now (or --remove for backward compat): remove files and unmerge
 	if willRemoveFiles && len(featureTransfers) > 0 {
+		// Read the other pending links before the unmerge: it clears the
+		// merged state, after which every link would look pending.
+		var pending []PendingActivation
+		if opts.Now && !opts.NoRefresh {
+			pending = c.pendingActivations(transfers, featureTransfers)
+		}
+
 		// If --now is specified, unmerge first (unless dry-run)
 		if opts.Now && !opts.DryRun {
 			c.msg("Unmerging extensions")
@@ -433,6 +459,8 @@ func (c *Client) disableFeature(ctx context.Context, name string, opts DisableFe
 			result.Unmerged = true
 		} else if opts.Now && opts.DryRun {
 			c.msg("Would unmerge extensions")
+			result.PendingActivations = pending
+			c.warnPendingActivations(pending, true)
 		}
 
 		// Remove files for each transfer
@@ -466,6 +494,8 @@ func (c *Client) disableFeature(ctx context.Context, name string, opts DisableFe
 
 		// Refresh if we unmerged (unless --no-refresh or --dry-run)
 		if opts.Now && !opts.NoRefresh && !opts.DryRun {
+			result.PendingActivations = pending
+			c.warnPendingActivations(pending, false)
 			c.msg("Refreshing sysext")
 			if err := c.runner.Refresh(); err != nil {
 				// Unmerge already detached every extension on the host and
@@ -531,6 +561,7 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 	// the CLI's `--json` output depend on an array being present.
 	allResults := make([]UpdateFeaturesResult, 0)
 	var hasErrors bool
+	var ownTransfers []*config.Transfer // transfers of the enabled features this run updates
 	// transferErrs carries each failed transfer's error into the returned
 	// error, so a caller that only logs the error still sees why (a link
 	// restore failure in particular, see linkStaged).
@@ -551,6 +582,8 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 		if len(featureTransfers) == 0 {
 			continue
 		}
+
+		ownTransfers = append(ownTransfers, featureTransfers...)
 
 		featureResult := UpdateFeaturesResult{
 			Feature: f.Name,
@@ -636,6 +669,18 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 		allResults = append(allResults, featureResult)
 	}
 
+	// The refresh activates every pending link on the host. This run's own
+	// transfers are the enabled features' (the operator asked to update them,
+	// and the refresh is what applies them); list the others, such as a
+	// disabled feature whose link still names a newer image.
+	if !opts.NoRefresh {
+		pending := c.pendingActivations(transfers, ownTransfers)
+		c.warnPendingActivations(pending, opts.DryRun)
+		for i := range allResults {
+			allResults[i].PendingActivations = pending
+		}
+	}
+
 	var refreshErr error
 	if opts.DryRun {
 		c.msg("Dry run: skipping sysext refresh")
@@ -698,6 +743,11 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 		for _, transfer := range featureTransfers {
 			c.msg("Checking %s/%s", f.Name, transfer.Component)
 
+			// What the host runs and what its next boot merges. A failure to
+			// read either is reported after the manifest check below, in this
+			// component's Error, with the values that could be read.
+			status := c.transferStatus(transfer)
+
 			available, m, _, err := c.getAvailableVersions(ctx, transfer, manifestCache[transfer.Source.Path])
 			if m != nil {
 				manifestCache[transfer.Source.Path] = m
@@ -708,10 +758,7 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 				// "could not check" from "no update" (mirrors UpdateFeatures).
 				err = fmt.Errorf("failed to get available versions: %w", err)
 				c.warn("%s", err)
-				featureResult.Results = append(featureResult.Results, CheckResult{
-					Component: transfer.Component,
-					Error:     err.Error(),
-				})
+				featureResult.Results = append(featureResult.Results, checkResultFor(transfer, status, "", err))
 				hasErrors = true
 				continue
 			}
@@ -729,11 +776,15 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 				// spurious "update available"; report the failure instead.
 				err = fmt.Errorf("failed to get installed versions: %w", err)
 				c.warn("%s", err)
-				featureResult.Results = append(featureResult.Results, CheckResult{
-					Component:     transfer.Component,
-					NewestVersion: newest,
-					Error:         err.Error(),
-				})
+				featureResult.Results = append(featureResult.Results, checkResultFor(transfer, status, newest, err))
+				hasErrors = true
+				continue
+			}
+
+			if status.Error != "" {
+				err = errors.New(status.Error)
+				c.warn("%s", err)
+				featureResult.Results = append(featureResult.Results, checkResultFor(transfer, status, newest, err))
 				hasErrors = true
 				continue
 			}
@@ -744,27 +795,13 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 			// CurrentSymlink, and the newest staged file, without touching the
 			// link updex made. With no usable link, the staging-based current
 			// version stands as before.
-			linked, err := sysext.LinkedVersionAt(transfer, c.paths.sysextLinkDir)
-			if err != nil {
-				err = fmt.Errorf("failed to inspect sysext link: %w", err)
-				c.warn("%s", err)
-				featureResult.Results = append(featureResult.Results, CheckResult{
-					Component:     transfer.Component,
-					NewestVersion: newest,
-					Error:         err.Error(),
-				})
-				hasErrors = true
-				continue
-			}
+			linked := status.LinkedVersion
 			if linked != "" {
 				current = linked
 			}
 
-			result := CheckResult{
-				Component:      transfer.Component,
-				CurrentVersion: current,
-				NewestVersion:  newest,
-			}
+			result := checkResultFor(transfer, status, newest, nil)
+			result.CurrentVersion = current
 
 			if len(installed) == 0 {
 				result.UpdateAvailable = true
@@ -786,4 +823,20 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 		return allResults, fmt.Errorf("one or more components failed to check")
 	}
 	return allResults, nil
+}
+
+// checkResultFor builds a CheckResult carrying the transfer's status values,
+// the newest version when known, and err as the component's error.
+func checkResultFor(t *config.Transfer, status TransferStatus, newest string, err error) CheckResult {
+	r := CheckResult{
+		Component:      t.Component,
+		NewestVersion:  newest,
+		RunningVersion: status.RunningVersion,
+		LinkedVersion:  status.LinkedVersion,
+		PendingReboot:  status.PendingReboot,
+	}
+	if err != nil {
+		r.Error = err.Error()
+	}
+	return r
 }

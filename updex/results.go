@@ -52,10 +52,25 @@ type DaemonStatusResult struct {
 
 // CheckResult represents the result of a check operation for a single component.
 type CheckResult struct {
-	Component       string `json:"component"`
-	CurrentVersion  string `json:"current_version,omitempty"`
-	NewestVersion   string `json:"newest_version"`
-	UpdateAvailable bool   `json:"update_available"`
+	Component string `json:"component"`
+	// CurrentVersion is the version the systemd-sysext link names, or the
+	// staged version when no usable link exists. It is kept for
+	// compatibility; RunningVersion and LinkedVersion are the precise values.
+	// With a usable link it equals LinkedVersion.
+	CurrentVersion string `json:"current_version,omitempty"`
+	NewestVersion  string `json:"newest_version"`
+	// RunningVersion is the version merged now (see TransferStatus). Empty
+	// when the image is not merged; "unknown" when merged without a recorded
+	// version. Always present in JSON.
+	RunningVersion string `json:"running_version"`
+	// LinkedVersion is the version the systemd-sysext link names, which the
+	// next boot merges. Empty when there is no usable link. Always present in
+	// JSON.
+	LinkedVersion string `json:"linked_version"`
+	// PendingReboot is true when LinkedVersion differs from RunningVersion
+	// (see TransferStatus.PendingReboot).
+	PendingReboot   bool `json:"pending_reboot,omitempty"`
+	UpdateAvailable bool `json:"update_available"`
 	// Error is set when the component could not be checked (manifest fetch,
 	// signature verification, pattern failure, or installed-version listing).
 	// UpdateAvailable is always false in that case; other fields may be empty,
@@ -79,6 +94,12 @@ type UpdateResult struct {
 type UpdateFeaturesResult struct {
 	Feature string         `json:"feature"`
 	Results []UpdateResult `json:"results"`
+	// PendingActivations lists the sysexts outside this run's own features
+	// that are linked to a version the host does not run, and that the
+	// systemd-sysext refresh at the end of the run activates as well (a
+	// dry run: would activate). Empty with NoRefresh. The list is host-wide:
+	// every element of the result slice carries the same list.
+	PendingActivations []PendingActivation `json:"pending_activations,omitzero"`
 }
 
 // CheckFeaturesResult represents the result of checking all enabled features.
@@ -116,6 +137,9 @@ type FeatureInfo struct {
 	Origin        string   `json:"origin"`
 	OriginName    string   `json:"origin_name,omitempty"`
 	Transfers     []string `json:"transfers,omitzero"`
+	// TransferStatus holds the running and linked version of each transfer,
+	// in the same order as Transfers.
+	TransferStatus []TransferStatus `json:"transfer_status,omitzero"`
 }
 
 // CatalogEntry represents one sysext available from a configured catalog repo.
@@ -166,4 +190,9 @@ type FeatureActionResult struct {
 	// preceding unmerge already ran, so until that refresh happens every
 	// extension on the host stays unmerged.
 	RefreshError string `json:"refresh_error,omitempty"`
+	// PendingActivations lists the sysexts outside this feature that are
+	// linked to a version the host does not run, and that the
+	// `systemd-sysext refresh` of this action activates as well (a dry run:
+	// would activate). Set only when the action runs, or would run, a refresh.
+	PendingActivations []PendingActivation `json:"pending_activations,omitzero"`
 }
