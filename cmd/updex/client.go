@@ -7,11 +7,13 @@ import (
 	"time"
 
 	"github.com/frostyard/clix"
+	"github.com/frostyard/std/reporter"
 	"github.com/frostyard/updex/v2/imagecompat"
 	"github.com/frostyard/updex/v2/sysext"
 	"github.com/frostyard/updex/v2/systemd"
 	"github.com/frostyard/updex/v2/updex"
 	"github.com/schollz/progressbar/v3"
+	"golang.org/x/term"
 )
 
 // sysextRunner is the systemd-sysext runner handed to every CLI-constructed
@@ -48,17 +50,63 @@ func newClient() *updex.Client {
 		Definitions:     definitions,
 		Verify:          verify,
 		Verbose:         clix.Verbose,
-		Progress:        clix.NewReporter(),
+		Progress:        newReporter(),
 		SysextRunner:    sysextRunner,
 		BootcRunner:     bootcRunner,
 		ErofsDumpRunner: erofsDumpRunner,
 		SystemdManager:  systemdManager,
 		Paths:           runtimePaths,
 	}
-	if !clix.JSONOutput && !clix.Silent {
+	if downloadProgressEnabled() {
 		clientConfig.OnDownloadProgress = newProgressBar
 	}
 	return updex.NewClient(clientConfig)
+}
+
+// newReporter returns the progress reporter for the current output mode.
+//
+// Silent mode discards every event. JSON mode writes the progress and warning
+// events as JSON Lines to stderr, so stdout carries only one JSON document:
+// the command's result. Text mode keeps clix's text reporter, which already
+// writes to stderr. clix.NewReporter() must not be used for JSON mode because
+// it writes its JSON Lines to stdout.
+func newReporter() reporter.Reporter {
+	switch {
+	case clix.Silent:
+		return reporter.NoopReporter{}
+	case clix.JSONOutput:
+		w := clix.Stderr
+		if w == nil {
+			w = os.Stderr
+		}
+		return reporter.NewJSONReporter(w)
+	default:
+		return clix.NewReporter()
+	}
+}
+
+// stderrIsTerminal reports whether standard error is a terminal. It is a
+// variable so a test can choose the answer without a real terminal.
+var stderrIsTerminal = func() bool {
+	return isTerminal(os.Stderr)
+}
+
+// isTerminal reports whether f is a terminal. A character device is not
+// enough (/dev/null is one), so it asks the terminal driver (term.IsTerminal,
+// an ioctl on the descriptor).
+func isTerminal(f *os.File) bool {
+	return term.IsTerminal(int(f.Fd()))
+}
+
+// downloadProgressEnabled reports whether downloads get a progress bar: only
+// in text mode, and only when stderr is a terminal. Under systemd (or any
+// non-terminal stderr) the bar's carriage-return redraws would reach the
+// journal as raw text, so updex suppresses the bar there.
+func downloadProgressEnabled() bool {
+	if clix.JSONOutput || clix.Silent {
+		return false
+	}
+	return stderrIsTerminal()
 }
 
 // newProgressBar creates a terminal progress bar for download tracking.
@@ -66,8 +114,10 @@ func newClient() *updex.Client {
 // In JSON or silent mode stdout must carry only machine-readable data, so the
 // bar is suppressed entirely by returning nil (download.Download treats a nil
 // writer as "no progress"). In text mode the bar and its completion newline are
-// written to stderr — matching clix.NewReporter(), which keeps stdout clean for
+// written to stderr — matching the text reporter, which keeps stdout clean for
 // data — so a real download under --json no longer corrupts the JSON result.
+// newClient only installs this writer when downloadProgressEnabled reports a
+// text mode on a terminal; the checks here keep a direct caller safe too.
 func newProgressBar(contentLength int64) io.Writer {
 	if clix.JSONOutput || clix.Silent {
 		return nil

@@ -234,16 +234,24 @@ reloads systemd, then enables and starts the timer, and returns the
 `/etc` unit directory that updex wrote, and reloads systemd. A file is updex's
 when its first line is the marker, or its whole content equals one of the
 frozen unit texts that earlier releases wrote without a marker; any other file
-is kept and listed in `KeptFiles` and in the message, and a symlink, directory
-or other non-regular path is refused (`os.Lstat`, ADR-0005). Packaged units are
-never touched. It returns "timer not installed" when neither directory has the
-timer. Every step is attempted, and stop, disable, removal and reload failures
-are contextualized and joined; `DisableDaemon` returns that error with no
-success result.
+is kept and listed in `KeptFiles` and in the message, and a directory or other
+non-regular path is refused (`os.Lstat`, ADR-0005). A symlink to `/dev/null` is
+the one exception: it is a systemd mask (`systemctl mask`), which updex never
+removes. Disable classifies it as masked, leaves it in place, and reports it in
+`MaskedFiles` and in the message with the command that undoes it, for example
+`; updex-update.timer is masked (run 'systemctl unmask updex-update.timer' to
+undo)`; with both units masked, one command names both (`systemctl unmask updex-update.timer updex-update.service`). Every other symlink is still refused. A masked timer still counts as
+installed, so disable stops and disables it without the "timer not installed"
+error. Packaged units are never touched. It returns "timer not installed"
+when neither directory has the timer. Every step is attempted, and stop,
+disable, removal and reload failures are contextualized and joined;
+`DisableDaemon` returns that error with no success result.
 `DaemonStatus` reports a missing timer without querying systemctl. For an
 installed timer (a timer file in either directory) it reports enabled/active
 state, `Source` (`etc` when the timer file in use is in the `/etc` unit
-directory, else `packaged`), `UnitFiles` in use, `Schedule` (the timer's
+directory, else `packaged`), `Masked` (`true` when that timer file is a symlink
+to `/dev/null`; such a timer never fires, so `Schedule` is empty),
+`UnitFiles` in use, `Schedule` (the timer's
 effective `OnCalendar` schedule, comma-separated), and the next and last run
 from `systemctl show -p
 PROPERTY --value`, one call per property: `NextRun` (timer
@@ -301,18 +309,20 @@ type DaemonActionResult struct {
     UnitFiles []string `json:"unit_files,omitzero"`
     Packaged  bool     `json:"packaged,omitempty"`   // the package ships the units
     KeptFiles []string `json:"kept_files,omitzero"`  // /etc files disable kept
+    MaskedFiles []string `json:"masked_files,omitzero"` // /etc files disable kept: systemd masks (symlinks to /dev/null)
 }
 
 type DaemonStatusResult struct {
     Installed  bool     `json:"installed"`
     Enabled    bool     `json:"enabled"`
     Active     bool     `json:"active"`
-    Schedule   string   `json:"schedule,omitempty"` // effective OnCalendar, "a, b"
+    Schedule   string   `json:"schedule,omitempty"` // effective OnCalendar, "a, b"; empty for a mask
     Source     string   `json:"source,omitempty"`      // "packaged" or "etc"
     UnitFiles  []string `json:"unit_files,omitzero"`
     NextRun    string   `json:"next_run,omitempty"`
     LastRun    string   `json:"last_run,omitempty"`
     LastResult string   `json:"last_result,omitempty"`
+    Masked     bool     `json:"masked,omitempty"` // the timer file in use is a symlink to /dev/null
 }
 ```
 
@@ -369,7 +379,7 @@ func (c *Client) EnableFeature(ctx context.Context, name string, opts EnableFeat
 func (c *Client) DisableFeature(ctx context.Context, name string, opts DisableFeatureOptions) (*FeatureActionResult, error)
 ```
 
-Enable creates a drop-in file setting `Enabled=true`. With `Now: true`, it downloads extensions via the same `installTransfers` pipeline as `UpdateFeatures`, so the feature's transfers link together (all or none; the first own failure is returned as `failed to download <component>: …`); a component whose newest image is already staged and current is not re-downloaded, but its sysext link is restored if it is missing, dangling, or points at another image (`restored sysext link without re-downloading` — reported through the progress reporter, not the result). Disable creates a drop-in setting `Enabled=false`. Without `Now`, that is all it does: the staged images and the `/var/lib/extensions` links stay and the extensions stay merged (`features update` and the daemon skip disabled features, so they do not remove anything). The result then has no `RemovedFiles` and `NextActionMessage` is `Feature '<name>' disabled. Its extensions stay installed and merged; run 'updex features disable <name> --now' to remove them.`
+Enable creates a drop-in file setting `Enabled=true`. With `Now: true`, it downloads extensions via the same `installTransfers` pipeline as `UpdateFeatures`, so the feature's transfers link together (all or none; the first own failure is returned as `failed to download <component>: …`); a component whose newest image is already staged and current is not re-downloaded, but its sysext link is restored if it is missing, dangling, or points at another image (`Linked staged version <version> for <component>` — reported through the progress reporter, not the result). Disable creates a drop-in setting `Enabled=false`. Without `Now`, that is all it does: the staged images and the `/var/lib/extensions` links stay and the extensions stay merged (`features update` and the daemon skip disabled features, so they do not remove anything). The result then has no `RemovedFiles` and `NextActionMessage` is `Feature '<name>' disabled. Its extensions stay installed and merged; run 'updex features disable <name> --now' to remove them.`
 
 In dry-run mode, enable/disable skip writing drop-ins and skip sysext/filesystem mutations. `EnableFeature` with `Now: true` records associated transfer components as would-download entries without fetching manifests or resolving exact versions. `DisableFeature` with `Now: true` still checks active versions for force-safety, then records component-level would-remove entries instead of deleting files.
 
@@ -412,9 +422,9 @@ The manifest cache key is `Transfer.Source.Path` only, but verification is a pro
 
 Dry-run update results use the normal `UpdateResult` shape: `Downloaded=true` means the component would be downloaded, `Installed=false` means no install happened, and `RemovedVersions` is populated from `sysext.PlanVacuumWith` (the would-install version is the active version; the merged version is protected; the link is not, because it moves) unless `NoVacuum` is true. The CLI still enforces root before calling this SDK method, but the SDK method itself is read-only in dry-run mode apart from remote manifest fetches.
 
-Already-current components are detected by `sysext.GetInstalledVersions`: the selected newest version must be both present on disk and equal to the current version resolved from a legacy `CurrentSymlink` (or newest installed when no symlink exists). This detection deliberately reads the staging directory, not the `/var/lib/extensions` link, so a staged image is never downloaded again. After current detection but before any no-op return, update removes the legacy staging symlink if the transfer defines one. A newer installed-but-not-current version is still treated as needing installation so the `/var/lib/extensions` link can be updated. An already-current component restores a missing sysext link without re-downloading: if `<SysextLinkDir>/<component>.<ext>` is absent, dangling, not a symlink, or resolves to another image, the link step relinks it (through the runner) and still returns `Downloaded=false`; a link that already resolves to the current image is not touched. A failure to list installed versions on that path is a component error (`failed to inspect installed versions: …`), not a fall-through into download.
+Already-current components are detected by `sysext.GetInstalledVersions`: the selected newest version must be both present on disk and equal to the current version resolved from a legacy `CurrentSymlink` (or newest installed when no symlink exists). This detection deliberately reads the staging directory, not the `/var/lib/extensions` link, so a staged image is never downloaded again. After current detection but before any no-op return, update removes the legacy staging symlink if the transfer defines one. A newer installed-but-not-current version is still treated as needing installation so the `/var/lib/extensions` link can be updated. An already-current component restores a missing sysext link without re-downloading: if `<SysextLinkDir>/<component>.<ext>` is absent, dangling, not a symlink, or resolves to another image, the link step relinks it (through the runner) and still returns `Downloaded=false`, with `Linked=true`; a link that already resolves to the current image is not touched and reports `Linked=false`. A failure to list installed versions on that path is a component error (`failed to inspect installed versions: …`), not a fall-through into download.
 
-When the link step relinked because the image was already staged and current, it reports that fact to `UpdateFeatures` separately from `Downloaded` (an unexported outcome field, `Relinked`; no exported result field changed). The non-dry-run component result then keeps `Downloaded=false` and `Installed=true`, sets `NextActionMessage` to `Reboot required to activate changes` (the same text as the download case), and the progress reporter prints `Linked staged version <version>` instead of `Version <version> already installed and current`. This is how an operator learns that a second updater (for example `systemd-sysupdate`) advanced its own staging symlink while the systemd-sysext link updex owns still pointed at the older image.
+When the link step relinked because the image was already staged and current, it reports that fact separately from `Downloaded`: the install outcome's unexported `Relinked` field feeds the exported `UpdateResult.Linked`. The non-dry-run component result then keeps `Downloaded=false`, sets `Installed=true` and `Linked=true`, sets `NextActionMessage` to `Reboot required to activate changes` (the same text as the download case), and the progress reporter prints `Linked staged version <version> for <component>` instead of `Version <version> already installed and current`. This is how an operator learns that a second updater (for example `systemd-sysupdate`) advanced its own staging symlink while the systemd-sysext link updex owns still pointed at the older image.
 
 **Minimum image version** ([ADR-0016](../adr/0016-automatic-sysext-updates-apply-at-next-boot.md), plan 0001 Phase 5; `updex/imagegate.go`, package `imagecompat`). `installTransfers` checks every image whose link would move, after the stage step and before the link step. That covers a new download and the relink path (an image blocked earlier stays staged). It reads the staged image the link step would link (`sysext.LinkTargetAt`) with `imagecompat.ReadExtensionRelease` (name hint: the transfer's component, then the feature name when several extension-release files exist).
 - No key: link as usual. `imagecompat.ErrUnsupportedImage` (no EROFS filesystem at all: a squashfs sysext, random bytes, an invalid GPT): the same, **fail open**, because only snosi sets the key and snosi ships EROFS; a debug line says so. **Once a candidate has the EROFS superblock magic (`0xE0F5E1E2` at offset 1024), every later problem fails closed** and never wraps `ErrUnsupportedImage`: `ErrUnreadableRelease` (a failed EROFS open, a failed open/stat/read of the release file, a recovered parser panic, or a failed `dump.erofs` run for a compressed image), `ErrErofsToolUnavailable` (the compressed-image fallback cannot run because `dump.erofs` is missing or too old), `ErrNoExtensionRelease`, `ErrAmbiguousExtensionRelease`, `ErrReleaseFileTooLarge`.
@@ -433,6 +443,8 @@ Before every refresh updex runs — `UpdateFeatures` without `NoRefresh`, `Enabl
 - key set: unsafe when `imagecompat.CheckMinImageVersion` against the running version is not ok, which includes a running version that is missing or not numeric.
 
 The link gate is unchanged: a link the next boot can run but the running base cannot is still linked; only the immediate refresh is skipped.
+
+Both gates report one line per compared image without `--verbose`: `<component>: minimum image <value>, next-boot image <version> (<source>)` for the link gate, and `<component>: minimum image <value>, running image <version>` for the refresh gate, whether the image passes or not. The line lets an operator read the decision from the journal, where the `--verbose` debug lines are absent.
 
 - **`UpdateFeatures` / `EnableFeature{Now}`:** the links stay (they are correct for the next boot) and the refresh is skipped. `UpdateFeaturesResult.RefreshSkipped` (JSON `refresh_skipped`, host-wide like `PendingActivations`) or `FeatureActionResult.RefreshSkipped` carries `refresh skipped: <component> needs image >= <value> (running image <running>); it takes effect at the next boot`, the reporter gets a warning, and `FeatureActionResult.NextActionMessage` says to reboot. It is not an error and the run returns no error from it. A dry run reports the same text and refreshes nothing.
 - **`RollbackFeature{Now}`:** the record and the links stay; only the refresh is skipped, with `RollbackFeatureResult.RefreshSkipped` and a `NextActionMessage` that says to reboot.
@@ -716,10 +728,11 @@ type UpdateResult struct {
     NeedsImage        string   `json:"needs_image,omitempty"`       // "needs image >= X": the staged image needs a newer base image; nothing of the feature was linked; not an error
     NotLinked         bool     `json:"not_linked,omitempty"`        // another transfer of the feature NeedsImage, so this one was not linked either
     NextBootImageVersion string `json:"next_boot_image_version,omitempty"` // the next-boot IMAGE_VERSION that was compared
+    Linked            bool     `json:"linked,omitempty"`            // this run moved the sysext link to Version (download path or relink); always false in a dry run
 }
 ```
 
-For dry-run update results, `Downloaded=true` means the component would be downloaded, `Installed=false` means no install was performed, and `RemovedVersions` lists versions vacuum would remove if `NoVacuum` is false. For non-dry-run results, `Downloaded=true` means a new file was fetched and installed; already-current components still report `Installed=true` but `Downloaded=false`. Non-dry-run `RemovedVersions` is currently not populated because the install pipeline does not report what `sysext.VacuumWith` removed.
+For dry-run update results, `Downloaded=true` means the component would be downloaded, `Installed=false` means no install was performed, and `RemovedVersions` lists versions vacuum would remove if `NoVacuum` is false. For non-dry-run results, `Downloaded=true` means a new file was fetched and installed; already-current components still report `Installed=true` but `Downloaded=false`. `Linked=true` means this run moved the sysext link to `Version`, on the download path and on the relink path (an already staged image whose link was missing, dangling, or pointed elsewhere), and it stays false in a dry run: `Downloaded=false` with `Linked=true` is a relink that needs no download. The CLI's text table shows `linked` in its `STATUS` column for such a row instead of `up to date`. Non-dry-run `RemovedVersions` is currently not populated because the install pipeline does not report what `sysext.VacuumWith` removed.
 
 ### CheckFeaturesResult / CheckResult
 

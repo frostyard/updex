@@ -120,7 +120,9 @@ func newDaemonDisableCmd() *cobra.Command {
 This stops the timer, disables it, and removes the unit files that updex
 wrote to /etc/systemd/system/ (the ones with its marker, and the units that
 older updex releases wrote). It keeps any other file there, and it never
-removes the units that the package ships in /usr/lib/systemd/system.
+removes the units that the package ships in /usr/lib/systemd/system. A unit
+that is masked (a symlink to /dev/null) is kept and reported; undo it with
+systemctl unmask <unit>.
 
 To keep the timer off across image updates, mask it instead:
   sudo systemctl mask updex-update.timer
@@ -190,6 +192,8 @@ OUTPUT:
   Active     - Whether timer is currently running
   Source     - "packaged" (/usr/lib/systemd/system) or "etc"
                (/etc/systemd/system, which overrides a packaged unit)
+  Masked     - Whether the timer is masked (systemctl mask); a masked timer
+               never fires
   Unit files - The unit files in use
   Schedule   - When updates run (the effective OnCalendar, drop-ins included)
   Next run   - When the timer fires next
@@ -227,6 +231,9 @@ func runDaemonStatus(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Enabled: %v\n", status.Enabled)
 	fmt.Printf("  Active: %v\n", status.Active)
 	fmt.Printf("  Source: %s\n", status.Source)
+	if status.Masked {
+		fmt.Println("  Masked: yes")
+	}
 	for _, path := range status.UnitFiles {
 		fmt.Printf("  Unit file: %s\n", path)
 	}

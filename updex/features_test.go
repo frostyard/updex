@@ -1031,6 +1031,9 @@ func TestUpdateFeatures_DownloadsForEnabledFeatures(t *testing.T) {
 	if !r.Downloaded {
 		t.Error("expected Downloaded=true")
 	}
+	if !r.Linked {
+		t.Error("expected Linked=true: the run moved the link to the downloaded version")
+	}
 	if r.Version != "1.0.0" {
 		t.Errorf("expected Version=1.0.0, got %q", r.Version)
 	}

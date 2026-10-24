@@ -367,12 +367,16 @@ the identical units that older updex releases wrote).
   operation lock as the other mutating commands, also when they only enable or
   disable the packaged timer.
 - **Status:** `updex daemon status` shows the unit files in use (`packaged`, or
-  `etc` when a file in `/etc/systemd/system` overrides the package), the next run
-  and the time and result of the last run. The run log is
-  `journalctl -u updex-update.service`.
+  `etc` when a file in `/etc/systemd/system` overrides the package), whether the
+  timer is masked (`Masked: yes`), the next run and the time and result of the
+  last run. The run log is `journalctl -u updex-update.service`.
 - **Opt out:** `sudo systemctl mask updex-update.timer` stops automatic updates
-  on the whole host and survives image updates. `updex daemon disable` also
-  stops the timer, but an image preset can enable it again. To stop one
+  on the whole host and survives image updates. A mask is a symlink to
+  `/dev/null`; `updex daemon disable` stops and disables the timer and removes
+  the unit files updex wrote, but it never removes a mask. It reports the mask
+  (`masked_files` in JSON) and the command that undoes it
+  (`sudo systemctl unmask updex-update.timer`). Stopping the timer alone does
+  not survive an image update: an image preset can enable it again. To stop one
   sysext, run `updex features disable <name>`.
 
 ### Global Flags
@@ -464,9 +468,24 @@ its transfer.
 
 ## JSON output
 
+With `--json`, stdout carries only the command's result, as one JSON
+document. Progress and warning events are JSON Lines on stderr, for example
+`{"type":"message","message":"Installed version 2.0.0",...}`, so a consumer
+can read stderr for live progress and still parse stdout with one
+`json.Unmarshal`. A command that fails before it has a result (for example a
+missing root privilege, or `daemon disable` with no timer installed) can print
+nothing on stdout; it exits non-zero and writes the error to stderr. Check the
+exit status before you parse stdout. The interactive download bar is off in JSON mode, and in
+text mode it appears only when stderr is a terminal (under systemd the journal
+would otherwise receive raw carriage-return text).
+
+`features update --json` reports `linked: true` for a transfer whose link this
+run moved, including one that needed no download because its image was already
+staged; the text table shows `linked` in its `STATUS` column for that row, not
+`up to date`.
+
 Use `updex features list --json | jq '.[] | select(.enabled)'` to list enabled
-features for a script; the interactive download bar stays off stdout in JSON
-mode.
+features for a script.
 
 ## More documentation
 

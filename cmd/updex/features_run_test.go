@@ -286,6 +286,128 @@ func TestRunFeaturesUpdate_RefreshFailure_JSONEmitsResultsAndErrors(t *testing.T
 	}
 }
 
+// TestRunFeaturesUpdate_JSONStdoutCarriesOnlyTheResult verifies that a
+// --json run whose SDK call reports progress puts exactly one JSON document
+// (the result array) on stdout, and the progress events on stderr as JSON
+// Lines. Before this contract the clix reporter wrote them to stdout, in front
+// of the result, so no consumer could parse stdout as one document.
+func TestRunFeaturesUpdate_JSONStdoutCarriesOnlyTheResult(t *testing.T) {
+	configDir := t.TempDir()
+	targetDir := t.TempDir()
+
+	extContent := []byte("fake extension content")
+	server := testutil.NewTestServer(t, testutil.TestServerFiles{
+		Files:   map[string]string{"testext_1.0.0.raw": sha256Hex(extContent)},
+		Content: map[string][]byte{"testext_1.0.0.raw": extContent},
+	})
+	defer server.Close()
+	writeFeatureFile(t, configDir, "testfeature", true)
+	writeFeatureTransferFile(t, configDir, targetDir, "testext", "testfeature", server.URL)
+
+	oldDefinitions, oldNoRefresh, oldNoVac := definitions, noRefresh, featureUpdateNoVac
+	oldJSONOutput, oldSilent := clix.JSONOutput, clix.Silent
+	oldGetEUID, oldRunner, oldStderr := getEUID, sysextRunner, clix.Stderr
+	t.Cleanup(func() {
+		definitions, noRefresh, featureUpdateNoVac = oldDefinitions, oldNoRefresh, oldNoVac
+		clix.JSONOutput, clix.Silent = oldJSONOutput, oldSilent
+		getEUID, sysextRunner, clix.Stderr = oldGetEUID, oldRunner, oldStderr
+	})
+	definitions = configDir
+	noRefresh = true
+	featureUpdateNoVac = true
+	clix.JSONOutput = true
+	clix.Silent = false
+	getEUID = func() int { return 0 }
+	sysextRunner = &sysext.MockRunner{}
+	var errBuf bytes.Buffer
+	clix.Stderr = &errBuf
+
+	output, err := captureStdout(t, func() error {
+		cmd := &cobra.Command{}
+		cmd.SetContext(t.Context())
+		return runFeaturesUpdate(cmd, nil)
+	})
+	if err != nil {
+		t.Fatalf("runFeaturesUpdate failed: %v", err)
+	}
+
+	var results []updex.UpdateFeaturesResult
+	if jsonErr := json.Unmarshal([]byte(output), &results); jsonErr != nil {
+		t.Fatalf("stdout is not exactly one JSON document: %v\n%s", jsonErr, output)
+	}
+	if len(results) != 1 || len(results[0].Results) != 1 || !results[0].Results[0].Downloaded {
+		t.Errorf("unexpected update results: %+v", results)
+	}
+	if strings.Contains(output, `"type"`) {
+		t.Errorf("stdout carries a progress event:\n%s", output)
+	}
+	if !strings.Contains(errBuf.String(), `"type":"message"`) {
+		t.Errorf("stderr does not carry the JSON progress event: %q", errBuf.String())
+	}
+	if !strings.Contains(errBuf.String(), "Installed version") {
+		t.Errorf("stderr does not carry the install message: %q", errBuf.String())
+	}
+}
+
+// TestRunFeaturesUpdate_TextShowsLinkedForRelink verifies that the update
+// table says "linked" for a transfer whose link this run moved to an image
+// that was already staged, instead of "up to date": the row changed state
+// and needs a reboot.
+func TestRunFeaturesUpdate_TextShowsLinkedForRelink(t *testing.T) {
+	configDir := t.TempDir()
+	targetDir := t.TempDir()
+
+	extContent := []byte("fake extension content")
+	server := testutil.NewTestServer(t, testutil.TestServerFiles{
+		Files:   map[string]string{"testext_1.0.0.raw": sha256Hex(extContent)},
+		Content: map[string][]byte{"testext_1.0.0.raw": extContent},
+	})
+	defer server.Close()
+	writeFeatureFile(t, configDir, "testfeature", true)
+	writeFeatureTransferFile(t, configDir, targetDir, "testext", "testfeature", server.URL)
+	// The newest image is already staged; only the sysext link is missing.
+	if err := os.WriteFile(filepath.Join(targetDir, "testext_1.0.0.raw"), extContent, 0644); err != nil {
+		t.Fatalf("stage the image: %v", err)
+	}
+
+	oldDefinitions, oldNoRefresh, oldNoVac := definitions, noRefresh, featureUpdateNoVac
+	oldJSONOutput, oldSilent := clix.JSONOutput, clix.Silent
+	oldGetEUID := getEUID
+	t.Cleanup(func() {
+		definitions, noRefresh, featureUpdateNoVac = oldDefinitions, oldNoRefresh, oldNoVac
+		clix.JSONOutput, clix.Silent = oldJSONOutput, oldSilent
+		getEUID = oldGetEUID
+	})
+	definitions = configDir
+	noRefresh = true
+	featureUpdateNoVac = true
+	clix.JSONOutput = false
+	clix.Silent = true
+	getEUID = func() int { return 0 }
+
+	output, err := captureStdout(t, func() error {
+		cmd := &cobra.Command{}
+		cmd.SetContext(t.Context())
+		return runFeaturesUpdate(cmd, nil)
+	})
+	if err != nil {
+		t.Fatalf("runFeaturesUpdate failed: %v", err)
+	}
+	var row string
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, "testext") {
+			row = line
+		}
+	}
+	fields := strings.Fields(row)
+	if len(fields) != 4 || fields[3] != "linked" {
+		t.Errorf("expected STATUS 'linked' for the relinked transfer, got row %q", row)
+	}
+	if strings.Contains(output, "up to date") {
+		t.Errorf("a relink must not read as up to date:\n%s", output)
+	}
+}
+
 // TestRunFeaturesUpdate_JSONErrorPathEmitsArray is the update analog. It also
 // sets getEUID to root so the requireRoot() guard is not what fails.
 func TestRunFeaturesUpdate_JSONErrorPathEmitsArray(t *testing.T) {

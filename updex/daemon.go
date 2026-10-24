@@ -201,16 +201,20 @@ const (
 	unitAbsent  unitOwnership = iota // no file at the path
 	unitOurs                         // carries the updex marker or matches the legacy text
 	unitForeign                      // a regular file that updex cannot prove it wrote
+	unitMasked                       // a symlink to /dev/null: `systemctl mask`
 )
 
 // classifyUnitFile decides whether the file at path is one that updex wrote.
 // It uses os.Lstat and refuses anything that is not a regular file
 // (ADR-0005), so it never reads through, or later deletes, a symlink or a
-// directory. A file is updex's when its first line is the marker comment, or
-// when its whole content equals one of the legacy texts (the ADR-0007 units
-// that older releases wrote before the marker existed). Exact content match
-// is deliberately strict: a unit that an administrator edited, or that an
-// older release wrote in another shape, is foreign and stays.
+// directory. A symlink to /dev/null is the one exception: it is a systemd
+// mask, which updex never removes (DisableDaemon reports it instead), so it is
+// classified as unitMasked rather than refused. A file is updex's when its
+// first line is the marker comment, or when its whole content equals one of
+// the legacy texts (the ADR-0007 units that older releases wrote before the
+// marker existed). Exact content match is deliberately strict: a unit that an
+// administrator edited, or that an older release wrote in another shape, is
+// foreign and stays.
 func classifyUnitFile(path string, legacy []string) (unitOwnership, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -218,6 +222,12 @@ func classifyUnitFile(path string, legacy []string) (unitOwnership, error) {
 			return unitAbsent, nil
 		}
 		return unitForeign, fmt.Errorf("inspect unit path %s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		if isMaskLink(path) {
+			return unitMasked, nil
+		}
+		return unitForeign, fmt.Errorf("unit path %s exists and is not a regular file; refusing to remove it", path)
 	}
 	if !info.Mode().IsRegular() {
 		return unitForeign, fmt.Errorf("unit path %s exists and is not a regular file; refusing to remove it", path)
@@ -231,6 +241,17 @@ func classifyUnitFile(path string, legacy []string) (unitOwnership, error) {
 		return unitOurs, nil
 	}
 	return unitForeign, nil
+}
+
+// isMaskLink reports whether path is a symlink to /dev/null, the shape that
+// `systemctl mask` writes. It reads the link target only; it never follows it.
+func isMaskLink(path string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return false
+	}
+	target, err := os.Readlink(path)
+	return err == nil && target == os.DevNull
 }
 
 // readUnitFile reads at most maxUnitRead bytes of a unit file.
@@ -251,6 +272,7 @@ func readUnitFile(path string) (string, error) {
 type daemonRemovalPlan struct {
 	remove []string // files updex wrote: removed
 	keep   []string // files updex cannot prove it wrote: kept
+	masked []string // symlinks to /dev/null (systemd masks): kept, never removed
 	errs   []error  // files that cannot be classified or are not regular files
 }
 
@@ -266,6 +288,8 @@ func (c *Client) planDaemonRemoval() daemonRemovalPlan {
 			plan.errs = append(plan.errs, err)
 		case state == unitOurs:
 			plan.remove = append(plan.remove, paths[i])
+		case state == unitMasked:
+			plan.masked = append(plan.masked, paths[i])
 		case state == unitForeign:
 			plan.keep = append(plan.keep, paths[i])
 		}
@@ -280,7 +304,10 @@ func (c *Client) planDaemonRemoval() daemonRemovalPlan {
 // text that an older updex wrote before the marker existed. It never deletes
 // any other file: the OS image can ship a unit of that name in /etc, and an
 // administrator can edit one. Those files are kept and reported in the
-// result's KeptFiles and Message. Units that the OS package ships in
+// result's KeptFiles and Message. A unit that is masked (a symlink to
+// /dev/null, the shape `systemctl mask` writes) is kept too and reported in
+// MaskedFiles: disable stops and disables the timer, but only
+// `systemctl unmask` removes a mask. Units that the OS package ships in
 // /usr/lib/systemd/system stay; disabling stops the timer from running.
 // Every step is attempted, and all failures are returned together.
 //
@@ -305,7 +332,7 @@ func (c *Client) DisableDaemon(ctx context.Context, opts DisableDaemonOptions) (
 
 	timerUnit := daemonUnitName + ".timer"
 	plan := c.planDaemonRemoval()
-	kept := keptNote(plan.keep)
+	notes := keptNote(plan.keep) + maskedNote(plan.masked)
 
 	if opts.DryRun {
 		if err := errors.Join(plan.errs...); err != nil {
@@ -317,12 +344,13 @@ func (c *Client) DisableDaemon(ctx context.Context, opts DisableDaemonOptions) (
 				timerUnit, strings.Join(plan.remove, " and "))
 		}
 		return &DaemonActionResult{
-			Success:   true,
-			DryRun:    true,
-			Packaged:  packaged,
-			UnitFiles: plan.remove,
-			KeptFiles: plan.keep,
-			Message:   message + kept,
+			Success:     true,
+			DryRun:      true,
+			Packaged:    packaged,
+			UnitFiles:   plan.remove,
+			KeptFiles:   plan.keep,
+			MaskedFiles: plan.masked,
+			Message:     message + notes,
 		}, nil
 	}
 
@@ -352,11 +380,12 @@ func (c *Client) DisableDaemon(ctx context.Context, opts DisableDaemonOptions) (
 	}
 
 	return &DaemonActionResult{
-		Success:   true,
-		Packaged:  packaged,
-		UnitFiles: removed,
-		KeptFiles: plan.keep,
-		Message:   "Auto-update daemon disabled" + kept,
+		Success:     true,
+		Packaged:    packaged,
+		UnitFiles:   removed,
+		KeptFiles:   plan.keep,
+		MaskedFiles: plan.masked,
+		Message:     "Auto-update daemon disabled" + notes,
 	}, nil
 }
 
@@ -367,6 +396,26 @@ func keptNote(kept []string) string {
 		return ""
 	}
 	return fmt.Sprintf("; kept %s (not written by updex; remove by hand if unwanted)", strings.Join(kept, " and "))
+}
+
+// maskedNote returns the message suffix that names the unit files that are
+// masked (symlinks to /dev/null) and how to undo each mask, or "" when none
+// is masked.
+func maskedNote(masked []string) string {
+	if len(masked) == 0 {
+		return ""
+	}
+	names := make([]string, len(masked))
+	for i, path := range masked {
+		names[i] = filepath.Base(path)
+	}
+	verb := "is"
+	if len(names) > 1 {
+		verb = "are"
+	}
+	// One command for every mask: "and" between two commands would read as
+	// unit names to a shell.
+	return fmt.Sprintf("; %s %s masked (run 'systemctl unmask %s' to undo)", strings.Join(names, " and "), verb, strings.Join(names, " "))
 }
 
 // daemonUnitFileInUse returns the path of the unit file that systemd uses
@@ -409,7 +458,8 @@ func (c *Client) daemonUnitFileInUse(suffix string) (path, source string, ok boo
 // which already includes administrator drop-ins and an empty OnCalendar=
 // assignment that resets the list, or, when systemd cannot report it, the
 // schedule computed from the unit file in use and its drop-ins by systemd's
-// rules.
+// rules. A masked timer (a symlink to /dev/null) reports Masked and no
+// schedule: it never fires.
 func (c *Client) DaemonStatus(ctx context.Context, _ DaemonStatusOptions) (*DaemonStatusResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("get daemon status: %w", err)
@@ -428,7 +478,10 @@ func (c *Client) DaemonStatus(ctx context.Context, _ DaemonStatusOptions) (*Daem
 		}
 	}
 	timerUnit := daemonUnitName + ".timer"
-	status.Schedule = c.daemonSchedule(ctx, timerUnit, timerPath)
+	status.Masked = isMaskLink(timerPath)
+	if !status.Masked {
+		status.Schedule = c.daemonSchedule(ctx, timerUnit, timerPath)
+	}
 
 	enabled, err := c.systemd.IsEnabled(ctx, timerUnit)
 	if err != nil {

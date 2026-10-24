@@ -694,3 +694,96 @@ func TestRunDaemonStatus_RunsAndSource(t *testing.T) {
 		}
 	})
 }
+
+// maskCLIUnit replaces a unit file with the symlink that `systemctl mask`
+// writes, a link to /dev/null.
+func maskCLIUnit(t *testing.T, dir, ext string) {
+	t.Helper()
+	path := filepath.Join(dir, daemonTestUnitName+ext)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove unit %s before masking: %v", ext, err)
+	}
+	if err := os.Symlink(os.DevNull, path); err != nil {
+		t.Fatalf("mask unit %s: %v", ext, err)
+	}
+}
+
+// TestRunDaemonDisable_Masked verifies that the command succeeds when the
+// timer is masked, keeps the mask, and reports it in JSON and in the text
+// message.
+func TestRunDaemonDisable_Masked(t *testing.T) {
+	t.Run("json", func(t *testing.T) {
+		mock := &systemd.MockSystemctlRunner{}
+		dir := daemonTestEnv(t, mock)
+		seedUnits(t, dir)
+		maskCLIUnit(t, dir, ".timer")
+		clix.JSONOutput = true
+
+		out, err := captureStdout(t, func() error { return runDaemonDisable(daemonTestCommand(t), nil) })
+		if err != nil {
+			t.Fatalf("disable failed: %v", err)
+		}
+
+		var result sdk.DaemonActionResult
+		if jsonErr := json.Unmarshal([]byte(out), &result); jsonErr != nil {
+			t.Fatalf("disable JSON output invalid: %v\n%s", jsonErr, out)
+		}
+		if !result.Success {
+			t.Errorf("expected success=true, got %+v", result)
+		}
+		wantMasked := filepath.Join(dir, daemonTestUnitName+".timer")
+		if len(result.MaskedFiles) != 1 || result.MaskedFiles[0] != wantMasked {
+			t.Errorf("MaskedFiles = %v, want [%s]", result.MaskedFiles, wantMasked)
+		}
+		if !strings.Contains(result.Message, "is masked") {
+			t.Errorf("Message = %q, want the mask note", result.Message)
+		}
+		if target, err := os.Readlink(wantMasked); err != nil || target != os.DevNull {
+			t.Errorf("the mask was removed: target = %q, err = %v", target, err)
+		}
+		if _, err := os.Lstat(filepath.Join(dir, daemonTestUnitName+".service")); !os.IsNotExist(err) {
+			t.Errorf("the service unit was not removed: %v", err)
+		}
+	})
+
+	t.Run("text", func(t *testing.T) {
+		mock := &systemd.MockSystemctlRunner{}
+		dir := daemonTestEnv(t, mock)
+		seedUnits(t, dir)
+		maskCLIUnit(t, dir, ".timer")
+
+		out, err := captureStdout(t, func() error { return runDaemonDisable(daemonTestCommand(t), nil) })
+		if err != nil {
+			t.Fatalf("disable failed: %v", err)
+		}
+		for _, want := range []string{"disabled", "updex-update.timer is masked", "systemctl unmask updex-update.timer"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("disable output missing %q:\n%s", want, out)
+			}
+		}
+	})
+}
+
+// TestRunDaemonStatus_Masked verifies that the text status prints
+// "Masked: yes" and no schedule for a masked timer.
+func TestRunDaemonStatus_Masked(t *testing.T) {
+	mock := &systemd.MockSystemctlRunner{
+		ShowValues: map[string]string{
+			"TimersCalendar": "{ OnCalendar=daily ; next_elapse=never }",
+		},
+	}
+	dir := daemonTestEnv(t, mock)
+	seedUnits(t, dir)
+	maskCLIUnit(t, dir, ".timer")
+
+	out, err := captureStdout(t, func() error { return runDaemonStatus(daemonTestCommand(t), nil) })
+	if err != nil {
+		t.Fatalf("status failed: %v", err)
+	}
+	if !strings.Contains(out, "Masked: yes") {
+		t.Errorf("status output missing 'Masked: yes':\n%s", out)
+	}
+	if strings.Contains(out, "Schedule: daily") {
+		t.Errorf("status output shows a schedule for a mask:\n%s", out)
+	}
+}

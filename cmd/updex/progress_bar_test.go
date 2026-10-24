@@ -1,9 +1,14 @@
 package updex
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/frostyard/clix"
+	"github.com/frostyard/std/reporter"
 )
 
 // TestNewProgressBarSuppressedForMachineOutput verifies that the download
@@ -43,5 +48,129 @@ func TestNewProgressBarSuppressedForMachineOutput(t *testing.T) {
 				t.Fatalf("newProgressBar returned nil in text mode; expected a progress bar")
 			}
 		})
+	}
+}
+
+// setReporterFlags swaps the clix output flags and the terminal seam for one
+// test.
+func setReporterFlags(t *testing.T, jsonOutput, silent, stderrTerminal bool) {
+	t.Helper()
+	oldJSON, oldSilent, oldTerminal := clix.JSONOutput, clix.Silent, stderrIsTerminal
+	t.Cleanup(func() {
+		clix.JSONOutput, clix.Silent, stderrIsTerminal = oldJSON, oldSilent, oldTerminal
+	})
+	clix.JSONOutput = jsonOutput
+	clix.Silent = silent
+	stderrIsTerminal = func() bool { return stderrTerminal }
+}
+
+// TestDownloadProgressEnabled verifies that the download bar is installed only
+// for a text run whose stderr is a terminal. Under systemd (or any redirect)
+// the bar's carriage-return redraws would reach the journal as raw text.
+func TestDownloadProgressEnabled(t *testing.T) {
+	cases := []struct {
+		name           string
+		jsonOutput     bool
+		silent         bool
+		stderrTerminal bool
+		want           bool
+	}{
+		{name: "text mode on a terminal", stderrTerminal: true, want: true},
+		{name: "text mode without a terminal", stderrTerminal: false, want: false},
+		{name: "json mode on a terminal", jsonOutput: true, stderrTerminal: true, want: false},
+		{name: "silent mode on a terminal", silent: true, stderrTerminal: true, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setReporterFlags(t, tc.jsonOutput, tc.silent, tc.stderrTerminal)
+			if got := downloadProgressEnabled(); got != tc.want {
+				t.Errorf("downloadProgressEnabled() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestNewReporterGoesToStderr verifies the reporter each output mode gets:
+// nothing in silent mode, JSON Lines on stderr in JSON mode, and clix's text
+// reporter otherwise. A JSON reporter on stdout would put progress events in
+// front of the command's result.
+func TestNewReporterGoesToStderr(t *testing.T) {
+	t.Run("silent discards events", func(t *testing.T) {
+		setReporterFlags(t, false, true, true)
+		if _, ok := newReporter().(reporter.NoopReporter); !ok {
+			t.Fatalf("newReporter() = %T, want reporter.NoopReporter", newReporter())
+		}
+	})
+
+	t.Run("json writes JSON lines to stderr", func(t *testing.T) {
+		setReporterFlags(t, true, false, true)
+		var errBuf bytes.Buffer
+		oldStderr := clix.Stderr
+		clix.Stderr = &errBuf
+		t.Cleanup(func() { clix.Stderr = oldStderr })
+
+		r := newReporter()
+		if _, ok := r.(*reporter.JSONReporter); !ok {
+			t.Fatalf("newReporter() = %T, want *reporter.JSONReporter", r)
+		}
+		if !r.IsJSON() {
+			t.Error("newReporter() in JSON mode does not report IsJSON")
+		}
+		r.Message("progress %d", 1)
+		if !strings.Contains(errBuf.String(), `"type":"message"`) || !strings.Contains(errBuf.String(), "progress 1") {
+			t.Errorf("stderr does not carry the JSON progress event: %q", errBuf.String())
+		}
+	})
+
+	t.Run("text uses the clix text reporter", func(t *testing.T) {
+		setReporterFlags(t, false, false, true)
+		if _, ok := newReporter().(*reporter.TextReporter); !ok {
+			t.Fatalf("newReporter() = %T, want *reporter.TextReporter", newReporter())
+		}
+	})
+}
+
+// TestIsTerminal verifies the real terminal check behind stderrIsTerminal: a
+// character device that is not a terminal (/dev/null), a pipe and a regular
+// file are not terminals; a pseudo-terminal is.
+func TestIsTerminal(t *testing.T) {
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = devNull.Close() }()
+	if info, err := devNull.Stat(); err != nil || info.Mode()&os.ModeCharDevice == 0 {
+		t.Fatalf("%s is not a character device: %v", os.DevNull, err)
+	}
+	if isTerminal(devNull) {
+		t.Errorf("isTerminal(%s) = true, want false: a character device is not a terminal", os.DevNull)
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close(); _ = w.Close() }()
+	if isTerminal(w) {
+		t.Error("isTerminal(pipe) = true, want false")
+	}
+
+	regular, err := os.Create(filepath.Join(t.TempDir(), "stderr.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = regular.Close() }()
+	if isTerminal(regular) {
+		t.Error("isTerminal(regular file) = true, want false")
+	}
+
+	// The master side of a pseudo-terminal answers the terminal ioctl.
+	ptmx, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
+	if err != nil {
+		t.Skipf("no pseudo-terminal available: %v", err)
+	}
+	defer func() { _ = ptmx.Close() }()
+	if !isTerminal(ptmx) {
+		t.Error("isTerminal(/dev/ptmx) = false, want true")
 	}
 }

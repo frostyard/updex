@@ -555,7 +555,7 @@ func (c *Client) RollbackFeature(ctx context.Context, name string, opts Rollback
 	}
 	result.Record = recordPath
 	if opts.Clear && (opts.To != "" || opts.Now) {
-		return fail(errors.New("--clear cannot be combined with --to or --now"))
+		return fail(errors.New("cannot combine --clear with --to or --now"))
 	}
 
 	release, err := c.lockMutation(opts.DryRun)
