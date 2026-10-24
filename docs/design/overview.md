@@ -661,6 +661,20 @@ revision needs at most the base the host already runs.
   the next-boot version (`SourceRollback`), ahead of the staged deployment. A
   queued rollback without a version is an error: the next boot is known to be
   the rollback, its version is not.
+- *Next boot is a staged deployment without a version (`status.staged` is
+  not null, but its `image` or `image.version` is):* fail closed
+  (`imagecompat.ErrStagedWithoutVersion`, frostyard/updex#464). Only "no
+  staged deployment" falls back to the booted `os-release`. The booted
+  version can be newer than the staged one (a `bootc switch` to an older or
+  another image), so a fallback could link a revision the next boot cannot
+  run. bootc 1.16 fills `image.version` from the OCI **manifest annotation**
+  `org.opencontainers.image.version`, not from the config label of the same
+  name. **The gate therefore needs that annotation on the OS image**: on an
+  image without it, every run that needs the check fails for the features
+  with the key while an update is staged (the 2026-10-24 host test found
+  this on every published snow image; snosi#1125 adds the annotation). After
+  the reboot into the staged image the staged entry is gone, the booted
+  `os-release` answers, and the feature links.
 
 **Residual risks.** Two are accepted:
 
@@ -985,11 +999,15 @@ an error and every fallback output is bounded and validated, so one bad image
 cannot end the run for the other features.
 
 `NextBootImageVersion` does not mount either: it runs `bootc status --json`
-and reads `.status.staged.image.version` (bootc's `Host` schema:
-`status.staged` and `status.booted` are `BootEntry` objects or null, and
-`image.version` is a string or null), else the booted `IMAGE_VERSION` from
-`os-release`. A missing bootc falls back; a bootc that fails does not
-(fail closed). `CheckMinImageVersion` compares digit strings as numbers
+(bootc's `Host` schema: `status.rollback`, `status.staged` and
+`status.booted` are `BootEntry` objects or null, and `image.version` is a
+string or null) and takes, in order: `.status.rollback.image.version` when
+`status.rollbackQueued` is true; else `.status.staged.image.version` when
+`status.staged` is not null; else the booted `IMAGE_VERSION` from
+`os-release`. A queued rollback or a staged deployment without an image
+version is an error (`ErrStagedWithoutVersion` for the staged one), never a
+fallback. A missing bootc falls back; a bootc that fails does not (fail
+closed). `CheckMinImageVersion` compares digit strings as numbers
 without conversion.
 
 ### Feature check (end-to-end)

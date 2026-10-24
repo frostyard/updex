@@ -45,6 +45,13 @@ func bootcStaged(version string) *fakeBootc {
 	return &fakeBootc{out: `{"status":{"staged":{"image":{"version":"` + version + `"}},"booted":{"image":{"version":"20260101000000"}}}}`}
 }
 
+// bootcStagedNoVersion reports a staged deployment whose image has no
+// version, as bootc does for an OS image without the OCI manifest annotation
+// org.opencontainers.image.version (frostyard/updex#464).
+func bootcStagedNoVersion() *fakeBootc {
+	return &fakeBootc{out: `{"status":{"staged":{"image":{"image":{"image":"ghcr.io/frostyard/snow:latest","transport":"registry"},"version":null}},"booted":{"image":{"version":null}}}}`}
+}
+
 // bootcRollbackQueued reports a rollback deployment queued for the next boot,
 // with the given image version, and an older booted image.
 func bootcRollbackQueued(version string) *fakeBootc {
@@ -275,6 +282,8 @@ func TestUpdateFeatures_MinImageVersion(t *testing.T) {
 		{name: "image too old: not linked, no error", image: sysextImage(t, "tool", "20270101000000"), osRelease: osRelease20261001, bootc: bootcNotInstalled(), wantNeeds: "needs image >= 20270101000000", wantBootc: 1},
 		{name: "staged deployment newer than booted: linked", image: sysextImage(t, "tool", "20261022021319"), osRelease: osRelease20261001, bootc: bootcStaged("20261101000000"), wantLinked: true, wantBootc: 1},
 		{name: "staged deployment still too old: not linked", image: sysextImage(t, "tool", "20261201000000"), osRelease: osRelease20261001, bootc: bootcStaged("20261101000000"), wantNeeds: "needs image >= 20261201000000", wantBootc: 1},
+		{name: "staged deployment without a version: not linked, error", image: sysextImage(t, "tool", "20260901000000"), osRelease: osRelease20261001, bootc: bootcStagedNoVersion(), wantErr: "staged deployment without an image version", wantBootc: 1},
+		{name: "staged deployment without a version, image has no key: linked", image: sysextImage(t, "tool", ""), osRelease: osRelease20261001, bootc: bootcStagedNoVersion(), wantLinked: true},
 		{name: "queued rollback is the next boot: not linked", image: sysextImage(t, "tool", "20261001000000"), osRelease: osRelease20261001, bootc: bootcRollbackQueued("20260901000000"), wantNeeds: "needs image >= 20261001000000", wantBootc: 1},
 		{name: "minimum not numeric: not linked", image: sysextImage(t, "tool", "soon"), osRelease: osRelease20261001, bootc: bootcNotInstalled(), wantNeeds: "needs image >= soon", wantBootc: 1},
 		{name: "no IMAGE_VERSION anywhere: not linked", image: sysextImage(t, "tool", "1"), osRelease: "ID=snow\n", bootc: bootcNotInstalled(), wantNeeds: "needs image >= 1", wantBootc: 1},
@@ -605,6 +614,19 @@ func TestCheckFeatures_MinImageVersion(t *testing.T) {
 		r, err := check(t, h)
 		if err == nil || !strings.Contains(r.Error, "next-boot image version") {
 			t.Errorf("result = %+v, err %v", r, err)
+		}
+	})
+	t.Run("staged deployment without a version: the component has an error", func(t *testing.T) {
+		h := setup(bootcStagedNoVersion(), "20260101000000", false)
+		r, err := check(t, h)
+		if err == nil || !strings.Contains(r.Error, "staged deployment without an image version") {
+			t.Errorf("result = %+v, err %v", r, err)
+		}
+		if r.NeedsImage != "" || r.NextBootImageVersion != "" {
+			t.Errorf("result = %+v, want no needs-image and no next-boot version", r)
+		}
+		if h.linked("tool") != oldVersion {
+			t.Error("check moved a link")
 		}
 	})
 	t.Run("a rollback holds the staged image: nothing read", func(t *testing.T) {

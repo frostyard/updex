@@ -335,9 +335,15 @@ The *link* is what the next boot merges, so it is compared with the
 of `bootc status --json` when bootc reports `rollbackQueued: true` (the next
 boot is the rollback deployment; a queued rollback without that version is an
 error), else `.status.staged.image.version` when bootc reports a staged
-deployment with a version, else `IMAGE_VERSION` from the first readable of the
-client's os-release files (`/etc/os-release`, `/usr/lib/os-release`;
-`RuntimePaths.OSReleasePaths`). A host without `bootc` uses the os-release.
+deployment (a staged deployment without that version is an error: the next
+boot is known to be the staged image, its version is not), else
+`IMAGE_VERSION` from the first readable of the client's os-release files
+(`/etc/os-release`, `/usr/lib/os-release`; `RuntimePaths.OSReleasePaths`). A
+host without `bootc`, or with no staged deployment, uses the os-release.
+bootc reads `image.version` from the OCI manifest annotation
+`org.opencontainers.image.version` of the OS image (not from the config label
+of the same name), so an OS image that uses the key on its sysexts must carry
+that annotation.
 Both values are compared as numbers of any length (leading zeros ignored).
 When the key is set and the image version is lower, missing or not digits
 only, or the key value itself is not digits only, the revision is not linked
