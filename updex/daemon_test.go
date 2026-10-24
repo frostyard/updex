@@ -446,6 +446,19 @@ func TestDaemonResultsMarshalToCLIShape(t *testing.T) {
 			value: DaemonStatusResult{Installed: true, Enabled: true, Active: true, Schedule: "daily"},
 			want:  `{"installed":true,"enabled":true,"active":true,"schedule":"daily"}`,
 		},
+		{
+			name:  "masked timer",
+			value: DaemonStatusResult{Installed: true, Masked: true},
+			want:  `{"installed":true,"enabled":false,"active":false,"masked":true}`,
+		},
+		{
+			name: "disable kept a mask",
+			value: DaemonActionResult{
+				Success: true, Message: "Auto-update daemon disabled",
+				MaskedFiles: []string{"/etc/systemd/system/updex-update.timer"},
+			},
+			want: `{"success":true,"message":"Auto-update daemon disabled","masked_files":["/etc/systemd/system/updex-update.timer"]}`,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -568,6 +581,179 @@ func TestDisableDaemonDryRun(t *testing.T) {
 			t.Error("DisableDaemon() dry run touched systemd")
 		}
 	})
+}
+
+// maskUnit replaces a unit file with the symlink that `systemctl mask`
+// writes: a link to /dev/null.
+func maskUnit(t *testing.T, unitPath, suffix string) string {
+	t.Helper()
+	path := filepath.Join(unitPath, daemonUnitName+suffix)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove unit %s before masking: %v", suffix, err)
+	}
+	if err := os.Symlink(os.DevNull, path); err != nil {
+		t.Fatalf("mask unit %s: %v", suffix, err)
+	}
+	return path
+}
+
+// TestDisableDaemonMasked verifies that a systemd mask (a symlink to
+// /dev/null) no longer makes `daemon disable` fail: the command stops and
+// disables the timer, removes the unit files updex wrote, keeps the mask, and
+// says how to undo it. Any other symlink stays a refusal.
+func TestDisableDaemonMasked(t *testing.T) {
+	t.Run("masked timer is kept and reported", func(t *testing.T) {
+		runner := &systemd.MockSystemctlRunner{}
+		client, unitPath := newDaemonTestClient(t, runner)
+		seedDaemonUnits(t, unitPath)
+		timerPath := maskUnit(t, unitPath, ".timer")
+		servicePath := filepath.Join(unitPath, daemonUnitName+".service")
+
+		result, err := client.DisableDaemon(t.Context(), DisableDaemonOptions{})
+		if err != nil {
+			t.Fatalf("DisableDaemon() error = %v, want success with a masked unit", err)
+		}
+		if !result.Success || result.DryRun {
+			t.Fatalf("DisableDaemon() result = %+v", result)
+		}
+		if want := []string{servicePath}; !slices.Equal(result.UnitFiles, want) {
+			t.Errorf("DisableDaemon() UnitFiles = %v, want %v", result.UnitFiles, want)
+		}
+		if want := []string{timerPath}; !slices.Equal(result.MaskedFiles, want) {
+			t.Errorf("DisableDaemon() MaskedFiles = %v, want %v", result.MaskedFiles, want)
+		}
+		wantNote := "; updex-update.timer is masked (run 'systemctl unmask updex-update.timer' to undo)"
+		if !strings.Contains(result.Message, wantNote) {
+			t.Errorf("DisableDaemon() Message = %q, want it to contain %q", result.Message, wantNote)
+		}
+		if target, err := os.Readlink(timerPath); err != nil || target != os.DevNull {
+			t.Errorf("the mask was removed: target = %q, err = %v", target, err)
+		}
+		if _, err := os.Lstat(servicePath); !os.IsNotExist(err) {
+			t.Errorf("service unit remains after DisableDaemon(): %v", err)
+		}
+		if !runner.StopCalled || !runner.DisableCalled || !runner.DaemonReloadCalled {
+			t.Errorf("systemd calls = stop:%v disable:%v reload:%v, want all true",
+				runner.StopCalled, runner.DisableCalled, runner.DaemonReloadCalled)
+		}
+	})
+
+	t.Run("masked service is kept", func(t *testing.T) {
+		runner := &systemd.MockSystemctlRunner{}
+		client, unitPath := newDaemonTestClient(t, runner)
+		seedDaemonUnits(t, unitPath)
+		servicePath := maskUnit(t, unitPath, ".service")
+		timerPath := filepath.Join(unitPath, daemonUnitName+".timer")
+
+		result, err := client.DisableDaemon(t.Context(), DisableDaemonOptions{})
+		if err != nil {
+			t.Fatalf("DisableDaemon() error = %v", err)
+		}
+		if want := []string{timerPath}; !slices.Equal(result.UnitFiles, want) {
+			t.Errorf("DisableDaemon() UnitFiles = %v, want %v", result.UnitFiles, want)
+		}
+		if want := []string{servicePath}; !slices.Equal(result.MaskedFiles, want) {
+			t.Errorf("DisableDaemon() MaskedFiles = %v, want %v", result.MaskedFiles, want)
+		}
+		if !strings.Contains(result.Message, "updex-update.service is masked") {
+			t.Errorf("DisableDaemon() Message = %q", result.Message)
+		}
+		if _, err := os.Lstat(servicePath); err != nil {
+			t.Errorf("the masked service was removed: %v", err)
+		}
+	})
+
+	t.Run("a lone masked timer counts as installed", func(t *testing.T) {
+		runner := &systemd.MockSystemctlRunner{}
+		client, unitPath := newDaemonTestClient(t, runner)
+		timerPath := maskUnit(t, unitPath, ".timer")
+
+		result, err := client.DisableDaemon(t.Context(), DisableDaemonOptions{})
+		if err != nil {
+			t.Fatalf("DisableDaemon() error = %v, want no not-installed error", err)
+		}
+		if len(result.UnitFiles) != 0 {
+			t.Errorf("DisableDaemon() UnitFiles = %v, want none", result.UnitFiles)
+		}
+		if want := []string{timerPath}; !slices.Equal(result.MaskedFiles, want) {
+			t.Errorf("DisableDaemon() MaskedFiles = %v, want %v", result.MaskedFiles, want)
+		}
+	})
+
+	t.Run("dry run reports the mask without removing it", func(t *testing.T) {
+		runner := &systemd.MockSystemctlRunner{}
+		client, unitPath := newDaemonTestClient(t, runner)
+		seedDaemonUnits(t, unitPath)
+		timerPath := maskUnit(t, unitPath, ".timer")
+
+		result, err := client.DisableDaemon(t.Context(), DisableDaemonOptions{DryRun: true})
+		if err != nil {
+			t.Fatalf("DisableDaemon() error = %v", err)
+		}
+		if !result.DryRun || !result.Success {
+			t.Fatalf("DisableDaemon() result = %+v", result)
+		}
+		if want := []string{timerPath}; !slices.Equal(result.MaskedFiles, want) {
+			t.Errorf("DisableDaemon() MaskedFiles = %v, want %v", result.MaskedFiles, want)
+		}
+		if !strings.Contains(result.Message, "is masked") {
+			t.Errorf("DisableDaemon() Message = %q, want the mask note", result.Message)
+		}
+		if _, err := os.Lstat(timerPath); err != nil {
+			t.Errorf("the dry run removed the mask: %v", err)
+		}
+		if runner.StopCalled || runner.DisableCalled || runner.DaemonReloadCalled {
+			t.Error("DisableDaemon() dry run touched systemd")
+		}
+	})
+
+	t.Run("a symlink to another target is still refused", func(t *testing.T) {
+		runner := &systemd.MockSystemctlRunner{}
+		client, unitPath := newDaemonTestClient(t, runner)
+		seedDaemonUnits(t, unitPath)
+		timerPath := filepath.Join(unitPath, daemonUnitName+".timer")
+		if err := os.Remove(timerPath); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(unitPath, "elsewhere"), timerPath); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := client.DisableDaemon(t.Context(), DisableDaemonOptions{})
+		if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Fatalf("DisableDaemon() error = %v, want a not-a-regular-file refusal", err)
+		}
+	})
+}
+
+// TestDaemonStatusMasked verifies that a masked timer reports Masked, keeps
+// Installed true, and has no schedule: a masked timer never fires, and the
+// mask file holds no OnCalendar line.
+func TestDaemonStatusMasked(t *testing.T) {
+	runner := &systemd.MockSystemctlRunner{
+		IsEnabledResult: false,
+		IsActiveResult:  false,
+		ShowValues: map[string]string{
+			"TimersCalendar": "{ OnCalendar=daily ; next_elapse=never }",
+		},
+	}
+	client, unitPath := newDaemonTestClient(t, runner)
+	seedDaemonUnits(t, unitPath)
+	timerPath := maskUnit(t, unitPath, ".timer")
+
+	status, err := client.DaemonStatus(t.Context(), DaemonStatusOptions{})
+	if err != nil {
+		t.Fatalf("DaemonStatus() error = %v", err)
+	}
+	if !status.Installed || !status.Masked {
+		t.Fatalf("DaemonStatus() = %+v, want installed and masked", status)
+	}
+	if status.Schedule != "" {
+		t.Errorf("DaemonStatus() Schedule = %q, want empty for a mask", status.Schedule)
+	}
+	if !strings.Contains(strings.Join(status.UnitFiles, " "), timerPath) {
+		t.Errorf("DaemonStatus() UnitFiles = %v, want the masked timer path", status.UnitFiles)
+	}
 }
 
 func TestDaemonActionResultJSON(t *testing.T) {

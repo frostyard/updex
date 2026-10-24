@@ -365,6 +365,10 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 				status = "would download"
 			} else if r.Downloaded {
 				status = "downloaded"
+			} else if r.Linked {
+				// The image was already staged, but this run moved the link to
+				// it: the row changed state, so it is not "up to date".
+				status = "linked"
 			} else if r.Installed {
 				status = "up to date"
 			}

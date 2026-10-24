@@ -683,11 +683,6 @@ func (c *Client) linkStaged(feature string, transfers []*config.Transfer, staged
 		}
 		return err
 	}
-	for _, i := range idx {
-		if staged[i].relink {
-			c.msg("restored sysext link for %s", transfers[i].Component)
-		}
-	}
 	return nil
 }
 

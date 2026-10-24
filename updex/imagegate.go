@@ -130,7 +130,8 @@ func (c *Client) minImageGate(ctx context.Context, feature string, t *config.Tra
 	if err != nil {
 		return imageGate{}, fmt.Errorf("cannot check the minimum image version of %s: next-boot image version: %w", t.Component, err)
 	}
-	c.debug("%s: next-boot image version %q (%s)", t.Component, nextBoot, source)
+	minValue, _ := imagecompat.MinImageVersion(release)
+	c.msg("%s: minimum image %s, next-boot image %s (%s)", t.Component, minValue, nextBoot, source)
 	ok, reason := imagecompat.CheckMinImageVersion(release, nextBoot)
 	if ok {
 		return imageGate{nextBoot: nextBoot}, nil
@@ -359,7 +360,8 @@ func (c *Client) refreshLinkBlocker(ctx context.Context, link refreshLink, ri *r
 		return nil
 	}
 	running := ri.get(c)
-	c.debug("%s: running image version %q", link.component, running)
+	minValue, _ := imagecompat.MinImageVersion(release)
+	c.msg("%s: minimum image %s, running image %s", link.component, minValue, running)
 	if ok, needs := imagecompat.CheckMinImageVersion(release, running); !ok {
 		return &refreshBlocker{component: link.component, needs: needs, running: running}
 	}

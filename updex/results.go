@@ -20,6 +20,10 @@ type DaemonActionResult struct {
 	// KeptFiles holds the unit files in /etc/systemd/system that disable
 	// left in place because updex cannot prove that it wrote them.
 	KeptFiles []string `json:"kept_files,omitzero"`
+	// MaskedFiles holds the unit files in /etc/systemd/system that disable
+	// left in place because they are masked: a symlink to /dev/null, the
+	// shape `systemctl mask` writes. Only `systemctl unmask` removes a mask.
+	MaskedFiles []string `json:"masked_files,omitzero"`
 }
 
 // DaemonStatusResult represents the automatic update daemon's current state.
@@ -48,6 +52,9 @@ type DaemonStatusResult struct {
 	// LastResult is the service's Result for the last run ("success",
 	// "exit-code", ...); empty when LastRun is empty.
 	LastResult string `json:"last_result,omitempty"`
+	// Masked reports that the timer file in use is a systemd mask: a symlink
+	// to /dev/null. A masked timer never fires, so Schedule is empty.
+	Masked bool `json:"masked,omitempty"`
 }
 
 // CheckResult represents the result of a check operation for a single component.
@@ -138,6 +145,12 @@ type UpdateResult struct {
 	// NextBootImageVersion is the next-boot IMAGE_VERSION that the check
 	// compared, when it was read.
 	NextBootImageVersion string `json:"next_boot_image_version,omitempty"`
+	// Linked is true when this run moved the systemd-sysext link to Version:
+	// on the download path and on the relink path (an image that was already
+	// staged but whose link was missing, dangling, or pointed elsewhere). It
+	// is always false in a dry run. Downloaded=false with Linked=true is an
+	// image that needed no download but that the run linked.
+	Linked bool `json:"linked,omitempty"`
 }
 
 // UpdateFeaturesResult represents the result of updating all enabled features.

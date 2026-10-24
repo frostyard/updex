@@ -524,8 +524,16 @@ func TestRollbackFeature_ClearDoesNotNeedTheFeature(t *testing.T) {
 func TestRollbackFeature_ClearConflictsWithToAndNow(t *testing.T) {
 	f := newRollbackFixture(t, "alpha")
 	for _, opts := range []RollbackFeatureOptions{{Clear: true, To: "1.0.0"}, {Clear: true, Now: true}} {
-		if _, err := f.rollback(opts); err == nil {
+		// The wording starts lowercase because fang capitalizes the first
+		// letter of a printed error; a leading "--clear" would render as
+		// "--Clear" there.
+		_, err := f.rollback(opts)
+		if err == nil {
 			t.Errorf("RollbackFeature(%+v) must fail", opts)
+			continue
+		}
+		if !strings.Contains(err.Error(), "cannot combine --clear with --to or --now") {
+			t.Errorf("RollbackFeature(%+v) error = %q, want the flag-conflict text", opts, err)
 		}
 	}
 }
