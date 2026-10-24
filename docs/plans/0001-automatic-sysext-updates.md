@@ -121,7 +121,13 @@ Phase 8 checks real hosts. Nothing starts before the ADR is Accepted.
   `find /var/lib/extensions -xtype l` is empty.
 - Before the first base-dependent revision after Phase 7, snosi sets
   `UPDEX_MIN_IMAGE_VERSION` on it, and a host on an older image keeps its
-  old link.
+  old link. Prerequisites (host test of 2026-10-24): the image ships an
+  updex with the sandbox fix (frostyard/updex#463) and the fail-closed
+  staged version (frostyard/updex#464), and snosi images carry the OCI
+  manifest annotation `org.opencontainers.image.version`
+  (frostyard/snosi#1125). Without the annotation, every host with a staged
+  image update fails the check for the features with the key until it
+  reboots.
 - **Done when:** both hosts run a new revision that no person installed.
 
 ## Open questions

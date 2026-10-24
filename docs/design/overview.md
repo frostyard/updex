@@ -661,6 +661,20 @@ revision needs at most the base the host already runs.
   the next-boot version (`SourceRollback`), ahead of the staged deployment. A
   queued rollback without a version is an error: the next boot is known to be
   the rollback, its version is not.
+- *Next boot is a staged deployment without a version (`status.staged` is
+  not null, but its `image` or `image.version` is):* fail closed
+  (`imagecompat.ErrStagedWithoutVersion`, frostyard/updex#464). Only "no
+  staged deployment" falls back to the booted `os-release`. The booted
+  version can be newer than the staged one (a `bootc switch` to an older or
+  another image), so a fallback could link a revision the next boot cannot
+  run. bootc 1.16 fills `image.version` from the OCI **manifest annotation**
+  `org.opencontainers.image.version`, not from the config label of the same
+  name. **The gate therefore needs that annotation on the OS image**: on an
+  image without it, every run that needs the check fails for the features
+  with the key while an update is staged (the 2026-10-24 host test found
+  this on every published snow image; snosi#1125 adds the annotation). After
+  the reboot into the staged image the staged entry is gone, the booted
+  `os-release` answers, and the feature links.
 
 **Residual risks.** Two are accepted:
 

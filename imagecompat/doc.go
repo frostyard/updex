@@ -15,7 +15,8 @@
 //     closed (ErrErofsToolUnavailable), so the check is never skipped.
 //   - NextBootImageVersion returns the IMAGE_VERSION of the image that boots
 //     next: the rollback deployment when bootc queues one, else the staged
-//     deployment, else the booted os-release.
+//     deployment, else the booted os-release. A queued rollback or a staged
+//     deployment without an image version is an error (fail closed).
 //   - CheckMinImageVersion compares the UPDEX_MIN_IMAGE_VERSION key of the
 //     extension-release file with that version.
 //
