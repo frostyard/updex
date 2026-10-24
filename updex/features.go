@@ -774,6 +774,7 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 			result.Version = v
 			if outcome.Downloaded {
 				result.Downloaded = true
+				result.Linked = !opts.DryRun
 				if opts.DryRun {
 					result.NextActionMessage = "Would download and install version " + v
 					if !opts.NoVacuum {
@@ -805,8 +806,9 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 					// touching ours, or an earlier run downloaded it but did not
 					// link). The link now points at this version, so the host
 					// needs a refresh or reboot to run it.
+					result.Linked = true
 					result.NextActionMessage = "Reboot required to activate changes"
-					c.msg("Linked staged version %s", v)
+					c.msg("Linked staged version %s for %s", v, result.Component)
 				} else {
 					c.msg("Version %s already installed and current", v)
 				}

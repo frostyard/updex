@@ -318,6 +318,7 @@ afterwards.
 | `gopkg.in/ini.v1`                         | INI file parsing            |
 | `github.com/hashicorp/go-version`         | Version comparison          |
 | `github.com/schollz/progressbar/v3`       | Download progress display   |
+| `golang.org/x/term`                       | Terminal check: the progress bar only on a terminal stderr |
 | `github.com/ulikunitz/xz`                 | XZ decompression            |
 | `github.com/klauspost/compress/zstd`      | Zstd decompression          |
 | `github.com/ProtonMail/go-crypto/openpgp` | GPG verification            |

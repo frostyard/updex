@@ -349,6 +349,26 @@ func TestUpdateFeatures_MinImageVersion(t *testing.T) {
 	}
 }
 
+// TestUpdateFeatures_MinImageVersion_LogsTheGateLine verifies that the gate
+// reports its decision without --verbose: one line with the component, the
+// minimum the image needs, the next-boot version, and where that version came
+// from. The line is how an operator can tell from the journal why an update
+// did not link an image.
+func TestUpdateFeatures_MinImageVersion_LogsTheGateLine(t *testing.T) {
+	h := newMinImageHost(t, bootcNotInstalled(), osRelease20261001,
+		minComp{name: "tool", feature: "toolfeature", versions: map[string][]byte{newVersion: sysextImage(t, "tool", "20270101000000")}})
+	h.preinstall("tool", oldVersion, true)
+
+	results := mustUpdate(t, h)
+	if results["tool"].NeedsImage == "" {
+		t.Fatalf("result = %+v, want the image blocked", results["tool"])
+	}
+	want := "tool: minimum image 20270101000000, next-boot image 20261001000000 (booted-os-release)"
+	if !strings.Contains(h.out.String(), want) {
+		t.Errorf("reporter output does not carry the gate line %q:\n%s", want, h.out.String())
+	}
+}
+
 // A feature's transfers link together: when the second image is too old, the
 // first, which is fine, does not link either, and another feature continues.
 func TestUpdateFeatures_MinImageVersion_TransfersLinkTogether(t *testing.T) {
@@ -797,6 +817,11 @@ func TestUpdateFeatures_RefreshGate_RunningImageTooOld(t *testing.T) {
 	}
 	if !strings.Contains(h.out.String(), "refresh skipped") {
 		t.Errorf("reporter output does not warn about the skipped refresh: %q", h.out.String())
+	}
+	// The refresh gate names its comparison without --verbose too.
+	gateLine := "tool: minimum image " + minNeedsStaged + ", running image 20261001000000"
+	if !strings.Contains(h.out.String(), gateLine) {
+		t.Errorf("reporter output does not carry the refresh gate line %q:\n%s", gateLine, h.out.String())
 	}
 	if h.bootc.calls != 1 {
 		t.Errorf("bootc ran %d times, want 1", h.bootc.calls)

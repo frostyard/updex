@@ -141,9 +141,12 @@ func TestUpdateFeatures_RestoresSysextLinkForCurrentImage(t *testing.T) {
 			if r.Downloaded {
 				t.Error("expected already-current component not to download")
 			}
+			if !r.Linked {
+				t.Error("expected Linked=true: this run moved the link to the staged image")
+			}
 			assertLinkResolvesTo(t, f.linkPath, f.extPath)
-			if !strings.Contains(f.out.String(), "restored sysext link for testext") {
-				t.Errorf("expected a 'restored sysext link' message, got:\n%s", f.out.String())
+			if !strings.Contains(f.out.String(), "Linked staged version 1.0.0 for testext") {
+				t.Errorf("expected a 'Linked staged version' message, got:\n%s", f.out.String())
 			}
 			assertOnlyEntries(t, f.linkDir, "testext.raw")
 		})
@@ -173,7 +176,7 @@ func TestUpdateFeatures_LeavesCorrectSysextLinkAlone(t *testing.T) {
 	if !os.SameFile(before, after) {
 		t.Error("expected the correct sysext link to be untouched, but it was replaced")
 	}
-	if strings.Contains(f.out.String(), "restored sysext link") {
+	if strings.Contains(f.out.String(), "Linked staged version") {
 		t.Errorf("expected no relink message for a correct link, got:\n%s", f.out.String())
 	}
 	assertOnlyEntries(t, f.linkDir, "testext.raw")
@@ -203,8 +206,8 @@ func TestEnableFeature_Now_RestoresSysextLinkForCurrentImage(t *testing.T) {
 		t.Errorf("expected drop-in under the temp definition root: %v", err)
 	}
 	assertLinkResolvesTo(t, f.linkPath, f.extPath)
-	if !strings.Contains(f.out.String(), "restored sysext link for testext") {
-		t.Errorf("expected a 'restored sysext link' message, got:\n%s", f.out.String())
+	if !strings.Contains(f.out.String(), "Linked staged version 1.0.0 for testext") {
+		t.Errorf("expected a 'Linked staged version ... for testext' message, got:\n%s", f.out.String())
 	}
 }
 
@@ -310,7 +313,7 @@ func TestUpdateFeatures_LegacyRunnerRefusedBeforeAnyMutation(t *testing.T) {
 	assertOnlyEntries(t, untouched)
 	assertOnlyEntries(t, f.linkDir)
 	assertOnlyEntries(t, f.targetDir, "testext_1.0.0.raw")
-	if strings.Contains(f.out.String(), "restored sysext link") {
+	if strings.Contains(f.out.String(), "Linked staged version") {
 		t.Errorf("expected no link work at all, got:\n%s", f.out.String())
 	}
 }
@@ -490,6 +493,9 @@ func TestUpdateFeatures_RelinksStaleSysextLink(t *testing.T) {
 	if !r.Installed {
 		t.Error("expected Installed=true for the relinked component")
 	}
+	if !r.Linked {
+		t.Error("expected Linked=true: this run moved the link to the staged image")
+	}
 	if r.Version != "2.0.0" {
 		t.Errorf("Version = %q, want 2.0.0", r.Version)
 	}
@@ -497,8 +503,8 @@ func TestUpdateFeatures_RelinksStaleSysextLink(t *testing.T) {
 		t.Errorf("NextActionMessage = %q, want the reboot hint", r.NextActionMessage)
 	}
 	assertLinkResolvesTo(t, f.linkPath, f.newImage)
-	if !strings.Contains(f.out.String(), "Linked staged version 2.0.0") {
-		t.Errorf("expected a 'Linked staged version' message, got:\n%s", f.out.String())
+	if !strings.Contains(f.out.String(), "Linked staged version 2.0.0 for testext") {
+		t.Errorf("expected a 'Linked staged version ... for testext' message, got:\n%s", f.out.String())
 	}
 	if strings.Contains(f.out.String(), "already installed and current") {
 		t.Errorf("a relink must not be reported as already current, got:\n%s", f.out.String())
