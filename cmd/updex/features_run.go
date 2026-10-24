@@ -80,13 +80,13 @@ func runFeaturesList(cmd *cobra.Command, args []string) error {
 }
 
 // writeHeldByRollback prints the footer that marks transfers a rollback
-// record holds: updates link nothing at or below the rejected version. It
-// prints nothing when held is empty.
+// record holds: updates link nothing for the feature while the record applies.
+// It prints nothing when held is empty.
 func writeHeldByRollback(out io.Writer, held []string) error {
 	if len(held) == 0 {
 		return nil
 	}
-	return writeLine(out, fmt.Sprintf("HELD BY ROLLBACK: %d sysext(s) that 'updex features update' leaves alone until a newer version is published: %s", len(held), strings.Join(held, ", ")))
+	return writeLine(out, fmt.Sprintf("HELD BY ROLLBACK: %d sysext(s) that 'updex features update' leaves alone while a rollback record applies: %s", len(held), strings.Join(held, ", ")))
 }
 
 // formatTransferVersions renders a feature's per-transfer versions for the

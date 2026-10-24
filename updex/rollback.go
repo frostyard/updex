@@ -213,10 +213,30 @@ type rollbackHolds struct {
 	errs map[string]error
 
 	// records holds the applicable records that could be read, by the
-	// feature that wrote them. A rollback is over, and its record may be
-	// deleted, once every version it rejects is behind a link (see
-	// deleteFinishedRollbackRecords).
+	// feature that wrote them. Only that feature advances the transfers its
+	// record names, so a record of another feature holds the whole feature
+	// being processed (see ownersOtherThan). A rollback is over, and its
+	// record may be deleted, once every version it rejects is behind a link
+	// (see deleteFinishedRollbackRecords).
 	records map[string]*rollbackRecord
+}
+
+// ownersOtherThan returns the sorted names of the features, other than
+// feature, whose records apply to the transfers. Every one of them names one
+// of those transfers (see collectRollbackHolds), and only the feature that
+// wrote a record advances the transfers it names: a record and its feature's
+// links move together only when that feature itself updates (ADR-0016).
+// Callers that need one owner for a message take the first; the feature stays
+// held while any of the records exists.
+func (h rollbackHolds) ownersOtherThan(feature string) []string {
+	var owners []string
+	for name := range h.records {
+		if name != feature {
+			owners = append(owners, name)
+		}
+	}
+	slices.Sort(owners)
+	return owners
 }
 
 // rollbackFeaturesOf returns the features that name a transfer, deduplicated
@@ -279,6 +299,28 @@ func (c *Client) collectRollbackHolds(transfers []*config.Transfer) rollbackHold
 	return holds
 }
 
+// rollbackOwnerHold reports that a rollback record written by another feature
+// applies to one of a feature's transfers: the other feature names that
+// transfer, perhaps only after it wrote the record. Only the feature that
+// wrote the record advances the transfer (ADR-0016): its transfers link
+// together, and the record is deleted only after that link, so another feature
+// that shares the transfer could otherwise split the rolled-back feature, in
+// any processing order and after any download or link failure.
+type rollbackOwnerHold struct {
+	// feature is the feature whose record holds.
+	feature string
+}
+
+// String renders the hold for a message:
+// "grp: it advances only when grp updates (or run 'updex features rollback
+// --clear grp')". The hold lasts while the record exists, also when the
+// feature that wrote it is disabled or masked; only an update through that
+// feature, or --clear, ends it.
+func (h rollbackOwnerHold) String() string {
+	return fmt.Sprintf("%s: it advances only when %s updates (or run 'updex features rollback --clear %s')",
+		h.feature, h.feature, h.feature)
+}
+
 // rollbackHoldReason is one reason an applicable rollback record still holds a
 // feature: a component the record rejects has no available version newer than
 // the rejected one, so linking the newest version would undo the rollback.
@@ -338,8 +380,9 @@ func (e *rollbackHoldLookupError) Error() string {
 // Unwrap returns the failure to read the versions.
 func (e *rollbackHoldLookupError) Unwrap() error { return e.err }
 
-// rollbackHoldReason reports whether an applicable rollback record still holds
-// transfers, and why (ADR-0016).
+// rollbackHoldReason reports whether the feature's own rollback record still
+// holds its transfers, and why (ADR-0016). rec is nil when the feature has no
+// record, and then nothing holds.
 //
 // A record still holds when any component it rejects has no available version
 // newer than the rejected one (version.Compare), because the update would then
@@ -351,55 +394,64 @@ func (e *rollbackHoldLookupError) Unwrap() error { return e.err }
 // the rollback is over, and it must never link a rejected version by default.
 // A failure to read a component's versions is a *rollbackHoldLookupError: the
 // caller then links nothing for the feature, rather than guess. Only one
-// reason is returned, from the record and component that sort first, so the
-// message is stable.
-func (c *Client) rollbackHoldReason(ctx context.Context, transfers, domain []*config.Transfer, holds rollbackHolds, manifests map[string]*manifest.Manifest) (*rollbackHoldReason, error) {
-	if len(holds.records) == 0 {
+// reason is returned, from the component that sorts first, so the message is
+// stable.
+//
+// Callers pass only the feature's own record: a record of another feature
+// holds the whole feature before this check runs (rollbackHolds.ownersOtherThan).
+func (c *Client) rollbackHoldReason(ctx context.Context, rec *rollbackRecord, transfers, domain []*config.Transfer, manifests map[string]*manifest.Manifest) (*rollbackHoldReason, error) {
+	if rec == nil {
 		return nil, nil
 	}
 	if manifests == nil {
 		manifests = make(map[string]*manifest.Manifest)
 	}
-	for _, name := range slices.Sorted(maps.Keys(holds.records)) {
-		rejectedVersions := holds.records[name].Rejected
-		for _, component := range slices.Sorted(maps.Keys(rejectedVersions)) {
-			rejected := rejectedVersions[component]
-			t := transferForComponent(component, transfers)
-			if t == nil {
-				t = transferForComponent(component, domain)
-			}
-			if t == nil {
-				return &rollbackHoldReason{feature: name, component: component, rejected: rejected, noTransfer: true}, nil
-			}
-			available, m, _, err := c.getAvailableVersions(ctx, t, manifests[t.Source.Path])
-			if m != nil {
-				manifests[t.Source.Path] = m
-			}
-			if err != nil {
-				return nil, &rollbackHoldLookupError{feature: name, component: component, err: err}
-			}
-			newest := ""
-			if len(available) > 0 {
-				version.Sort(available)
-				newest = available[0]
-			}
-			if newest == "" || version.Compare(newest, rejected) <= 0 {
-				return &rollbackHoldReason{feature: name, component: component, rejected: rejected, newest: newest}, nil
-			}
+	rejectedVersions := rec.Rejected
+	for _, component := range slices.Sorted(maps.Keys(rejectedVersions)) {
+		rejected := rejectedVersions[component]
+		t := transferForComponent(component, transfers)
+		if t == nil {
+			t = transferForComponent(component, domain)
+		}
+		if t == nil {
+			return &rollbackHoldReason{feature: rec.Feature, component: component, rejected: rejected, noTransfer: true}, nil
+		}
+		available, m, _, err := c.getAvailableVersions(ctx, t, manifests[t.Source.Path])
+		if m != nil {
+			manifests[t.Source.Path] = m
+		}
+		if err != nil {
+			return nil, &rollbackHoldLookupError{feature: rec.Feature, component: component, err: err}
+		}
+		newest := ""
+		if len(available) > 0 {
+			version.Sort(available)
+			newest = available[0]
+		}
+		if newest == "" || version.Compare(newest, rejected) <= 0 {
+			return &rollbackHoldReason{feature: rec.Feature, component: component, rejected: rejected, newest: newest}, nil
 		}
 	}
 	return nil, nil
 }
 
-// deleteFinishedRollbackRecords deletes every applicable record that a link
-// has overtaken: for each component the record rejects, the version linked now
-// is newer than the rejected one (ADR-0016). A component of the record that is
-// not one of transfers is looked up in domain, the transfers the operation
-// loaded. A component whose transfer cannot be found, whose link cannot be
-// read, or whose link is not newer keeps its record: the rollback may still be
-// in force for it.
-func (c *Client) deleteFinishedRollbackRecords(transfers, domain []*config.Transfer, holds rollbackHolds) {
+// deleteFinishedRollbackRecords deletes the processed feature's own record
+// when a link has overtaken it: for each component the record rejects, the
+// version linked now is newer than the rejected one (ADR-0016). A component
+// of the record that is not one of transfers is looked up in domain, the
+// transfers the operation loaded. A component whose transfer cannot be found,
+// whose link cannot be read, or whose link is not newer keeps the record: the
+// rollback may still be in force for it.
+//
+// Only the record of feature is deleted. installTransfers holds the feature
+// before it reaches this point when any other feature's record applies, and
+// only the feature that wrote a record advances its transfers, so a record is
+// deleted only by an update of the feature that owns it.
+func (c *Client) deleteFinishedRollbackRecords(feature string, transfers, domain []*config.Transfer, holds rollbackHolds) {
 	for _, name := range slices.Sorted(maps.Keys(holds.records)) {
+		if name != feature {
+			continue
+		}
 		if !c.rollbackOvertaken(holds.records[name], transfers, domain) {
 			continue
 		}
@@ -469,7 +521,9 @@ type rollbackPlan struct {
 // feature that shares one of its transfers (Features= or
 // RequisiteFeatures=), enabled or not: the records of all of them are read by
 // UpdateFeatures, EnableFeature, Features and CheckFeatures, so a second
-// feature cannot link the rejected version again.
+// feature cannot link the rejected version again. Only the rolled-back feature
+// advances a transfer its record names; every other feature that shares it is
+// held until that feature updates or the record is cleared.
 //
 // By default each transfer goes to its own newest staged version older than
 // the version its link names. With opts.To every transfer goes to that
