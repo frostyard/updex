@@ -5,10 +5,12 @@
 // It has three parts:
 //
 //   - ReadExtensionRelease reads the extension-release file from inside a
-//     staged sysext image without mounting it. The auto-update service runs
-//     with RestrictNamespaces=yes and SystemCallFilter=@system-service, so
-//     it cannot mount, call systemd-dissect, or set up a loop device. The
-//     reader parses the GPT and an uncompressed EROFS filesystem in pure Go.
+//     staged sysext image without mounting it. The image is untrusted input:
+//     mounting it (mount, systemd-dissect, a loop device) would hand it to
+//     the kernel's filesystem code as root before updex decides whether to
+//     link it, and the auto-update service runs with RestrictNamespaces=yes.
+//     The reader parses the GPT and an uncompressed EROFS filesystem in
+//     pure Go.
 //     go-erofs refuses a compressed filesystem, so such an image is read
 //     with the erofs-utils "dump.erofs" program instead, through the
 //     injectable ErofsDumpRunner; a host without erofs-utils >= 1.8.5 fails
