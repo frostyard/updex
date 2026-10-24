@@ -63,6 +63,7 @@ default directories:
 	cmd.AddCommand(newDaemonCmd())
 	cmd.AddCommand(newComponentsCmd())
 	cmd.AddCommand(newCatalogCmd())
+	cmd.AddCommand(newUnitsCmd())
 
 	return cmd
 }

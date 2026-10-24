@@ -32,6 +32,24 @@ type MockSystemctlRunner struct {
 	IsEnabledUnit   string
 	IsEnabledResult bool
 	IsEnabledErr    error
+
+	// ShowValues maps a property name to the value ShowContext returns for
+	// it; a property that is not in the map returns "". ShowCalls records
+	// "unit:property" for every call.
+	ShowValues map[string]string
+	ShowErr    error
+	ShowCalls  []string
+}
+
+var _ ShowRunner = (*MockSystemctlRunner)(nil)
+
+// ShowContext implements ShowRunner.
+func (m *MockSystemctlRunner) ShowContext(_ context.Context, unit, property string) (string, error) {
+	m.ShowCalls = append(m.ShowCalls, unit+":"+property)
+	if m.ShowErr != nil {
+		return "", m.ShowErr
+	}
+	return m.ShowValues[property], nil
 }
 
 func (m *MockSystemctlRunner) DaemonReload() error {

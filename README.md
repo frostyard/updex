@@ -329,14 +329,51 @@ Use `REPO/NAME` to disambiguate; a bare `NAME` works when unambiguous.
 ### Automatic updates
 
 ```bash
-sudo updex daemon enable             # Install and start the daily systemd timer
-updex daemon status                  # Inspect the timer
-sudo updex --dry-run daemon enable   # Preview the timer install
-sudo updex daemon disable            # Stop and remove it
+sudo updex daemon enable             # Enable and start the update timer
+updex daemon status                  # Enabled/active, next run, last result
+sudo updex --dry-run daemon enable   # Preview what enable would do
+sudo updex daemon disable            # Stop and disable it
 ```
 
-The timer downloads and stages updates without activating them; they become
-active after a later refresh or reboot.
+The `frostyard-updex` package ships `updex-update.timer` and
+`updex-update.service` in `/usr/lib/systemd/system`, **disabled**. An OS image
+can enable the timer with a preset; otherwise `updex daemon enable` runs
+`systemctl enable` and `start` on it and writes nothing. When the package's
+units are absent (updex installed without the package), `daemon enable`
+writes the units to `/etc/systemd/system` instead, with a marker comment
+on the first line, and `daemon disable` removes only files that carry it (and
+the identical units that older updex releases wrote).
+
+- **Schedule:** every 6 hours (`OnCalendar=*-*-* 00/6:00:00`) with up to one
+  hour of random delay; a run missed while the host was off happens at the next
+  boot (`Persistent=true`). An administrator can change it with a drop-in such
+  as `/etc/systemd/system/updex-update.timer.d/override.conf`, and
+  `updex daemon status` shows the schedule that actually applies, drop-ins
+  included.
+- **What a run does:** `updex features update --no-refresh` downloads, verifies
+  and links the new revision. It never runs `systemd-sysext refresh`, so the
+  new revision takes effect at the next boot. A run that finds nothing new
+  fetches only the manifests.
+- **Power and network:** the service waits for `network-online.target` and
+  skips a run while the host is on battery (`ConditionACPower=true`; a host
+  without a battery always runs). updex does not detect metered networks.
+  A host that is offline still reaches `network-online.target` on many
+  setups; the downloads then fail and the run exits non-zero, so the unit is
+  `failed` (and `systemctl is-system-running` reports `degraded`) until the
+  next successful run. This is expected on a laptop that is often offline.
+- **Time limit:** the service has `TimeoutStartSec=2h`. systemd stops a stuck
+  run after 2 hours, which releases the operation lock `/run/updex/lock`.
+- **Lock:** `updex daemon enable` and `updex daemon disable` take the same
+  operation lock as the other mutating commands, also when they only enable or
+  disable the packaged timer.
+- **Status:** `updex daemon status` shows the unit files in use (`packaged`, or
+  `etc` when a file in `/etc/systemd/system` overrides the package), the next run
+  and the time and result of the last run. The run log is
+  `journalctl -u updex-update.service`.
+- **Opt out:** `sudo systemctl mask updex-update.timer` stops automatic updates
+  on the whole host and survives image updates. `updex daemon disable` also
+  stops the timer, but an image preset can enable it again. To stop one
+  sysext, run `updex features disable <name>`.
 
 ### Global Flags
 

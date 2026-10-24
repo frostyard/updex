@@ -200,3 +200,42 @@ func installFakeSystemctl(t *testing.T) string {
 	t.Setenv("UPDEX_SYSTEMCTL_LOG", logPath)
 	return logPath
 }
+
+// TestDefaultSystemctlRunnerShow pins the exact command Show runs and that its
+// output is trimmed, with a fake systemctl that prints a value.
+func TestDefaultSystemctlRunnerShow(t *testing.T) {
+	dir := t.TempDir()
+	argsPath := filepath.Join(dir, "arguments")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$UPDEX_SYSTEMCTL_LOG\"\n" +
+		"[ \"${UPDEX_SYSTEMCTL_EXIT:-0}\" = 0 ] || exit \"$UPDEX_SYSTEMCTL_EXIT\"\n" +
+		"printf '%s\\n' \"$UPDEX_SYSTEMCTL_OUT\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "systemctl"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("UPDEX_SYSTEMCTL_LOG", argsPath)
+	runner := &DefaultSystemctlRunner{}
+
+	t.Setenv("UPDEX_SYSTEMCTL_OUT", "Fri 2026-10-23 18:34:12 EDT")
+	got, err := runner.ShowContext(t.Context(), "updex-update.timer", "NextElapseUSecRealtime")
+	if err != nil || got != "Fri 2026-10-23 18:34:12 EDT" {
+		t.Fatalf("ShowContext() = (%q, %v)", got, err)
+	}
+	assertSystemctlArgs(t, argsPath, "show\n-p\nNextElapseUSecRealtime\n--value\nupdex-update.timer")
+
+	t.Setenv("UPDEX_SYSTEMCTL_OUT", "")
+	if got, err := runner.ShowContext(t.Context(), "updex-update.service", "ExecMainExitTimestamp"); err != nil || got != "" {
+		t.Errorf("ShowContext() of an empty value = (%q, %v), want (\"\", nil)", got, err)
+	}
+
+	t.Setenv("UPDEX_SYSTEMCTL_EXIT", "1")
+	if _, err := runner.ShowContext(t.Context(), "updex-update.service", "Result"); err == nil || !strings.Contains(err.Error(), "systemctl show Result failed") {
+		t.Errorf("ShowContext() error = %v, want a failure naming the property", err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := runner.ShowContext(ctx, "updex-update.service", "Result"); !errors.Is(err, context.Canceled) {
+		t.Errorf("ShowContext() with a canceled context error = %v, want context.Canceled", err)
+	}
+}
