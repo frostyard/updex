@@ -271,7 +271,8 @@ func TestGenerateServiceDaemonSandbox(t *testing.T) {
 		"MemoryDenyWriteExecute=yes",
 		"SystemCallArchitectures=native",
 		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
-		"SystemCallFilter=@system-service",
+		// @mount: bootc status remounts /sysroot (frostyard/updex#463).
+		"SystemCallFilter=@system-service @mount",
 	}
 	for _, directive := range directives {
 		if !strings.Contains(result, directive+"\n") {

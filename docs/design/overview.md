@@ -736,16 +736,33 @@ leave the host consistent without a refresh:
   a disable, and refreshes nothing.
 
 **Sandbox.** The service runs with `SandboxDirectives` (`ProtectSystem=full`,
-`RestrictNamespaces=yes`, `SystemCallFilter=@system-service`). Reading the
-image needs only `open` and `pread`; `bootc status --json` runs inside the same
-sandbox. **This is not verified on a host.** An operator checks it with
-`systemd-run -p` set to the same directives (for example
-`systemd-run --wait --pty -p NoNewPrivileges=yes -p ProtectSystem=full
--p RestrictNamespaces=yes -p SystemCallFilter=@system-service
--p MemoryDenyWriteExecute=yes /usr/bin/updex features check`) on a host with a
-staged unlinked image and `bootc`: `features check` should print the
-`needs image` line or no error. A bootc that the sandbox blocks shows as the
-component's `Error` (fail closed).
+`RestrictNamespaces=yes`, `SystemCallFilter=@system-service @mount`). Reading
+the image needs only `open` and `pread`; `bootc status --json` runs inside the
+same sandbox. bootc needs `@mount` there: for `status` it remounts `/sysroot`
+read-write with `mount -o remount,rw` (bootc `open_dir_remount_rw`), and
+`@system-service` alone makes seccomp kill that `mount` with `SIGSYS`, so the
+gate failed closed on every timer run (frostyard/updex#463, host test of
+2026-10-24 on snow with bootc 1.16.8 and the composefs backend). The remount
+stays in the service's own mount namespace: `ProtectSystem=` gives the
+service one, systemd does not propagate mounts from it back to the host, and
+bootc (`ensure_self_unshared_mount_namespace`) sees that it is already in a
+namespace other than PID 1's and does not `unshare` (which
+`RestrictNamespaces=yes` refuses). It is the same remount that bootc makes in
+its own namespace when an administrator runs `bootc status`. Why `@mount`
+costs little: updex runs as root, can reach the systemd manager over
+`AF_UNIX`, and links images that `systemd-sysext` merges into `/usr`, so the
+sandbox contains bugs, not an attacker with code execution in updex. It does
+widen the syscalls the whole service may make, not only bootc. updex itself
+never calls `mount` and never mounts a sysext image; only the `bootc status`
+subprocess remounts `/sysroot`, in the service's namespace. "Does not mount"
+in the `imagecompat` section below means updex, not that subprocess. The host test found that no single `@mount`
+syscall, and no subset of 7 of them, is enough, so the unit allows the group.
+`TestSandboxRunsBootcStatus` (`systemd/sandbox_bootc_test.go`) runs
+`bootc status --json` under every `SandboxDirectives` line with
+`systemd-run --wait --pipe`; it runs only as root on a host with `bootc` and
+`systemd-run`, and skips elsewhere (CI included). An operator repeats it with
+`sudo go test -run TestSandboxRunsBootcStatus ./systemd/`. A bootc that the
+sandbox blocks shows as the component's `Error` (fail closed).
 
 ### Retention (vacuum)
 
@@ -884,11 +901,13 @@ service (`ProtectSystem=full`) can write `/run`.
 
 ADR-0016 ("Minimum image version") needs one value from inside a downloaded
 image: `UPDEX_MIN_IMAGE_VERSION` in `usr/lib/extension-release.d/extension-release.<name>`.
-The obvious tools cannot run in the auto-update service, which has
-`RestrictNamespaces=yes` and `SystemCallFilter=@system-service` (see
-`systemd.SandboxDirectives`): it cannot mount, so `systemd-dissect`, `mount`
-and loop devices all fail. `imagecompat.ReadExtensionRelease` therefore reads
-the file in pure Go, with plain `ReadAt` on the staged file:
+The obvious tools are wrong for it: the image is untrusted input, and
+`systemd-dissect`, `mount` or a loop device would hand it to the kernel's
+filesystem code as root before updex decides whether to link it. The
+auto-update service also has `RestrictNamespaces=yes` (see
+`systemd.SandboxDirectives`; its `@mount` exists only for bootc, see
+"Sandbox" above). `imagecompat.ReadExtensionRelease` therefore reads the file
+in pure Go, with plain `ReadAt` on the staged file:
 
 1. `Lstat` and `O_NOFOLLOW` open; refuse anything that is not a regular file.
 2. Look for a GPT header at LBA 1 for 512-byte sectors, then for 4096-byte
@@ -1089,7 +1108,7 @@ which supersedes [ADR-0007](../adr/0007-daemon-stages-never-activates.md).
   own unit construction and lifecycle sequencing; the daemon CLI retains only
   root authorization, SDK invocation, and text/JSON formatting
 - Unit installation (the `/etc` path, `Manager.Install`) refuses to overwrite existing timer/service files; callers must disable first. The existence check is `os.Lstat`-based per [ADR-0005](../adr/0005-transactional-writes-lstat-checks.md) (`systemd.unitFileState`): a symlink (dangling or live), directory, or other non-regular entry at either unit path is refused outright (`unit path … exists and is not a regular file; remove it manually`) rather than written through, and each unit is written as a fresh 0644 regular file via temp-file-plus-rename in the unit directory (`systemd.writeUnitFile`), so the write never follows a link that appears between check and write. `Manager.Exists` uses the same Lstat view and treats any occupied unit path — including a dangling symlink — as present, so `daemon enable` reports "already installed" instead of attempting a write the guard would reject, and `daemon status` never reports a planted entry as absent
-- The service runs as root, so `DaemonUnits()` sets `systemd.ServiceConfig.Sandbox` and `GenerateService` appends the `systemd.SandboxDirectives` block to `[Service]`: `NoNewPrivileges=yes`, `ProtectSystem=full`, `ProtectHome=yes`, `PrivateTmp=yes`, `ProtectKernelTunables=yes`, `ProtectKernelModules=yes`, `ProtectKernelLogs=yes`, `ProtectControlGroups=yes`, `ProtectClock=yes`, `ProtectHostname=yes`, `RestrictRealtime=yes`, `RestrictSUIDSGID=yes`, `RestrictNamespaces=yes`, `LockPersonality=yes`, `MemoryDenyWriteExecute=yes`, `SystemCallArchitectures=native`, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`, `SystemCallFilter=@system-service`
+- The service runs as root, so `DaemonUnits()` sets `systemd.ServiceConfig.Sandbox` and `GenerateService` appends the `systemd.SandboxDirectives` block to `[Service]`: `NoNewPrivileges=yes`, `ProtectSystem=full`, `ProtectHome=yes`, `PrivateTmp=yes`, `ProtectKernelTunables=yes`, `ProtectKernelModules=yes`, `ProtectKernelLogs=yes`, `ProtectControlGroups=yes`, `ProtectClock=yes`, `ProtectHostname=yes`, `RestrictRealtime=yes`, `RestrictSUIDSGID=yes`, `RestrictNamespaces=yes`, `LockPersonality=yes`, `MemoryDenyWriteExecute=yes`, `SystemCallArchitectures=native`, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`, `SystemCallFilter=@system-service @mount` (`@mount` lets `bootc status` remount `/sysroot` inside the service's own mount namespace for the minimum image version check, frostyard/updex#463; see "Sandbox" in the minimum image version section)
 - `ProtectSystem=full` (not `strict`) was chosen so `/var` stays writable without a `ReadWritePaths=` list: the default `/var/lib/extensions.d` staging directory, the `/var/lib/extensions` link directory, and hand-written transfers with a `Target.Path` elsewhere under `/var` keep working; `/usr`, `/boot`, `/efi`, and `/etc` are read-only, which the `--no-refresh` staged path never writes. No `CapabilityBoundingSet=` is set. Other `GenerateService` callers keep the minimal unit unless they opt in
 - In-flight cancellation: `EnableDaemon`, `DisableDaemon`, and `DaemonStatus` thread their `ctx` through every `systemd.Manager` operation they call (`Install`, `Remove`, `Enable`, `Start`, `IsEnabled`, `IsActive`, and the `daemon-reload` each triggers). `Manager` checks `ctx` before touching the runner at all, then prefers the runner's `ContextSystemctlRunner` methods (`DaemonReloadContext`, `EnableContext`, `DisableContext`, `StartContext`, `StopContext`, `IsActiveContext`, `IsEnabledContext`) when it implements that optional interface, falling back to the legacy `SystemctlRunner` methods otherwise so existing external runners stay source-compatible without gaining cancellation. `DefaultSystemctlRunner` implements both: its `*Context` methods run `systemctl` via `exec.CommandContext` and its legacy methods delegate to them with `context.Background()`. If `ctx` is canceled or expires while a `systemctl` subprocess is running, the process is killed immediately and the call returns promptly with an error matching `context.Canceled`/`context.DeadlineExceeded` (`errors.Is`) rather than the raw "signal: killed" process error
 
