@@ -19,8 +19,8 @@ import (
 // the transient unit's mount namespace: the host's /sysroot mount options do
 // not change.
 //
-// It needs root, bootc and systemd-run, so it skips in CI and on hosts
-// without bootc. On a bootc host run it with:
+// It needs root, bootc, systemd-run and a running systemd system manager, so
+// it skips in CI, in containers and on hosts without bootc. On a bootc host run it with:
 //
 //	sudo go test -run TestSandboxRunsBootcStatus -v ./systemd/
 func TestSandboxRunsBootcStatus(t *testing.T) {
@@ -34,6 +34,13 @@ func TestSandboxRunsBootcStatus(t *testing.T) {
 	systemdRun, err := exec.LookPath("systemd-run")
 	if err != nil {
 		t.Skip("systemd-run is not installed")
+	}
+	// sd_booted(3): /run/systemd/system exists only when systemd is the
+	// running system manager. A root container can have bootc and
+	// systemd-run without one; systemd-run cannot start a unit there. After
+	// this check every failure is fatal, so a seccomp kill never skips.
+	if info, err := os.Stat("/run/systemd/system"); err != nil || !info.IsDir() {
+		t.Skip("systemd is not the running system manager")
 	}
 
 	before, sysrootMounted := mountOptions(t, "/sysroot")

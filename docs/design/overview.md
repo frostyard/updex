@@ -751,8 +751,11 @@ namespace other than PID 1's and does not `unshare` (which
 its own namespace when an administrator runs `bootc status`. Why `@mount`
 costs little: updex runs as root, can reach the systemd manager over
 `AF_UNIX`, and links images that `systemd-sysext` merges into `/usr`, so the
-sandbox contains bugs, not an attacker with code execution in updex; updex
-itself never calls `mount`. The host test found that no single `@mount`
+sandbox contains bugs, not an attacker with code execution in updex. It does
+widen the syscalls the whole service may make, not only bootc. updex itself
+never calls `mount` and never mounts a sysext image; only the `bootc status`
+subprocess remounts `/sysroot`, in the service's namespace. "Does not mount"
+in the `imagecompat` section below means updex, not that subprocess. The host test found that no single `@mount`
 syscall, and no subset of 7 of them, is enough, so the unit allows the group.
 `TestSandboxRunsBootcStatus` (`systemd/sandbox_bootc_test.go`) runs
 `bootc status --json` under every `SandboxDirectives` line with
