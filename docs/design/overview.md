@@ -22,6 +22,8 @@ cmd/updex/components.go         components (list discovered systemd-sysupdate co
 cmd/updex/catalog.go            catalog list|search|add|remove ([REPO/]NAME parsing,
                                 --repo/--force flags, output formatting)
 cmd/updex/daemon.go             daemon enable|disable|status SDK wrappers
+cmd/updex/units.go              hidden `units --output-dir` release command (writes
+                                the packaged timer and service; scripts/units.sh)
 cmd/updex/client.go             CLI → SDK client factory
 
 updex/                          Public SDK (Client + methods)
@@ -48,8 +50,10 @@ updex/                          Public SDK (Client + methods)
   options.go                    Option structs for all operations (each
                                 feature-related struct carries Component string)
   results.go                    Result structs for all operations
-  daemon.go                     EnableDaemon(), DisableDaemon(), DaemonStatus()
-                                systemd lifecycle orchestration
+  daemon.go                     DaemonUnits() (the one source of the timer and
+                                service text), EnableDaemon(), DisableDaemon(),
+                                DaemonStatus() systemd lifecycle orchestration
+  daemon_legacy.go              frozen ADR-0007 unit texts that disable recognizes
   catalog.go                    CatalogList(), CatalogAdd(), CatalogRemove() —
                                 orchestrate catalog/ primitives plus
                                 EnableFeature/DisableFeature reuse
@@ -99,9 +103,12 @@ CLI (cmd/daemon.go) ─┘                version, sysext, systemd
 - Return dedicated result structs with status fields + error
 - `ClientConfig.HTTPClient` is reused for manifest fetches and downloads; if nil, `NewClient` creates one with a 10-minute timeout, the standard 10-redirect limit, and an HTTPS-to-HTTP downgrade refusal
 - `ClientConfig.Progress` receives informational/warning/debug messages; `ClientConfig.OnDownloadProgress` is a separate download-byte callback
-- `ClientConfig.SystemdManager` injects the unit-file path and
-  `SystemctlRunner` used by daemon SDK methods; nil selects the production
-  `/etc/systemd/system` manager
+- `ClientConfig.SystemdManager` injects the unit-file paths (`UnitPath`,
+  `RunUnitPath`, `PackagedUnitPath`) and `SystemctlRunner` used by daemon SDK
+  methods; nil selects the production manager (`/etc/systemd/system`,
+  `/run/systemd/system`, `/usr/lib/systemd/system`). `NewTestManager` leaves
+  `RunUnitPath` and `PackagedUnitPath` empty so a test never sees the host's
+  runtime or packaged units
 - `UpdateFeatures` and `CheckFeatures` cache fetched manifests by `Transfer.Source.Path` only. Future changes that mix verification policy or auth by transfer for the same source URL need to revisit that cache key.
 - The feature SDK methods (`UpdateFeatures`, `CheckFeatures`, enable/disable with `Now`) use `config.GetTransfersForFeature`, which includes transfers where the feature appears in either `Features` or `RequisiteFeatures`. The more general `config.FilterTransfersByFeatures` implements full active-transfer logic, including standalone transfers and AND/OR feature requirements, but it is not the main path for current feature update/check workflows.
 - Error messages: lowercase, no trailing punctuation, wrapped with `fmt.Errorf("context: %w", err)`
@@ -755,18 +762,90 @@ always override and always survive (decision recorded in
 
 ### Auto-update daemon
 
-The daemon stages updates but never activates them (decision recorded in
-[ADR-0007](../adr/0007-daemon-stages-never-activates.md)).
+The daemon links new revisions but never activates them: a run is
+`updex features update --no-refresh`, and a new revision takes effect at the
+next boot. The decision is [ADR-0016](../adr/0016-automatic-sysext-updates-apply-at-next-boot.md),
+which supersedes [ADR-0007](../adr/0007-daemon-stages-never-activates.md).
 
-- `updex daemon enable` installs `/etc/systemd/system/updex-update.timer` and `.service`, then enables and starts the timer
+- **One source for the unit text.** `updex.DaemonUnits()` returns the
+  `systemd.TimerConfig` and `systemd.ServiceConfig`. `daemon enable` and the
+  release build both render them with `systemd.GenerateTimer`/`GenerateService`,
+  so the packaged files and the files `daemon enable` writes cannot drift
+  (`updex/units_hook_contract_test.go` compares them byte for byte).
+- **Packaged units.** The `frostyard-updex` package installs
+  `/usr/lib/systemd/system/updex-update.timer` and `.service`, disabled (no
+  maintainer script). The hidden `updex-cli units --output-dir DIR` command writes
+  them, `scripts/units.sh` runs it as a GoReleaser `before.hooks` entry (next to
+  `completions.sh` and `manpages.sh`; output in the gitignored `units/`), and
+  `nfpms.contents` installs them with mode 0644. CI verifies them with
+  `systemd-analyze verify` (`units` job in `test.yml`) and the nightly checks the
+  `.deb` listing (`scripts/check-deb-units.sh`, `snapshot.yml`).
+- **The units.** Service: the sandboxed `oneshot` (`SandboxDirectives`),
+  `ExecStart=/usr/bin/updex features update --no-refresh`,
+  `Wants=`/`After=network-online.target` and `ConditionACPower=true` (a host on
+  battery skips the run; a host without a battery always runs), and
+  `TimeoutStartSec=2h` (a backstop: systemd stops a stuck run, which releases
+  `/run/updex/lock`; per-request timeouts and ADR-0008's bounded retries end a
+  normal run long before). An offline host can still reach
+  `network-online.target`; its downloads fail and the run exits non-zero, so the
+  unit shows `failed` until the next successful run (ADR-0016: a failed feature
+  fails the run). Timer:
+  `OnCalendar=*-*-* 00/6:00:00`, `RandomizedDelaySec=3600s`, `Persistent=true`,
+  `[Install] WantedBy=timers.target`. `systemd.ServiceConfig` gained `Wants`,
+  `After` and `Conditions` (`[]string`; `Conditions` are whole directive lines),
+  `TimeoutStartSec` (a string written after `ExecStart`),
+  and both configs a `Comment` (first line `# <Comment>`); a config that sets none
+  of them generates the same text as before.
+- `updex daemon enable`: when the manager's `PackagedUnitPath` has
+  `updex-update.timer`, it runs `systemctl enable` then `start` (the same as
+  `enable --now`) and writes nothing; unit files already in `/etc/systemd/system`
+  are reported as overriding the packaged ones. Otherwise (an updex binary
+  installed without the package) it refuses when `/etc` unit files already exist,
+  else writes both units there with the first-line marker
+  `# Generated by updex daemon enable; updex daemon disable removes this file.`,
+  reloads systemd, enables and starts the timer. Enabling a masked timer fails
+  with systemctl's error.
+- `updex daemon disable`: stops and disables the timer, removes only the
+  `/etc/systemd/system` unit files that updex wrote, then reloads systemd. A file
+  is updex's when its first line is the marker, or when its whole content equals
+  one of the frozen ADR-0007 texts that earlier releases wrote without a marker
+  (`updex/daemon_legacy.go`: the daily timer, and the sandboxed and unsandboxed
+  service). The match is exact on purpose: an edited or differently shaped file is
+  kept and named in `DaemonActionResult.KeptFiles` and the message, since deleting
+  a file that updex cannot prove it wrote could remove an administrator's unit or
+  one that the OS image ships in `/etc`. Every file is checked with `os.Lstat`; a
+  symlink, directory or other non-regular file is refused and left alone
+  ([ADR-0005](../adr/0005-transactional-writes-lstat-checks.md)). The packaged
+  units are never touched. A disable with only packaged units stops and disables
+  the timer; the opt-out that survives image updates is `systemctl mask`.
+- `updex daemon status`: `Installed` means a timer file exists in either directory.
+  `Source` is `etc` when the timer file in use is in `/etc/systemd/system` (it
+  overrides the packaged one), else `packaged`; `UnitFiles` lists the files in use and `Schedule` is the timer's effective
+  `OnCalendar` schedule: the `TimersCalendar` property that `systemctl show`
+  reports, so administrator drop-ins such as
+  `/etc/systemd/system/updex-update.timer.d/*.conf` and the reset meaning of an
+  empty `OnCalendar=` count, or, when systemd cannot report it (a runner
+  without `Show`, a failing query, no calendar trigger), the schedule computed
+  from the timer file in use plus its drop-ins in `/etc`, `/run` and the
+  packaged directory, by systemd's rules (`OnCalendar` appends inside `[Timer]`,
+  an empty value clears the list, and a drop-in name in a higher-priority
+  directory hides the same name below). The
+  next run and last run come from `systemctl show -p PROPERTY --value`, one call
+  per property through the `systemd.ShowRunner` interface (an optional runner
+  interface, like `ContextSystemctlRunner`; a runner without it leaves them
+  empty): the timer's `NextElapseUSecRealtime` (`NextRun`) and the service's
+  `ExecMainExitTimestamp` (`LastRun`) and `Result` (`LastResult`), all as systemd
+  prints them. An empty value, `n/a` and `0` mean none: `NextRun` is empty when
+  nothing is scheduled, and `LastRun` and `LastResult` are empty when the service
+  has not run since boot (`Result` is `success` for a service that never ran, so it
+  is read only when `LastRun` is set). A failed query fails the command, as for the
+  enabled and active queries.
 - `--dry-run` on `daemon enable`/`daemon disable` passes `DryRun` into the SDK options: the context check and the installed/not-installed precondition still run, but no unit file is written or removed and no systemctl call is made. The `DaemonActionResult` carries `DryRun` and the absolute `UnitFiles` paths (timer then service), and the CLI prints the result's `Message` with a `[DRY RUN] ` prefix in text mode
 - `Client.EnableDaemon`, `Client.DisableDaemon`, and `Client.DaemonStatus`
   own unit construction and lifecycle sequencing; the daemon CLI retains only
   root authorization, SDK invocation, and text/JSON formatting
-- The timer runs `daily`, is `Persistent=true`, and uses `RandomizedDelaySec=3600`
-- The service command is `/usr/bin/updex features update --no-refresh`, so automatic downloads are staged and not refreshed/activated until a later refresh or reboot
-- Unit installation refuses to overwrite existing timer/service files; callers must disable first. The existence check is `os.Lstat`-based per [ADR-0005](../adr/0005-transactional-writes-lstat-checks.md) (`systemd.unitFileState`): a symlink (dangling or live), directory, or other non-regular entry at either unit path is refused outright (`unit path … exists and is not a regular file; remove it manually`) rather than written through, and each unit is written as a fresh 0644 regular file via temp-file-plus-rename in the unit directory (`systemd.writeUnitFile`), so the write never follows a link that appears between check and write. `Manager.Exists` uses the same Lstat view and treats any occupied unit path — including a dangling symlink — as present, so `daemon enable` reports "already installed" instead of attempting a write the guard would reject, and `daemon status` never reports a planted entry as absent
-- The service runs as root, so `updex daemon enable` sets `systemd.ServiceConfig.Sandbox` and `GenerateService` appends the `systemd.SandboxDirectives` block to `[Service]`: `NoNewPrivileges=yes`, `ProtectSystem=full`, `ProtectHome=yes`, `PrivateTmp=yes`, `ProtectKernelTunables=yes`, `ProtectKernelModules=yes`, `ProtectKernelLogs=yes`, `ProtectControlGroups=yes`, `ProtectClock=yes`, `ProtectHostname=yes`, `RestrictRealtime=yes`, `RestrictSUIDSGID=yes`, `RestrictNamespaces=yes`, `LockPersonality=yes`, `MemoryDenyWriteExecute=yes`, `SystemCallArchitectures=native`, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`, `SystemCallFilter=@system-service`
+- Unit installation (the `/etc` path, `Manager.Install`) refuses to overwrite existing timer/service files; callers must disable first. The existence check is `os.Lstat`-based per [ADR-0005](../adr/0005-transactional-writes-lstat-checks.md) (`systemd.unitFileState`): a symlink (dangling or live), directory, or other non-regular entry at either unit path is refused outright (`unit path … exists and is not a regular file; remove it manually`) rather than written through, and each unit is written as a fresh 0644 regular file via temp-file-plus-rename in the unit directory (`systemd.writeUnitFile`), so the write never follows a link that appears between check and write. `Manager.Exists` uses the same Lstat view and treats any occupied unit path — including a dangling symlink — as present, so `daemon enable` reports "already installed" instead of attempting a write the guard would reject, and `daemon status` never reports a planted entry as absent
+- The service runs as root, so `DaemonUnits()` sets `systemd.ServiceConfig.Sandbox` and `GenerateService` appends the `systemd.SandboxDirectives` block to `[Service]`: `NoNewPrivileges=yes`, `ProtectSystem=full`, `ProtectHome=yes`, `PrivateTmp=yes`, `ProtectKernelTunables=yes`, `ProtectKernelModules=yes`, `ProtectKernelLogs=yes`, `ProtectControlGroups=yes`, `ProtectClock=yes`, `ProtectHostname=yes`, `RestrictRealtime=yes`, `RestrictSUIDSGID=yes`, `RestrictNamespaces=yes`, `LockPersonality=yes`, `MemoryDenyWriteExecute=yes`, `SystemCallArchitectures=native`, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`, `SystemCallFilter=@system-service`
 - `ProtectSystem=full` (not `strict`) was chosen so `/var` stays writable without a `ReadWritePaths=` list: the default `/var/lib/extensions.d` staging directory, the `/var/lib/extensions` link directory, and hand-written transfers with a `Target.Path` elsewhere under `/var` keep working; `/usr`, `/boot`, `/efi`, and `/etc` are read-only, which the `--no-refresh` staged path never writes. No `CapabilityBoundingSet=` is set. Other `GenerateService` callers keep the minimal unit unless they opt in
 - In-flight cancellation: `EnableDaemon`, `DisableDaemon`, and `DaemonStatus` thread their `ctx` through every `systemd.Manager` operation they call (`Install`, `Remove`, `Enable`, `Start`, `IsEnabled`, `IsActive`, and the `daemon-reload` each triggers). `Manager` checks `ctx` before touching the runner at all, then prefers the runner's `ContextSystemctlRunner` methods (`DaemonReloadContext`, `EnableContext`, `DisableContext`, `StartContext`, `StopContext`, `IsActiveContext`, `IsEnabledContext`) when it implements that optional interface, falling back to the legacy `SystemctlRunner` methods otherwise so existing external runners stay source-compatible without gaining cancellation. `DefaultSystemctlRunner` implements both: its `*Context` methods run `systemctl` via `exec.CommandContext` and its legacy methods delegate to them with `context.Background()`. If `ctx` is canceled or expires while a `systemctl` subprocess is running, the process is killed immediately and the call returns promptly with an error matching `context.Canceled`/`context.DeadlineExceeded` (`errors.Is`) rather than the raw "signal: killed" process error
 
@@ -819,9 +898,13 @@ updex catalog remove [REPO/]NAME        DisableFeature --now + delete generated 
   --repo <name>                         Persistent flag on `updex catalog`, equivalent
                                          to the REPO/ prefix (error if they conflict)
 
-updex daemon enable                     Install daily auto-update timer
-updex daemon disable                    Remove auto-update timer
-updex daemon status                     Show timer status
+updex daemon enable                     Enable the auto-update timer (packaged
+                                         units; writes marked /etc units only
+                                         without the package)
+updex daemon disable                    Stop and disable the timer; remove only
+                                         the /etc units updex wrote
+updex daemon status                     Timer state, units in use, next run,
+                                         last run and result
 
 Global flags:
   -C, --definitions <path>              Custom path to config files (bypasses component

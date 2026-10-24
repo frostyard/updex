@@ -2,6 +2,7 @@
 dist/
 completions/
 manpages/
+units/
 coverage.out
 
 # Local agent/tooling state (never committed)

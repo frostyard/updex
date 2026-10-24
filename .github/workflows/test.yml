@@ -210,6 +210,54 @@ jobs:
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} make build
           ls -lh build/
 
+  units:
+    name: Systemd units
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Build updex
+        run: make build
+
+      # The same script GoReleaser's before-hook runs, so this verifies the
+      # exact text the package ships.
+      - name: Generate the packaged units
+        run: ./scripts/units.sh
+
+      # The service's ExecStart is /usr/bin/updex. Installing the built binary
+      # there lets systemd-analyze check the shipped text as it is, instead of
+      # a copy whose ExecStart was rewritten.
+      - name: Install updex where the units expect it
+        run: sudo install -m 0755 build/updex /usr/bin/updex
+
+      # systemd-analyze verify exits 0 on an unknown directive (it only warns),
+      # so the step also fails on any output that names an updex unit.
+      - name: Verify the units with systemd-analyze
+        run: |
+          set -o pipefail
+          status=0
+          output="$(systemd-analyze verify units/updex-update.service units/updex-update.timer 2>&1)" || status=$?
+          printf '%s\n' "$output"
+          if [ "$status" -ne 0 ]; then
+            echo "::error::systemd-analyze verify failed with exit code $status"
+            exit 1
+          fi
+          if printf '%s\n' "$output" | grep -q 'updex-update'; then
+            echo "::error::systemd-analyze verify reported a problem with an updex unit"
+            exit 1
+          fi
+
   docs-gate:
     name: Docs integrity
     runs-on: ubuntu-latest
