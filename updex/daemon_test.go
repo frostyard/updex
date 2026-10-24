@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -23,10 +24,14 @@ func newDaemonTestClient(t *testing.T, runner systemd.SystemctlRunner) (*Client,
 	return client, unitPath
 }
 
+// markedStubUnit is the content that seedDaemonUnits writes: a unit file that
+// carries the updex ownership marker, as `daemon enable` writes it.
+const markedStubUnit = "# " + daemonMarker + "\nstub\n"
+
 func seedDaemonUnits(t *testing.T, unitPath string) {
 	t.Helper()
 	for _, suffix := range []string{".timer", ".service"} {
-		if err := os.WriteFile(filepath.Join(unitPath, daemonUnitName+suffix), []byte("stub"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(unitPath, daemonUnitName+suffix), []byte(markedStubUnit), 0644); err != nil {
 			t.Fatalf("seed unit %s: %v", suffix, err)
 		}
 	}
@@ -61,6 +66,10 @@ func TestEnableDaemon(t *testing.T) {
 		t.Fatalf("read service unit: %v", err)
 	}
 	for _, required := range []string{
+		"# " + daemonMarker + "\n",
+		"Wants=network-online.target\n",
+		"After=network-online.target\n",
+		"ConditionACPower=true\n",
 		"Type=oneshot\n",
 		"ExecStart=/usr/bin/updex features update --no-refresh\n",
 		"NoNewPrivileges=yes\n",
@@ -76,7 +85,9 @@ func TestEnableDaemon(t *testing.T) {
 		t.Fatalf("read timer unit: %v", err)
 	}
 	for _, required := range []string{
-		"OnCalendar=daily\n",
+		"# " + daemonMarker + "\n",
+		"OnCalendar=*-*-* 00/6:00:00\n",
+		"[Install]\nWantedBy=timers.target\n",
 		"Persistent=true\n",
 		"RandomizedDelaySec=3600s\n",
 	} {
@@ -262,7 +273,7 @@ func TestDaemonStatus(t *testing.T) {
 		if err != nil {
 			t.Fatalf("DaemonStatus() error = %v", err)
 		}
-		if *status != (DaemonStatusResult{}) {
+		if !reflect.DeepEqual(*status, DaemonStatusResult{}) {
 			t.Fatalf("DaemonStatus() = %+v", status)
 		}
 		if runner.IsEnabledCalled || runner.IsActiveCalled {
@@ -282,8 +293,11 @@ func TestDaemonStatus(t *testing.T) {
 		if err != nil {
 			t.Fatalf("DaemonStatus() error = %v", err)
 		}
-		want := DaemonStatusResult{Installed: true, Enabled: true, Active: true, Schedule: "daily"}
-		if *status != want {
+		want := DaemonStatusResult{
+			Installed: true, Enabled: true, Active: true, Source: DaemonSourceEtc,
+			UnitFiles: daemonTestUnitFiles(unitPath),
+		}
+		if !reflect.DeepEqual(*status, want) {
 			t.Fatalf("DaemonStatus() = %+v, want %+v", status, want)
 		}
 		if !runner.IsEnabledCalled || !runner.IsActiveCalled {
@@ -502,8 +516,8 @@ func TestEnableDaemonDryRun(t *testing.T) {
 			if readErr != nil {
 				t.Fatalf("read seeded unit %s: %v", path, readErr)
 			}
-			if string(content) != "stub" {
-				t.Errorf("seeded unit %s content = %q, want %q", path, content, "stub")
+			if string(content) != markedStubUnit {
+				t.Errorf("seeded unit %s content = %q, want %q", path, content, markedStubUnit)
 			}
 		}
 	})
@@ -536,8 +550,8 @@ func TestDisableDaemonDryRun(t *testing.T) {
 			if readErr != nil {
 				t.Fatalf("unit %s removed by dry run: %v", path, readErr)
 			}
-			if string(content) != "stub" {
-				t.Errorf("unit %s content = %q, want %q", path, content, "stub")
+			if string(content) != markedStubUnit {
+				t.Errorf("unit %s content = %q, want %q", path, content, markedStubUnit)
 			}
 		}
 	})

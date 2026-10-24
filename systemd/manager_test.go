@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -641,6 +642,10 @@ func TestNewManager(t *testing.T) {
 		t.Errorf("UnitPath = %q, want %q", mgr.UnitPath, "/etc/systemd/system")
 	}
 
+	if mgr.RunUnitPath != "/run/systemd/system" {
+		t.Errorf("RunUnitPath = %q, want %q", mgr.RunUnitPath, "/run/systemd/system")
+	}
+
 	if mgr.runner == nil {
 		t.Error("runner should not be nil")
 	}
@@ -664,6 +669,57 @@ func TestNewTestManager(t *testing.T) {
 	if mgr.runner != mockRunner {
 		t.Error("runner should be the provided mock")
 	}
+
+	if mgr.RunUnitPath != "" {
+		t.Errorf("RunUnitPath = %q, want empty so a test never reads the host's runtime units", mgr.RunUnitPath)
+	}
+}
+
+// TestUnitDropIns pins how the manager picks the drop-ins systemd applies to
+// a unit: the highest-priority directory wins for each file name, and the
+// surviving files are sorted by name.
+func TestUnitDropIns(t *testing.T) {
+	etcPath, runPath, packagedPath := t.TempDir(), t.TempDir(), t.TempDir()
+	writeDropIn := func(dir, name string) {
+		t.Helper()
+		d := filepath.Join(dir, "updex-update.timer.d")
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, name), []byte("[Timer]\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeDropIn(packagedPath, "20-late.conf")
+	writeDropIn(packagedPath, "10-shared.conf")
+	writeDropIn(packagedPath, "30-hidden.conf")
+	writeDropIn(runPath, "10-shared.conf")
+	writeDropIn(runPath, "30-hidden.conf")
+	writeDropIn(etcPath, "10-shared.conf")
+	// A file that is not a *.conf drop-in must not be reported.
+	if err := os.WriteFile(filepath.Join(etcPath, "updex-update.timer.d", "notes.txt"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewTestManager(etcPath, &MockSystemctlRunner{})
+	mgr.RunUnitPath = runPath
+	mgr.PackagedUnitPath = packagedPath
+
+	want := []string{
+		filepath.Join(etcPath, "updex-update.timer.d", "10-shared.conf"),
+		filepath.Join(packagedPath, "updex-update.timer.d", "20-late.conf"),
+		filepath.Join(runPath, "updex-update.timer.d", "30-hidden.conf"),
+	}
+	if got := mgr.UnitDropIns("updex-update.timer"); !slices.Equal(got, want) {
+		t.Errorf("UnitDropIns() = %v, want %v", got, want)
+	}
+
+	t.Run("no drop-in directory", func(t *testing.T) {
+		bare := NewTestManager(t.TempDir(), &MockSystemctlRunner{})
+		if got := bare.UnitDropIns("updex-update.timer"); len(got) != 0 {
+			t.Errorf("UnitDropIns() = %v, want none", got)
+		}
+	})
 }
 
 // TestManagerPrefersContextRunner pins that Manager dispatches to a runner's
@@ -821,5 +877,83 @@ func TestManagerContextCancellationDuringDaemonReload(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Install() did not return after context cancellation")
+	}
+}
+
+func TestManagerPackagedUnits(t *testing.T) {
+	t.Run("default path", func(t *testing.T) {
+		if got := NewManager().PackagedUnitPath; got != "/usr/lib/systemd/system" {
+			t.Errorf("NewManager().PackagedUnitPath = %q, want /usr/lib/systemd/system", got)
+		}
+	})
+
+	t.Run("test manager has none", func(t *testing.T) {
+		m := NewTestManager(t.TempDir(), &MockSystemctlRunner{})
+		if m.PackagedUnitPath != "" || m.PackagedExists("updex-update") || m.PackagedUnitPaths("updex-update") != nil {
+			t.Errorf("NewTestManager() reports packaged units: %q", m.PackagedUnitPath)
+		}
+	})
+
+	t.Run("timer decides", func(t *testing.T) {
+		dir := t.TempDir()
+		m := NewTestManager(t.TempDir(), &MockSystemctlRunner{})
+		m.PackagedUnitPath = dir
+		if m.PackagedExists("updex-update") {
+			t.Fatal("PackagedExists() = true for an empty directory")
+		}
+		if err := os.WriteFile(filepath.Join(dir, "updex-update.service"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if m.PackagedExists("updex-update") {
+			t.Error("PackagedExists() = true with only the service present")
+		}
+		if err := os.WriteFile(filepath.Join(dir, "updex-update.timer"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if !m.PackagedExists("updex-update") {
+			t.Error("PackagedExists() = false with the timer present")
+		}
+		want := []string{filepath.Join(dir, "updex-update.timer"), filepath.Join(dir, "updex-update.service")}
+		got := m.PackagedUnitPaths("updex-update")
+		if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+			t.Errorf("PackagedUnitPaths() = %v, want %v", got, want)
+		}
+	})
+}
+
+func TestManagerStopDisableReloadShow(t *testing.T) {
+	runner := &MockSystemctlRunner{ShowValues: map[string]string{"Result": "success"}}
+	m := NewTestManager(t.TempDir(), runner)
+	ctx := t.Context()
+
+	if err := m.Stop(ctx, "a.timer"); err != nil || !runner.StopCalled || runner.StopUnit != "a.timer" {
+		t.Errorf("Stop() = %v, called=%v unit=%q", err, runner.StopCalled, runner.StopUnit)
+	}
+	if err := m.Disable(ctx, "a.timer"); err != nil || !runner.DisableCalled || runner.DisableUnit != "a.timer" {
+		t.Errorf("Disable() = %v, called=%v unit=%q", err, runner.DisableCalled, runner.DisableUnit)
+	}
+	if err := m.DaemonReload(ctx); err != nil || !runner.DaemonReloadCalled {
+		t.Errorf("DaemonReload() = %v, called=%v", err, runner.DaemonReloadCalled)
+	}
+	if got, err := m.Show(ctx, "a.service", "Result"); err != nil || got != "success" {
+		t.Errorf("Show() = (%q, %v), want (success, nil)", got, err)
+	}
+
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := m.Show(canceled, "a.service", "Result"); !errors.Is(err, context.Canceled) {
+		t.Errorf("Show() with a canceled context error = %v, want context.Canceled", err)
+	}
+}
+
+// bareRunner implements only SystemctlRunner.
+type bareRunner struct{ *MockSystemctlRunner }
+
+func (bareRunner) ShowContext() {} // wrong signature on purpose: does not satisfy ShowRunner
+
+func TestManagerShowUnsupportedRunner(t *testing.T) {
+	m := NewTestManager(t.TempDir(), bareRunner{&MockSystemctlRunner{}})
+	if _, err := m.Show(t.Context(), "a.service", "Result"); !errors.Is(err, ErrShowUnsupported) {
+		t.Errorf("Show() error = %v, want ErrShowUnsupported", err)
 	}
 }

@@ -193,6 +193,35 @@ the `goreleaser-nightly` group with boolean `cancel-in-progress: true`, the
 renames the fang-injected hidden `man` subcommand fails the Unit Tests job on
 the pull request instead of GoReleaser at tag time (skipped under `-short`).
 
+`scripts/units.sh` is the third GoReleaser `before.hooks` generator, after
+`completions.sh` and `manpages.sh`. It runs the hidden `updex-cli units
+--output-dir DIR` subcommand (default `units/`, gitignored like `completions/`
+and `manpages/`), which writes `updex-update.timer` and `updex-update.service`
+from `systemd.GenerateTimer`/`GenerateService` applied to `updex.DaemonUnits()`,
+the same function `updex daemon enable` uses
+([ADR-0016](docs/adr/0016-automatic-sysext-updates-apply-at-next-boot.md)).
+`nfpms.contents` installs them (mode 0644) as
+`/usr/lib/systemd/system/updex-update.{timer,service}`; the package ships no
+maintainer scripts and enables nothing.
+`updex/units_hook_contract_test.go` runs `scripts/units.sh` into a temporary
+directory (skipped under `-short`), compares the files byte for byte with the
+generator, pins the contract lines (`ExecStart=/usr/bin/updex features update
+--no-refresh`, the 6-hour `OnCalendar`, `RandomizedDelaySec=3600s`,
+`Persistent=true`, `WantedBy=timers.target`, `Wants=`/`After=network-online.target`,
+`ConditionACPower=true`, `TimeoutStartSec=2h`, every `SandboxDirectives`
+line), pins the
+`.goreleaser.yaml` hook order, both `nfpms.contents` destinations and the
+absence of maintainer scripts, pins the CI steps below, and runs
+`scripts/check-deb-units.sh` against a fake `dpkg-deb`. The `units` job in
+`.github/workflows/test.yml` builds updex, runs `scripts/units.sh`, installs
+the binary at `/usr/bin/updex` with `sudo install` (the service's `ExecStart`,
+so the shipped text is verified as it is) and runs `systemd-analyze verify` on
+both files; because `systemd-analyze verify` exits 0 for an unknown directive,
+the step also fails on any output that names an updex unit. After GoReleaser
+publishes, `snapshot.yml` runs `scripts/check-deb-units.sh` on the amd64
+`.deb` in `dist/` (`dpkg-deb -c`), failing the nightly unless both unit paths
+are listed as 0644 files.
+
 Releases are tagged with semantic versions (`vMAJOR.MINOR.PATCH`) and built by
 GoReleaser. Maintainers run `make bump`, which first runs
 `make svu-version-check` — it fails with the install command (`mise install`)
@@ -211,7 +240,7 @@ updex is a Go SDK and CLI for managing systemd-sysext images. It replicates `sys
 **SDK-first design**: All logic lives in the `updex/` package as a public Go API. CLI commands in `cmd/` are thin Cobra wrappers that parse flags, call SDK functions, and format output. SDK code must never import CLI packages. The SDK can be imported by other Go applications for programmatic sysext management.
 
 Key packages:
-- `updex/` — Public SDK: `Client` struct with feature, component, catalog, and daemon lifecycle methods (`EnableDaemon()`, `DisableDaemon()`, `DaemonStatus()`)
+- `updex/` — Public SDK: `Client` struct with feature, component, catalog, and daemon lifecycle methods (`EnableDaemon()`, `DisableDaemon()`, `DaemonStatus()`); `DaemonUnits()` is the single source of the auto-update timer and service configuration
 - `cmd/updex/` — Cobra command handlers calling SDK methods (flags, output formatting, progress bars)
 - `config/` — Parses `.transfer` and `.feature` INI files from systemd-style search paths, including systemd-sysupdate "component" discovery (see below)
 - `catalog/` — Sysext catalog primitives (see below): `*.catalog` repo config loading, sysext enumeration via a GitHub contents API endpoint, fetching the catalog's published `.conf`, and rendering it into updex `.transfer`/`.feature` files
@@ -293,8 +322,13 @@ afterwards.
   download and install updates for enabled features, check without
   installing)
 - `components` — list discovered systemd-sysext components
-- `daemon enable|disable|status` — install/remove/inspect the systemd
-  timer+service units
+- `daemon enable|disable|status` — enable/disable/inspect the auto-update
+  timer. The package ships the units in `/usr/lib/systemd/system`; `enable`
+  writes marked units to `/etc/systemd/system` only when the package does not,
+  and `disable` removes only marked (or exactly legacy) files there. `status`
+  also reports the next run and the last result
+- `units --output-dir DIR` (hidden) — release tooling that writes the packaged
+  unit files (`scripts/units.sh`)
 - `catalog list|search <query>|add <name>|remove <name>` — browse and manage
   sysexts from configured catalogs
 
