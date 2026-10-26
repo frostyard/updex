@@ -312,7 +312,9 @@ func TestE2E_FeaturesListRejectsExtraArgs(t *testing.T) {
 	if err == nil {
 		t.Fatalf("updex features list unexpectedly accepted an argument:\n%s", out)
 	}
-	if !strings.Contains(out, "Unknown command") {
+	// stderr is a pipe, so clix v0.5.0 prints the plain cobra error (no fang
+	// styling or capitalization; frostyard/clix#107).
+	if !strings.Contains(out, `unknown command "unexpected" for "updex features list"`) {
 		t.Errorf("features list error missing argument validation message:\n%s", out)
 	}
 }

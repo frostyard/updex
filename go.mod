@@ -7,7 +7,7 @@ toolchain go1.26.10
 require (
 	github.com/ProtonMail/go-crypto v1.5.2
 	github.com/erofs/go-erofs v0.3.1
-	github.com/frostyard/clix v0.4.0
+	github.com/frostyard/clix v0.5.0
 	github.com/frostyard/std v0.3.0
 	github.com/hashicorp/go-version v1.9.0
 	github.com/klauspost/compress v1.20.3
@@ -20,9 +20,9 @@ require (
 )
 
 require (
+	charm.land/fang/v2 v2.0.1 // indirect
 	charm.land/lipgloss/v2 v2.0.6 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
-	github.com/charmbracelet/fang v1.0.0 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20260812204455-68fa937c71be // indirect
 	github.com/charmbracelet/x/ansi v0.11.8 // indirect
 	github.com/charmbracelet/x/exp/charmtone v0.0.0-20260813141921-f091cedeaf78 // indirect
