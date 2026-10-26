@@ -68,7 +68,14 @@ updex applies the activation rule in every feature path.
   of `g` that names only a transfer which `f` does not act on no longer holds `f`.
   `RollbackFeature` rolls back, and records, only the active transfers, and fails
   with `feature '<name>' has no active transfers to roll back` when there is
-  none. `rollbackFeaturesOf` stays the association (it reads more records, never
+  none. One exception: an existing rejection of an *inactive associated*
+  transfer of the feature stays in the record (`preservedRejections`), with no
+  link change. Otherwise a repeated rollback, while a requisite feature is
+  disabled, would erase the rejection, and enabling the requisite feature again
+  would let `update` link the rejected version (ADR-0016). A dry run says it in
+  one reporter line per kept entry. An entry for a component that is neither
+  active nor an inactive associated transfer is dropped, as before, so a removed
+  transfer does not hold the feature for ever. `rollbackFeaturesOf` stays the association (it reads more records, never
   fewer, so it keeps failing closed).
 
 ## Consequences
@@ -83,8 +90,10 @@ updex applies the activation rule in every feature path.
   (its link and images are not removed by `update`); `disable --now` of one of its
   features removes it.
 - A rollback of a feature while a requisite feature is disabled does not roll
-  back, or record, the transfer that waits. When the requisite feature is enabled
-  later, the transfer is a new part of the feature without a hold.
+  back the transfer that waits, and a first rollback adds no entry for it. When
+  the requisite feature is enabled later, the transfer is a new part of the
+  feature without a hold, unless the record already rejected a version of it:
+  that rejection is kept.
 - A record of `g` is still read when `g` names an acted-on transfer, also when the
   record rejects only another component. That is the ADR-0016 rule and is unchanged.
 

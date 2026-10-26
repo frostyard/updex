@@ -837,7 +837,12 @@ has no active transfers to roll back`:
   directory and file; the feature name goes through `catalog.ValidateSysextName`
   first. The record names only the rolled-back feature; its hold covers every
   feature that shares a transfer with it: those features are held, and only the
-  rolled-back feature advances the shared transfers (see "Update path").
+  rolled-back feature advances the shared transfers (see "Update path"). A
+  rollback adds or raises entries for the active transfers only, but it keeps an
+  existing entry of an inactive associated transfer (`preservedRejections`,
+  without a link change; a dry run says so in one reporter line per entry), so
+  enabling a requisite feature later cannot link a rejected version. An entry for
+  a component that is no associated transfer is dropped.
 - **Order.** Record first, then the links (`linkAllOrNone` with
   `sysext.LinkVersionAt`), then the optional refresh. A crash between the record
   and the links leaves a hold on the current link, which is harmless; the other
@@ -853,7 +858,8 @@ has no active transfers to roll back`:
   `installTransfers`, so a record that applies only to it does not hold the
   feature. `Features`, `CheckFeatures` and `RollbackFeature` use the same set,
   so `list`, `check` and `update` agree, and a rollback records only the active
-  transfers. For a component that several records
+  transfers (an existing rejection of an inactive associated transfer stays in
+  the record, see "Rollback"). For a component that several records
   reject, the highest rejected version wins (`version.Compare`). An unreadable
   applicable record fails closed for that feature only (nothing downloaded or
   linked, an error on every transfer, naming the feature whose record failed).

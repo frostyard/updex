@@ -590,9 +590,10 @@ func (c *Client) RollbackFeature(ctx context.Context, name string, opts Rollback
 		return fail(err)
 	}
 	// Only the transfers that are active with the feature enabled are rolled
-	// back, and the record names only those (ADR-0017): a transfer that waits
-	// for another feature has no link of ours to move, and a record of it
-	// would hold features that never act on it.
+	// back, and the plans name only those (ADR-0017): a transfer that waits
+	// for another feature has no link of ours to move. An existing rejection
+	// of such a transfer is kept in the record all the same (see
+	// preservedRejections), and a first rollback adds none for it.
 	split := splitFeatureTransfers(features, transfers, name, true)
 	if split.associated() == 0 {
 		return fail(fmt.Errorf("feature '%s' has no transfers to roll back", name))
@@ -616,6 +617,13 @@ func (c *Client) RollbackFeature(ctx context.Context, name string, opts Rollback
 	}
 	for _, p := range plans {
 		result.Transfers = append(result.Transfers, p.entry)
+	}
+	// An earlier rejection of a transfer that is inactive now stays in the
+	// record, without a link change (ADR-0017): when the transfer becomes
+	// active again, the update must still not link the rejected version.
+	preserved := preservedRejections(existing, split)
+	for _, component := range slices.Sorted(maps.Keys(preserved)) {
+		c.msg("Keeping the rejection of %s %s: the transfer is inactive, so its link is not changed", component, preserved[component])
 	}
 
 	if opts.DryRun {
@@ -651,8 +659,9 @@ func (c *Client) RollbackFeature(ctx context.Context, name string, opts Rollback
 		Format:   rollbackRecordFormat,
 		Feature:  name,
 		Created:  time.Now().UTC().Format(time.RFC3339),
-		Rejected: make(map[string]string, len(plans)),
+		Rejected: make(map[string]string, len(plans)+len(preserved)),
 	}
+	maps.Copy(rec.Rejected, preserved)
 	for _, p := range plans {
 		rec.Rejected[p.transfer.Component] = p.entry.RejectedVersion
 	}
@@ -729,6 +738,21 @@ func (c *Client) RollbackFeature(ctx context.Context, name string, opts Rollback
 		result.NextActionMessage = fmt.Sprintf("Feature '%s' rolled back. It takes effect at the next boot (or run 'systemd-sysext refresh', or use --now). %s", name, holdText)
 	}
 	return result, nil
+}
+
+// preservedRejections returns the entries of the existing record that a new
+// rollback keeps without moving a link: those of the feature's associated
+// transfers that are inactive now (ADR-0017). Every other entry that the new
+// plans do not cover is dropped, as before, so a transfer that was removed
+// from the definitions does not hold the feature for ever.
+func preservedRejections(existing *rollbackRecord, split featureTransferSplit) map[string]string {
+	kept := make(map[string]string)
+	for _, in := range split.inactive {
+		if v := existing.rejectedVersions()[in.transfer.Component]; v != "" {
+			kept[in.transfer.Component] = v
+		}
+	}
+	return kept
 }
 
 // inactiveSummary renders inactive transfers for a message:

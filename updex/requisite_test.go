@@ -3,6 +3,7 @@ package updex
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/frostyard/std/reporter"
+	"github.com/frostyard/updex/v2/config"
 	"github.com/frostyard/updex/v2/sysext"
 )
 
@@ -19,6 +21,15 @@ type reqRunner struct {
 	*sysext.DefaultRunner
 	unmerges  int
 	refreshes int
+	// failLink makes LinkVersionAt fail for this component.
+	failLink string
+}
+
+func (r *reqRunner) LinkVersionAt(t *config.Transfer, dir, version string) error {
+	if t.Component == r.failLink {
+		return errors.New("injected link failure")
+	}
+	return r.DefaultRunner.LinkVersionAt(t, dir, version)
 }
 
 func (r *reqRunner) Unmerge() error { r.unmerges++; return nil }
@@ -769,6 +780,173 @@ func TestRollbackFeature_NoActiveTransfersFails(t *testing.T) {
 	}
 	if _, statErr := os.Lstat(filepath.Join(f.rollbackDir, "x")); !os.IsNotExist(statErr) {
 		t.Errorf("no record may be written (err = %v)", statErr)
+	}
+}
+
+// readRecord reads the record of feature.
+func (f *reqFixture) readRecord(feature string) rollbackRecord {
+	f.t.Helper()
+	data, err := os.ReadFile(filepath.Join(f.rollbackDir, feature))
+	if err != nil {
+		f.t.Fatalf("read rollback record of %s: %v", feature, err)
+	}
+	var rec rollbackRecord
+	if err := json.Unmarshal(data, &rec); err != nil {
+		f.t.Fatalf("decode rollback record %q: %v", data, err)
+	}
+	return rec
+}
+
+func (f *reqFixture) setEnabled(name string, enabled bool) {
+	f.t.Helper()
+	var err error
+	if enabled {
+		_, err = f.client.EnableFeature(f.t.Context(), name, EnableFeatureOptions{})
+	} else {
+		_, err = f.client.DisableFeature(f.t.Context(), name, DisableFeatureOptions{})
+	}
+	if err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// preservedFixture: maild owns A, and T (Features=maild RequisiteFeatures=lodge);
+// both features are enabled. A and T are staged 0.5.0, 1.0.0 and 2.0.0 and
+// linked at 2.0.0.
+func preservedFixture(t *testing.T) *reqFixture {
+	t.Helper()
+	f := maildLodge(t, true, true)
+	f.transfer("A", []string{"maild"}, nil)
+	f.install("A", "2.0.0", "0.5.0", "1.0.0", "2.0.0")
+	f.install("T", "2.0.0", "0.5.0", "1.0.0", "2.0.0")
+	return f
+}
+
+// A repeated rollback keeps the rejection of a transfer that is inactive now.
+// Otherwise enabling its requisite feature again would let `update` link the
+// rejected version (ADR-0016, ADR-0017).
+func TestRollbackFeature_RepeatedRollbackKeepsRejectionOfInactiveTransfer(t *testing.T) {
+	f := preservedFixture(t)
+
+	// First rollback, both transfers active: 2.0.0 is rejected for both.
+	if _, err := f.client.RollbackFeature(t.Context(), "maild", RollbackFeatureOptions{}); err != nil {
+		t.Fatalf("first RollbackFeature: %v", err)
+	}
+	if rec := f.readRecord("maild"); len(rec.Rejected) != 2 || rec.Rejected["A"] != "2.0.0" || rec.Rejected["T"] != "2.0.0" {
+		t.Fatalf("first record rejects %v, want A and T 2.0.0", rec.Rejected)
+	}
+
+	// lodge is disabled without --now: T is inactive and its link stays.
+	f.setEnabled("lodge", false)
+	if f.linked("T") != "T_1.0.0.raw" {
+		t.Fatalf("T link = %q, want T_1.0.0.raw", f.linked("T"))
+	}
+
+	// Second rollback: only A is planned, and T's rejection stays.
+	result, err := f.client.RollbackFeature(t.Context(), "maild", RollbackFeatureOptions{})
+	if err != nil {
+		t.Fatalf("second RollbackFeature: %v", err)
+	}
+	if len(result.Transfers) != 1 || result.Transfers[0].Component != "A" {
+		t.Errorf("Transfers = %+v, want only A", result.Transfers)
+	}
+	if f.linked("A") != "A_0.5.0.raw" || f.linked("T") != "T_1.0.0.raw" {
+		t.Errorf("links: A %s, T %s; want A rolled back and T untouched", f.linked("A"), f.linked("T"))
+	}
+	rec := f.readRecord("maild")
+	if len(rec.Rejected) != 2 || rec.Rejected["A"] != "2.0.0" || rec.Rejected["T"] != "2.0.0" {
+		t.Fatalf("second record rejects %v, want A and T 2.0.0", rec.Rejected)
+	}
+
+	// A has a newer version; T's newest is still the rejected 2.0.0. lodge is
+	// enabled again without --now.
+	f.servers["A"].publish("3.0.0")
+	f.setEnabled("lodge", true)
+	results := f.update(UpdateFeaturesOptions{})
+	r := updateFeatureResult(t, results, "maild")
+	if len(r.Results) != 2 {
+		t.Fatalf("Results = %+v, want A and T", r.Results)
+	}
+	for _, res := range r.Results {
+		if !res.Held || res.Downloaded || res.Error != "" {
+			t.Errorf("%s = %+v, want held and not downloaded", res.Component, res)
+		}
+	}
+	if f.linked("T") != "T_1.0.0.raw" || f.linked("A") != "A_0.5.0.raw" {
+		t.Errorf("links: A %s, T %s; update must not move them", f.linked("A"), f.linked("T"))
+	}
+	if f.gets("T") != 0 || f.gets("A") != 0 {
+		t.Errorf("downloads: T %d, A %d; a held feature downloads nothing", f.gets("T"), f.gets("A"))
+	}
+}
+
+// A first rollback while T is inactive writes no entry for T, and an entry for
+// a component that is not an associated transfer is dropped.
+func TestRollbackFeature_FirstRollbackWithInactiveTransferRecordsOnlyActive(t *testing.T) {
+	f := maildLodge(t, true, false)
+	f.transfer("A", []string{"maild"}, nil)
+	f.install("A", "2.0.0", "1.0.0", "2.0.0")
+	f.install("T", "2.0.0", "1.0.0", "2.0.0")
+	// A stale entry for a component that no transfer of maild names.
+	f.writeRecord("maild", map[string]string{"gone": "9.0.0"})
+
+	if _, err := f.client.RollbackFeature(t.Context(), "maild", RollbackFeatureOptions{}); err != nil {
+		t.Fatalf("RollbackFeature: %v", err)
+	}
+	if rec := f.readRecord("maild"); len(rec.Rejected) != 1 || rec.Rejected["A"] != "2.0.0" {
+		t.Errorf("record rejects %v, want only A 2.0.0", rec.Rejected)
+	}
+}
+
+// A dry run says what a real run keeps, and writes nothing.
+func TestRollbackFeature_DryRunSaysWhichRejectionsStay(t *testing.T) {
+	f := maildLodge(t, true, false)
+	f.transfer("A", []string{"maild"}, nil)
+	f.install("A", "2.0.0", "1.0.0", "2.0.0")
+	f.install("T", "1.0.0", "1.0.0", "2.0.0")
+	f.writeRecord("maild", map[string]string{"T": "2.0.0"})
+	before, err := os.ReadFile(filepath.Join(f.rollbackDir, "maild"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := f.client.RollbackFeature(t.Context(), "maild", RollbackFeatureOptions{DryRun: true}); err != nil {
+		t.Fatalf("RollbackFeature: %v", err)
+	}
+	if !strings.Contains(f.out.String(), "Keeping the rejection of T 2.0.0") {
+		t.Errorf("no line about the kept rejection:\n%s", f.out.String())
+	}
+	after, err := os.ReadFile(filepath.Join(f.rollbackDir, "maild"))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Errorf("a dry run must not change the record (err = %v)", err)
+	}
+	if f.linked("A") != "A_2.0.0.raw" {
+		t.Error("a dry run must not move a link")
+	}
+}
+
+// A link failure puts the previous record back, kept entries included.
+func TestRollbackFeature_LinkFailureRestoresRecordWithKeptRejection(t *testing.T) {
+	f := maildLodge(t, true, false)
+	f.transfer("A", []string{"maild"}, nil)
+	f.install("A", "2.0.0", "1.0.0", "2.0.0")
+	f.install("T", "1.0.0", "1.0.0", "2.0.0")
+	f.writeRecord("maild", map[string]string{"T": "2.0.0"})
+	before, err := os.ReadFile(filepath.Join(f.rollbackDir, "maild"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.runner.failLink = "A"
+
+	if _, err := f.client.RollbackFeature(t.Context(), "maild", RollbackFeatureOptions{}); err == nil {
+		t.Fatal("RollbackFeature must fail when the link fails")
+	}
+	after, err := os.ReadFile(filepath.Join(f.rollbackDir, "maild"))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Errorf("the previous record must be restored (err = %v): %s", err, after)
+	}
+	if f.linked("A") != "A_2.0.0.raw" {
+		t.Errorf("A link = %q, want it unchanged", f.linked("A"))
 	}
 }
 

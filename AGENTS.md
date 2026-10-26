@@ -470,7 +470,10 @@ in the `config/` structs and parse functions. Always finish with
   bullet below): `installTransfers` (through its callers), `Features` and
   `CheckFeatures` all use it, so a record that applies only to a transfer the
   feature does not act on holds nothing, and `RollbackFeature` rolls back and
-  records only the active transfers. **A record of another feature
+  records only the active transfers. Exception: it keeps an existing entry of
+  an INACTIVE associated transfer (`preservedRejections`, no link change), so a
+  repeated rollback cannot erase a rejection that applies again when a requisite
+  feature is enabled; an entry for a non-associated component is dropped. **A record of another feature
   holds the whole feature**: only the feature that wrote a record advances the
   transfers its record names (`rollbackHolds.ownersOtherThan`,
   `holdFeatureOwnedBy`), because its transfers link all or none and it deletes

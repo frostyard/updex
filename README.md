@@ -224,7 +224,8 @@ feature that shares a transfer it acts on (an active transfer, see above):
 `features list` read the rollback records of all of them, whether or not a
 feature is enabled. A record that applies only to a transfer that is not active
 for a feature does not hold that feature, and a rollback records only the
-feature's active transfers. When several records reject the same
+feature's active transfers (it keeps an earlier rejection of a transfer that is
+inactive at that time). When several records reject the same
 transfer, the highest rejected version applies. If one of those records cannot
 be read, updates link nothing for every feature that shares the transfer and
 name the feature whose record failed.
