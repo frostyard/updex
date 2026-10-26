@@ -1,5 +1,7 @@
 package updex
 
+import "strings"
+
 // DaemonActionResult represents the result of enabling or disabling the
 // automatic update daemon.
 type DaemonActionResult struct {
@@ -153,10 +155,55 @@ type UpdateResult struct {
 	Linked bool `json:"linked,omitempty"`
 }
 
+// InactiveTransfer reports a transfer that a feature command did not act on
+// because it is not active (sysupdate.d(5)): a transfer is active when its
+// Features= is empty or at least one listed feature is enabled (OR), and every
+// feature in its RequisiteFeatures= is enabled (AND). Nothing is downloaded,
+// linked or vacuumed for an inactive transfer. See ADR-0017.
+type InactiveTransfer struct {
+	// Component is the transfer's component name.
+	Component string `json:"component"`
+	// MissingRequisites lists the RequisiteFeatures= entries that are not
+	// enabled (a feature that does not exist is not enabled). The transfer
+	// waits until all of them are enabled.
+	MissingRequisites []string `json:"missing_requisites,omitzero"`
+	// NeedsOneOf lists the Features= entries when none of them is enabled.
+	// The transfer waits until at least one of them is enabled.
+	NeedsOneOf []string `json:"needs_one_of,omitzero"`
+}
+
+// Reason renders why the transfer is inactive, for a message: "waits for
+// feature(s) lodge", "needs one of features: maild", or both joined by "and".
+func (i InactiveTransfer) Reason() string {
+	var parts []string
+	if len(i.MissingRequisites) > 0 {
+		parts = append(parts, "waits for feature(s) "+strings.Join(i.MissingRequisites, ", "))
+	}
+	if len(i.NeedsOneOf) > 0 {
+		parts = append(parts, "needs one of features: "+strings.Join(i.NeedsOneOf, ", "))
+	}
+	return strings.Join(parts, " and ")
+}
+
+// KeptTransfer reports a transfer that a disable with Now did not remove
+// because another enabled feature still activates it: it is associated with
+// the disabled feature through Features=, and stays active without it (ADR-0017).
+type KeptTransfer struct {
+	// Component is the transfer's component name.
+	Component string `json:"component"`
+	// ActiveThrough lists the other enabled features in the transfer's
+	// Features= that keep it active.
+	ActiveThrough []string `json:"active_through"`
+}
+
 // UpdateFeaturesResult represents the result of updating all enabled features.
 type UpdateFeaturesResult struct {
 	Feature string         `json:"feature"`
 	Results []UpdateResult `json:"results"`
+	// Inactive lists the transfers associated with the feature that were not
+	// downloaded or linked because they are not active: a requisite feature is
+	// disabled, or none of their Features= is enabled. See InactiveTransfer.
+	Inactive []InactiveTransfer `json:"inactive,omitzero"`
 	// PendingActivations lists the sysexts outside this run's own features
 	// that are linked to a version the host does not run, and that the
 	// systemd-sysext refresh at the end of the run activates as well (a
@@ -178,6 +225,9 @@ type UpdateFeaturesResult struct {
 type CheckFeaturesResult struct {
 	Feature string        `json:"feature"`
 	Results []CheckResult `json:"results"`
+	// Inactive lists the transfers associated with the feature that were not
+	// checked because they are not active. See InactiveTransfer.
+	Inactive []InactiveTransfer `json:"inactive,omitzero"`
 }
 
 // Feature origin kinds reported in FeatureInfo.Origin. Kind and name are
@@ -260,6 +310,17 @@ type FeatureActionResult struct {
 	// one that boots next (ADR-0016): "<component> of feature <name> needs
 	// image >= <value>". The feature's old links stay. It is not an error.
 	NotLinked []string `json:"not_linked,omitzero"`
+	// Inactive lists, for an enable with Now, the transfers associated with
+	// the feature that were not downloaded, or in a dry run would not be,
+	// because they are not active even with this feature enabled: a requisite
+	// feature is disabled, or none of their Features= is enabled. They are
+	// downloaded when the missing feature is enabled. See InactiveTransfer.
+	Inactive []InactiveTransfer `json:"inactive,omitzero"`
+	// Kept lists, for a disable with Now, the transfers that were not removed
+	// (in a dry run: would not be) because another enabled feature still
+	// activates them. Their links, images and merged state are untouched. See
+	// KeptTransfer.
+	Kept []KeptTransfer `json:"kept,omitzero"`
 	// RefreshError is set when every requested filesystem change succeeded
 	// but the final `systemd-sysext refresh` failed. Success is false and
 	// Error carries the same message; NextActionMessage says how to finish

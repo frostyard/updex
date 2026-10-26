@@ -199,7 +199,10 @@ func (r *rollbackRecord) rejectedVersions() map[string]string {
 // back, and a transfer can belong to several features (Features= and
 // RequisiteFeatures=), so a rollback of one feature must hold the transfer for
 // every other feature that shares it; otherwise updating through a sharer
-// would link the rejected version again.
+// would link the rejected version again. The set is the transfers a command
+// acts on (the active ones, ADR-0017), not every transfer a feature is
+// associated with: a transfer that is not active is never linked by that
+// command, so a record that applies only to it holds nothing.
 type rollbackHolds struct {
 	// rejected maps a transfer component to the highest version any
 	// applicable record rejects for it. Several features can reject
@@ -242,7 +245,10 @@ func (h rollbackHolds) ownersOtherThan(feature string) []string {
 // rollbackFeaturesOf returns the features that name a transfer, deduplicated
 // and sorted: Features= is OR logic and RequisiteFeatures= is AND logic, and
 // either way the transfer belongs to that feature, with or without the
-// feature being enabled.
+// feature being enabled. It is the association, not the activation: reading
+// a record of a feature that does not activate the transfer is harmless, and
+// reading fewer records could let a rejected version through, so a
+// rollbackHolds read stays fail closed here.
 func rollbackFeaturesOf(t *config.Transfer) []string {
 	names := make(map[string]struct{}, len(t.Transfer.Features)+len(t.Transfer.RequisiteFeatures))
 	for _, name := range t.Transfer.Features {
@@ -255,7 +261,8 @@ func rollbackFeaturesOf(t *config.Transfer) []string {
 }
 
 // collectRollbackHolds reads the rollback record of every feature that names
-// one of transfers, and combines them. Each record is read at most once per
+// one of transfers, and combines them. transfers is the set the caller acts on
+// (ADR-0017): the transfers that are active when the feature is enabled. Each record is read at most once per
 // call. A record that cannot be read is an error for every transfer it names,
 // which names the feature whose record failed.
 func (c *Client) collectRollbackHolds(transfers []*config.Transfer) rollbackHolds {
@@ -582,9 +589,17 @@ func (c *Client) RollbackFeature(ctx context.Context, name string, opts Rollback
 	if _, err := lookupFeature(features, name, "rolled back"); err != nil {
 		return fail(err)
 	}
-	featureTransfers := config.GetTransfersForFeature(transfers, name)
-	if len(featureTransfers) == 0 {
+	// Only the transfers that are active with the feature enabled are rolled
+	// back, and the record names only those (ADR-0017): a transfer that waits
+	// for another feature has no link of ours to move, and a record of it
+	// would hold features that never act on it.
+	split := splitFeatureTransfers(features, transfers, name, true)
+	if split.associated() == 0 {
 		return fail(fmt.Errorf("feature '%s' has no transfers to roll back", name))
+	}
+	featureTransfers := split.active
+	if len(featureTransfers) == 0 {
+		return fail(fmt.Errorf("feature '%s' has no active transfers to roll back: %s", name, inactiveSummary(split.inactiveReports())))
 	}
 
 	// What an earlier rollback rejected stays rejected. A record that cannot
@@ -714,6 +729,16 @@ func (c *Client) RollbackFeature(ctx context.Context, name string, opts Rollback
 		result.NextActionMessage = fmt.Sprintf("Feature '%s' rolled back. It takes effect at the next boot (or run 'systemd-sysext refresh', or use --now). %s", name, holdText)
 	}
 	return result, nil
+}
+
+// inactiveSummary renders inactive transfers for a message:
+// "T waits for feature(s) lodge, U needs one of features: maild".
+func inactiveSummary(inactive []InactiveTransfer) string {
+	parts := make([]string, len(inactive))
+	for i, in := range inactive {
+		parts[i] = in.Component + " " + in.Reason()
+	}
+	return strings.Join(parts, ", ")
 }
 
 // rejectedSummary renders the rejected versions of a rollback, one per

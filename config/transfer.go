@@ -582,7 +582,7 @@ func parsePatterns(patterns string) []string {
 }
 
 // FilterTransfersByFeatures filters transfers based on enabled features.
-// A transfer is included if:
+// A transfer is included if it is active (see CheckTransferActivation):
 // - It has no Features and no RequisiteFeatures (standalone, always included)
 // - It has Features and at least one of them is enabled (OR logic)
 // - It has RequisiteFeatures and all of them are enabled (AND logic)
@@ -593,49 +593,82 @@ func FilterTransfersByFeatures(transfers []*Transfer, features []*Feature) []*Tr
 		return transfers
 	}
 
+	enabled := EnabledFeatureSet(features)
 	var filtered []*Transfer
 	for _, t := range transfers {
-		if isTransferEnabledByFeatures(t, features) {
+		if CheckTransferActivation(t, enabled).Active {
 			filtered = append(filtered, t)
 		}
 	}
 	return filtered
 }
 
-// isTransferEnabledByFeatures checks if a transfer should be active based on features
-func isTransferEnabledByFeatures(t *Transfer, features []*Feature) bool {
-	// Standalone transfers (no feature requirements) are always enabled
-	if len(t.Transfer.Features) == 0 && len(t.Transfer.RequisiteFeatures) == 0 {
-		return true
+// EnabledFeatureSet returns the names of the features that are enabled and
+// not masked (see IsFeatureEnabled), as a set. A name that is not in features
+// is never in the set.
+func EnabledFeatureSet(features []*Feature) map[string]bool {
+	enabled := make(map[string]bool, len(features))
+	for _, f := range features {
+		if f.Enabled && !f.Masked {
+			enabled[f.Name] = true
+		}
 	}
+	return enabled
+}
 
-	// Check Features (OR logic): at least one must be enabled
-	if len(t.Transfer.Features) > 0 {
-		found := false
-		for _, featureName := range t.Transfer.Features {
-			if IsFeatureEnabled(features, featureName) {
-				found = true
+// TransferActivation says whether a transfer is active for a set of enabled
+// features and, when it is not, why (sysupdate.d(5), "Features=" and
+// "RequisiteFeatures=").
+type TransferActivation struct {
+	// Active is true when the transfer belongs to no feature, or when it
+	// satisfies both conditions below.
+	Active bool
+
+	// MissingRequisites lists, in file order, the RequisiteFeatures= entries
+	// that are not enabled. A transfer is active only when this is empty.
+	MissingRequisites []string
+
+	// NeedsOneOf lists the Features= entries when none of them is enabled.
+	// It is empty when Features= is empty or when at least one entry is
+	// enabled.
+	NeedsOneOf []string
+}
+
+// CheckTransferActivation applies the sysupdate.d(5) activation rule to a
+// transfer: it is active when Features= is empty or at least one listed
+// feature is enabled (OR), and every feature in RequisiteFeatures= is
+// enabled (AND). A transfer with neither list belongs to no feature and is
+// always active. enabled is the set of enabled feature names (see
+// EnabledFeatureSet); a name that is not in it, a feature that does not
+// exist included, is not enabled.
+func CheckTransferActivation(t *Transfer, enabled map[string]bool) TransferActivation {
+	var a TransferActivation
+	if feats := t.Transfer.Features; len(feats) > 0 {
+		hasEnabled := false
+		for _, name := range feats {
+			if enabled[name] {
+				hasEnabled = true
 				break
 			}
 		}
-		if !found {
-			return false
+		if !hasEnabled {
+			a.NeedsOneOf = slices.Clone(feats)
 		}
 	}
-
-	// Check RequisiteFeatures (AND logic): all must be enabled
-	if len(t.Transfer.RequisiteFeatures) > 0 {
-		for _, featureName := range t.Transfer.RequisiteFeatures {
-			if !IsFeatureEnabled(features, featureName) {
-				return false
-			}
+	for _, name := range t.Transfer.RequisiteFeatures {
+		if !enabled[name] {
+			a.MissingRequisites = append(a.MissingRequisites, name)
 		}
 	}
-
-	return true
+	a.Active = len(a.NeedsOneOf) == 0 && len(a.MissingRequisites) == 0
+	return a
 }
 
-// GetTransfersForFeature returns all transfers that belong to a specific feature
+// GetTransfersForFeature returns the transfers that are associated with a
+// feature: the feature appears in their Features= or in their
+// RequisiteFeatures=. It says nothing about whether a transfer is active, and
+// must not decide what is downloaded, linked or removed: use
+// CheckTransferActivation for that.
 func GetTransfersForFeature(transfers []*Transfer, featureName string) []*Transfer {
 	var result []*Transfer
 	for _, t := range transfers {

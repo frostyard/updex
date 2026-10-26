@@ -40,6 +40,9 @@ updex/                          Public SDK (Client + methods)
                                 verify), then linkStaged() links all or none
                                 (snapshot + restore), then the vacuum
                                 Reuses parsed patterns from getAvailableVersions
+  activation.go                 splitFeatureTransfers() — the feature's associated
+                                transfers split into active and inactive by the
+                                sysupdate.d(5) rule (ADR-0017)
   rollback.go                   RollbackFeature(), the rollback record
                                 (/var/lib/updex/rollback/<feature>, RuntimePaths.RollbackDir)
   lock.go                       ErrBusy, acquireLock() — the exclusive,
@@ -110,7 +113,7 @@ CLI (cmd/daemon.go) ─┘                version, sysext, systemd, imagecompat
   `RunUnitPath` and `PackagedUnitPath` empty so a test never sees the host's
   runtime or packaged units
 - `UpdateFeatures` and `CheckFeatures` cache fetched manifests by `Transfer.Source.Path` only. Future changes that mix verification policy or auth by transfer for the same source URL need to revisit that cache key.
-- The feature SDK methods (`UpdateFeatures`, `CheckFeatures`, enable/disable with `Now`) use `config.GetTransfersForFeature`, which includes transfers where the feature appears in either `Features` or `RequisiteFeatures`. The more general `config.FilterTransfersByFeatures` implements full active-transfer logic, including standalone transfers and AND/OR feature requirements, but it is not the main path for current feature update/check workflows.
+- The feature SDK methods (`Features`, `UpdateFeatures`, `CheckFeatures`, `RollbackFeature`, enable/disable with `Now`) use `config.GetTransfersForFeature` only to find the transfers *associated* with a feature (it is in `Features` or in `RequisiteFeatures`), and then split them with `splitFeatureTransfers` (`updex/activation.go`) by the sysupdate.d(5) activation rule, `config.CheckTransferActivation` ([ADR-0017](../adr/0017-apply-the-feature-activation-rule-in-every-feature-path.md)): a transfer is *active* when `Features` is empty or one listed feature is enabled (OR) and every `RequisiteFeatures` entry is enabled (AND). The enabled set is the loaded domain's (`config.EnabledFeatureSet`) with the feature being processed forced to the state the command gives it: enabled for update, check, enable, rollback and the status read; disabled for disable. Only active transfers are downloaded, linked, vacuumed, rolled back and counted for rollback holds; the others are reported as `InactiveTransfer` (`inactive` in the JSON of update, check and enable). `DisableFeature{Now}` is the mirror: with the feature forced disabled, the transfers that stay active (another enabled feature in their `Features`) are *kept* (`KeptTransfer`) and only the others are removed; with nothing left to remove it runs no unmerge, no refresh and no refresh-gate preflight.
 - Error messages: lowercase, no trailing punctuation, wrapped with `fmt.Errorf("context: %w", err)`
 
 ### Testing patterns
@@ -811,7 +814,12 @@ wrappers that do not know the link or the hierarchies.
 
 `updex features rollback <name> [--to VERSION] [--now] [--clear]` is
 `Client.RollbackFeature` (`updex/rollback.go`). It plans first and changes
-nothing when any transfer of the feature blocks it:
+nothing when any transfer of the feature blocks it. "The transfers of the
+feature" are its *active* transfers with the feature forced enabled
+([ADR-0017](../adr/0017-apply-the-feature-activation-rule-in-every-feature-path.md)):
+a transfer that waits for another feature is neither rolled back nor named in
+the record, and a feature with no active transfer fails with `feature '<name>'
+has no active transfers to roll back`:
 
 - **Target.** Per transfer, the newest staged version older than the linked one
   (`sysext.StagedVersionsAt`, `LinkedVersionAt`, `version.Compare`), or `--to`
@@ -837,9 +845,15 @@ nothing when any transfer of the feature blocks it:
   failure restores the links (Phase 1 snapshot/restore) and the previous record.
 - **Update path.** A transfer can belong to several features (`Features=` OR,
   `RequisiteFeatures=` AND), so `installTransfers` reads not only the record of
-  the feature it processes but every record that applies to its transfers
-  (`collectRollbackHolds`): the record of each feature that names one of them,
-  enabled or not, each read once per call. For a component that several records
+  the feature it processes but every record that applies to the transfers it
+  acts on (`collectRollbackHolds`): the record of each feature that names one of
+  them, enabled or not, each read once per call. "The transfers it acts on" are
+  the feature's *active* transfers ([ADR-0017](../adr/0017-apply-the-feature-activation-rule-in-every-feature-path.md)):
+  a transfer that waits for another feature is never passed to
+  `installTransfers`, so a record that applies only to it does not hold the
+  feature. `Features`, `CheckFeatures` and `RollbackFeature` use the same set,
+  so `list`, `check` and `update` agree, and a rollback records only the active
+  transfers. For a component that several records
   reject, the highest rejected version wins (`version.Compare`). An unreadable
   applicable record fails closed for that feature only (nothing downloaded or
   linked, an error on every transfer, naming the feature whose record failed).

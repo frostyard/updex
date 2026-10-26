@@ -76,6 +76,13 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
   revisions apply at the next boot; vacuum keeps the linked and merged
   images; a revision with `UPDEX_MIN_IMAGE_VERSION` waits for a new enough
   image; `features rollback` records a rejected version
+- [ADR-0017](adr/0017-apply-the-feature-activation-rule-in-every-feature-path.md) —
+  every feature command applies the `sysupdate.d(5)` activation rule
+  (`Features=` OR, `RequisiteFeatures=` AND): only active transfers are
+  downloaded, linked, vacuumed and rolled back, inactive ones are reported,
+  `disable --now` keeps a transfer that another enabled feature still
+  activates, and rollback holds are computed over the transfers a command
+  acts on
 
 ### Design
 
