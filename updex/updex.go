@@ -318,6 +318,13 @@ type ClientConfig struct {
 	// fetches. If nil, a default client with a 10-minute timeout is created.
 	// Providing a shared client enables HTTP keep-alive connection reuse across
 	// multiple downloads from the same host.
+	//
+	// updex uses a shallow copy of the given client (or of the default one)
+	// whose Transport wraps the client's own transport (or
+	// http.DefaultTransport when it has none). The wrapper only records, for an
+	// UpdateFeatures run, whether a source answered (ADR-0018); Timeout,
+	// CheckRedirect and Jar are kept as given. The given client itself is not
+	// changed.
 	HTTPClient *http.Client
 
 	// Paths holds the filesystem paths this client consults at runtime.
@@ -348,6 +355,16 @@ func NewClient(cfg ClientConfig) *Client {
 	if hc == nil {
 		hc = httpclient.New(10 * time.Minute)
 	}
+	// Copy the client and wrap its transport, so a source that answered can be
+	// told from one that could not be reached (ADR-0018). The copy keeps
+	// Timeout, CheckRedirect and Jar, and the caller's client stays unchanged.
+	wrapped := *hc
+	base := wrapped.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	wrapped.Transport = sourceTrackerTransport{base: base}
+	hc = &wrapped
 	er := cfg.ErofsDumpRunner
 	if er == nil {
 		er = imagecompat.DefaultErofsDumpRunner{}

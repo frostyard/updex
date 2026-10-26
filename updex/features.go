@@ -698,6 +698,10 @@ func (c *Client) disableFeature(ctx context.Context, name string, opts DisableFe
 // updex operation holds it, UpdateFeatures changes nothing and returns an
 // error that wraps ErrBusy.
 func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions) ([]UpdateFeaturesResult, error) {
+	// Record what this run's HTTP requests saw, so a run that every source
+	// could not reach is told apart from a run that failed (ADR-0018).
+	ctx, tracker := withSourceTracker(ctx)
+
 	release, err := c.lockMutation(opts.DryRun)
 	if err != nil {
 		return nil, err
@@ -717,8 +721,12 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 	var ownTransfers []*config.Transfer // transfers of the enabled features this run updates
 	// transferErrs carries each failed transfer's error into the returned
 	// error, so a caller that only logs the error still sees why (a link
-	// restore failure in particular, see linkStaged).
+	// restore failure in particular, see linkStaged). hardErrs holds the same
+	// errors without the collateral errNotLinked of a feature whose other
+	// transfer failed: only those decide whether every failure is an
+	// unreachable source (ADR-0018).
 	var transferErrs []error
+	var hardErrs []error
 
 	// Cache manifests by source URL to avoid redundant HTTP requests
 	// when multiple transfers share the same source. getAvailableVersions
@@ -788,7 +796,11 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 				c.warn("%s", result.Error)
 				featureResult.Results = append(featureResult.Results, result)
 				hasErrors = true
-				transferErrs = append(transferErrs, fmt.Errorf("%s/%s: %w", f.Name, transfer.Component, in.err))
+				transferErr := fmt.Errorf("%s/%s: %w", f.Name, transfer.Component, in.err)
+				transferErrs = append(transferErrs, transferErr)
+				if !in.notLinked {
+					hardErrs = append(hardErrs, transferErr)
+				}
 				continue
 			}
 
@@ -925,7 +937,14 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 	}
 
 	if hasErrors {
-		errs := []error{fmt.Errorf("one or more components failed to update")}
+		head := fmt.Errorf("one or more components failed to update")
+		if everySourceUnreachable(ctx, tracker, hardErrs, refreshErr) {
+			// No source could be reached: the timer skips this run instead of
+			// failing the unit (ADR-0018). The transfer errors stay in the
+			// chain, and the results are unchanged.
+			head = fmt.Errorf("one or more components failed to update: %w", ErrSourcesUnreachable)
+		}
+		errs := []error{head}
 		errs = append(errs, transferErrs...)
 		errs = append(errs, refreshErr)
 		return allResults, errors.Join(errs...)

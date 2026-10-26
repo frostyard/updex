@@ -591,6 +591,22 @@ in the `config/` structs and parse functions. Always finish with
   only when `runningUnderSystemd()` (non-empty `INVOCATION_ID`; the packaged
   timer runs exactly `updex features update --no-refresh`); every other
   command, and an interactive shell, treats `ErrBusy` as an error.
+- **Unreachable sources (ADR-0018).** `UpdateFeatures` wraps
+  `updex.ErrSourcesUnreachable` (`no update source is reachable`) only when
+  the run failed because no source answered: at least one transfer error,
+  every transfer error except the collateral `errNotLinked`
+  (`isUnreachable`, `updex/unreachable.go`: `*net.DNSError`; a `*net.OpError`
+  with `Op == "dial"`; `ECONNREFUSED`/`EHOSTUNREACH`/`ENETUNREACH`/`ENETDOWN`;
+  a `net.Error` with `Timeout()`), no HTTP response of any status, a live
+  `ctx`, and no refresh error. Rule 2 comes from a per-run `sourceTracker` in
+  the context: `NewClient` uses a shallow copy of its HTTP client whose
+  transport (`sourceTrackerTransport`) wraps the given one and records
+  attempt and response. TLS/x509 errors, error statuses, verification and
+  hash failures stay failures. The CLI prints the normal output, then
+  `updex: no update source is reachable; skipping this run` on stderr and
+  exits 0, only under systemd; an interactive shell and `--json` behaviour
+  are unchanged, and so are the units. The negative consequence is recorded
+  in the ADR: a source name that is wrong for ever also looks offline.
 
 ### Using the SDK programmatically
 
@@ -698,6 +714,10 @@ explicit development/test escape hatch; it does not widen token attachment,
 which remains restricted to the trusted `https://api.github.com` origin. The
 SDK's default HTTP client refuses HTTPS-to-HTTP redirects, while a
 caller-supplied `ClientConfig.HTTPClient` keeps its own redirect policy.
+`NewClient` copies the client and wraps its transport to track whether a
+source answered (ADR-0018); it keeps `Timeout`, `CheckRedirect` and `Jar`
+and does not change the caller's client. Code that replaces
+`client.httpClient.Transport` after construction bypasses the tracking.
 
 Key design points:
 
