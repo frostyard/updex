@@ -1103,8 +1103,9 @@ which supersedes [ADR-0007](../adr/0007-daemon-stages-never-activates.md).
   ([ADR-0018](../adr/0018-skip-an-update-run-when-every-source-is-unreachable.md)):
   `UpdateFeatures` wraps `updex.ErrSourcesUnreachable` only when every failed
   transfer failed with a network error and no HTTP request of the run got a
-  response, and the CLI, under systemd only, prints the normal output, logs
-  one line and exits 0, so the unit does not stay `failed`. A partial failure,
+  response (a dial error only for a network cause, never a local `EMFILE` or
+  `EACCES`), and the CLI, under systemd only, prints the normal output and
+  warnings, adds one skip line and exits 0, so the unit does not stay `failed`. A partial failure,
   a source that answered with an error status, a verification failure, a
   failed refresh and a cancelled run still exit non-zero. Timer:
   `OnCalendar=*-*-* 00/6:00:00`, `RandomizedDelaySec=3600s`, `Persistent=true`,

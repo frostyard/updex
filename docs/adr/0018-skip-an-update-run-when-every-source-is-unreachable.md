@@ -32,9 +32,13 @@ of these hold:
 1. at least one transfer failed;
 2. no HTTP request of the run got an HTTP response, of any status;
 3. every transfer error except the collateral `not linked: another transfer
-   of feature <name> failed` is a network failure: a DNS error, a failed dial
-   (`syscall.ECONNREFUSED`, `EHOSTUNREACH`, `ENETUNREACH`, `ENETDOWN`), or a
-   timeout that expired before a response arrived;
+   of feature <name> failed` is a network failure: a DNS error, a connection
+   refused, an unreachable host or network, a network that is down
+   (`syscall.ECONNREFUSED`, `EHOSTUNREACH`, `ENETUNREACH`, `ENETDOWN`,
+   `ETIMEDOUT`), or a timeout that expired before a response arrived. A dial
+   error counts only through one of these causes: a dial that fails for a
+   local reason (`EMFILE`, `EACCES`, `ENOBUFS`) is a host failure and still
+   fails the run;
 4. the run's own context is still live (a cancelled or stopped run never
    skips);
 5. no refresh failed.
@@ -46,14 +50,21 @@ results slice is unchanged.
 
 The SDK learns rule 2 from a per-operation tracker carried in the run's
 context. `NewClient` uses a shallow copy of its HTTP client whose transport
-wraps the given transport and records whether a response came back. A request
+wraps the given transport and records whether a response came back. The
+wrapper forwards `CloseIdleConnections`, and `CancelRequest` to a base that is
+not an `*http.Transport`, so a client timeout still cancels a legacy
+transport. A request
 outside `UpdateFeatures` carries no tracker and is unaffected.
 
 Only the CLI applies the skip, and only under systemd (the environment
 variable `INVOCATION_ID` is set, as for the timer's service).
 `updex features update` prints its normal output first (the text table, or
-the results array with `--json`), writes exactly one line to stderr,
-`updex: no update source is reachable; skipping this run`, and exits 0. In an
+the results array with `--json`) and the run's usual progress and warning
+lines, as every run does, then adds one line to stderr,
+`updex: no update source is reachable; skipping this run`, and exits 0. The
+skip adds exactly one line; it does not hide the warnings, and it does not
+buffer them, because a normal run must keep logging live (a run can take up
+to 2 hours, and the journal must show its progress as it happens). In an
 interactive shell the command still returns the error and exits non-zero.
 `--json` output is unchanged, so consumers see the same document. The systemd
 units do not change.

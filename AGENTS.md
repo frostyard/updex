@@ -595,16 +595,19 @@ in the `config/` structs and parse functions. Always finish with
   `updex.ErrSourcesUnreachable` (`no update source is reachable`) only when
   the run failed because no source answered: at least one transfer error,
   every transfer error except the collateral `errNotLinked`
-  (`isUnreachable`, `updex/unreachable.go`: `*net.DNSError`; a `*net.OpError`
-  with `Op == "dial"`; `ECONNREFUSED`/`EHOSTUNREACH`/`ENETUNREACH`/`ENETDOWN`;
-  a `net.Error` with `Timeout()`), no HTTP response of any status, a live
+  (`isUnreachable`, `updex/unreachable.go`: `*net.DNSError`;
+  `ECONNREFUSED`/`EHOSTUNREACH`/`ENETUNREACH`/`ENETDOWN`/`ETIMEDOUT`; a
+  `net.Error` with `Timeout()`; a dial error counts only through these causes,
+  never for a local `EMFILE`/`EACCES`), no HTTP response of any status, a live
   `ctx`, and no refresh error. Rule 2 comes from a per-run `sourceTracker` in
   the context: `NewClient` uses a shallow copy of its HTTP client whose
   transport (`sourceTrackerTransport`) wraps the given one and records
   attempt and response. TLS/x509 errors, error statuses, verification and
-  hash failures stay failures. The CLI prints the normal output, then
-  `updex: no update source is reachable; skipping this run` on stderr and
-  exits 0, only under systemd; an interactive shell and `--json` behaviour
+  hash failures stay failures. The wrapper forwards `CloseIdleConnections`
+  and, for a base that is not an `*http.Transport`, `CancelRequest`. The CLI
+  prints the normal output and the usual progress and warning lines, then
+  adds `updex: no update source is reachable; skipping this run` on stderr
+  and exits 0, only under systemd; an interactive shell and `--json` behaviour
   are unchanged, and so are the units. The negative consequence is recorded
   in the ADR: a source name that is wrong for ever also looks offline.
 

@@ -9,11 +9,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/frostyard/updex/v2/internal/testutil"
 	"github.com/frostyard/updex/v2/sysext"
@@ -57,6 +59,11 @@ func TestIsUnreachable(t *testing.T) {
 		{name: "ENETUNREACH", err: dialError("192.0.2.1:443", syscall.ENETUNREACH), want: true},
 		{name: "EHOSTUNREACH", err: dialError("192.0.2.1:443", syscall.EHOSTUNREACH), want: true},
 		{name: "ENETDOWN", err: dialError("192.0.2.1:443", syscall.ENETDOWN), want: true},
+		{name: "ETIMEDOUT", err: dialError("192.0.2.1:443", &os.SyscallError{Syscall: "connect", Err: syscall.ETIMEDOUT}), want: true},
+		{name: "real dial shape with ECONNREFUSED", err: dialError("127.0.0.1:1", &os.SyscallError{Syscall: "connect", Err: syscall.ECONNREFUSED}), want: true},
+		{name: "dial OpError with EMFILE (local)", err: dialError("192.0.2.1:443", &os.SyscallError{Syscall: "socket", Err: syscall.EMFILE}), want: false},
+		{name: "dial OpError with EACCES (local)", err: dialError("192.0.2.1:443", &os.SyscallError{Syscall: "connect", Err: syscall.EACCES}), want: false},
+		{name: "dial OpError with ENOBUFS (local)", err: dialError("192.0.2.1:443", syscall.ENOBUFS), want: false},
 		{name: "timeout net.Error", err: timeoutNetError{}, want: true},
 		{name: "url.Error wrapping a dial error", err: urlWrappedDial, want: true},
 		{name: "several wraps around a DNS error", err: deeplyWrappedDNS, want: true},
@@ -216,6 +223,81 @@ func updateFixture(t *testing.T, sources map[string]string, configure func(*Clie
 		configure(&cfg)
 	}
 	return NewClient(cfg)
+}
+
+// localDialFailureTransport fails every request with a dial error whose cause
+// is local (too many open files), not the network.
+type localDialFailureTransport struct{}
+
+func (localDialFailureTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, dialError("192.0.2.1:80", &os.SyscallError{Syscall: "socket", Err: syscall.EMFILE})
+}
+
+// A dial that fails for a local reason, on every source, is a host failure,
+// not an offline host: the run must not be a skip.
+func TestUpdateFeatures_LocalDialFailureIsNotSkipped(t *testing.T) {
+	client := updateFixture(t, map[string]string{
+		"testext":  unreachableSourceURL("a"),
+		"othertex": unreachableSourceURL("b"),
+	}, func(cfg *ClientConfig) {
+		cfg.HTTPClient = &http.Client{Transport: localDialFailureTransport{}}
+	})
+
+	_, err := client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true})
+	if err == nil {
+		t.Fatal("UpdateFeatures() error = nil, want the dial failure")
+	}
+	if errors.Is(err, ErrSourcesUnreachable) {
+		t.Errorf("UpdateFeatures() error = %v, want no ErrSourcesUnreachable for EMFILE", err)
+	}
+}
+
+// cancelOnlyTransport blocks every request until CancelRequest is called, as
+// an old transport that ignores the request context does.
+type cancelOnlyTransport struct {
+	cancelled chan struct{}
+}
+
+func (t cancelOnlyTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	<-t.cancelled
+	return nil, errors.New("request cancelled")
+}
+
+func (t cancelOnlyTransport) CancelRequest(*http.Request) {
+	close(t.cancelled)
+}
+
+// http.Client cancels a transport that is not an *http.Transport through
+// CancelRequest when its Timeout expires. The wrapper forwards it, so such a
+// transport still ends at the client timeout.
+func TestSourceTrackerTransportForwardsCancelRequest(t *testing.T) {
+	base := cancelOnlyTransport{cancelled: make(chan struct{})}
+	client := NewClient(ClientConfig{HTTPClient: &http.Client{Transport: base, Timeout: 50 * time.Millisecond}}).httpClient
+
+	done := make(chan error, 1)
+	go func() {
+		resp, err := client.Get("http://unreachable.invalid/SHA256SUMS")
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("Get() error = nil, want the timeout")
+		}
+	case <-time.After(5 * time.Second):
+		close(base.cancelled)
+		t.Fatal("the client timeout did not reach the wrapped transport's CancelRequest")
+	}
+}
+
+// An *http.Transport is cancelled through the request context, so the wrapper
+// does not call its deprecated CancelRequest.
+func TestSourceTrackerTransportCancelRequestSkipsHTTPTransport(t *testing.T) {
+	sourceTrackerTransport{base: &http.Transport{}}.CancelRequest(httptest.NewRequest(http.MethodGet, "http://example.invalid/", nil))
+	sourceTrackerTransport{base: roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, nil })}.CancelRequest(httptest.NewRequest(http.MethodGet, "http://example.invalid/", nil))
 }
 
 // featureForComponent returns the feature name updateFixture gave a component.

@@ -211,9 +211,11 @@ there is at least one transfer error; every transfer error except the
 collateral `not linked: another transfer of feature <name> failed` is a
 network failure; no HTTP request of the run got a response of any status;
 the run's own context is not cancelled; and no refresh failed. A network
-failure is a `*net.DNSError`, a `*net.OpError` with `Op == "dial"`,
-`syscall.ECONNREFUSED`/`EHOSTUNREACH`/`ENETUNREACH`/`ENETDOWN`, or a
-`net.Error` whose `Timeout()` is true. TLS and x509 errors, HTTP error
+failure is a `*net.DNSError`,
+`syscall.ECONNREFUSED`/`EHOSTUNREACH`/`ENETUNREACH`/`ENETDOWN`/`ETIMEDOUT`
+anywhere in the chain, or a `net.Error` whose `Timeout()` is true. A dial
+error counts only through one of these causes: a dial that fails for a local
+reason (`EMFILE`, `EACCES`, `ENOBUFS`) is not unreachable. TLS and x509 errors, HTTP error
 statuses, verification failures, hash mismatches, disk errors and
 "no versions available" are not unreachable. When the rule holds, the first
 joined error is `one or more components failed to update: no update source is
@@ -222,10 +224,13 @@ slice is unchanged. Every other failure keeps the shape above.
 
 The rule reads a per-operation tracker that `UpdateFeatures` puts in its
 context: the transport wrapper of the client's HTTP copy records each attempt
-and each response. A request outside `UpdateFeatures` carries no tracker. The
-CLI maps the sentinel to exit status 0 with one stderr line only for
-`updex features update` under systemd, after printing the normal output;
-an interactive run returns the error, and `--json` output is unchanged.
+and each response. A request outside `UpdateFeatures` carries no tracker. The wrapper forwards
+`CloseIdleConnections`, and `CancelRequest` to a base transport that is not an
+`*http.Transport`, so a client timeout still reaches a legacy transport. The
+CLI maps the sentinel to exit status 0 only for `updex features update` under
+systemd: after the normal output and the run's usual progress and warning
+lines, it adds the one skip line; an interactive run returns the error, and
+`--json` output is unchanged.
 
 ## Methods
 

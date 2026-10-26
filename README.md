@@ -345,8 +345,8 @@ deletes nothing and warns.
 **An offline host is a skip, not a failure:** when no update source can be
 reached at all (a DNS failure, a refused or impossible connection, no HTTP
 response of any status), `updex features update` run by systemd prints its
-normal output, logs `updex: no update source is reachable; skipping this run`
-and exits 0, so `updex-update.service` does not stay `failed` until the next
+normal output and warnings, adds the line
+`updex: no update source is reachable; skipping this run` and exits 0, so `updex-update.service` does not stay `failed` until the next
 successful run ([ADR-0018](docs/adr/0018-skip-an-update-run-when-every-source-is-unreachable.md)).
 A partial failure, a source that answered with an error status, a
 verification failure and a failed refresh still exit non-zero, and a run in
@@ -398,8 +398,8 @@ the identical units that older updex releases wrote).
   without a battery always runs). updex does not detect metered networks.
   A host that is offline still reaches `network-online.target` on many
   setups; its downloads then fail, but a run that no source answered is a
-  skip: it logs one line and exits 0 (`updex-update.service` stays
-  successful). A partial failure, or a source that answered with an error,
+  skip: after its usual warnings it logs one skip line and exits 0
+  (`updex-update.service` stays successful). A partial failure, or a source that answered with an error,
   still fails the unit ([ADR-0018](docs/adr/0018-skip-an-update-run-when-every-source-is-unreachable.md)).
 - **Time limit:** the service has `TimeoutStartSec=2h`. systemd stops a stuck
   run after 2 hours, which releases the operation lock `/run/updex/lock`.

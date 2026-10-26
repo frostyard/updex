@@ -53,12 +53,17 @@ func closedLoopbackURL(t *testing.T) string {
 }
 
 // Under systemd, a run that no source could reach prints the normal table,
-// logs exactly one line and exits 0 (ADR-0018).
+// keeps the run's usual warnings, adds exactly one skip line and exits 0
+// (ADR-0018). The reporter is not silenced here: the test reads both stderr
+// routes, the reporter's (clix.Stderr) and the command's own.
 func TestRunFeaturesUpdate_AllSourcesUnreachableUnderSystemdSkips(t *testing.T) {
 	configDir, targetDir := t.TempDir(), t.TempDir()
 	writeFeatureFile(t, configDir, "testfeature", true)
 	writeFeatureTransferFile(t, configDir, targetDir, "testext", "testfeature", closedLoopbackURL(t))
 	configureUpdateRun(t, configDir, false)
+	clix.Silent = false
+	reporterOut := &strings.Builder{}
+	clix.Stderr = reporterOut
 	t.Setenv("INVOCATION_ID", "0123456789abcdef0123456789abcdef")
 
 	stdout, stderr, err := runUpdateCapturing(t)
@@ -69,12 +74,21 @@ func TestRunFeaturesUpdate_AllSourcesUnreachableUnderSystemdSkips(t *testing.T) 
 		t.Errorf("stdout = %q, want the normal update table", stdout)
 	}
 	if strings.Count(stderr, "\n") != 1 {
-		t.Errorf("stderr = %q, want exactly one line", stderr)
+		t.Errorf("command stderr = %q, want exactly one line", stderr)
 	}
 	for _, want := range []string{"skipping this run", "no update source is reachable"} {
 		if !strings.Contains(stderr, want) {
-			t.Errorf("stderr = %q, want it to contain %q", stderr, want)
+			t.Errorf("command stderr = %q, want it to contain %q", stderr, want)
 		}
+	}
+	combined := reporterOut.String() + stderr
+	if got := strings.Count(combined, "skipping this run"); got != 1 {
+		t.Errorf("all stderr = %q, want the skip line exactly once, got %d", combined, got)
+	}
+	// The run's own warnings are not hidden: the journal still shows why the
+	// source failed.
+	if !strings.Contains(reporterOut.String(), "testext") {
+		t.Errorf("reporter stderr = %q, want the run's warning for testext", reporterOut.String())
 	}
 }
 

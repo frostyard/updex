@@ -75,12 +75,27 @@ func (t sourceTrackerTransport) CloseIdleConnections() {
 	}
 }
 
+// CancelRequest forwards the legacy cancellation that http.Client still uses
+// when its Timeout expires and the transport is not an *http.Transport. An
+// *http.Transport is cancelled through the request context, as it was before
+// the wrapper, so the call is not forwarded to it.
+func (t sourceTrackerTransport) CancelRequest(req *http.Request) {
+	if _, ok := t.base.(*http.Transport); ok {
+		return
+	}
+	if canceler, ok := t.base.(interface{ CancelRequest(*http.Request) }); ok {
+		canceler.CancelRequest(req)
+	}
+}
+
 // isUnreachable reports whether err means that a source could not be reached
-// at all: a DNS failure, a failed dial (no route, connection refused, dial
-// timeout), an unreachable or down network, or a timeout that expired before
-// a response arrived. TLS and x509 errors, HTTP status errors, verification
-// failures, disk errors and a cancelled context are not unreachable: the
-// source answered, or the run, not the network, ended the request.
+// at all: a DNS failure, a connection refused, an unreachable host or
+// network, a network that is down, or a timeout that expired before a
+// response arrived. A dial error counts only through one of these causes, so
+// a local failure such as EMFILE or EACCES is not unreachable. TLS and x509
+// errors, HTTP status errors, verification failures, disk errors and a
+// cancelled context are not unreachable either: the source answered, or the
+// host or the run, not the network, ended the request.
 func isUnreachable(err error) bool {
 	if err == nil {
 		return false
@@ -93,15 +108,14 @@ func isUnreachable(err error) bool {
 	if errors.As(err, &dnsErr) {
 		return true
 	}
-	var opErr *net.OpError
-	if errors.As(err, &opErr) && opErr.Op == "dial" {
-		return true
-	}
+	// A failed dial counts only by its cause: a dial can also fail for a
+	// local reason (EMFILE, EACCES, ENOBUFS), and that must fail the run.
 	switch {
 	case errors.Is(err, syscall.ECONNREFUSED),
 		errors.Is(err, syscall.EHOSTUNREACH),
 		errors.Is(err, syscall.ENETUNREACH),
-		errors.Is(err, syscall.ENETDOWN):
+		errors.Is(err, syscall.ENETDOWN),
+		errors.Is(err, syscall.ETIMEDOUT):
 		return true
 	}
 	var netErr net.Error
