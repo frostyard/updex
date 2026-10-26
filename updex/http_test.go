@@ -83,9 +83,38 @@ func TestNewClientDefaultKeepsTenMinuteTimeout(t *testing.T) {
 	}
 }
 
-func TestNewClientPreservesSuppliedHTTPClient(t *testing.T) {
-	custom := &http.Client{}
-	if got := NewClient(ClientConfig{HTTPClient: custom}).httpClient; got != custom {
-		t.Error("NewClient replaced caller-supplied HTTPClient")
+func TestNewClientCopiesSuppliedHTTPClient(t *testing.T) {
+	custom := &http.Client{Timeout: 3 * time.Second}
+	got := NewClient(ClientConfig{HTTPClient: custom}).httpClient
+	if got == custom {
+		t.Error("NewClient reused the caller-supplied HTTPClient instead of wrapping a copy")
+	}
+	if got.Timeout != 3*time.Second {
+		t.Errorf("httpClient.Timeout = %v, want the supplied 3s", got.Timeout)
+	}
+	if custom.Transport != nil {
+		t.Error("NewClient changed the caller-supplied client's Transport")
+	}
+	transport, ok := got.Transport.(sourceTrackerTransport)
+	if !ok {
+		t.Fatalf("httpClient.Transport = %T, want sourceTrackerTransport", got.Transport)
+	}
+	if transport.base != http.DefaultTransport {
+		t.Errorf("wrapped transport = %T, want http.DefaultTransport", transport.base)
+	}
+}
+
+// A caller-supplied transport is the base of the copy's wrapper, so updex keeps
+// the transport's TLS settings and connection pool.
+func TestNewClientWrapsSuppliedTransport(t *testing.T) {
+	base := &http.Transport{}
+	custom := &http.Client{Transport: base}
+	got := NewClient(ClientConfig{HTTPClient: custom}).httpClient
+	transport, ok := got.Transport.(sourceTrackerTransport)
+	if !ok {
+		t.Fatalf("httpClient.Transport = %T, want sourceTrackerTransport", got.Transport)
+	}
+	if transport.base != base {
+		t.Errorf("wrapped transport = %T, want the supplied transport", transport.base)
 	}
 }

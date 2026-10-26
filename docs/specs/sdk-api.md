@@ -165,7 +165,7 @@ The `SysextRunner` interface itself is unchanged, so existing implementations
 still compile; adding `LinkToSysextAt` is what makes one usable for a real
 install. `sysext.DefaultRunner` and `sysext.MockRunner` both implement it.
 
-Other fields: if `SysextRunner` is nil it defaults to `&sysext.DefaultRunner{}`; if `SystemdManager` is nil it defaults to `systemd.NewManager()` for `/etc/systemd/system` (packaged units: `/usr/lib/systemd/system`) and the real `systemctl`; if `Progress` is nil it defaults to `reporter.NoopReporter{}`; if `HTTPClient` is nil a default `http.Client` with a 10-minute timeout, the standard 10-redirect limit, and an HTTPS-to-HTTP downgrade refusal is created via `internal/httpclient.New` — the same constructor `manifest.Fetch` and `download.Download` fall back to when their own `httpClient` parameter is nil, so the refusal is enforced consistently everywhere a caller supplies no client. HTTP-to-HTTP and HTTPS-to-HTTPS redirects remain allowed. A caller-supplied `HTTPClient` is stored unchanged, including its redirect policy. `OnDownloadProgress` is called with the HTTP response content length (-1 if unknown) and must return a fresh `io.Writer` per attempt to avoid double-counting retried downloads.
+Other fields: if `SysextRunner` is nil it defaults to `&sysext.DefaultRunner{}`; if `SystemdManager` is nil it defaults to `systemd.NewManager()` for `/etc/systemd/system` (packaged units: `/usr/lib/systemd/system`) and the real `systemctl`; if `Progress` is nil it defaults to `reporter.NoopReporter{}`; if `HTTPClient` is nil a default `http.Client` with a 10-minute timeout, the standard 10-redirect limit, and an HTTPS-to-HTTP downgrade refusal is created via `internal/httpclient.New` — the same constructor `manifest.Fetch` and `download.Download` fall back to when their own `httpClient` parameter is nil, so the refusal is enforced consistently everywhere a caller supplies no client. HTTP-to-HTTP and HTTPS-to-HTTPS redirects remain allowed. A caller-supplied `HTTPClient` keeps its redirect policy, but updex does not use the client itself: it stores a shallow copy whose `Transport` wraps the given transport (`http.DefaultTransport` when the client has none) and keeps `Timeout`, `CheckRedirect` and `Jar`. The wrapper records, for one `UpdateFeatures` run, whether a request got an HTTP response, which the unreachable-source rule needs (see [Unreachable sources and `ErrSourcesUnreachable`](#unreachable-sources-and-errsourcesunreachable)); the caller's client is not changed. `OnDownloadProgress` is called with the HTTP response content length (-1 if unknown) and must return a fresh `io.Writer` per attempt to avoid double-counting retried downloads.
 
 ### Operation lock and `ErrBusy`
 
@@ -196,6 +196,41 @@ file is refused with an error that is not `ErrBusy`. The kernel releases the
 lock when the process exits. The CLI maps `ErrBusy` to exit status 0 with one
 stderr line only for `updex features update` under systemd (`INVOCATION_ID`
 set); everywhere else it is an error.
+
+### Unreachable sources and `ErrSourcesUnreachable`
+
+```go
+var ErrSourcesUnreachable = errors.New("no update source is reachable")
+```
+
+`UpdateFeatures` wraps `ErrSourcesUnreachable`
+(`errors.Is(err, updex.ErrSourcesUnreachable)`) only when the whole run failed
+because no source could be reached
+([ADR-0018](../adr/0018-skip-an-update-run-when-every-source-is-unreachable.md)):
+there is at least one transfer error; every transfer error except the
+collateral `not linked: another transfer of feature <name> failed` is a
+network failure; no HTTP request of the run got a response of any status;
+the run's own context is not cancelled; and no refresh failed. A network
+failure is a `*net.DNSError`,
+`syscall.ECONNREFUSED`/`EHOSTUNREACH`/`ENETUNREACH`/`ENETDOWN`/`ETIMEDOUT`
+anywhere in the chain, or a `net.Error` whose `Timeout()` is true. A dial
+error counts only through one of these causes: a dial that fails for a local
+reason (`EMFILE`, `EACCES`, `ENOBUFS`) is not unreachable. TLS and x509 errors, HTTP error
+statuses, verification failures, hash mismatches, disk errors and
+"no versions available" are not unreachable. When the rule holds, the first
+joined error is `one or more components failed to update: no update source is
+reachable`, the transfer errors stay in the chain after it, and the results
+slice is unchanged. Every other failure keeps the shape above.
+
+The rule reads a per-operation tracker that `UpdateFeatures` puts in its
+context: the transport wrapper of the client's HTTP copy records each attempt
+and each response. A request outside `UpdateFeatures` carries no tracker. The wrapper forwards
+`CloseIdleConnections`, and `CancelRequest` to a base transport that is not an
+`*http.Transport`, so a client timeout still reaches a legacy transport. The
+CLI maps the sentinel to exit status 0 only for `updex features update` under
+systemd: after the normal output and the run's usual progress and warning
+lines, it adds the one skip line; an interactive run returns the error, and
+`--json` output is unchanged.
 
 ## Methods
 
@@ -424,7 +459,7 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 
 Downloads and installs the newest available version for each enabled feature's **active** transfers (see [Activation rule](#activation-rule)). A transfer that is not active, for example `Features=maild` `RequisiteFeatures=lodge` while `lodge` is disabled, or one whose `Features=` has no enabled feature (a run where only `lodge` is enabled), is neither downloaded nor linked nor vacuumed: it is listed in `UpdateFeaturesResult.Inactive` and the reporter gets one `<feature>/<component>: inactive: <reason>` line for it. A feature whose associated transfers are all inactive still gets an `UpdateFeaturesResult`, with empty `Results` and `Inactive` set. The enabled features' active transfers are the run's own transfers for the refresh gate. Delegates each feature to the internal `installTransfers` pipeline: `stageTransfer` per transfer (version lookup, legacy staging-symlink cleanup, download, verification), then `linkStaged` for the whole feature, then the vacuum.
 
-**A feature's transfers link together** ([ADR-0016](../adr/0016-automatic-sysext-updates-apply-at-next-boot.md)). Every transfer of a feature is staged first. If one fails (version lookup, download, verification), no transfer of the feature is linked: every old link stays, the images already downloaded stay on disk for the next run (which relinks them without downloading again), and the vacuum does not run. The failing transfer's `UpdateResult.Error` is its own error; every other transfer of the feature gets `not linked: another transfer of feature <name> failed`, with `Version` and `Downloaded` showing what is staged and `Installed=false`. If a link fails part-way through the link step, the links already moved are restored (an absent link is removed again; a regular file that the link replaced was backed up as a hard link beside it in the snapshot pass and is renamed back over the link), the failing transfer reports the link error and the others report `not linked: …`. A regular file at a link path is backed up before any link moves, so a later failure never loses it; a directory, FIFO or device there, and a regular file updex cannot back up, is refused in that same pass with nothing changed. A restore failure is an error, never only a warning: `linkStaged` returns it joined with the link error, a transfer whose link had moved reports `failed to restore sysext link for <component>: …; the link may point at the new version` instead of `not linked`, and the backup it could not put back stays on disk. Backups are removed after the feature links. Other features continue; the method returns `one or more components failed to update` joined with every failed transfer's error.
+**A feature's transfers link together** ([ADR-0016](../adr/0016-automatic-sysext-updates-apply-at-next-boot.md)). Every transfer of a feature is staged first. If one fails (version lookup, download, verification), no transfer of the feature is linked: every old link stays, the images already downloaded stay on disk for the next run (which relinks them without downloading again), and the vacuum does not run. The failing transfer's `UpdateResult.Error` is its own error; every other transfer of the feature gets `not linked: another transfer of feature <name> failed`, with `Version` and `Downloaded` showing what is staged and `Installed=false`. If a link fails part-way through the link step, the links already moved are restored (an absent link is removed again; a regular file that the link replaced was backed up as a hard link beside it in the snapshot pass and is renamed back over the link), the failing transfer reports the link error and the others report `not linked: …`. A regular file at a link path is backed up before any link moves, so a later failure never loses it; a directory, FIFO or device there, and a regular file updex cannot back up, is refused in that same pass with nothing changed. A restore failure is an error, never only a warning: `linkStaged` returns it joined with the link error, a transfer whose link had moved reports `failed to restore sysext link for <component>: …; the link may point at the new version` instead of `not linked`, and the backup it could not put back stays on disk. Backups are removed after the feature links. Other features continue; the method returns `one or more components failed to update` joined with every failed transfer's error. When no source could be reached at all, that first error wraps `ErrSourcesUnreachable` instead (see [Unreachable sources and `ErrSourcesUnreachable`](#unreachable-sources-and-errsourcesunreachable)).
 
 **Retention.** After a feature's links succeeded, `sysext.VacuumWith` removes old staged images but keeps, per transfer: the linked version, the merged version (hierarchy metadata, ADR-0015), `ProtectVersion=`, the legacy `CurrentSymlink` target and the newest `InstancesMax` (default 2). A host that linked a new revision and still runs an older one keeps up to 3. A vacuum that cannot read the link or the merged state deletes nothing and reports a warning (`vacuum failed for <component>: …`) while the update still succeeds.
 

@@ -314,6 +314,13 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 
 	results, err := client.UpdateFeatures(cmd.Context(), opts)
 
+	// ADR-0018: a scheduled run that no source could reach is a skip, not a
+	// failure. An offline host must not leave updex-update.service failed (and
+	// the system degraded) until a source answers. The normal output is printed
+	// first, then one log line, and the run exits 0. An operator at a shell
+	// still gets the error.
+	skipUnreachable := errors.Is(err, updex.ErrSourcesUnreachable) && runningUnderSystemd()
+
 	// ADR-0016: a scheduled run that finds another updex operation running
 	// is not a failure. systemd would otherwise mark updex-update.service
 	// failed for a run that only had to wait for the next one. An operator
@@ -344,17 +351,29 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 			results = []updex.UpdateFeaturesResult{}
 		}
 		_, jsonErr := clix.OutputJSON(results)
+		if skipUnreachable {
+			// stdout stays the same JSON array; only the exit status and the
+			// one log line change.
+			return skipUnreachableRun(cmd, jsonErr)
+		}
 		return errors.Join(err, jsonErr)
 	}
 
 	out := cmd.OutOrStdout()
 
 	if len(results) == 0 {
-		return errors.Join(err, writeLine(out, "No enabled features with transfers found."))
+		outErr := writeLine(out, "No enabled features with transfers found.")
+		if skipUnreachable {
+			return skipUnreachableRun(cmd, outErr)
+		}
+		return errors.Join(err, outErr)
 	}
 
 	if clix.DryRun {
 		if lineErr := writeLine(out, "[DRY RUN] Previewing feature updates."); lineErr != nil {
+			if skipUnreachable {
+				return skipUnreachableRun(cmd, lineErr)
+			}
 			return errors.Join(err, lineErr)
 		}
 	}
@@ -400,7 +419,22 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 
 	// Both failures matter: the SDK error decides the exit status, and the
 	// output error says the table the operator is reading is incomplete.
-	return errors.Join(err, table.Flush(), writeInactive(out, resultsInactive(results)), writeNeedsImageUpdate(out, results), writeRefreshSkipped(out, results))
+	outErr := errors.Join(table.Flush(), writeInactive(out, resultsInactive(results)), writeNeedsImageUpdate(out, results), writeRefreshSkipped(out, results))
+	if skipUnreachable {
+		return skipUnreachableRun(cmd, outErr)
+	}
+	return errors.Join(err, outErr)
+}
+
+// skipUnreachableRun finishes a scheduled update run whose sources were all
+// unreachable (ADR-0018). The results are already printed; the run logs one
+// line and succeeds, so systemd does not mark the unit failed. outErr, an
+// output failure, still fails the run.
+func skipUnreachableRun(cmd *cobra.Command, outErr error) error {
+	if _, werr := fmt.Fprintf(cmd.ErrOrStderr(), "updex: no update source is reachable; skipping this run\n"); werr != nil {
+		return errors.Join(outErr, werr)
+	}
+	return outErr
 }
 
 // featureInactive is the inactive transfers of one feature.

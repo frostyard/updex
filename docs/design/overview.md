@@ -1099,9 +1099,15 @@ which supersedes [ADR-0007](../adr/0007-daemon-stages-never-activates.md).
   `TimeoutStartSec=2h` (a backstop: systemd stops a stuck run, which releases
   `/run/updex/lock`; per-request timeouts and ADR-0008's bounded retries end a
   normal run long before). An offline host can still reach
-  `network-online.target`; its downloads fail and the run exits non-zero, so the
-  unit shows `failed` until the next successful run (ADR-0016: a failed feature
-  fails the run). Timer:
+  `network-online.target`. A run that no source answered is a skip
+  ([ADR-0018](../adr/0018-skip-an-update-run-when-every-source-is-unreachable.md)):
+  `UpdateFeatures` wraps `updex.ErrSourcesUnreachable` only when every failed
+  transfer failed with a network error and no HTTP request of the run got a
+  response (a dial error only for a network cause, never a local `EMFILE` or
+  `EACCES`), and the CLI, under systemd only, prints the normal output and
+  warnings, adds one skip line and exits 0, so the unit does not stay `failed`. A partial failure,
+  a source that answered with an error status, a verification failure, a
+  failed refresh and a cancelled run still exit non-zero. Timer:
   `OnCalendar=*-*-* 00/6:00:00`, `RandomizedDelaySec=3600s`, `Persistent=true`,
   `[Install] WantedBy=timers.target`. `systemd.ServiceConfig` gained `Wants`,
   `After` and `Conditions` (`[]string`; `Conditions` are whole directive lines),

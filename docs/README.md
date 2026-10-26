@@ -83,6 +83,12 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
   `disable --now` keeps a transfer that another enabled feature still
   activates, and rollback holds are computed over the transfers a command
   acts on
+- [ADR-0018](adr/0018-skip-an-update-run-when-every-source-is-unreachable.md) —
+  an `UpdateFeatures` run that no source answered (DNS/dial failure, no HTTP
+  response at all) wraps `ErrSourcesUnreachable`; the CLI treats it as a skip
+  only under systemd (`INVOCATION_ID` set), printing the normal output, one
+  log line and exiting 0, while a shell run, a partial failure, an error
+  status and a verification failure still fail
 
 ### Design
 
