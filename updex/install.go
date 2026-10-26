@@ -252,6 +252,10 @@ type installFeatureOptions struct {
 
 // installTransfers installs the transfers of one feature so that they link
 // together (ADR-0016): it stages every transfer first, then links them all.
+// transfers holds only the feature's active transfers (ADR-0017): a transfer
+// that waits for another feature is not passed, so it is never downloaded,
+// linked or vacuumed, and its rollback records do not apply. The rollback
+// holds and the deletion of finished records are computed over this set.
 //
 //   - A rollback record of another feature that names one of the transfers
 //     holds the whole feature: only the feature that wrote the record

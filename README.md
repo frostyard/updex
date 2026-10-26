@@ -97,6 +97,28 @@ directory and discovered named components. The `--component` flag applies to
 every `features` subcommand and cannot be combined with `-C, --definitions`,
 which instead reads one explicit directory and bypasses discovery.
 
+**`Features=` and `RequisiteFeatures=`:** a transfer is active when its
+`Features=` is empty or at least one listed feature is enabled (OR), and every
+feature in its `RequisiteFeatures=` is enabled (AND), as in
+`sysupdate.d(5)`. A feature that does not exist, is disabled or is masked is
+not enabled. The feature commands act only on active transfers, and say which
+ones they left alone:
+
+- `features update` and `features check` skip an inactive transfer: nothing is
+  downloaded, linked or vacuumed, and the output shows
+  `<feature>/<component>: inactive: waits for feature(s) lodge` (or
+  `needs one of features: maild`; JSON `inactive`).
+- `features enable maild --now` installs the transfers that are active with
+  `maild` enabled and reports, without downloading, those that still wait for
+  another feature. Enabling that feature later (`enable lodge --now`) installs
+  them.
+- `features disable a --now` removes only the transfers that `a` no longer
+  activates. A transfer that another enabled feature in its `Features=` keeps
+  active (`Features=a b`, with `b` enabled) is kept, with its link and
+  images, and reported as `<component>: kept: still active through feature(s) b`
+  (JSON `kept`). When nothing is left to remove, there is no unmerge and no
+  refresh.
+
 **Refresh failure:** If the final `systemd-sysext refresh` fails after
 `enable --now`, `disable --now`, or `update`, updex reports completed steps
 and exits non-zero (`refresh_error` in JSON). Run `systemd-sysext refresh`
@@ -197,9 +219,13 @@ the reason, in the `UPDATE` column (JSON `rollback_rejected` and
 
 A transfer can belong to more than one feature (`Features=` or
 `RequisiteFeatures=` in its `.transfer` file). The hold covers **every**
-feature that shares a transfer: `features update`, `features enable --now`,
-`features check` and `features list` read the rollback records of all of them,
-whether or not a feature is enabled. When several records reject the same
+feature that shares a transfer it acts on (an active transfer, see above):
+`features update`, `features enable --now`, `features check` and
+`features list` read the rollback records of all of them, whether or not a
+feature is enabled. A record that applies only to a transfer that is not active
+for a feature does not hold that feature, and a rollback records only the
+feature's active transfers (it keeps an earlier rejection of a transfer that is
+inactive at that time). When several records reject the same
 transfer, the highest rejected version applies. If one of those records cannot
 be read, updates link nothing for every feature that shares the transfer and
 name the feature whose record failed.

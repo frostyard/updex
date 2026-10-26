@@ -862,3 +862,61 @@ func TestImageNameNoOSRelease(t *testing.T) {
 		t.Errorf("ImageName() = %q, want empty when os-release is unreadable", got)
 	}
 }
+
+func TestCheckTransferActivation(t *testing.T) {
+	enabled := map[string]bool{"a": true, "b": true}
+	tests := []struct {
+		name        string
+		features    []string
+		requisites  []string
+		wantActive  bool
+		wantMissing []string
+		wantOneOf   []string
+	}{
+		{name: "no lists belongs to no feature", wantActive: true},
+		{name: "features one enabled", features: []string{"x", "a"}, wantActive: true},
+		{name: "features none enabled", features: []string{"x", "y"}, wantOneOf: []string{"x", "y"}},
+		{name: "unknown feature is never enabled", features: []string{"nonexistent"}, wantOneOf: []string{"nonexistent"}},
+		{name: "requisites all enabled", requisites: []string{"a", "b"}, wantActive: true},
+		{name: "requisites one missing", requisites: []string{"a", "x"}, wantMissing: []string{"x"}},
+		{name: "requisites several missing in file order", requisites: []string{"y", "a", "x"}, wantMissing: []string{"y", "x"}},
+		{name: "both satisfied", features: []string{"a"}, requisites: []string{"b"}, wantActive: true},
+		{name: "features ok requisite missing", features: []string{"a"}, requisites: []string{"x"}, wantMissing: []string{"x"}},
+		{name: "requisite ok features none enabled", features: []string{"x"}, requisites: []string{"b"}, wantOneOf: []string{"x"}},
+		{name: "both unsatisfied", features: []string{"x"}, requisites: []string{"y"}, wantMissing: []string{"y"}, wantOneOf: []string{"x"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tr := &Transfer{Transfer: TransferSection{Features: tt.features, RequisiteFeatures: tt.requisites}}
+			got := CheckTransferActivation(tr, enabled)
+			if got.Active != tt.wantActive {
+				t.Errorf("Active = %v, want %v", got.Active, tt.wantActive)
+			}
+			if !slices.Equal(got.MissingRequisites, tt.wantMissing) {
+				t.Errorf("MissingRequisites = %v, want %v", got.MissingRequisites, tt.wantMissing)
+			}
+			if !slices.Equal(got.NeedsOneOf, tt.wantOneOf) {
+				t.Errorf("NeedsOneOf = %v, want %v", got.NeedsOneOf, tt.wantOneOf)
+			}
+		})
+	}
+}
+
+func TestCheckTransferActivationNilSet(t *testing.T) {
+	tr := &Transfer{Transfer: TransferSection{Features: []string{"a"}}}
+	if got := CheckTransferActivation(tr, nil); got.Active {
+		t.Error("a transfer with Features= must not be active when no feature is enabled")
+	}
+}
+
+func TestEnabledFeatureSet(t *testing.T) {
+	features := []*Feature{
+		{Name: "on", Enabled: true},
+		{Name: "off"},
+		{Name: "masked", Enabled: true, Masked: true},
+	}
+	got := EnabledFeatureSet(features)
+	if len(got) != 1 || !got["on"] {
+		t.Errorf("EnabledFeatureSet = %v, want only on", got)
+	}
+}

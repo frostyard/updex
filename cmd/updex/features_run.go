@@ -185,6 +185,7 @@ func runFeaturesEnable(cmd *cobra.Command, args []string) error {
 		case result.Success:
 			if result.DryRun {
 				fmt.Printf("[DRY RUN] %s\n", result.NextActionMessage)
+				printInactiveTransfers(result.Feature, result.Inactive)
 			} else {
 				fmt.Printf("Feature '%s' enabled.\n", result.Feature)
 				if len(result.DownloadedFiles) > 0 {
@@ -192,6 +193,7 @@ func runFeaturesEnable(cmd *cobra.Command, args []string) error {
 				} else if !featureEnableNow {
 					fmt.Printf("Run 'updex features update' to download extensions.\n")
 				}
+				printInactiveTransfers(result.Feature, result.Inactive)
 				if result.RefreshSkipped != "" {
 					fmt.Printf("%s. Reboot to activate it.\n", result.RefreshSkipped)
 				}
@@ -209,6 +211,23 @@ func printDownloadedFiles(files []string) {
 	fmt.Printf("Downloaded %d extension(s):\n", len(files))
 	for _, f := range files {
 		fmt.Printf("  - %s\n", f)
+	}
+}
+
+// printInactiveTransfers prints one line per transfer that a command did not
+// act on because it is not active (ADR-0017), for example
+// "maild/T: inactive: waits for feature(s) lodge".
+func printInactiveTransfers(feature string, inactive []updex.InactiveTransfer) {
+	for _, in := range inactive {
+		fmt.Printf("%s/%s: inactive: %s\n", feature, in.Component, in.Reason())
+	}
+}
+
+// printKeptTransfers prints one line per transfer that a disable did not
+// remove because another enabled feature still activates it (ADR-0017).
+func printKeptTransfers(kept []updex.KeptTransfer) {
+	for _, k := range kept {
+		fmt.Printf("%s: kept: still active through feature(s) %s\n", k.Component, strings.Join(k.ActiveThrough, ", "))
 	}
 }
 
@@ -252,18 +271,21 @@ func runFeaturesDisable(cmd *cobra.Command, args []string) error {
 				fmt.Printf("Extensions unmerged.\n")
 			}
 			printRemovedFiles(result.RemovedFiles)
+			printKeptTransfers(result.Kept)
 			fmt.Printf("Error: %s\n%s\n", result.RefreshError, result.NextActionMessage)
 		case result.Error != "":
 			fmt.Printf("Error: %s\n", result.Error)
 		case result.Success:
 			if result.DryRun {
 				fmt.Printf("[DRY RUN] %s\n", result.NextActionMessage)
+				printKeptTransfers(result.Kept)
 			} else {
 				fmt.Printf("Feature '%s' disabled.\n", result.Feature)
 				if result.Unmerged {
 					fmt.Printf("Extensions unmerged.\n")
 				}
 				printRemovedFiles(result.RemovedFiles)
+				printKeptTransfers(result.Kept)
 				if !featureDisableNow {
 					fmt.Printf("Its extensions stay installed and merged. Run 'updex features disable %s --now' to remove them.\n", result.Feature)
 				} else if featureDisableForce {
@@ -378,7 +400,36 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 
 	// Both failures matter: the SDK error decides the exit status, and the
 	// output error says the table the operator is reading is incomplete.
-	return errors.Join(err, table.Flush(), writeNeedsImageUpdate(out, results), writeRefreshSkipped(out, results))
+	return errors.Join(err, table.Flush(), writeInactive(out, resultsInactive(results)), writeNeedsImageUpdate(out, results), writeRefreshSkipped(out, results))
+}
+
+// featureInactive is the inactive transfers of one feature.
+type featureInactive struct {
+	feature  string
+	inactive []updex.InactiveTransfer
+}
+
+// resultsInactive collects the inactive transfers of an update run, per feature.
+func resultsInactive(results []updex.UpdateFeaturesResult) []featureInactive {
+	var out []featureInactive
+	for _, fr := range results {
+		if len(fr.Inactive) > 0 {
+			out = append(out, featureInactive{feature: fr.Feature, inactive: fr.Inactive})
+		}
+	}
+	return out
+}
+
+// writeInactive prints one line per transfer that update or check did not act
+// on because it is not active (ADR-0017). It prints nothing when there is none.
+func writeInactive(out io.Writer, items []featureInactive) error {
+	var errs []error
+	for _, fi := range items {
+		for _, in := range fi.inactive {
+			errs = append(errs, writeLine(out, fmt.Sprintf("%s/%s: inactive: %s", fi.feature, in.Component, in.Reason())))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // writeRefreshSkipped prints the reason a run did not refresh systemd-sysext:
@@ -502,7 +553,13 @@ func runFeaturesCheck(cmd *cobra.Command, args []string) error {
 
 	// See runFeaturesUpdate: the SDK error and the output error are reported
 	// together so neither is lost.
-	return errors.Join(err, table.Flush(), writePendingReboot(out, pending), writeNeedsImage(out, needsImage, nextBoot))
+	var inactive []featureInactive
+	for _, fr := range results {
+		if len(fr.Inactive) > 0 {
+			inactive = append(inactive, featureInactive{feature: fr.Feature, inactive: fr.Inactive})
+		}
+	}
+	return errors.Join(err, table.Flush(), writeInactive(out, inactive), writePendingReboot(out, pending), writeNeedsImage(out, needsImage, nextBoot))
 }
 
 func runFeaturesRollback(cmd *cobra.Command, args []string) error {

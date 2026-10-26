@@ -427,6 +427,22 @@ in the `config/` structs and parse functions. Always finish with
   the link or merged state is unreadable. Never call the compatibility
   wrappers (`Vacuum`, `VacuumAt`, `PlanVacuumAfterInstallAt`) from SDK code:
   they know neither the link nor the merged state.
+- **Activation rule (ADR-0017, #455).** A transfer is active when `Features=`
+  is empty or one listed feature is enabled (OR) and every `RequisiteFeatures=`
+  entry is enabled (AND); `config.CheckTransferActivation` is the single
+  implementation. `config.GetTransfersForFeature` is only the ASSOCIATION lookup
+  (the feature is in either list) and must never decide what is downloaded,
+  linked, removed or held. Every feature path calls `splitFeatureTransfers`
+  (`updex/activation.go`), which splits the associated transfers into active and
+  inactive over the loaded domain's enabled set with the feature forced
+  enabled (update, check, enable, rollback, the hold read in `Features`) or
+  disabled (`DisableFeature{Now}`). Inactive transfers are not downloaded,
+  linked or vacuumed and are reported (`UpdateFeaturesResult.Inactive`,
+  `CheckFeaturesResult.Inactive`, `FeatureActionResult.Inactive`);
+  `DisableFeature{Now}` keeps (`FeatureActionResult.Kept`) a transfer that stays
+  active without the feature and removes only the rest, with no unmerge,
+  refresh or preflight when nothing is left to remove. A new path that acts on
+  a feature's transfers must split them the same way.
 - **Operation lock.** Every mutating SDK operation (`UpdateFeatures`,
   `EnableFeature`, `DisableFeature`, `CatalogAdd`, `CatalogRemove`,
   `EnableDaemon`, `DisableDaemon`), except in a dry run, calls
@@ -445,12 +461,19 @@ in the `config/` structs and parse functions. Always finish with
   `updex.DefaultRollbackDir`): JSON `format` 1 with one rejected version per
   transfer, written with a temp file plus rename after `Lstat` checks, feature
   name validated with `catalog.ValidateSysextName`. **The hold covers every
-  feature that shares a transfer**, because a transfer can name several
-  features (`Transfer.Features` OR, `Transfer.RequisiteFeatures` AND).
+  feature that shares a transfer it acts on**, because a transfer can name
+  several features (`Transfer.Features` OR, `Transfer.RequisiteFeatures` AND).
   `collectRollbackHolds` (`updex/rollback.go`) reads, once per call, the record
-  of every feature that names one of the transfers, enabled or not, and keeps
-  the highest rejected version per component; `installTransfers`,
-  `Features` and `CheckFeatures` all use it. **A record of another feature
+  of every feature that names one of the transfers it is given, enabled or not,
+  and keeps the highest rejected version per component. Callers give it the
+  ACTED-ON (active) transfers, never the association set (see the activation
+  bullet below): `installTransfers` (through its callers), `Features` and
+  `CheckFeatures` all use it, so a record that applies only to a transfer the
+  feature does not act on holds nothing, and `RollbackFeature` rolls back and
+  records only the active transfers. Exception: it keeps an existing entry of
+  an INACTIVE associated transfer (`preservedRejections`, no link change), so a
+  repeated rollback cannot erase a rejection that applies again when a requisite
+  feature is enabled; an entry for a non-associated component is dropped. **A record of another feature
   holds the whole feature**: only the feature that wrote a record advances the
   transfers its record names (`rollbackHolds.ownersOtherThan`,
   `holdFeatureOwnedBy`), because its transfers link all or none and it deletes

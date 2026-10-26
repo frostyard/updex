@@ -53,26 +53,45 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 	manifests := make(map[string]*manifest.Manifest)
 
 	for _, f := range features {
-		// Get transfers associated with this feature
+		// Get transfers associated with this feature, and the ones that are
+		// active with the feature enabled: the transfers the feature's
+		// commands act on (ADR-0017).
+		split := splitFeatureTransfers(features, transfers, f.Name, true)
 		featureTransfers := config.GetTransfersForFeature(transfers, f.Name)
+		active := make(map[*config.Transfer]bool, len(split.active))
+		for _, t := range split.active {
+			active[t] = true
+		}
 		var transferNames []string
 		var statuses []TransferStatus
-		// The records of every feature that shares one of the transfers
-		// apply, not only this feature's own (ADR-0016). A record of another
-		// feature holds the whole feature: only the feature that wrote it
-		// advances the transfers it names. The feature's own record holds
-		// only while a component it names has no newer version.
-		holds := c.collectRollbackHolds(featureTransfers)
+		// The records of every feature that shares one of the acted-on
+		// transfers apply, not only this feature's own (ADR-0016). A record
+		// of another feature holds the whole feature: only the feature that
+		// wrote it advances the transfers it names. The feature's own record
+		// holds only while a component it names has no newer version. A
+		// transfer that is not active is not acted on, so it brings no
+		// record in (ADR-0017).
+		holds := c.collectRollbackHolds(split.active)
 		owner := ""
 		var reason *rollbackHoldReason
 		var holdErr error
 		if owners := holds.ownersOtherThan(f.Name); len(owners) > 0 {
 			owner = rollbackOwnerHold{feature: owners[0]}.String()
 		} else if rec := holds.records[f.Name]; rec != nil {
-			reason, holdErr = c.rollbackHoldReason(ctx, rec, featureTransfers, transfers, manifests)
+			reason, holdErr = c.rollbackHoldReason(ctx, rec, split.active, transfers, manifests)
 		}
 		for _, t := range featureTransfers {
 			transferNames = append(transferNames, t.Component)
+
+			if !active[t] {
+				// Not acted on: no rollback hold and no image gate apply.
+				status := c.transferStatus(t)
+				if status.Error != "" {
+					c.warn("%s: %s", t.Component, status.Error)
+				}
+				statuses = append(statuses, status)
+				continue
+			}
 
 			// A transfer whose merged state or link cannot be read is
 			// reported as a warning, and keeps its other value, so one bad
@@ -302,10 +321,20 @@ func (c *Client) enableFeature(ctx context.Context, name string, opts EnableFeat
 	if opts.Now {
 		c.msg("Downloading extensions")
 
-		featureTransfers := config.GetTransfersForFeature(transfers, name)
+		// Only the transfers that are active with this feature enabled are
+		// downloaded and linked (ADR-0017); the others wait for the feature
+		// they miss.
+		split := splitFeatureTransfers(features, transfers, name, true)
+		featureTransfers := split.active
+		result.Inactive = split.inactiveReports()
+		for _, in := range result.Inactive {
+			c.msg("%s/%s: inactive: %s", name, in.Component, in.Reason())
+		}
 
-		if len(featureTransfers) == 0 {
+		if split.associated() == 0 {
 			c.msg("No transfers associated with this feature")
+		} else if len(featureTransfers) == 0 {
+			c.msg("No active transfers for this feature; nothing to download")
 		} else {
 			if opts.DryRun {
 				for _, transfer := range featureTransfers {
@@ -415,6 +444,9 @@ func (c *Client) enableFeature(ctx context.Context, name string, opts EnableFeat
 			}
 		}
 	}
+	if len(result.Inactive) > 0 {
+		result.NextActionMessage += fmt.Sprintf("; not downloaded, waiting for another feature: %s", inactiveSummary(result.Inactive))
+	}
 
 	return result, nil
 }
@@ -461,8 +493,18 @@ func (c *Client) disableFeature(ctx context.Context, name string, opts DisableFe
 		return result, err
 	}
 
-	// Transfers for this feature (needed for merge state check and file removal)
-	featureTransfers := config.GetTransfersForFeature(transfers, name)
+	// Transfers for this feature (needed for merge state check and file
+	// removal). A transfer that is still active with this feature disabled,
+	// because another enabled feature in its Features= activates it, is kept
+	// (ADR-0017): the disable removes only what it makes inactive.
+	split := splitFeatureTransfers(features, transfers, name, false)
+	featureTransfers := split.inactiveTransfers()
+	if opts.Now {
+		result.Kept = split.keptTransfers(features, name)
+		for _, k := range result.Kept {
+			c.msg("%s/%s: kept: still active through feature(s) %s", name, k.Component, strings.Join(k.ActiveThrough, ", "))
+		}
+	}
 
 	willRemoveFiles := opts.Now
 
@@ -615,17 +657,27 @@ func (c *Client) disableFeature(ctx context.Context, name string, opts DisableFe
 	result.Success = true
 
 	// Set the next action message based on what was done
+	nothingToRemove := willRemoveFiles && len(featureTransfers) == 0 && len(result.Kept) > 0
 	if opts.DryRun {
 		result.NextActionMessage = fmt.Sprintf("Dry run complete. Would disable feature '%s'", name)
-		if willRemoveFiles {
+		if willRemoveFiles && !nothingToRemove {
 			result.NextActionMessage += " and remove extension files"
 		}
+	} else if nothingToRemove {
+		result.NextActionMessage = fmt.Sprintf("Feature '%s' disabled. No extension files were removed.", name)
 	} else if willRemoveFiles && opts.Force {
 		result.NextActionMessage = fmt.Sprintf("Feature '%s' disabled and files removed. Reboot required for changes to take effect.", name)
 	} else if willRemoveFiles {
 		result.NextActionMessage = fmt.Sprintf("Feature '%s' disabled and %d extension file(s) removed.", name, len(result.RemovedFiles))
 	} else {
 		result.NextActionMessage = fmt.Sprintf("Feature '%[1]s' disabled. Its extensions stay installed and merged; run 'updex features disable %[1]s --now' to remove them.", name)
+	}
+	if len(result.Kept) > 0 {
+		parts := make([]string, len(result.Kept))
+		for i, k := range result.Kept {
+			parts[i] = fmt.Sprintf("%s (still active through feature(s) %s)", k.Component, strings.Join(k.ActiveThrough, ", "))
+		}
+		result.NextActionMessage += fmt.Sprintf(" Kept, because another enabled feature activates them: %s.", strings.Join(parts, ", "))
 	}
 
 	return result, nil
@@ -683,10 +735,14 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 			continue
 		}
 
-		featureTransfers := config.GetTransfersForFeature(transfers, f.Name)
-		if len(featureTransfers) == 0 {
+		// Only the active transfers are acted on (ADR-0017). The ones that
+		// are not wait for a feature they miss: nothing is downloaded,
+		// linked or vacuumed for them.
+		split := splitFeatureTransfers(features, transfers, f.Name, true)
+		if split.associated() == 0 {
 			continue
 		}
+		featureTransfers := split.active
 
 		ownTransfers = append(ownTransfers, featureTransfers...)
 
@@ -694,16 +750,23 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 			Feature: f.Name,
 			// Non-nil so a feature with no per-transfer result serializes
 			// its `results` as `[]` rather than `null`.
-			Results: make([]UpdateResult, 0),
+			Results:  make([]UpdateResult, 0),
+			Inactive: split.inactiveReports(),
+		}
+		for _, in := range featureResult.Inactive {
+			c.msg("%s/%s: inactive: %s", f.Name, in.Component, in.Reason())
 		}
 
-		installs := c.installTransfers(ctx, f.Name, featureTransfers, installFeatureOptions{
-			DryRun:    opts.DryRun,
-			NoVacuum:  opts.NoVacuum,
-			Manifests: manifestCache,
-			NextBoot:  nextBoot,
-			Domain:    transfers,
-		})
+		var installs []transferInstall
+		if len(featureTransfers) > 0 {
+			installs = c.installTransfers(ctx, f.Name, featureTransfers, installFeatureOptions{
+				DryRun:    opts.DryRun,
+				NoVacuum:  opts.NoVacuum,
+				Manifests: manifestCache,
+				NextBoot:  nextBoot,
+				Domain:    transfers,
+			})
+		}
 
 		for _, in := range installs {
 			transfer := in.transfer
@@ -897,16 +960,22 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 			continue
 		}
 
-		featureTransfers := config.GetTransfersForFeature(transfers, f.Name)
-		if len(featureTransfers) == 0 {
+		// Only the active transfers are checked (ADR-0017).
+		split := splitFeatureTransfers(features, transfers, f.Name, true)
+		if split.associated() == 0 {
 			continue
 		}
+		featureTransfers := split.active
 
 		featureResult := CheckFeaturesResult{
 			Feature: f.Name,
 			// Non-nil so a feature with no per-transfer result serializes
 			// its `results` as `[]` rather than `null`.
-			Results: make([]CheckResult, 0),
+			Results:  make([]CheckResult, 0),
+			Inactive: split.inactiveReports(),
+		}
+		for _, in := range featureResult.Inactive {
+			c.msg("%s/%s: inactive: %s", f.Name, in.Component, in.Reason())
 		}
 
 		// Every rollback record that applies to these transfers counts, not
