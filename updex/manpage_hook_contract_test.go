@@ -10,7 +10,7 @@ import (
 // TestManPageHookProducesRoff pins the release man-page hook: GoReleaser's
 // before-hook scripts/manpages.sh runs `go run ./cmd/updex-cli man | gzip`
 // at tag time, and the `man` subcommand is hidden and injected by
-// charmbracelet/fang through github.com/frostyard/clix App.Run — a
+// fang (charm.land/fang/v2) through github.com/frostyard/clix App.Run — a
 // dependency bump that drops or renames it would otherwise pass every
 // pull-request check and fail for the first time inside GoReleaser. This
 // reproduces the hook's command and asserts on the roff it prints, so the
