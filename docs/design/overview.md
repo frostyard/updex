@@ -817,9 +817,10 @@ wrappers that do not know the link or the hierarchies.
 nothing when any transfer of the feature blocks it. "The transfers of the
 feature" are its *active* transfers with the feature forced enabled
 ([ADR-0017](../adr/0017-apply-the-feature-activation-rule-in-every-feature-path.md)):
-a transfer that waits for another feature is neither rolled back nor named in
-the record, and a feature with no active transfer fails with `feature '<name>'
-has no active transfers to roll back`:
+a transfer that waits for another feature is not rolled back and gets no new
+entry in the record (an existing rejection of it is kept, see **Record**), and a
+feature with no active transfer fails with `feature '<name>' has no active
+transfers to roll back`:
 
 - **Target.** Per transfer, the newest staged version older than the linked one
   (`sysext.StagedVersionsAt`, `LinkedVersionAt`, `version.Compare`), or `--to`
