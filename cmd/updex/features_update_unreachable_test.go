@@ -87,8 +87,8 @@ func TestRunFeaturesUpdate_AllSourcesUnreachableUnderSystemdSkips(t *testing.T) 
 	}
 	// The run's own warnings are not hidden: the journal still shows why the
 	// source failed.
-	if !strings.Contains(reporterOut.String(), "testext") {
-		t.Errorf("reporter stderr = %q, want the run's warning for testext", reporterOut.String())
+	if !strings.Contains(reporterOut.String(), "connection refused") {
+		t.Errorf("reporter stderr = %q, want the run's warning with the connection failure", reporterOut.String())
 	}
 }
 
