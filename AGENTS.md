@@ -251,7 +251,7 @@ Key packages:
 - `download/` — HTTP downloads with bounded retry for transient failures, SHA256 verification, and decompression (xz, gz, zstd)
 - `manifest/` — Fetches/parses SHA256SUMS manifests with bounded retry for transient failures and GPG verification (enabled by default per systemd-sysupdate); response bodies are capped at 4 MiB for manifests and 1 MiB for detached signatures
 - `version/` — Pattern matching (`@v` placeholder) and semantic version comparison
-- `sysext/` — systemd-sysext integration with mockable `Runner` interface, `/var/lib/extensions` link management, and the vacuum (`VacuumWith`/`PlanVacuumWith` over `VacuumPaths`: it keeps the linked and the merged version, see "Feature install and retention" below)
+- `sysext/` — systemd-sysext integration with mockable `Runner` interface, `/var/lib/extensions` link management, and the vacuum (`VacuumWith`/`PlanVacuumWith` over `VacuumPaths`: it keeps the linked and the merged version, see "Feature install and retention" below); `DefaultRunner.Refresh` applies merged sysusers.d/tmpfiles.d in the sequence chosen by systemd version (ADR-0019)
 - `systemd/` — Generates/installs systemd timer+service units, mockable `Runner` interface
 - `imagecompat/` — Minimum-image-version check (ADR-0016): reads `extension-release.*` from a staged sysext image without mounting it (pure-Go GPT + EROFS reader for uncompressed images, `dump.erofs` fallback for compressed ones, `ReadExtensionRelease`), finds the next-boot `IMAGE_VERSION` (`NextBootImageVersion`: `bootc status --json` through the mockable `BootcRunner` — a queued rollback, else a staged deployment, and either one without an image version is an error (`ErrStagedWithoutVersion` for the staged one, #464) — else the booted `os-release`) and the running one (`BootedImageVersion`, os-release only, no bootc) and compares both as numbers (`CheckMinImageVersion`, key `UPDEX_MIN_IMAGE_VERSION`). No CLI imports; treats the image as untrusted input
 - `internal/retry/`, `internal/httpclient/`, `internal/testutil/` — HTTP retry policy, the shared default-HTTP-client constructor (`internal/httpclient.New`; enforces the HTTPS-to-HTTP redirect downgrade refusal used by `updex.NewClient`, `manifest.Fetch`, and `download.Download` when no caller-supplied client is given), and shared test helpers (HTTP test server)
@@ -587,6 +587,25 @@ in the `config/` structs and parse functions. Always finish with
   nothing changed, and tells the operator to run it without `--now` and reboot.
   `NoRefresh` (the timer) runs no check. A new refresh call site must go
   through `refreshGate`/`refreshGateFor`.
+- **Live refresh activation (ADR-0019).** `sysext.DefaultRunner.Refresh` reads
+  the major version from `systemd-sysext --version`, then runs: on 260 and
+  newer (or an unreadable version) `systemd-sysext refresh --no-reload`,
+  `systemd-sysusers`, `systemd-tmpfiles --create --graceful`, then
+  `systemd-sysext refresh --always-refresh=yes`; on 255 to 259 the same with a
+  plain last refresh; older than 255 one plain refresh, then sysusers and
+  tmpfiles, no last refresh. `systemd-tmpfiles` gets `--graceful` from 254 and
+  `--create` alone before that. The last refresh is what reloads the manager and
+  starts the units, so the merged images' accounts and paths exist first;
+  `--always-refresh=yes` forces the remount that 260 and newer would skip when
+  no image changed. A step 1 failure returns `systemd-sysext refresh failed: …`
+  and runs nothing else; a sysusers failure is a refresh failure
+  (`systemd-sysusers failed after refresh: …`, joined with a last-refresh
+  failure) and the sequence continues, and when the last refresh succeeded it
+  also wraps `sysext.ErrActivationIncomplete`, so the SDK says the images are
+  merged and a reboot finishes the activation; a tmpfiles failure is one
+  warning line on stderr and is not an error. The timer (`--no-refresh`) runs
+  none of it. A new refresh call site must call `runner.Refresh()`, never
+  `systemd-sysext refresh` directly.
 - **CLI.** `features update` that gets `ErrBusy` exits 0 with one stderr line
   only when `runningUnderSystemd()` (non-empty `INVOCATION_ID`; the packaged
   timer runs exactly `updex features update --no-refresh`); every other

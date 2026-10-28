@@ -3,6 +3,7 @@ package updex
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -445,6 +446,28 @@ func TestRollbackFeature_NowRefreshFailure(t *testing.T) {
 	}
 	if result.Success || result.RefreshError == "" || result.Refreshed {
 		t.Errorf("result = %+v", result)
+	}
+	f.wantLinks(map[string]string{"alpha": "2.0.0"})
+	f.readRecord()
+}
+
+// An incomplete activation after a rollback says the images are merged and
+// that a reboot finishes it, not that a refresh would.
+func TestRollbackFeature_NowIncompleteActivationSaysReboot(t *testing.T) {
+	f := newRollbackFixture(t, "alpha")
+	f.setup("alpha", "3.0.0", "1.0.0", "2.0.0", "3.0.0")
+	f.runner.refreshErr = fmt.Errorf("refresh: %w", sysext.ErrActivationIncomplete)
+
+	result, err := f.rollback(RollbackFeatureOptions{Now: true})
+	if err == nil {
+		t.Fatal("expected RollbackFeature to return an error")
+	}
+	if result.Success || result.RefreshError == "" {
+		t.Errorf("result = %+v", result)
+	}
+	want := "Feature 'grp' rolled back and recorded; the extensions are merged, but activation did not finish (the sysext accounts may be missing); reboot to finish it"
+	if result.NextActionMessage != want {
+		t.Errorf("NextActionMessage = %q, want %q", result.NextActionMessage, want)
 	}
 	f.wantLinks(map[string]string{"alpha": "2.0.0"})
 	f.readRecord()

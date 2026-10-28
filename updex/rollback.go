@@ -717,9 +717,17 @@ func (c *Client) RollbackFeature(ctx context.Context, name string, opts Rollback
 		} else {
 			c.msg("Refreshing sysext")
 			if err := c.runner.Refresh(); err != nil {
+				// The record and the links are written. When the refresh
+				// merged the images and only systemd-sysusers failed, they
+				// are merged but their accounts may be missing: a plain
+				// refresh cannot fix that, a reboot can.
 				err = fmt.Errorf("sysext refresh failed: %w", err)
 				result.RefreshError = err.Error()
-				result.NextActionMessage = fmt.Sprintf("Feature '%s' rolled back and recorded, but systemd-sysext refresh failed; run 'systemd-sysext refresh' (or reboot) to activate it", name)
+				if errors.Is(err, sysext.ErrActivationIncomplete) {
+					result.NextActionMessage = fmt.Sprintf("Feature '%s' rolled back and recorded; the extensions are merged, but activation did not finish (the sysext accounts may be missing); reboot to finish it", name)
+				} else {
+					result.NextActionMessage = fmt.Sprintf("Feature '%s' rolled back and recorded, but systemd-sysext refresh failed; run 'systemd-sysext refresh' (or reboot) to activate it", name)
+				}
 				return fail(err)
 			}
 			result.Refreshed = true

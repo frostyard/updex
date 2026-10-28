@@ -89,6 +89,15 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
   only under systemd (`INVOCATION_ID` set), printing the normal output, one
   log line and exiting 0, while a shell run, a partial failure, an error
   status and a verification failure still fail
+- [ADR-0019](adr/0019-apply-merged-sysusers-and-tmpfiles-on-a-live-refresh.md) —
+  `DefaultRunner.Refresh` activates merged images in boot order, chosen by
+  systemd version: merge with `--no-reload`, `systemd-sysusers`,
+  `systemd-tmpfiles --create`, then a refresh that reloads the manager and
+  starts units whose accounts and paths exist (`--always-refresh=yes` on 260
+  and newer, plain on 255 to 259); older systemd gets the accounts after the
+  merge; a sysusers failure is a refresh failure that keeps a successful
+  merge visible as `ErrActivationIncomplete`, a tmpfiles failure only a
+  warning
 
 ### Design
 

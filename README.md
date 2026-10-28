@@ -122,8 +122,16 @@ ones they left alone:
 **Refresh failure:** If the final `systemd-sysext refresh` fails after
 `enable --now`, `disable --now`, or `update`, updex reports completed steps
 and exits non-zero (`refresh_error` in JSON). Run `systemd-sysext refresh`
-manually or reboot; after `disable --now`, extensions remain unmerged until
-then.
+manually or reboot; after `disable --now`, the remaining extensions may stay
+unmerged until then.
+
+**Accounts and paths:** with `--now` (and `update` without `--no-refresh`),
+updex runs `systemd-sysusers` and `systemd-tmpfiles --create` for the merged
+sysexts before the service manager reloads, so a sysext's own accounts and
+directories exist at once, as after a reboot. A `systemd-sysusers` failure
+fails the refresh with a message that the images are merged and a reboot
+finishes the activation; a `systemd-tmpfiles` failure only prints a warning.
+Older than systemd 255 gets the accounts after the merge.
 
 **Check errors:** If a component's manifest cannot be fetched or verified,
 `features check` reports `UPDATE=error` (JSON: `error`), continues reporting

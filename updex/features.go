@@ -404,11 +404,18 @@ func (c *Client) enableFeature(ctx context.Context, name string, opts EnableFeat
 						// The drop-in is written and the images are staged and
 						// linked; only activation failed. Report it rather than
 						// claiming success (see FeatureActionResult.RefreshError).
+						// When the refresh merged the images and only systemd-sysusers
+						// failed, the images are merged but their accounts may be
+						// missing: a plain refresh cannot fix that, a reboot can.
 						err = fmt.Errorf("sysext refresh failed: %w", err)
 						c.warn("%s", err)
 						result.RefreshError = err.Error()
 						result.Error = err.Error()
-						result.NextActionMessage = fmt.Sprintf("Feature '%s' enabled and %d extension(s) downloaded, but systemd-sysext refresh failed; run 'systemd-sysext refresh' (or reboot) to activate them", name, len(result.DownloadedFiles))
+						if errors.Is(err, sysext.ErrActivationIncomplete) {
+							result.NextActionMessage = fmt.Sprintf("Feature '%s' enabled and %d extension(s) downloaded and merged, but activation did not finish (the sysext accounts may be missing); reboot to finish it", name, len(result.DownloadedFiles))
+						} else {
+							result.NextActionMessage = fmt.Sprintf("Feature '%s' enabled and %d extension(s) downloaded, but systemd-sysext refresh failed; run 'systemd-sysext refresh' (or reboot) to activate them", name, len(result.DownloadedFiles))
+						}
 						return result, err
 					}
 				}
@@ -642,13 +649,22 @@ func (c *Client) disableFeature(ctx context.Context, name string, opts DisableFe
 			c.msg("Refreshing sysext")
 			if err := c.runner.Refresh(); err != nil {
 				// Unmerge already detached every extension on the host and
-				// the files are gone; a failed refresh leaves the remaining
-				// extensions unmerged. That must never read as success.
+				// the files are gone. A failed refresh does not say what is
+				// merged now: a first refresh without a reload may have
+				// merged the remaining extensions, or nothing may be merged.
+				// That must never read as success. When the error says the
+				// extensions merged and only systemd-sysusers failed, they
+				// are merged: say that, and that a reboot finishes the
+				// activation.
 				err = fmt.Errorf("sysext refresh failed: %w", err)
 				c.warn("%s", err)
 				result.RefreshError = err.Error()
 				result.Error = err.Error()
-				result.NextActionMessage = fmt.Sprintf("Feature '%s' disabled and %d extension file(s) removed, but systemd-sysext refresh failed after unmerge: all extensions are currently unmerged; run 'systemd-sysext refresh' (or reboot) to re-merge the remaining extensions", name, len(result.RemovedFiles))
+				if errors.Is(err, sysext.ErrActivationIncomplete) {
+					result.NextActionMessage = fmt.Sprintf("Feature '%s' disabled and %d extension file(s) removed; the remaining extensions are merged, but activation did not finish (the sysext accounts may be missing); reboot to finish it", name, len(result.RemovedFiles))
+				} else {
+					result.NextActionMessage = fmt.Sprintf("Feature '%s' disabled and %d extension file(s) removed, but systemd-sysext refresh failed after unmerge: the remaining extensions may be unmerged; run 'systemd-sysext refresh' (or reboot) to re-merge them", name, len(result.RemovedFiles))
+				}
 				return result, err
 			}
 		}
