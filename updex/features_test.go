@@ -1677,6 +1677,31 @@ func TestEnableFeature_Now_RefreshFailure_ReportsError(t *testing.T) {
 	}
 }
 
+// TestEnableFeature_Now_IncompleteActivation_SaysReboot verifies that a
+// Refresh error wrapping sysext.ErrActivationIncomplete says the images are
+// merged and that a reboot finishes the activation, not that a plain
+// `systemd-sysext refresh` would.
+func TestEnableFeature_Now_IncompleteActivation_SaysReboot(t *testing.T) {
+	client, mockRunner, _ := refreshFailureFixture(t, false)
+	mockRunner.RefreshErr = fmt.Errorf("refresh: %w", sysext.ErrActivationIncomplete)
+
+	result, err := client.EnableFeature(t.Context(), "testfeature", EnableFeatureOptions{Now: true})
+
+	if err == nil {
+		t.Fatal("expected EnableFeature to return an error")
+	}
+	if result.Success {
+		t.Error("Success must be false")
+	}
+	if result.RefreshError == "" || result.Error != result.RefreshError {
+		t.Errorf("RefreshError=%q Error=%q", result.RefreshError, result.Error)
+	}
+	want := fmt.Sprintf("Feature 'testfeature' enabled and %d extension(s) downloaded and merged, but activation did not finish (the sysext accounts may be missing); reboot to finish it", len(result.DownloadedFiles))
+	if result.NextActionMessage != want {
+		t.Errorf("NextActionMessage = %q, want %q", result.NextActionMessage, want)
+	}
+}
+
 // TestDisableFeature_Now_RefreshFailure_ReportsError verifies that
 // DisableFeature{Now, Force} whose unmerge and removal succeed but whose
 // re-merge refresh fails returns an error and says the host is left with
@@ -1713,6 +1738,35 @@ func TestDisableFeature_Now_RefreshFailure_ReportsError(t *testing.T) {
 	}
 	if !strings.Contains(result.NextActionMessage, "unmerged") || !strings.Contains(result.NextActionMessage, "systemd-sysext refresh") {
 		t.Errorf("NextActionMessage should say extensions are unmerged and how to re-merge, got %q", result.NextActionMessage)
+	}
+}
+
+// TestDisableFeature_Now_IncompleteActivation_SaysReboot verifies that a
+// Refresh error wrapping sysext.ErrActivationIncomplete does not claim the
+// remaining extensions are unmerged: they are merged, and a reboot finishes
+// the activation.
+func TestDisableFeature_Now_IncompleteActivation_SaysReboot(t *testing.T) {
+	client, mockRunner, targetDir := refreshFailureFixture(t, true)
+	extPath := filepath.Join(targetDir, "testext_1.0.0.raw")
+	if err := os.WriteFile(extPath, []byte("installed"), 0644); err != nil {
+		t.Fatalf("write installed image: %v", err)
+	}
+	mockRunner.RefreshErr = fmt.Errorf("refresh: %w", sysext.ErrActivationIncomplete)
+
+	result, err := client.DisableFeature(t.Context(), "testfeature", DisableFeatureOptions{Now: true, Force: true})
+
+	if err == nil {
+		t.Fatal("expected DisableFeature to return an error")
+	}
+	if result.Success {
+		t.Error("Success must be false")
+	}
+	if result.RefreshError == "" || result.Error != result.RefreshError {
+		t.Errorf("RefreshError=%q Error=%q", result.RefreshError, result.Error)
+	}
+	want := fmt.Sprintf("Feature 'testfeature' disabled and %d extension file(s) removed; the remaining extensions are merged, but activation did not finish (the sysext accounts may be missing); reboot to finish it", len(result.RemovedFiles))
+	if result.NextActionMessage != want {
+		t.Errorf("NextActionMessage = %q, want %q", result.NextActionMessage, want)
 	}
 }
 

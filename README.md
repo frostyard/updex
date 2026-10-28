@@ -129,8 +129,9 @@ then.
 updex runs `systemd-sysusers` and `systemd-tmpfiles --create` for the merged
 sysexts before the service manager reloads, so a sysext's own accounts and
 directories exist at once, as after a reboot. A `systemd-sysusers` failure
-fails the refresh; a `systemd-tmpfiles` failure only prints a warning. This
-needs systemd 255 or newer.
+fails the refresh with a message that the images are merged and a reboot
+finishes the activation; a `systemd-tmpfiles` failure only prints a warning.
+Older than systemd 255 gets the accounts after the merge.
 
 **Check errors:** If a component's manifest cannot be fetched or verified,
 `features check` reports `UPDATE=error` (JSON: `error`), continues reporting

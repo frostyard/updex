@@ -32,21 +32,36 @@ without `--no-refresh`, `rollback --now`).
 systemd gives no hook between the merge and the reload. Since systemd 255,
 `systemd-sysext --no-reload` skips the reload (and, since 262, also the
 `EXTENSION_RESTART_UNITS=` and `EXTENSION_RELOAD_OR_RESTART_UNITS=` handling).
-A plain `refresh` always unmounts and remounts the overlay, also when the set
-of images did not change, and then applies those settings for the merged set.
+Before 255, `refresh` never reloads the manager. From 255 to 259, a `refresh`
+always unmounts and remounts the overlay and then applies those settings for
+the merged set. Since 260, a `refresh` does nothing when no image was added,
+removed or changed, unless it gets `--always-refresh=yes` (added in 260).
 
 ## Decision
 
-`sysext.DefaultRunner.Refresh` activates the merged images in the boot order:
+`sysext.DefaultRunner.Refresh` activates the merged images in the boot order.
+It first reads the major version from `systemd-sysext --version`, then runs:
 
 1. `systemd-sysext refresh --no-reload`: merge the new set; the manager does
    not see it yet.
 2. `systemd-sysusers`: create the accounts the merged `sysusers.d` declares.
 3. `systemd-tmpfiles --create --graceful`: create the merged `tmpfiles.d`
    paths. No `--remove` and no `--boot`: those belong to boot.
-4. `systemd-sysext refresh`: merge the same set again, now with systemd's own
-   reload and unit-restart handling, so a unit the reload starts finds its
-   accounts and paths.
+4. `systemd-sysext refresh --always-refresh=yes`: merge the same set again,
+   now with systemd's own reload and unit-restart handling, so a unit the
+   reload starts finds its accounts and paths. `--always-refresh=yes` is
+   needed because the set did not change since step 1, and systemd 260 and
+   newer would skip a plain refresh, and with it the reload.
+
+By version:
+
+- 260 and newer, or a version updex cannot read: the 4 steps above. An
+  unreadable version takes the newest form, so an older systemd fails loudly
+  on the unknown option instead of skipping the reload silently.
+- 255 to 259: step 4 is a plain `systemd-sysext refresh` (it always
+  remounts; `--always-refresh` does not exist).
+- Older than 255: step 1 is a plain `systemd-sysext refresh` (it never
+  reloads, and `--no-reload` does not exist), then steps 2 and 3; no step 4.
 
 Failures:
 
@@ -54,12 +69,17 @@ Failures:
   nothing else (as before).
 - Step 2 fails: `Refresh` continues with steps 3 and 4 (the merged set must
   still reach the manager) and then returns an error that names
-  `systemd-sysusers`.
+  `systemd-sysusers`. When the last refresh succeeded, that error wraps
+  `sysext.ErrActivationIncomplete`: the extensions are merged, but their
+  accounts may be missing. The SDK then says so, and says that a reboot
+  finishes the activation, instead of the plain refresh-failure text (a
+  plain `systemd-sysext refresh` does not run `systemd-sysusers`).
 - Step 3 fails: `Refresh` writes a warning to stderr and continues; it is not
   an error. One bad rule in any merged sysext must not fail every refresh
   (the same rule as snosi#1167 for `reload-sysext.service`).
 - Step 4 fails: `Refresh` returns `systemd-sysext refresh failed: …`, joined
-  with a step 2 error if there is one.
+  with a step 2 error if there is one. The merge state is then not known, so
+  it never wraps `ErrActivationIncomplete`.
 
 The SDK calls `Refresh` exactly as before, so every operation that refreshes
 gets the sequence. Each such failure keeps the existing refresh-failure
@@ -79,10 +99,13 @@ paths in place before the manager reload, `Upholds=`, `WantedBy=`, and the
   gap the `systemd-sysext` man page describes, in which the merged files are
   absent. Processes that read sysext files during a refresh see two gaps, not
   one.
-- updex needs systemd 255 or newer for a live refresh (`--no-reload`).
-  Debian trixie ships 257 and snosi ships 262. On older systemd, step 1 fails
-  and the operation reports a refresh failure; the images stay linked and
-  merge at the next boot.
+- On systemd 260 and newer, step 4 forces a remount and a manager reload also
+  when nothing changed, for example `updex features update` with nothing new.
+  systemd alone would have skipped that refresh.
+- Each refresh runs `systemd-sysext --version` once more.
+- Debian trixie ships 257 and snosi ships 262. Older than 255 gets the
+  accounts and paths after the merge; it has no reload in the refresh, so no
+  unit starts before them.
 - `systemd-sysusers` and `systemd-tmpfiles --create` act on the whole merged
   configuration, not only on the new sysext. Both are idempotent and are what
   the boot runs; a live refresh now changes `/etc/passwd`, `/etc/group` and
@@ -101,6 +124,8 @@ paths in place before the manager reload, `Upholds=`, `WantedBy=`, and the
   upheld units before the accounts exist, so they fail first. updex would have
   to know each feature's units and their start limits, which is unit policy,
   not update policy.
+- **One plain refresh, with `systemd-sysusers` before it:** the accounts are
+  declared inside the images, which are not merged yet.
 - **`--no-reload`, then `systemctl daemon-reload` from updex:** updex would
   have to copy systemd's `EXTENSION_RELOAD_MANAGER=` decision and the 262
   `EXTENSION_RESTART_UNITS=`/`EXTENSION_RELOAD_OR_RESTART_UNITS=` handling,
