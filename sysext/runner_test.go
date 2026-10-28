@@ -59,6 +59,8 @@ func TestDefaultRunnerRefreshRunsTheADR0019Sequence(t *testing.T) {
 	const (
 		v262 = "systemd 262 (262-1)\n"
 		v257 = "systemd 257 (257.9-1~deb13u1)\n"
+		v254 = "systemd 254 (254.10-1)\n"
+		v253 = "systemd 253 (253.5-1)\n"
 		v252 = "systemd 252 (252.38-1~deb12u1)\n"
 	)
 
@@ -78,12 +80,19 @@ func TestDefaultRunnerRefreshRunsTheADR0019Sequence(t *testing.T) {
 		"systemd-tmpfiles --create --graceful",
 		"systemd-sysext refresh",
 	}
-	// older is the sequence for systemd older than 255: one plain refresh
+	// olderGraceful is the sequence for systemd 254: one plain refresh
 	// first, then the accounts and paths. It has no last refresh.
-	older := []string{
+	olderGraceful := []string{
 		"systemd-sysext refresh",
 		"systemd-sysusers",
 		"systemd-tmpfiles --create --graceful",
+	}
+	// older is the sequence for systemd 253 and older: --graceful does not
+	// exist there, so tmpfiles gets --create alone.
+	older := []string{
+		"systemd-sysext refresh",
+		"systemd-sysusers",
+		"systemd-tmpfiles --create",
 	}
 
 	tests := []struct {
@@ -114,6 +123,16 @@ func TestDefaultRunnerRefreshRunsTheADR0019Sequence(t *testing.T) {
 			name:      "systemd 257 runs a plain last refresh",
 			version:   v257,
 			wantCalls: v255To259,
+		},
+		{
+			name:      "systemd 254 runs tmpfiles with --graceful and no last refresh",
+			version:   v254,
+			wantCalls: olderGraceful,
+		},
+		{
+			name:      "systemd 253 runs tmpfiles without --graceful",
+			version:   v253,
+			wantCalls: older,
 		},
 		{
 			name:      "systemd 252 refreshes before sysusers and never again",

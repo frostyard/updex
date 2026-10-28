@@ -1704,8 +1704,8 @@ func TestEnableFeature_Now_IncompleteActivation_SaysReboot(t *testing.T) {
 
 // TestDisableFeature_Now_RefreshFailure_ReportsError verifies that
 // DisableFeature{Now, Force} whose unmerge and removal succeed but whose
-// re-merge refresh fails returns an error and says the host is left with
-// its extensions unmerged.
+// re-merge refresh fails returns an error and says the remaining extensions
+// may be unmerged.
 func TestDisableFeature_Now_RefreshFailure_ReportsError(t *testing.T) {
 	client, mockRunner, targetDir := refreshFailureFixture(t, true)
 	extPath := filepath.Join(targetDir, "testext_1.0.0.raw")
@@ -1737,7 +1737,7 @@ func TestDisableFeature_Now_RefreshFailure_ReportsError(t *testing.T) {
 		t.Errorf("RefreshError=%q Error=%q", result.RefreshError, result.Error)
 	}
 	if !strings.Contains(result.NextActionMessage, "unmerged") || !strings.Contains(result.NextActionMessage, "systemd-sysext refresh") {
-		t.Errorf("NextActionMessage should say extensions are unmerged and how to re-merge, got %q", result.NextActionMessage)
+		t.Errorf("NextActionMessage should say extensions may be unmerged and how to re-merge, got %q", result.NextActionMessage)
 	}
 }
 
@@ -1767,6 +1767,34 @@ func TestDisableFeature_Now_IncompleteActivation_SaysReboot(t *testing.T) {
 	want := fmt.Sprintf("Feature 'testfeature' disabled and %d extension file(s) removed; the remaining extensions are merged, but activation did not finish (the sysext accounts may be missing); reboot to finish it", len(result.RemovedFiles))
 	if result.NextActionMessage != want {
 		t.Errorf("NextActionMessage = %q, want %q", result.NextActionMessage, want)
+	}
+}
+
+// TestDisableFeature_Now_RefreshFailure_DoesNotClaimUnmerged pins that a
+// refresh error without ErrActivationIncomplete does not claim that every
+// extension is unmerged: the first refresh may have merged the remaining
+// extensions before the last one failed.
+func TestDisableFeature_Now_RefreshFailure_DoesNotClaimUnmerged(t *testing.T) {
+	client, mockRunner, targetDir := refreshFailureFixture(t, true)
+	if err := os.WriteFile(filepath.Join(targetDir, "testext_1.0.0.raw"), []byte("installed"), 0644); err != nil {
+		t.Fatalf("write installed image: %v", err)
+	}
+	mockRunner.RefreshErr = errors.New("systemd-sysext refresh failed: x")
+
+	result, err := client.DisableFeature(t.Context(), "testfeature", DisableFeatureOptions{Now: true, Force: true})
+
+	if err == nil {
+		t.Fatal("expected DisableFeature to return an error")
+	}
+	if result.Success {
+		t.Error("Success must be false")
+	}
+	want := fmt.Sprintf("Feature 'testfeature' disabled and %d extension file(s) removed, but systemd-sysext refresh failed after unmerge: the remaining extensions may be unmerged; run 'systemd-sysext refresh' (or reboot) to re-merge them", len(result.RemovedFiles))
+	if result.NextActionMessage != want {
+		t.Errorf("NextActionMessage = %q, want %q", result.NextActionMessage, want)
+	}
+	if strings.Contains(result.NextActionMessage, "currently unmerged") {
+		t.Errorf("NextActionMessage must not claim every extension is unmerged: %q", result.NextActionMessage)
 	}
 }
 

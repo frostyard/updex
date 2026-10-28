@@ -122,8 +122,8 @@ ones they left alone:
 **Refresh failure:** If the final `systemd-sysext refresh` fails after
 `enable --now`, `disable --now`, or `update`, updex reports completed steps
 and exits non-zero (`refresh_error` in JSON). Run `systemd-sysext refresh`
-manually or reboot; after `disable --now`, extensions remain unmerged until
-then.
+manually or reboot; after `disable --now`, the remaining extensions may stay
+unmerged until then.
 
 **Accounts and paths:** with `--now` (and `update` without `--no-refresh`),
 updex runs `systemd-sysusers` and `systemd-tmpfiles --create` for the merged

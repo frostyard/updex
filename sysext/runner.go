@@ -83,6 +83,9 @@ type DefaultRunner struct {
 //   - older than 255: a plain refresh, which never reloads the manager, then
 //     systemd-sysusers and systemd-tmpfiles --create. No last refresh.
 //
+// systemd-tmpfiles gets --graceful from systemd 254, so an older systemd runs
+// systemd-tmpfiles --create alone.
+//
 // An unreadable version takes the newest form, so an older systemd fails
 // loudly on the unknown option instead of skipping the reload silently.
 //
@@ -115,7 +118,7 @@ func (r *DefaultRunner) Refresh() error {
 		sysusersErr = fmt.Errorf("systemd-sysusers failed after refresh: %w", err)
 	}
 
-	if err := r.exec("systemd-tmpfiles", "--create", "--graceful"); err != nil {
+	if err := r.exec("systemd-tmpfiles", tmpfilesArgs(known, version)...); err != nil {
 		fmt.Fprintf(r.errStream(), "warning: systemd-tmpfiles --create failed after refresh: %v\n", err)
 	}
 
@@ -201,6 +204,17 @@ func parseSystemdVersion(out []byte) (int, bool) {
 		return 0, false
 	}
 	return version, true
+}
+
+// tmpfilesArgs are the arguments for systemd-tmpfiles --create. --graceful
+// exists since systemd 254; an older systemd gets --create alone, because the
+// unknown option would fail the command and create no paths. An unreadable
+// version takes the newest form.
+func tmpfilesArgs(known bool, version int) []string {
+	if !known || version >= 254 {
+		return []string{"--create", "--graceful"}
+	}
+	return []string{"--create"}
 }
 
 // exec runs one command through the seam, or with os/exec when it is nil.

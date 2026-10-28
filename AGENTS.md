@@ -593,7 +593,8 @@ in the `config/` structs and parse functions. Always finish with
   `systemd-sysusers`, `systemd-tmpfiles --create --graceful`, then
   `systemd-sysext refresh --always-refresh=yes`; on 255 to 259 the same with a
   plain last refresh; older than 255 one plain refresh, then sysusers and
-  tmpfiles, no last refresh. The last refresh is what reloads the manager and
+  tmpfiles, no last refresh. `systemd-tmpfiles` gets `--graceful` from 254 and
+  `--create` alone before that. The last refresh is what reloads the manager and
   starts the units, so the merged images' accounts and paths exist first;
   `--always-refresh=yes` forces the remount that 260 and newer would skip when
   no image changed. A step 1 failure returns `systemd-sysext refresh failed: …`

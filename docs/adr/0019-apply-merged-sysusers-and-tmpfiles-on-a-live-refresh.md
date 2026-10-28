@@ -62,6 +62,7 @@ By version:
   remounts; `--always-refresh` does not exist).
 - Older than 255: step 1 is a plain `systemd-sysext refresh` (it never
   reloads, and `--no-reload` does not exist), then steps 2 and 3; no step 4.
+- Older than 254: step 3 runs without `--graceful`, which 254 added.
 
 Failures:
 
@@ -79,7 +80,8 @@ Failures:
   (the same rule as snosi#1167 for `reload-sysext.service`).
 - Step 4 fails: `Refresh` returns `systemd-sysext refresh failed: …`, joined
   with a step 2 error if there is one. The merge state is then not known, so
-  it never wraps `ErrActivationIncomplete`.
+  it never wraps `ErrActivationIncomplete`, and the SDK says that the
+  extensions may be unmerged (not that they are).
 
 The SDK calls `Refresh` exactly as before, so every operation that refreshes
 gets the sequence. Each such failure keeps the existing refresh-failure

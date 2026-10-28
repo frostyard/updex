@@ -866,17 +866,18 @@ func TestRunFeaturesDisable(t *testing.T) {
 			},
 		},
 		{
-			// Unmerge already ran and the files are gone; a failed re-merge
-			// refresh leaves every extension unmerged, so the command must say
-			// so and exit non-zero instead of printing the reboot hint.
-			name:       "--now --force with a failing refresh reports the unmerged state",
+			// Unmerge already ran and the files are gone; a failed refresh
+			// does not prove what is merged now, so the command must say the
+			// extensions may be unmerged and exit non-zero instead of
+			// printing the reboot hint.
+			name:       "--now --force with a failing refresh reports a possible unmerged state",
 			scope:      "definitions",
 			staged:     true,
 			active:     true,
 			flags:      featureCLIFlags{now: true, force: true},
 			refreshErr: errors.New("systemd-sysext refresh: exit status 1"),
 			wantErr:    "sysext refresh failed",
-			wantOut:    []string{"Feature 'testfeature' disabled.\n", "Extensions unmerged.\n", "Removed 2 file(s):\n", "Error: sysext refresh failed: systemd-sysext refresh: exit status 1\n", "all extensions are currently unmerged"},
+			wantOut:    []string{"Feature 'testfeature' disabled.\n", "Extensions unmerged.\n", "Removed 2 file(s):\n", "Error: sysext refresh failed: systemd-sysext refresh: exit status 1\n", "the remaining extensions may be unmerged"},
 			wantNoOut:  []string{"Warning: Reboot required"},
 			check: func(t *testing.T, fx *featureCLIFixture, _ string, runner *sysext.MockRunner) {
 				assertNotExists(t, fx.stagedImage(), "staged image")
