@@ -89,6 +89,12 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
   only under systemd (`INVOCATION_ID` set), printing the normal output, one
   log line and exiting 0, while a shell run, a partial failure, an error
   status and a verification failure still fail
+- [ADR-0019](adr/0019-apply-merged-sysusers-and-tmpfiles-on-a-live-refresh.md) —
+  `DefaultRunner.Refresh` activates merged images in boot order: merge with
+  `--no-reload`, `systemd-sysusers`, `systemd-tmpfiles --create`, then a
+  plain refresh whose reload starts units that find their accounts and
+  paths; a sysusers failure is a refresh failure, a tmpfiles failure only a
+  warning, and systemd 255 or newer is needed
 
 ### Design
 
