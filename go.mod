@@ -6,7 +6,7 @@ toolchain go1.26.10
 
 require (
 	github.com/ProtonMail/go-crypto v1.5.2
-	github.com/erofs/go-erofs v0.3.1
+	github.com/erofs/go-erofs v0.3.2
 	github.com/frostyard/clix v0.5.0
 	github.com/frostyard/std v0.3.0
 	github.com/hashicorp/go-version v1.9.0
