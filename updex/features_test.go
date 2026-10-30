@@ -1672,8 +1672,14 @@ func TestEnableFeature_Now_RefreshFailure_ReportsError(t *testing.T) {
 	if len(result.DownloadedFiles) != 1 {
 		t.Errorf("expected 1 downloaded file, got %v", result.DownloadedFiles)
 	}
-	if !strings.Contains(result.NextActionMessage, "systemd-sysext refresh") {
-		t.Errorf("NextActionMessage should tell the operator how to activate, got %q", result.NextActionMessage)
+	want := fmt.Sprintf("Feature 'testfeature' enabled and %d extension(s) downloaded, but systemd-sysext refresh failed: the merge state is not known; reboot to activate them (a plain 'systemd-sysext refresh' does not create the sysext accounts)", len(result.DownloadedFiles))
+	if result.NextActionMessage != want {
+		t.Errorf("NextActionMessage = %q, want %q", result.NextActionMessage, want)
+	}
+	// #479: a plain refresh runs no systemd-sysusers, so it must not be
+	// offered as the way to activate the new sysext.
+	if strings.Contains(result.NextActionMessage, "run 'systemd-sysext refresh'") {
+		t.Errorf("NextActionMessage must not advise a plain refresh, got %q", result.NextActionMessage)
 	}
 }
 
@@ -1738,6 +1744,11 @@ func TestDisableFeature_Now_RefreshFailure_ReportsError(t *testing.T) {
 	}
 	if !strings.Contains(result.NextActionMessage, "unmerged") || !strings.Contains(result.NextActionMessage, "systemd-sysext refresh") {
 		t.Errorf("NextActionMessage should say extensions may be unmerged and how to re-merge, got %q", result.NextActionMessage)
+	}
+	// #479: disable keeps the refresh advice on purpose: the remaining
+	// extensions were merged before, so their accounts already exist.
+	if !strings.Contains(result.NextActionMessage, "run 'systemd-sysext refresh' (or reboot)") {
+		t.Errorf("NextActionMessage must keep the refresh advice, got %q", result.NextActionMessage)
 	}
 }
 

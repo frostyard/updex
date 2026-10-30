@@ -531,7 +531,7 @@ func TestRunFeaturesEnable(t *testing.T) {
 			flags:      featureCLIFlags{now: true},
 			refreshErr: errors.New("systemd-sysext refresh: exit status 1"),
 			wantErr:    "sysext refresh failed",
-			wantOut:    []string{"Feature 'testfeature' enabled.\n", "Downloaded 1 extension(s):\n", "Error: sysext refresh failed: systemd-sysext refresh: exit status 1\n", "run 'systemd-sysext refresh' (or reboot)"},
+			wantOut:    []string{"Feature 'testfeature' enabled.\n", "Downloaded 1 extension(s):\n", "Error: sysext refresh failed: systemd-sysext refresh: exit status 1\n", "reboot to activate them"},
 			check: func(t *testing.T, fx *featureCLIFixture, _ string, _ *sysext.MockRunner) {
 				assertExists(t, fx.dropInPath(""), "drop-in")
 				assertExists(t, fx.stagedImage(), "downloaded image")

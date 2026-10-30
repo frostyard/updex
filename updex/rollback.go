@@ -726,7 +726,7 @@ func (c *Client) RollbackFeature(ctx context.Context, name string, opts Rollback
 				if errors.Is(err, sysext.ErrActivationIncomplete) {
 					result.NextActionMessage = fmt.Sprintf("Feature '%s' rolled back and recorded; the extensions are merged, but activation did not finish (the sysext accounts may be missing); reboot to finish it", name)
 				} else {
-					result.NextActionMessage = fmt.Sprintf("Feature '%s' rolled back and recorded, but systemd-sysext refresh failed; run 'systemd-sysext refresh' (or reboot) to activate it", name)
+					result.NextActionMessage = fmt.Sprintf("Feature '%s' rolled back and recorded, but systemd-sysext refresh failed: the merge state is not known; reboot to activate it (a plain 'systemd-sysext refresh' does not create the sysext accounts)", name)
 				}
 				return fail(err)
 			}
@@ -743,7 +743,7 @@ func (c *Client) RollbackFeature(ctx context.Context, name string, opts Rollback
 	case result.RefreshSkipped != "":
 		result.NextActionMessage = fmt.Sprintf("Feature '%s' rolled back and recorded. %s. Reboot to activate it. %s", name, result.RefreshSkipped, holdText)
 	default:
-		result.NextActionMessage = fmt.Sprintf("Feature '%s' rolled back. It takes effect at the next boot (or run 'systemd-sysext refresh', or use --now). %s", name, holdText)
+		result.NextActionMessage = fmt.Sprintf("Feature '%s' rolled back. It takes effect at the next boot (or use --now). %s", name, holdText)
 	}
 	return result, nil
 }

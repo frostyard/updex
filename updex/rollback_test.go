@@ -175,6 +175,11 @@ func TestRollbackFeature_DefaultTarget(t *testing.T) {
 	if !strings.Contains(result.NextActionMessage, "next boot") {
 		t.Errorf("message must say it takes effect at the next boot: %q", result.NextActionMessage)
 	}
+	// #479: a plain `systemd-sysext refresh` runs no systemd-sysusers, so a
+	// rollback without --now must not offer it.
+	if strings.Contains(result.NextActionMessage, "systemd-sysext refresh") {
+		t.Errorf("message must not advise a plain refresh: %q", result.NextActionMessage)
+	}
 	if f.runner.refreshes != 0 {
 		t.Error("a rollback without --now must not refresh")
 	}
@@ -446,6 +451,15 @@ func TestRollbackFeature_NowRefreshFailure(t *testing.T) {
 	}
 	if result.Success || result.RefreshError == "" || result.Refreshed {
 		t.Errorf("result = %+v", result)
+	}
+	want := "Feature 'grp' rolled back and recorded, but systemd-sysext refresh failed: the merge state is not known; reboot to activate it (a plain 'systemd-sysext refresh' does not create the sysext accounts)"
+	if result.NextActionMessage != want {
+		t.Errorf("NextActionMessage = %q, want %q", result.NextActionMessage, want)
+	}
+	// #479: a plain `systemd-sysext refresh` runs no systemd-sysusers, so it
+	// must not be offered as the way to activate the rolled-back image.
+	if strings.Contains(result.NextActionMessage, "run 'systemd-sysext refresh'") {
+		t.Errorf("NextActionMessage must not advise a plain refresh, got %q", result.NextActionMessage)
 	}
 	f.wantLinks(map[string]string{"alpha": "2.0.0"})
 	f.readRecord()
