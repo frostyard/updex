@@ -407,6 +407,10 @@ func (c *Client) enableFeature(ctx context.Context, name string, opts EnableFeat
 						// When the refresh merged the images and only systemd-sysusers
 						// failed, the images are merged but their accounts may be
 						// missing: a plain refresh cannot fix that, a reboot can.
+						// Every other refresh failure leaves the merge state unknown,
+						// and gets the reboot advice too (#479): a plain
+						// `systemd-sysext refresh` runs no systemd-sysusers (ADR-0019),
+						// so it can merge the new sysext without its accounts.
 						err = fmt.Errorf("sysext refresh failed: %w", err)
 						c.warn("%s", err)
 						result.RefreshError = err.Error()
@@ -414,7 +418,7 @@ func (c *Client) enableFeature(ctx context.Context, name string, opts EnableFeat
 						if errors.Is(err, sysext.ErrActivationIncomplete) {
 							result.NextActionMessage = fmt.Sprintf("Feature '%s' enabled and %d extension(s) downloaded and merged, but activation did not finish (the sysext accounts may be missing); reboot to finish it", name, len(result.DownloadedFiles))
 						} else {
-							result.NextActionMessage = fmt.Sprintf("Feature '%s' enabled and %d extension(s) downloaded, but systemd-sysext refresh failed; run 'systemd-sysext refresh' (or reboot) to activate them", name, len(result.DownloadedFiles))
+							result.NextActionMessage = fmt.Sprintf("Feature '%s' enabled and %d extension(s) downloaded, but systemd-sysext refresh failed: the merge state is not known; reboot to activate them (a plain 'systemd-sysext refresh' does not create the sysext accounts)", name, len(result.DownloadedFiles))
 						}
 						return result, err
 					}
