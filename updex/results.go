@@ -324,9 +324,10 @@ type FeatureActionResult struct {
 	// RefreshError is set when every requested filesystem change succeeded
 	// but the final `systemd-sysext refresh` failed. Success is false and
 	// Error carries the same message; NextActionMessage says how to finish
-	// activation (a manual refresh or a reboot). For a disable with Now the
-	// preceding unmerge already ran, so until that refresh happens every
-	// extension on the host stays unmerged.
+	// activation: a reboot after an enable (a plain `systemd-sysext refresh`
+	// runs no systemd-sysusers, ADR-0019), a manual refresh or a reboot after
+	// a disable. For a disable with Now the preceding unmerge already ran, so
+	// the remaining extensions may stay unmerged until that refresh happens.
 	RefreshError string `json:"refresh_error,omitempty"`
 	// PendingActivations lists the sysexts outside this feature that are
 	// linked to a version the host does not run, and that the
