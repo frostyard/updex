@@ -237,6 +237,30 @@ svu pin, its `mise.lock` checksums for linux-x64 and linux-arm64, the check's
 placement before `$(SVU) next`, and its failure modes (missing binary,
 wrong release, and an svu build with no `GitVersion:` line).
 
+## Releases and dependencies
+
+Facts for hygiene work (`~/.pi/agent/skills/repo-hygiene/SKILL.md`); the
+detail is in [Release Automation](#release-automation) above.
+
+- Tag format: `vMAJOR.MINOR.PATCH` on the module `github.com/frostyard/updex/v2`
+  (one series; find the latest with `gh release list`). `dev` is the rolling
+  nightly tag that `snapshot.yml` recreates: never count it as a release.
+- How a release starts: the tag push runs `.github/workflows/release.yml`
+  (GoReleaser Pro). After the release it sends `publish-deb` to
+  `frostyard/apt-publisher`, which publishes the `frostyard-updex` `.deb` files
+  and then dispatches `build` to `frostyard/snosi`.
+- Who tags: Brian, with `make bump`. Agents never tag, push tags or release.
+- Version rule: `svu next` (svu pinned in `mise.toml`, configured by
+  `.svu.yml`) over the Conventional Commit subjects on `main`;
+  `build(deps)`/`ci(deps)` bumps alone give a patch.
+- Internal dependencies: `github.com/frostyard/clix` and
+  `github.com/frostyard/std` in `go.mod`. CI calls `frostyard/apt-publisher`
+  through `repository_dispatch` (no version pin).
+- Who uses this repository: `frostyard/chairlift` imports
+  `github.com/frostyard/updex/v2` in its `go.mod`; `frostyard/snosi` installs the
+  `frostyard-updex` package from the frostyard APT repository into its base
+  image.
+
 ## Architecture
 
 updex is a Go SDK and CLI for managing systemd-sysext images. It replicates `systemd-sysupdate` functionality for `url-file` transfers.
