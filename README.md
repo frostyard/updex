@@ -87,6 +87,8 @@ sudo updex features rollback docker --to r4 --now  # A given version, applied by
 sudo updex features rollback --clear docker        # Delete the rollback record
 sudo updex --dry-run features update      # Preview without modifying state
 updex features check                      # Check for updates (read-only)
+sudo updex features update docker         # Update only the docker feature
+updex features check docker               # Check only the docker feature
 updex components                          # List discovered named components
 updex features list --component=docker    # Inspect one named component
 sudo updex features update --component=docker
@@ -96,6 +98,18 @@ Without `--component`, `features` commands use the union of the legacy default
 directory and discovered named components. The `--component` flag applies to
 every `features` subcommand and cannot be combined with `-C, --definitions`,
 which instead reads one explicit directory and bypasses discovery.
+
+**Naming features:** `features update` and `features check` take optional
+feature names. With no name they act on every enabled feature, as before. With
+names they act only on those features and leave the other enabled features
+alone. Every name is checked against the loaded domain (after `--component` or
+`-C` scoping) before anything is downloaded, linked, vacuumed or refreshed, and
+an error names each problem: `feature 'x' not found`,
+`feature 'x' is not enabled; run 'updex features enable x' first`, or
+`feature 'x' is masked`. A feature-name validation failure changes nothing and
+exits non-zero. The refresh after the update still activates every pending link
+on the host, so the warning lists pending links of enabled features that the
+run does not name (use `--no-refresh` to leave them alone).
 
 **`Features=` and `RequisiteFeatures=`:** a transfer is active when its
 `Features=` is empty or at least one listed feature is enabled (OR), and every

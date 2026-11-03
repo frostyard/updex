@@ -310,6 +310,7 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 		NoRefresh: noRefresh,
 		NoVacuum:  featureUpdateNoVac,
 		Component: featureComponent,
+		Features:  args,
 	}
 
 	results, err := client.UpdateFeatures(cmd.Context(), opts)
@@ -362,6 +363,12 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 
 	if len(results) == 0 {
+		if err != nil && !skipUnreachable {
+			// A failed update (an unknown, disabled or masked feature name,
+			// a domain load error) reports only its error: "no enabled
+			// features" would be wrong. See runFeaturesCheck.
+			return err
+		}
 		outErr := writeLine(out, "No enabled features with transfers found.")
 		if skipUnreachable {
 			return skipUnreachableRun(cmd, outErr)
@@ -517,6 +524,7 @@ func runFeaturesCheck(cmd *cobra.Command, args []string) error {
 
 	results, err := client.CheckFeatures(cmd.Context(), updex.CheckFeaturesOptions{
 		Component: featureComponent,
+		Features:  args,
 	})
 
 	if clix.JSONOutput {
@@ -533,7 +541,12 @@ func runFeaturesCheck(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 
 	if len(results) == 0 {
-		return errors.Join(err, writeLine(out, "No enabled features with transfers found."))
+		if err != nil {
+			// A failed check (an unknown feature name, a domain load error)
+			// reports only its error: "no enabled features" would be wrong.
+			return err
+		}
+		return writeLine(out, "No enabled features with transfers found.")
 	}
 
 	table := newTextTable(out)

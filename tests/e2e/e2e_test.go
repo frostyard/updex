@@ -245,8 +245,6 @@ func TestE2E_ArgumentValidationAndExitCodes(t *testing.T) {
 		{name: "features list", args: []string{"features", "list", "extra"}, want: "unknown command"},
 		{name: "features enable", args: []string{"features", "enable"}, want: "accepts 1 arg"},
 		{name: "features disable", args: []string{"features", "disable", "one", "two"}, want: "accepts 1 arg"},
-		{name: "features update", args: []string{"features", "update", "extra"}, want: "unknown command"},
-		{name: "features check", args: []string{"features", "check", "extra"}, want: "unknown command"},
 		{name: "components", args: []string{"components", "extra"}, want: "unknown command"},
 		{name: "daemon enable", args: []string{"daemon", "enable", "extra"}, want: "unknown command"},
 		{name: "daemon disable", args: []string{"daemon", "disable", "extra"}, want: "unknown command"},
@@ -271,6 +269,26 @@ func TestE2E_ArgumentValidationAndExitCodes(t *testing.T) {
 				t.Errorf("argument error wrote to stdout:\n%s", result.stdout)
 			}
 		})
+	}
+}
+
+// TestE2E_FeaturesCheckRejectsUnknownFeature covers the feature-name filter
+// of `features check` through the real binary: a name the loaded domain does
+// not define is an error that names it, and stdout stays empty. `features
+// update` takes the same names but needs root before its handler runs, so it is
+// covered in-process by cmd/updex.
+func TestE2E_FeaturesCheckRejectsUnknownFeature(t *testing.T) {
+	configDir := t.TempDir()
+
+	result := runUpdexCommand(t, "-C", configDir, "features", "check", "extra")
+	if result.exitCode != 1 {
+		t.Fatalf("exit code = %d, want 1\nstdout:\n%s\nstderr:\n%s", result.exitCode, result.stdout, result.stderr)
+	}
+	if !strings.Contains(strings.ToLower(result.stderr), "feature 'extra' not found") {
+		t.Errorf("stderr does not name the unknown feature:\n%s", result.stderr)
+	}
+	if strings.TrimSpace(result.stdout) != "" {
+		t.Errorf("a failed check printed to stdout:\n%s", result.stdout)
 	}
 }
 

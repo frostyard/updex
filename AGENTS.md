@@ -354,11 +354,15 @@ binary needs it on the host. The unit tests do not run it.
 
 ### CLI commands
 
-- `features list|enable <name>|disable <name>|update|check|rollback <name>` —
+- `features list|enable <name>|disable <name>|update [<name>...]|check [<name>...]|rollback <name>` —
   manage systemd-sysext features (list with status, enable/disable via
   drop-ins, download and install updates for enabled features, check without
   installing, roll back to an older staged version and hold updates until a
-  newer one is published)
+  newer one is published). `update` and `check` act on the named features or,
+  with no name, on every enabled feature; a name that is not in the loaded
+  domain, is masked or is not enabled is an error, and nothing changes
+  (`selectFeatures` in `updex/features.go`, validated after the lock and the
+  domain load)
 - `components` — list discovered systemd-sysext components
 - `daemon enable|disable|status` — enable/disable/inspect the auto-update
   timer. The package ships the units in `/usr/lib/systemd/system`; `enable`
