@@ -48,8 +48,8 @@ func TestRunFeaturesCheck_FilterUnknownFeatureIsAnError(t *testing.T) {
 	if !strings.Contains(err.Error(), "feature 'extra' not found") {
 		t.Errorf("error = %q, want it to name the feature", err)
 	}
-	if strings.Contains(output, "testfeature") {
-		t.Errorf("a failed check must list no feature, got:\n%s", output)
+	if strings.TrimSpace(output) != "" {
+		t.Errorf("a failed check printed to stdout:\n%s", output)
 	}
 }
 
@@ -175,8 +175,8 @@ func TestRunFeaturesUpdate_FilterPassesNames(t *testing.T) {
 	if !strings.Contains(err.Error(), "feature 'extra' not found") {
 		t.Errorf("error = %q, want it to name the feature", err)
 	}
-	if strings.Contains(output, "docker") {
-		t.Errorf("a failed update must list no feature, got:\n%s", output)
+	if strings.TrimSpace(output) != "" {
+		t.Errorf("a failed update printed to stdout:\n%s", output)
 	}
 	if _, statErr := os.Stat(filepath.Join(targetDir, "dockerext_1.0.0.raw")); !os.IsNotExist(statErr) {
 		t.Error("a failed update must download nothing")

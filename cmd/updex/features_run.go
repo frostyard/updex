@@ -363,6 +363,12 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 	out := cmd.OutOrStdout()
 
 	if len(results) == 0 {
+		if err != nil && !skipUnreachable {
+			// A failed update (an unknown, disabled or masked feature name,
+			// a domain load error) reports only its error: "no enabled
+			// features" would be wrong. See runFeaturesCheck.
+			return err
+		}
 		outErr := writeLine(out, "No enabled features with transfers found.")
 		if skipUnreachable {
 			return skipUnreachableRun(cmd, outErr)

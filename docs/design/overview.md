@@ -1196,7 +1196,8 @@ updex features disable <name>           Disable a feature (without --now the
 updex features update [FEATURE...]      Download and install new versions for every
                                          enabled feature, or only for the named ones;
                                          an unknown, disabled or masked name is an
-                                         error and nothing changes
+                                         error, checked before anything is downloaded
+                                         or linked
   --no-vacuum                           Skip removing old versions
   --dry-run                             Preview update work without filesystem/sysext changes
 updex features rollback <name>          Link every transfer to an older staged version and

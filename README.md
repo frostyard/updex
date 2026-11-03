@@ -106,7 +106,10 @@ alone. Every name is checked against the loaded domain (after `--component` or
 `-C` scoping) before anything is downloaded, linked, vacuumed or refreshed, and
 an error names each problem: `feature 'x' not found`,
 `feature 'x' is not enabled; run 'updex features enable x' first`, or
-`feature 'x' is masked`. A failed command changes nothing and exits non-zero.
+`feature 'x' is masked`. A feature-name validation failure changes nothing and
+exits non-zero. The refresh after the update still activates every pending link
+on the host, so the warning lists pending links of enabled features that the
+run does not name (use `--no-refresh` to leave them alone).
 
 **`Features=` and `RequisiteFeatures=`:** a transfer is active when its
 `Features=` is empty or at least one listed feature is enabled (OR), and every

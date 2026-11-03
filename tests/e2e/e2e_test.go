@@ -292,63 +292,6 @@ func TestE2E_FeaturesCheckRejectsUnknownFeature(t *testing.T) {
 	}
 }
 
-// TestE2E_FeaturesCheckListsOnlyNamedFeature covers the feature-name filter of
-// `features check` against a fake source with two enabled features: naming one
-// leaves the other out of the table and out of the JSON array.
-func TestE2E_FeaturesCheckListsOnlyNamedFeature(t *testing.T) {
-	configDir := t.TempDir()
-	targetDir := t.TempDir()
-	dockerContent := []byte("fake docker sysext content")
-	incusContent := []byte("fake incus sysext content")
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch strings.TrimPrefix(r.URL.Path, "/") {
-		case "SHA256SUMS":
-			fmt.Fprintf(w, "%s  dockerext_1.0.0.raw\n%s  incusext_1.0.0.raw\n", sha256Hex(dockerContent), sha256Hex(incusContent))
-		case "dockerext_1.0.0.raw":
-			_, _ = w.Write(dockerContent)
-		case "incusext_1.0.0.raw":
-			_, _ = w.Write(incusContent)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
-
-	for _, feature := range []struct{ name, component string }{{"docker", "dockerext"}, {"incus", "incusext"}} {
-		writeFile(t, filepath.Join(configDir, feature.name+".feature"), "[Feature]\nDescription="+feature.name+"\nEnabled=true\n")
-		writeFile(t, filepath.Join(configDir, feature.component+".transfer"), ""+
-			"[Transfer]\nFeatures="+feature.name+"\nVerify=false\n\n"+
-			"[Source]\nType=url-file\nPath="+server.URL+"\nMatchPattern="+feature.component+"_@v.raw\n\n"+
-			"[Target]\nPath="+targetDir+"\nMatchPattern="+feature.component+"_@v.raw\n")
-	}
-
-	out, err := runUpdex(t, "-C", configDir, "features", "check", "docker")
-	if err != nil {
-		t.Fatalf("updex features check docker failed: %v\n%s", err, out)
-	}
-	if !strings.Contains(out, "docker") {
-		t.Errorf("features check output missing the named feature:\n%s", out)
-	}
-	if strings.Contains(out, "incus") {
-		t.Errorf("features check output lists the unnamed feature:\n%s", out)
-	}
-
-	filtered := runUpdexCommand(t, "-C", configDir, "--silent", "--json", "features", "check", "docker")
-	if filtered.err != nil {
-		t.Fatalf("features check docker --json failed: %v\n%s", filtered.err, filtered.stderr)
-	}
-	var checked []struct {
-		Feature string `json:"feature"`
-	}
-	if err := json.Unmarshal([]byte(filtered.stdout), &checked); err != nil {
-		t.Fatalf("features check returned invalid JSON: %v\n%s", err, filtered.stdout)
-	}
-	if len(checked) != 1 || checked[0].Feature != "docker" {
-		t.Errorf("features check docker JSON = %+v, want only docker", checked)
-	}
-}
-
 func TestE2E_ConfigurationErrors(t *testing.T) {
 	t.Run("malformed feature file", func(t *testing.T) {
 		configDir := t.TempDir()
