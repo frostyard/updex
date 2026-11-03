@@ -32,6 +32,13 @@ type UpdateFeaturesOptions struct {
 	// component. Empty operates on the default domain: the union of the
 	// legacy default sysupdate.d directory and every discovered component.
 	Component string
+
+	// Features limits the operation to the named features. Empty acts on
+	// every enabled feature. Each name must be a feature of the loaded
+	// domain (after Component or Definitions scoping) that is enabled and
+	// not masked. Otherwise the operation returns an error and changes
+	// nothing.
+	Features []string
 }
 
 // CheckFeaturesOptions configures the CheckFeatures operation.
@@ -40,6 +47,13 @@ type CheckFeaturesOptions struct {
 	// component. Empty operates on the default domain: the union of the
 	// legacy default sysupdate.d directory and every discovered component.
 	Component string
+
+	// Features limits the operation to the named features. Empty acts on
+	// every enabled feature. Each name must be a feature of the loaded
+	// domain (after Component or Definitions scoping) that is enabled and
+	// not masked. Otherwise the operation returns an error and changes
+	// nothing.
+	Features []string
 }
 
 // EnableFeatureOptions configures the EnableFeature operation.

@@ -42,8 +42,8 @@ SUBCOMMANDS:
   list     Show all features and their status
   enable   Enable a feature (optionally download immediately)
   disable  Disable a feature (optionally remove files)
-  update   Download newest versions for all enabled features
-  check    Check for available updates across all enabled features
+  update   Download newest versions for all enabled features, or the named ones
+  check    Check for available updates across all enabled features, or the named ones
   rollback Link a feature to an older staged version and hold updates`,
 		Example: `  # List all features
   updex features list
@@ -56,6 +56,9 @@ SUBCOMMANDS:
 
   # Update all enabled features
   sudo updex features update
+
+  # Update only the named features
+  sudo updex features update docker
 
   # Scope an operation to a single component
   updex features list --component=docker`,
@@ -191,20 +194,28 @@ Requires root privileges.`,
 
 func newFeaturesUpdateCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "update",
-		Short: "Update all enabled features",
-		Long: `Download and install newest versions for all enabled features.
+		Use:   "update [FEATURE...]",
+		Short: "Update all enabled features, or the named ones",
+		Long: `Download and install newest versions for all enabled features, or only
+for the features named on the command line.
 
-Iterates over all enabled features and their associated transfers,
-downloading the newest available version for each component.
+With no FEATURE argument, iterates over all enabled features and their
+associated transfers, downloading the newest available version for each
+component.
+
+With FEATURE arguments, only those features are updated; every other enabled
+feature is left untouched. A name that is not a feature of the loaded domain,
+a masked feature, and a feature that is not enabled are errors: the whole run
+fails and nothing is downloaded, linked, vacuumed or refreshed.
 
 OPTIONS:
   --no-refresh  Skip running systemd-sysext refresh after update
   --no-vacuum   Skip removing old versions after update
 
 Unless --no-refresh is set, a warning first lists the other sysexts (those
-outside the enabled features, such as a disabled feature) that are linked to a
-version the host does not run and that the refresh activates too.
+outside the features this run updates, such as a disabled feature or an
+enabled feature the run does not name) that are linked to a version the host
+does not run and that the refresh activates too.
 
 Use --dry-run (global flag) to preview downloads, installs, refreshes, and
 vacuum removals without modifying filesystem or sysext state.
@@ -212,6 +223,9 @@ vacuum removals without modifying filesystem or sysext state.
 Requires root privileges.`,
 		Example: `  # Update all enabled features
   sudo updex features update
+
+  # Update only the docker feature
+  sudo updex features update docker
 
   # Update without refreshing sysext
   sudo updex features update --no-refresh
@@ -221,7 +235,7 @@ Requires root privileges.`,
 
   # Update in JSON format
   sudo updex features update --json`,
-		Args: cobra.NoArgs,
+		Args: cobra.ArbitraryArgs,
 		RunE: runFeaturesUpdate,
 	}
 
@@ -232,12 +246,17 @@ Requires root privileges.`,
 
 func newFeaturesCheckCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "check",
-		Short: "Check for available updates",
-		Long: `Check if newer versions are available for all enabled features.
+		Use:   "check [FEATURE...]",
+		Short: "Check for available updates, for all enabled features or the named ones",
+		Long: `Check if newer versions are available for all enabled features, or only for
+the features named on the command line.
 
-Iterates over all enabled features and their associated transfers,
-comparing installed versions against the newest available versions.
+With no FEATURE argument, iterates over all enabled features and their
+associated transfers, comparing installed versions against the newest
+available versions. With FEATURE arguments, only those features are checked;
+every other enabled feature is left out of the output. A name that is not a
+feature of the loaded domain, a masked feature, and a feature that is not
+enabled are errors: the command fails and checks nothing.
 
 OUTPUT COLUMNS:
   CURRENT  - Version the systemd-sysext link names (staged version when
@@ -255,9 +274,12 @@ This is a read-only operation that does not download or install anything.`,
 		Example: `  # Check for updates
   updex features check
 
+  # Check only the docker and incus features
+  updex features check docker incus
+
   # Check in JSON format
   updex features check --json`,
-		Args: cobra.NoArgs,
+		Args: cobra.ArbitraryArgs,
 		RunE: runFeaturesCheck,
 	}
 }

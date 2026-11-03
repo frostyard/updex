@@ -16,7 +16,7 @@ Public repository observability is indexed at `docs/metrics/README.md` (a real t
 ```
 cmd/updex-cli/main.go          Entry point (frostyard/clix bootstrap)
 cmd/updex/root.go               Cobra root command, global flags
-cmd/updex/features.go           features list|enable|disable|update|check
+cmd/updex/features.go           features list|enable|disable|update [FEATURE...]|check [FEATURE...]
 cmd/updex/features_run.go       Run functions for feature subcommands
 cmd/updex/components.go         components (list discovered systemd-sysupdate components)
 cmd/updex/catalog.go            catalog list|search|add|remove ([REPO/]NAME parsing,
@@ -1193,7 +1193,10 @@ updex features disable <name>           Disable a feature (without --now the
                                          extensions stay installed and merged)
   --now                                 Unmerge and remove files immediately
   --force                               Allow removal of merged extensions
-updex features update                   Download and install new versions
+updex features update [FEATURE...]      Download and install new versions for every
+                                         enabled feature, or only for the named ones;
+                                         an unknown, disabled or masked name is an
+                                         error and nothing changes
   --no-vacuum                           Skip removing old versions
   --dry-run                             Preview update work without filesystem/sysext changes
 updex features rollback <name>          Link every transfer to an older staged version and
@@ -1202,7 +1205,10 @@ updex features rollback <name>          Link every transfer to an older staged v
   --to <version>                        Link this staged version (all transfers)
   --now                                 Apply with a systemd-sysext refresh
   --clear                               Delete the rollback record, change no link
-updex features check                    Check for available updates; CURRENT is the version
+updex features check [FEATURE...]       Check for available updates, for every enabled
+                                         feature or only for the named ones (an
+                                         unknown, disabled or masked name is an error);
+                                         CURRENT is the version
                                          the systemd-sysext link points to (staging
                                          fallback when there is no usable link);
                                          RUNNING is the merged version, LINKED the one the

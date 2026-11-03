@@ -196,6 +196,53 @@ func lookupFeature(features []*config.Feature, name, action string) (*config.Fea
 	return nil, fmt.Errorf("feature '%s' not found", name)
 }
 
+// selectFeatures validates the feature names an operation is limited to
+// against the loaded domain and returns the set of names the operation may
+// act on. Empty names mean no filter: selectFeatures returns nil, nil and the
+// caller acts on every enabled feature.
+//
+// A name that is not a feature of the domain, a masked feature and a feature
+// that is not enabled are all errors. Every problem is collected, in argument
+// order and once per distinct name, so the operator sees every name that
+// would not have been acted on instead of fixing them one run at a time.
+func selectFeatures(features []*config.Feature, names []string) (map[string]bool, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+
+	byName := make(map[string]*config.Feature, len(features))
+	for _, f := range features {
+		byName[f.Name] = f
+	}
+
+	selected := make(map[string]bool, len(names))
+	seen := make(map[string]bool, len(names))
+	var errs []error
+	for _, name := range names {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+
+		f, ok := byName[name]
+		switch {
+		case !ok:
+			errs = append(errs, fmt.Errorf("feature '%s' not found", name))
+		case f.Masked:
+			errs = append(errs, fmt.Errorf("feature '%s' is masked", name))
+		case !f.Enabled:
+			errs = append(errs, fmt.Errorf("feature '%s' is not enabled; run 'updex features enable %s' first", name, name))
+		default:
+			selected[name] = true
+		}
+	}
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
+	}
+
+	return selected, nil
+}
+
 // writeFeatureDropIn creates a drop-in configuration file that sets a
 // feature's enabled state. The drop-in is written under the same
 // systemd-sysupdate component scope the feature file itself was discovered
@@ -714,6 +761,14 @@ func (c *Client) disableFeature(ctx context.Context, name string, opts DisableFe
 // keeps the linked version, the merged version, ProtectVersion= and the
 // newest InstancesMax versions of each transfer.
 //
+// opts.Features limits the run to the named features. Every name is checked
+// after the lock is taken and the domain is loaded, and before anything is
+// downloaded, linked, vacuumed or refreshed: a name that is not a feature of
+// the loaded domain, a masked feature and a feature that is not enabled are
+// errors, all of them reported together, and the run changes nothing.
+// Results come back in domain order. With no names, the run updates every
+// enabled, unmasked feature.
+//
 // Except in a dry run, UpdateFeatures holds the operation lock; when another
 // updex operation holds it, UpdateFeatures changes nothing and returns an
 // error that wraps ErrBusy.
@@ -729,6 +784,14 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 	defer release()
 
 	features, transfers, err := c.loadDomain(opts.Component)
+	if err != nil {
+		return nil, err
+	}
+
+	// Resolve the feature filter before anything is downloaded, linked,
+	// vacuumed or refreshed: a name that cannot be updated fails the whole
+	// run with nothing changed. selected is nil when no names were given.
+	selected, err := selectFeatures(features, opts.Features)
 	if err != nil {
 		return nil, err
 	}
@@ -760,6 +823,9 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 
 	for _, f := range features {
 		if !f.Enabled || f.Masked {
+			continue
+		}
+		if selected != nil && !selected[f.Name] {
 			continue
 		}
 
@@ -972,9 +1038,25 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 	return allResults, refreshErr
 }
 
-// CheckFeatures checks if newer versions are available for all enabled features.
+// CheckFeatures checks if newer versions are available for all enabled
+// features.
+//
+// opts.Features limits the check to the named features. Every name is checked
+// after the domain is loaded and before any version is read: a name that is
+// not a feature of the loaded domain, a masked feature and a feature that is
+// not enabled are errors, all of them reported together, and nothing is
+// checked. Results come back in domain order. With no names, every enabled,
+// unmasked feature is checked.
 func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) ([]CheckFeaturesResult, error) {
 	features, transfers, err := c.loadDomain(opts.Component)
+	if err != nil {
+		return nil, err
+	}
+
+	// Resolve the feature filter before any version is read: a name that
+	// cannot be checked fails the whole run with nothing read. selected is
+	// nil when no names were given.
+	selected, err := selectFeatures(features, opts.Features)
 	if err != nil {
 		return nil, err
 	}
@@ -996,6 +1078,9 @@ func (c *Client) CheckFeatures(ctx context.Context, opts CheckFeaturesOptions) (
 
 	for _, f := range features {
 		if !f.Enabled || f.Masked {
+			continue
+		}
+		if selected != nil && !selected[f.Name] {
 			continue
 		}
 
