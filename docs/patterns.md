@@ -192,3 +192,4 @@ placeholder, not an architecture specifier.
 Frostyard and Fedora-Sysexts naming styles can coexist in a single `.transfer`
 file by space-separating patterns in `MatchPattern` when multiple naming
 conventions are needed.
+<!-- Throwaway risk-paths proof 2 (T801 t5): do not merge. -->
