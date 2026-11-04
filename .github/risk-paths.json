@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "paths": [
+    { "glob": ".github/risk-paths.json", "why": "workflow-and-permissions: governance, the high-risk path list that adds the risk:high label" },
+    { "glob": ".github/workflows/risk-paths.yml", "why": "workflow-and-permissions: governance, the caller of core's risk-paths workflow" },
+    { "glob": ".github/workflows/{release,snapshot}.yml", "why": "release-and-publication: publication, tagged and nightly releases, the APT dispatch and build provenance" },
+    { "glob": ".github/workflows/**", "why": "workflow-and-permissions: secrets and credentials, CI jobs, GITHUB_TOKEN permissions and repository secrets" },
+    { "glob": "{policies,.github/policies}/**", "why": "workflow-and-permissions: governance, the agent-governance and AI-governance policy files" },
+    { "glob": ".claude/settings.json", "why": "workflow-and-permissions: governance, the tool-layer deny of merge, approve and release" },
+    { "glob": "{.goreleaser.yaml,.svu.yml}", "why": "release-and-publication: publication, the release build, the package contents and the version rule" },
+    { "glob": "scripts/{units,check-deb-units}.sh", "why": "release-and-publication: publication, the systemd units that the packages ship and their nightly check" },
+    { "glob": "download/**", "why": "installation-and-update: update verification, image download, SHA256 check and bounded decompression" },
+    { "glob": "manifest/**", "why": "installation-and-update: update verification, SHA256SUMS fetch and GPG signature verification" },
+    { "glob": "internal/httpclient/**", "why": "installation-and-update: update verification, the refusal of HTTPS-to-HTTP redirects" },
+    { "glob": "updex/list.go", "why": "installation-and-update: update verification, the signature policy for each transfer (verifyPolicy)" },
+    { "glob": "config/transfer.go", "why": "installation-and-update: update verification, the Verify= default and parse, the target path and mode, and the activation rule" },
+    { "glob": "catalog/**", "why": "installation-and-update: update verification, catalog transfer rendering, Verify= policy and GITHUB_TOKEN scope" },
+    { "glob": "imagecompat/**", "why": "installation-and-update: update verification, the minimum-image check that reads untrusted images" },
+    { "glob": "sysext/**", "why": "installation-and-update: destructive operations, sysext links, vacuum (delete) and refresh as root" },
+    { "glob": "systemd/**", "why": "installation-and-update: destructive operations, write and remove of systemd units as root" },
+    { "glob": "updex/{install,imagegate,rollback,activation}.go", "why": "installation-and-update: destructive operations, the stage, gate, link, vacuum and rollback pipeline" },
+    { "glob": "updex/{features,catalog,daemon,daemon_legacy,fsguard}.go", "why": "installation-and-update: destructive operations, enable, disable, remove and root writes of managed files" }
+  ]
+}

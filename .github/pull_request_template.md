@@ -22,7 +22,8 @@ closes. -->
 ## Risk classification
 
 <!-- Select the highest applicable tier from docs/risk-tiers.md and give the
-rationale. -->
+rationale. A PR with the label `risk:high` (a path in
+.github/risk-paths.json) is Tier 4. -->
 
 - [ ] Tier 1: Low
 - [ ] Tier 2: Moderate

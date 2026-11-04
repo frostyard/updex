@@ -72,7 +72,9 @@ public pull request.
 Changes touching a protected boundary in
 [`policies/agent-governance.json`](../policies/agent-governance.json) — the
 file paths the repository's agent governance policy marks review-required
-at a minimum risk tier of `high` or above.
+at a minimum risk tier of `high` or above. A change that touches a path in
+[`.github/risk-paths.json`](../.github/risk-paths.json) is also Tier 4 and gets
+the `risk:high` label ([core ADR-0068](https://github.com/frostyard/core/blob/main/docs/adr/0068-label-pull-requests-that-touch-high-risk-paths.md)).
 
 Examples include:
 

@@ -185,6 +185,20 @@ the same label in every file, each workflow declares top-level
 `permissions:`, and each `actions/checkout` step sets
 `persist-credentials: false` (no job pushes; release and snapshot publish
 through the API).
+`.github/workflows/risk-paths.yml` calls
+`frostyard/core/.github/workflows/risk-paths.yml` pinned to a core commit SHA,
+on `pull_request_target` (opened, synchronize, reopened, edited), without
+`merge_group`, and as no required check. It declares `permissions: {}`, with
+the job at `contents: read` + `pull-requests: write`. It reads
+`.github/risk-paths.json` at the base SHA, checks out nothing, and adds
+`risk:high` when a changed file matches; it never removes the label. The rule
+is in [core ADR-0068](https://github.com/frostyard/core/blob/main/docs/adr/0068-label-pull-requests-that-touch-high-risk-paths.md)
+and [the risk-paths spec](https://github.com/frostyard/core/blob/main/docs/specs/risk-paths.md).
+`updex/risk_paths_contract_test.go` pins the caller shape, the list schema,
+the boundary-plus-category `why`, rule C, strict JSON without duplicate keys,
+the glob syntax of the spec, and a full match of each glob against at least 1
+repository file, and `TestRiskPathsListCoversHighRiskFiles` requires that the list covers each named high-risk file. Core's validator is the authority. A rename or move of a
+listed file must update the list in the same PR.
 `updex/snapshot_workflow_contract_test.go` pins the snapshot contract above —
 the `goreleaser-nightly` group with boolean `cancel-in-progress: true`, the
 `workflow_run` trigger on `Tests` for `main`, and the job's
@@ -1085,6 +1099,9 @@ their canonical targets, never the aliases. `docs/review-rubric.md`,
    include the tier rationale in the pull request
    ([`.github/pull_request_template.md`](.github/pull_request_template.md)
    walks through it).
+   A PR with `risk:high` is Tier 4. The author removes the label only when the
+   risky change leaves the PR, with the reason in the PR body. The PR body names
+   each matched path and why the change is safe.
 7. Open the PR with a description of what changed and why, and link any
    related issue.
 
