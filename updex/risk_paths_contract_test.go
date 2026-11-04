@@ -42,11 +42,16 @@ func TestRiskPathsCallerContract(t *testing.T) {
 		} `yaml:"on"`
 		Permissions map[string]any `yaml:"permissions"`
 		Jobs        map[string]struct {
+			If          string         `yaml:"if"`
+			Needs       any            `yaml:"needs"`
 			Permissions map[string]any `yaml:"permissions"`
 			Uses        string         `yaml:"uses"`
-			Steps       []any          `yaml:"steps"`
-			Secrets     any            `yaml:"secrets"`
-			With        any            `yaml:"with"`
+			Steps       []struct {
+				Uses string         `yaml:"uses"`
+				With map[string]any `yaml:"with"`
+			} `yaml:"steps"`
+			Secrets any `yaml:"secrets"`
+			With    any `yaml:"with"`
 		} `yaml:"jobs"`
 	}
 	if err := yaml.Unmarshal(data, &workflow); err != nil {
@@ -56,6 +61,20 @@ func TestRiskPathsCallerContract(t *testing.T) {
 	var generic map[string]any
 	if err := yaml.Unmarshal(data, &generic); err != nil {
 		t.Fatalf("parse risk paths workflow keys: %v", err)
+	}
+	// One run per pull request at a time, never cancelled in progress: the
+	// label job of a later run must not overlap the risk-paths job of an
+	// earlier run (updex#483 race).
+	wantGroup := "risk-paths-${{ github.event.pull_request.number }}"
+	if concurrency, ok := generic["concurrency"].(map[string]any); !ok {
+		t.Errorf("risk paths workflow has no concurrency map; want group %q with cancel-in-progress false", wantGroup)
+	} else {
+		if got := concurrency["group"]; got != wantGroup {
+			t.Errorf("concurrency.group = %v, want %q", got, wantGroup)
+		}
+		if got, ok := concurrency["cancel-in-progress"].(bool); !ok || got {
+			t.Errorf("concurrency.cancel-in-progress = %v, want boolean false", concurrency["cancel-in-progress"])
+		}
 	}
 	onValue, ok := generic["on"]
 	if !ok {
@@ -80,14 +99,60 @@ func TestRiskPathsCallerContract(t *testing.T) {
 	} else if len(workflow.Permissions) != 0 {
 		t.Errorf("top-level permissions = %v, want an empty map", workflow.Permissions)
 	}
-	if len(workflow.Jobs) != 1 {
-		t.Errorf("risk paths workflow jobs = %v, want exactly one job: risk-paths", workflow.Jobs)
+	if len(workflow.Jobs) != 2 {
+		t.Errorf("risk paths workflow jobs = %v, want exactly two jobs: label and risk-paths", workflow.Jobs)
 	}
+	label, ok := workflow.Jobs["label"]
+	if !ok {
+		t.Fatal("risk paths workflow is missing the label job")
+	}
+	if label.If != "github.event.action != 'edited'" {
+		t.Errorf("label job if = %q, want %q", label.If, "github.event.action != 'edited'")
+	}
+	wantPermissions := map[string]any{"contents": "read", "pull-requests": "write"}
+	if len(label.Permissions) != len(wantPermissions) {
+		t.Errorf("label permissions = %v, want %v", label.Permissions, wantPermissions)
+	} else {
+		for key, want := range wantPermissions {
+			if got, ok := label.Permissions[key]; !ok || got != want {
+				t.Errorf("label permissions[%q] = %v, want %v", key, got, want)
+			}
+		}
+	}
+	if len(label.Steps) != 1 {
+		t.Errorf("label job has %d steps, want exactly 1", len(label.Steps))
+	} else {
+		pinnedLabeler := regexp.MustCompile(`^actions/labeler@[0-9a-f]{40}$`)
+		if !pinnedLabeler.MatchString(label.Steps[0].Uses) {
+			t.Errorf("label step uses = %q, want actions/labeler pinned to a 40-character SHA", label.Steps[0].Uses)
+		}
+		if got, ok := label.Steps[0].With["sync-labels"]; !ok || got != false {
+			t.Errorf("label step sync-labels = %v, want false", got)
+		}
+	}
+	labelMap, ok := genericJobMap(generic, "label")
+	if !ok {
+		t.Fatal("risk paths workflow cannot find label job in generic YAML map")
+	}
+	if _, exists := labelMap["steps"]; !exists {
+		t.Errorf("label job must contain a steps list")
+	}
+	for _, forbidden := range []string{"uses", "secrets"} {
+		if _, exists := labelMap[forbidden]; exists {
+			t.Errorf("label job must not contain %q", forbidden)
+		}
+	}
+
 	job, ok := workflow.Jobs["risk-paths"]
 	if !ok {
 		t.Fatal("risk paths workflow is missing the risk-paths job")
 	}
-	wantPermissions := map[string]any{"contents": "read", "pull-requests": "write"}
+	if needsLabel(job.Needs) == false {
+		t.Errorf("risk-paths needs = %v, want label", job.Needs)
+	}
+	if job.If != "${{ !cancelled() }}" {
+		t.Errorf("risk-paths if = %q, want %q", job.If, "${{ !cancelled() }}")
+	}
 	if len(job.Permissions) != len(wantPermissions) {
 		t.Errorf("risk-paths permissions = %v, want %v", job.Permissions, wantPermissions)
 	} else {
@@ -111,6 +176,38 @@ func TestRiskPathsCallerContract(t *testing.T) {
 	for _, forbidden := range []string{"steps", "secrets", "with"} {
 		if _, exists := jobMap[forbidden]; exists {
 			t.Errorf("risk-paths job must not contain %q", forbidden)
+		}
+	}
+}
+
+func needsLabel(needs any) bool {
+	if got, ok := needs.(string); ok {
+		return got == "label"
+	}
+	if got, ok := needs.([]any); ok {
+		return len(got) == 1 && got[0] == "label"
+	}
+	if got, ok := needs.([]string); ok {
+		return len(got) == 1 && got[0] == "label"
+	}
+	return false
+}
+
+func TestNoOtherWorkflowSetsPullRequestLabels(t *testing.T) {
+	files, err := filepath.Glob("../.github/workflows/*")
+	if err != nil {
+		t.Fatalf("glob workflows: %v", err)
+	}
+	for _, file := range files {
+		if filepath.Base(file) == "risk-paths.yml" {
+			continue
+		}
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read workflow %s: %v", file, err)
+		}
+		if strings.Contains(string(data), "actions/labeler@") {
+			t.Errorf("workflow %s also uses actions/labeler; label-setting jobs must be consolidated in risk-paths.yml", file)
 		}
 	}
 }

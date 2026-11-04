@@ -124,9 +124,9 @@ PR template ──► review rubric ──► CI gates ──► corrections ─
   read/write Actions, Contents, Issues, Pull requests). It never checks out
   issue-authored content and grants no permissions to its `GITHUB_TOKEN`;
   failed assignments stay visibly labeled and can be retried.
-- **Auto-labeling** — `Pull Request Labeler` applies documentation, Go,
-  GitHub Actions, and dependency labels per `.github/labeler.yml` without
-  removing labels applied by people.
+- **Auto-labeling** — the `label` job in `.github/workflows/risk-paths.yml`
+  applies documentation, Go, GitHub Actions, and dependency labels per
+  `.github/labeler.yml` without removing labels applied by people.
 
 ## Human oversight
 

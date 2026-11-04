@@ -2,6 +2,15 @@
 # reusable risk-paths workflow on every pull request. A pull request that
 # touches a glob in .github/risk-paths.json gets the label risk:high.
 #
+# The labeler runs in this workflow before risk-paths because actions/labeler
+# reads the current labels and then sets the whole label list. A label that
+# another job adds between that read and that write is lost (updex#483:
+# risk:high added at 19:36:25Z, removed at 19:36:26Z). So within a run the
+# risk-paths job runs after the label job, and the concurrency group runs at
+# most 1 run per pull request at a time (no cancel: a queued run waits), so the
+# label job of a later run never overlaps the risk-paths job of an earlier one.
+# Do not add another workflow that sets pull-request labels.
+#
 # pull_request_target runs this file and the list from the base branch, so a
 # pull request cannot remove its own label by an edit of either one. The
 # reusable workflow checks out nothing and runs no pull-request code.
@@ -15,8 +24,30 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: risk-paths-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
 jobs:
+  label:
+    name: Apply path labels
+    if: github.event.action != 'edited'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      # pull_request_target can label fork PRs. Never check out or execute
+      # pull-request-controlled code in this privileged workflow.
+      - name: Apply labels
+        uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7
+        with:
+          sync-labels: false
+
   risk-paths:
+    needs: label
+    if: ${{ !cancelled() }}
     permissions:
       contents: read
       pull-requests: write

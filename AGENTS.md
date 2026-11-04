@@ -185,13 +185,20 @@ the same label in every file, each workflow declares top-level
 `permissions:`, and each `actions/checkout` step sets
 `persist-credentials: false` (no job pushes; release and snapshot publish
 through the API).
-`.github/workflows/risk-paths.yml` calls
+`.github/workflows/risk-paths.yml` runs the `label` job first, then calls
 `frostyard/core/.github/workflows/risk-paths.yml` pinned to a core commit SHA,
 on `pull_request_target` (opened, synchronize, reopened, edited), without
 `merge_group`, and as no required check. It declares `permissions: {}`, with
 the job at `contents: read` + `pull-requests: write`. It reads
 `.github/risk-paths.json` at the base SHA, checks out nothing, and adds
-`risk:high` when a changed file matches; it never removes the label. The rule
+`risk:high` when a changed file matches; it never removes the label. The
+labeler is in the same workflow because `actions/labeler` reads the labels and
+then sets the whole list, so a label added between the read and the write is
+lost (updex#483). The `risk-paths` job runs after the `label` job
+(`needs: label`, `if: ${{ !cancelled() }}`), and the concurrency group
+`risk-paths-<PR number>` (no cancel in progress) runs at most 1 run per pull
+request at a time, so no label job overlaps a risk-paths job. Do not add
+another workflow that sets pull-request labels. The rule
 is in [core ADR-0068](https://github.com/frostyard/core/blob/main/docs/adr/0068-label-pull-requests-that-touch-high-risk-paths.md)
 and [the risk-paths spec](https://github.com/frostyard/core/blob/main/docs/specs/risk-paths.md).
 `updex/risk_paths_contract_test.go` pins the caller shape, the list schema,
@@ -1117,9 +1124,10 @@ and never merge, approve, or release your own work (`.claude/settings.json`
 denies these at the tool layer).
 
 Pull requests are automatically labeled for documentation, Go, GitHub Actions,
-and dependency changes according to [`.github/labeler.yml`](.github/labeler.yml).
-The labeler adds matching labels without removing labels applied by contributors
-or reviewers.
+and dependency changes by the `label` job in
+[`.github/workflows/risk-paths.yml`](.github/workflows/risk-paths.yml), according
+to [`.github/labeler.yml`](.github/labeler.yml). The label job adds matching
+labels without removing labels applied by contributors or reviewers.
 
 CI runs on every pull request (`.github/workflows/test.yml`) and must pass:
 lint (golangci-lint), security scan (`govulncheck`), unit tests with coverage,
