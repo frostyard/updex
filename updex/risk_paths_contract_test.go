@@ -1,9 +1,12 @@
 package updex
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -129,12 +132,14 @@ func TestRiskPathsListContract(t *testing.T) {
 			Why  string `json:"why"`
 		} `json:"paths"`
 	}
-	file, err := os.Open("../.github/risk-paths.json")
+	data, err := os.ReadFile("../.github/risk-paths.json")
 	if err != nil {
-		t.Fatalf("open risk paths list: %v", err)
+		t.Fatalf("read risk paths list: %v", err)
 	}
-	defer file.Close()
-	decoder := json.NewDecoder(file)
+	if err := checkDuplicateRiskPathJSONKeys(data); err != nil {
+		t.Fatalf("strict JSON check failed: %v", err)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&list); err != nil {
 		t.Fatalf("decode risk paths list: %v", err)
@@ -154,6 +159,9 @@ func TestRiskPathsListContract(t *testing.T) {
 	hasSelfList := false
 	hasCaller := false
 	for _, entry := range list.Paths {
+		if err := validateRiskPathGlob(entry.Glob); err != nil {
+			t.Errorf("risk paths glob %q has invalid syntax: %v", entry.Glob, err)
+		}
 		if entry.Glob == "" {
 			t.Errorf("risk paths entry has an empty glob")
 		} else if seen[entry.Glob] {
@@ -242,6 +250,245 @@ func categoryPrefix(text string) bool {
 	return false
 }
 
+func checkDuplicateRiskPathJSONKeys(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	var walk func() error
+	walk = func() error {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		delimiter, isDelimiter := token.(json.Delim)
+		if !isDelimiter {
+			return nil
+		}
+		if delimiter == '{' {
+			seen := map[string]bool{}
+			for decoder.More() {
+				keyToken, err := decoder.Token()
+				if err != nil {
+					return err
+				}
+				key, ok := keyToken.(string)
+				if !ok {
+					return fmt.Errorf("JSON object key is not a string")
+				}
+				if seen[key] {
+					return fmt.Errorf("duplicate JSON key %q", key)
+				}
+				seen[key] = true
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+			if _, err := decoder.Token(); err != nil {
+				return err
+			}
+			return nil
+		}
+		if delimiter == '[' {
+			for decoder.More() {
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+			if _, err := decoder.Token(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := walk(); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("trailing data after the JSON document")
+		}
+		return fmt.Errorf("trailing data after the JSON document: %w", err)
+	}
+	return nil
+}
+
+func expandRiskPathGroups(glob string) ([]string, error) {
+	parts := [][]string{}
+	literal := ""
+	for i := 0; i < len(glob); {
+		if glob[i] == '}' {
+			return nil, fmt.Errorf("unmatched '}'")
+		}
+		if glob[i] != '{' {
+			literal += string(glob[i])
+			i++
+			continue
+		}
+		close := strings.IndexByte(glob[i+1:], '}')
+		if close < 0 {
+			return nil, fmt.Errorf("unmatched '{'")
+		}
+		close += i + 1
+		inside := glob[i+1 : close]
+		if strings.Contains(inside, "{") {
+			return nil, fmt.Errorf("nested braces are not supported")
+		}
+		alternatives := strings.Split(inside, ",")
+		if len(alternatives) < 2 {
+			return nil, fmt.Errorf("a brace group needs at least 2 alternatives")
+		}
+		if slices.Contains(alternatives, "") {
+			return nil, fmt.Errorf("a brace group has an empty alternative")
+		}
+		parts = append(parts, []string{literal})
+		parts = append(parts, alternatives)
+		literal = ""
+		i = close + 1
+	}
+	parts = append(parts, []string{literal})
+
+	expansions := []string{""}
+	for _, alternatives := range parts {
+		next := make([]string, 0, len(expansions)*len(alternatives))
+		for _, prefix := range expansions {
+			for _, alternative := range alternatives {
+				next = append(next, prefix+alternative)
+			}
+			if len(next) > 256 {
+				return nil, fmt.Errorf("brace expansion gives more than 256 globs")
+			}
+		}
+		expansions = next
+	}
+	return expansions, nil
+}
+
+func validateRiskPathGlob(glob string) error {
+	if glob == "" {
+		return fmt.Errorf("glob is empty")
+	}
+	var errors []string
+	for _, c := range []string{"[", "]", "!", "\\"} {
+		if strings.Contains(glob, c) {
+			errors = append(errors, fmt.Sprintf("%q is not supported", c))
+		}
+	}
+
+	expansions, err := expandRiskPathGroups(glob)
+	if err != nil {
+		errors = append(errors, err.Error())
+	} else {
+		for _, expansion := range expansions {
+			if strings.HasPrefix(expansion, "/") {
+				errors = append(errors, "a glob must not start with '/'")
+			}
+			if strings.HasPrefix(expansion, "./") {
+				errors = append(errors, "a glob must not start with './'")
+			}
+			for _, segment := range strings.Split(expansion, "/") {
+				if segment == "" {
+					errors = append(errors, "a glob must not have an empty segment")
+				} else if segment == ".." {
+					errors = append(errors, "a glob must not have a '..' segment")
+				} else if strings.Contains(segment, "**") && segment != "**" {
+					errors = append(errors, "'**' must be a whole segment")
+				}
+			}
+		}
+	}
+	if len(errors) != 0 {
+		return fmt.Errorf("%s", strings.Join(uniqueStrings(errors), "; "))
+	}
+	return nil
+}
+
+func uniqueStrings(values []string) []string {
+	seen := map[string]bool{}
+	var result []string
+	for _, value := range values {
+		if !seen[value] {
+			seen[value] = true
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
+func expandMatchGroups(glob string) []string {
+	expansions, err := expandRiskPathGroups(glob)
+	if err != nil {
+		return nil
+	}
+	return expansions
+}
+
+func matchRiskPathGlob(glob, filePath string) bool {
+	if glob == "" || filePath == "" {
+		return false
+	}
+	for _, expansion := range expandMatchGroups(glob) {
+		if matchRiskPathSegments(strings.Split(expansion, "/"), strings.Split(filePath, "/")) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchRiskPathSegments(globSegments, pathSegments []string) bool {
+	memo := map[[2]int]bool{}
+	seen := map[[2]int]bool{}
+	var visit func(int, int) bool
+	visit = func(g, p int) bool {
+		key := [2]int{g, p}
+		if seen[key] {
+			return memo[key]
+		}
+		seen[key] = true
+		var result bool
+		if g == len(globSegments) {
+			result = p == len(pathSegments)
+		} else if globSegments[g] == "**" {
+			result = visit(g+1, p) || (p < len(pathSegments) && visit(g, p+1))
+		} else {
+			if p < len(pathSegments) {
+				matched, err := path.Match(globSegments[g], pathSegments[p])
+				result = err == nil && matched && visit(g+1, p+1)
+			}
+		}
+		memo[key] = result
+		return result
+	}
+	return visit(0, 0)
+}
+
+func collectRepositoryFiles(t *testing.T) []string {
+	t.Helper()
+	var files []string
+	err := filepath.WalkDir("..", func(filePath string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel("..", filePath)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if entry.IsDir() {
+			if rel == ".git" || rel == "build" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		info, err := entry.Info()
+		if err == nil && info.Mode().IsRegular() {
+			files = append(files, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("collect repository files: %v", err)
+	}
+	return files
+}
+
 func TestRiskPathsGlobsNameExistingFiles(t *testing.T) {
 	data, err := os.ReadFile("../.github/risk-paths.json")
 	if err != nil {
@@ -255,90 +502,117 @@ func TestRiskPathsGlobsNameExistingFiles(t *testing.T) {
 	if err := json.Unmarshal(data, &list); err != nil {
 		t.Fatalf("parse risk paths list: %v", err)
 	}
+	files := collectRepositoryFiles(t)
 
 	for _, entry := range list.Paths {
-		for _, glob := range expandRiskPathGroups(entry.Glob) {
-			if glob == "" {
-				t.Errorf("risk paths glob %q expanded to an empty glob", entry.Glob)
-				continue
+		matched := false
+		for _, file := range files {
+			if matchRiskPathGlob(entry.Glob, file) {
+				matched = true
+				break
 			}
-			checkRiskPathGlob(t, entry.Glob, glob)
+		}
+		if !matched {
+			t.Errorf("risk paths glob %q matches no regular file in the repository", entry.Glob)
 		}
 	}
 }
 
-func expandRiskPathGroups(glob string) []string {
-	open := strings.Index(glob, "{")
-	if open < 0 {
-		return []string{glob}
+func TestRiskPathGlobValidation(t *testing.T) {
+	tests := []struct {
+		name  string
+		glob  string
+		valid bool
+	}{
+		{name: "github workflows", glob: ".github/workflows/**", valid: true},
+		{name: "brace alternatives", glob: "updex/{a,b}.go", valid: true},
+		{name: "double star prefix", glob: "**/x", valid: true},
+		{name: "double star alone", glob: "**", valid: true},
+		{name: "markdown", glob: "docs/*.md", valid: true},
+		{name: "question mark", glob: "x?y", valid: true},
+		{name: "three stars", glob: "manifest/***", valid: false},
+		{name: "mixed double stars", glob: "a**", valid: false},
+		{name: "leading slash", glob: "/a", valid: false},
+		{name: "dot slash", glob: "./a", valid: false},
+		{name: "empty segment", glob: "a//b", valid: false},
+		{name: "dot dot segment", glob: "a/../b", valid: false},
+		{name: "character class", glob: "a/[ab]", valid: false},
+		{name: "nested braces", glob: "{a,{b}}", valid: false},
+		{name: "empty brace alternative", glob: "{a,}", valid: false},
+		{name: "negation", glob: "!a", valid: false},
 	}
-	end := strings.Index(glob[open+1:], "}")
-	if end < 0 {
-		return []string{glob}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateRiskPathGlob(tt.glob)
+			if tt.valid && err != nil {
+				t.Errorf("validateRiskPathGlob(%q) = %v, want valid", tt.glob, err)
+			}
+			if !tt.valid && err == nil {
+				t.Errorf("validateRiskPathGlob(%q) = nil, want invalid", tt.glob)
+			}
+		})
 	}
-	end += open + 1
-	choices := strings.Split(glob[open+1:end], ",")
-	prefix, suffix := glob[:open], glob[end+1:]
-	var expanded []string
-	for _, choice := range choices {
-		expanded = append(expanded, expandRiskPathGroups(prefix+choice+suffix)...)
-	}
-	return expanded
 }
 
-func checkRiskPathGlob(t *testing.T, original, glob string) {
-	t.Helper()
-	path := filepath.Join("..", filepath.FromSlash(glob))
-	hasWildcard := strings.ContainsAny(glob, "*?")
-	if !hasWildcard {
-		info, err := os.Lstat(path)
-		if err != nil {
-			t.Errorf("risk paths glob %q (expanded %q) names missing file %q: %v", original, glob, glob, err)
-			return
-		}
-		if !info.Mode().IsRegular() {
-			t.Errorf("risk paths glob %q (expanded %q) names %q, which is not a regular file", original, glob, glob)
-		}
-		return
+func TestRiskPathDuplicateJSONKeys(t *testing.T) {
+	tests := []struct {
+		name string
+		json string
+	}{
+		{name: "duplicate nested key", json: `{"paths":[{"glob":"a","glob":"b","why":"governance"}]}`},
+		{name: "duplicate top-level key", json: `{"schema_version":1,"schema_version":2,"paths":[]}`},
 	}
-
-	segments := strings.Split(glob, "/")
-	prefix := []string{}
-	for _, segment := range segments {
-		if strings.ContainsAny(segment, "*?") {
-			break
-		}
-		prefix = append(prefix, segment)
-	}
-	if len(prefix) == 0 {
-		t.Errorf("risk paths glob %q (expanded %q) has a wildcard before a usable base directory", original, glob)
-		return
-	}
-	base := filepath.Join("..", filepath.Join(prefix...))
-	info, err := os.Stat(base)
-	if err != nil {
-		t.Errorf("risk paths glob %q (expanded %q) base directory %q is missing: %v", original, glob, base, err)
-		return
-	}
-	if !info.IsDir() {
-		t.Errorf("risk paths glob %q (expanded %q) base %q exists but is not a directory", original, glob, base)
-		return
-	}
-	found := false
-	err = filepath.WalkDir(base, func(_ string, entry os.DirEntry, err error) error {
-		if err == nil && !entry.IsDir() {
-			info, infoErr := entry.Info()
-			if infoErr == nil && info.Mode().IsRegular() {
-				found = true
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := checkDuplicateRiskPathJSONKeys([]byte(tt.json)); err == nil {
+				t.Errorf("duplicate JSON keys accepted in %s", tt.json)
+			} else if !strings.Contains(err.Error(), "duplicate JSON key") {
+				t.Errorf("duplicate JSON key error = %q, want clear duplicate-key message", err)
 			}
-		}
-		return nil
-	})
-	if err != nil {
-		t.Errorf("risk paths glob %q (expanded %q) cannot inspect base directory %q: %v", original, glob, base, err)
-		return
+		})
 	}
-	if !found {
-		t.Errorf("risk paths glob %q (expanded %q) base directory %q contains no regular file at any depth", original, glob, base)
+}
+
+func TestMatchRiskPathGlob(t *testing.T) {
+	tests := []struct {
+		name  string
+		glob  string
+		path  string
+		match bool
+	}{
+		{name: "double star root", glob: "**/x", path: "x", match: true},
+		{name: "double star one folder", glob: "**/x", path: "a/x", match: true},
+		{name: "double star two folders", glob: "**/x", path: "a/b/x", match: true},
+		{name: "double star does not match child", glob: "**/x", path: "a/x/y", match: false},
+		{name: "star exact root", glob: "x*", path: "x", match: true},
+		{name: "star xy root", glob: "x*", path: "xy", match: true},
+		{name: "star no nested match", glob: "x*", path: "a/x", match: false},
+		{name: "markdown file", glob: "docs/*.md", path: "docs/a.md", match: true},
+		{name: "dot markdown file", glob: "docs/*.md", path: "docs/.md", match: true},
+		{name: "markdown no nested", glob: "docs/*.md", path: "docs/a/b.md", match: false},
+		{name: "shared nested", glob: "shared/**", path: "shared/a/b", match: true},
+		{name: "shared no other root", glob: "shared/**", path: "other/a", match: false},
+		{name: "brace first", glob: ".github/{risk-paths.json,settings.yml}", path: ".github/risk-paths.json", match: true},
+		{name: "brace second", glob: ".github/{risk-paths.json,settings.yml}", path: ".github/settings.yml", match: true},
+		{name: "brace no unrelated", glob: ".github/{risk-paths.json,settings.yml}", path: ".github/workflows/ci.yml", match: false},
+		{name: "manifest nonexistent", glob: "manifest/does-not-exist-*.go", path: "manifest/does-not-exist-a.go", match: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := matchRiskPathGlob(tt.glob, tt.path)
+			if got != tt.match {
+				t.Errorf("matchRiskPathGlob(%q, %q) = %v, want %v", tt.glob, tt.path, got, tt.match)
+			}
+		})
+	}
+}
+
+func TestMatchRiskPathGlobNoRepositoryFile(t *testing.T) {
+	files := collectRepositoryFiles(t)
+	glob := "manifest/does-not-exist-*.go"
+	for _, file := range files {
+		if matchRiskPathGlob(glob, file) {
+			t.Fatalf("manifest/does-not-exist-*.go unexpectedly matched repository file %q", file)
+		}
 	}
 }

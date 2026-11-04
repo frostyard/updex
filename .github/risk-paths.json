@@ -13,6 +13,7 @@
     { "glob": "manifest/**", "why": "installation-and-update: update verification, SHA256SUMS fetch and GPG signature verification" },
     { "glob": "internal/httpclient/**", "why": "installation-and-update: update verification, the refusal of HTTPS-to-HTTP redirects" },
     { "glob": "updex/list.go", "why": "installation-and-update: update verification, the signature policy for each transfer (verifyPolicy)" },
+    { "glob": "config/transfer.go", "why": "installation-and-update: update verification, the Verify= default and parse, the target path and mode, and the activation rule" },
     { "glob": "catalog/**", "why": "installation-and-update: update verification, catalog transfer rendering, Verify= policy and GITHUB_TOKEN scope" },
     { "glob": "imagecompat/**", "why": "installation-and-update: update verification, the minimum-image check that reads untrusted images" },
     { "glob": "sysext/**", "why": "installation-and-update: destructive operations, sysext links, vacuum (delete) and refresh as root" },
