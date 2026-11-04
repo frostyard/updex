@@ -62,6 +62,20 @@ func TestRiskPathsCallerContract(t *testing.T) {
 	if err := yaml.Unmarshal(data, &generic); err != nil {
 		t.Fatalf("parse risk paths workflow keys: %v", err)
 	}
+	// One run per pull request at a time, never cancelled in progress: the
+	// label job of a later run must not overlap the risk-paths job of an
+	// earlier run (updex#483 race).
+	wantGroup := "risk-paths-${{ github.event.pull_request.number }}"
+	if concurrency, ok := generic["concurrency"].(map[string]any); !ok {
+		t.Errorf("risk paths workflow has no concurrency map; want group %q with cancel-in-progress false", wantGroup)
+	} else {
+		if got := concurrency["group"]; got != wantGroup {
+			t.Errorf("concurrency.group = %v, want %q", got, wantGroup)
+		}
+		if got, ok := concurrency["cancel-in-progress"].(bool); !ok || got {
+			t.Errorf("concurrency.cancel-in-progress = %v, want boolean false", concurrency["cancel-in-progress"])
+		}
+	}
 	onValue, ok := generic["on"]
 	if !ok {
 		t.Errorf("risk paths workflow has no on map")

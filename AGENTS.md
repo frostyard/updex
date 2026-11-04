@@ -192,9 +192,13 @@ on `pull_request_target` (opened, synchronize, reopened, edited), without
 the job at `contents: read` + `pull-requests: write`. It reads
 `.github/risk-paths.json` at the base SHA, checks out nothing, and adds
 `risk:high` when a changed file matches; it never removes the label. The
-labeler is in the same workflow because a separate workflow can overwrite
-`risk:high` when it sets the whole pull-request label list. Do not add another
-workflow that sets pull-request labels. The rule
+labeler is in the same workflow because `actions/labeler` reads the labels and
+then sets the whole list, so a label added between the read and the write is
+lost (updex#483). The `risk-paths` job runs after the `label` job
+(`needs: label`, `if: ${{ !cancelled() }}`), and the concurrency group
+`risk-paths-<PR number>` (no cancel in progress) runs at most 1 run per pull
+request at a time, so no label job overlaps a risk-paths job. Do not add
+another workflow that sets pull-request labels. The rule
 is in [core ADR-0068](https://github.com/frostyard/core/blob/main/docs/adr/0068-label-pull-requests-that-touch-high-risk-paths.md)
 and [the risk-paths spec](https://github.com/frostyard/core/blob/main/docs/specs/risk-paths.md).
 `updex/risk_paths_contract_test.go` pins the caller shape, the list schema,

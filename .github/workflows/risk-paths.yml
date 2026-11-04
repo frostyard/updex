@@ -3,9 +3,13 @@
 # touches a glob in .github/risk-paths.json gets the label risk:high.
 #
 # The labeler runs in this workflow before risk-paths because actions/labeler
-# sets the whole pull-request label list and can overwrite a label added by a
-# separate workflow. This order prevents the labeler race from removing
-# risk:high. Do not add another workflow that sets pull-request labels.
+# reads the current labels and then sets the whole label list. A label that
+# another job adds between that read and that write is lost (updex#483:
+# risk:high added at 19:36:25Z, removed at 19:36:26Z). So within a run the
+# risk-paths job runs after the label job, and the concurrency group runs at
+# most 1 run per pull request at a time (no cancel: a queued run waits), so the
+# label job of a later run never overlaps the risk-paths job of an earlier one.
+# Do not add another workflow that sets pull-request labels.
 #
 # pull_request_target runs this file and the list from the base branch, so a
 # pull request cannot remove its own label by an edit of either one. The
@@ -19,6 +23,10 @@ on:
     types: [opened, synchronize, reopened, edited]
 
 permissions: {}
+
+concurrency:
+  group: risk-paths-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
 
 jobs:
   label:
