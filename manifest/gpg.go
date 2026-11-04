@@ -1,3 +1,4 @@
+// Throwaway risk-paths proof 2 (T801 t5): do not merge.
 package manifest
 
 import (
