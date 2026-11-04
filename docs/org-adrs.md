@@ -26,6 +26,7 @@ The ones that bind updex:
 - [ADR-0044 — Expose the make gate triad in every repository](https://github.com/frostyard/core/blob/main/docs/adr/0044-expose-the-make-gate-triad-in-every-repository.md) — the Makefile's `verify`, `check`, and `ci` targets
 - [ADR-0055 — Publish Debian packages through the apt-publisher single writer](https://github.com/frostyard/core/blob/main/docs/adr/0055-publish-debian-packages-through-the-apt-publisher.md) — release.yml's `publish-deb` request to frostyard/apt-publisher (replaces ADR-0010's repogen publish step, via ADR-0048)
 - [ADR-0056 — The APT publisher triggers image rebuilds after packages are live](https://github.com/frostyard/core/blob/main/docs/adr/0056-rebuild-images-after-apt-publication.md) — apt-publisher, not release.yml, dispatches `build` to frostyard/snosi (supersedes ADR-0013); pinned by `updex/release_workflow_contract_test.go`
+- [ADR-0068 — Label pull requests that touch high-risk paths](https://github.com/frostyard/core/blob/main/docs/adr/0068-label-pull-requests-that-touch-high-risk-paths.md) — `.github/risk-paths.json` names high-risk paths and `.github/workflows/risk-paths.yml` adds `risk:high`; pinned by `updex/risk_paths_contract_test.go`
 
 When changing behavior covered by one of these, update or supersede the ADR
 in frostyard/core first, then change this repo in the same effort.

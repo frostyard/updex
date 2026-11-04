@@ -1,0 +1,23 @@
+# Risk paths (frostyard/core ADR-0068, docs/specs/risk-paths.md): runs core's
+# reusable risk-paths workflow on every pull request. A pull request that
+# touches a glob in .github/risk-paths.json gets the label risk:high.
+#
+# pull_request_target runs this file and the list from the base branch, so a
+# pull request cannot remove its own label by an edit of either one. The
+# reusable workflow checks out nothing and runs no pull-request code.
+# Pinned to a full core commit SHA (ADR-0021). No merge_group trigger, and
+# not a required check.
+name: Risk paths
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+
+permissions: {}
+
+jobs:
+  risk-paths:
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: frostyard/core/.github/workflows/risk-paths.yml@1b02a129026329cef2b46d1fbd0465a863c1cd81 # core#194
