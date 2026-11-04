@@ -318,7 +318,7 @@ func expandRiskPathGroups(glob string) ([]string, error) {
 			return nil, fmt.Errorf("unmatched '}'")
 		}
 		if glob[i] != '{' {
-			literal += string(glob[i])
+			literal += glob[i : i+1]
 			i++
 			continue
 		}
@@ -596,6 +596,8 @@ func TestMatchRiskPathGlob(t *testing.T) {
 		{name: "brace second", glob: ".github/{risk-paths.json,settings.yml}", path: ".github/settings.yml", match: true},
 		{name: "brace no unrelated", glob: ".github/{risk-paths.json,settings.yml}", path: ".github/workflows/ci.yml", match: false},
 		{name: "manifest nonexistent", glob: "manifest/does-not-exist-*.go", path: "manifest/does-not-exist-a.go", match: true},
+		{name: "non-ASCII literal in a brace glob", glob: "café/{a,b}.md", path: "café/a.md", match: true},
+		{name: "non-ASCII literal is not mangled", glob: "café/{a,b}.md", path: "cafÃ©/a.md", match: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -613,6 +615,74 @@ func TestMatchRiskPathGlobNoRepositoryFile(t *testing.T) {
 	for _, file := range files {
 		if matchRiskPathGlob(glob, file) {
 			t.Fatalf("manifest/does-not-exist-*.go unexpectedly matched repository file %q", file)
+		}
+	}
+}
+
+// TestRiskPathsListCoversHighRiskFiles pins that the list still covers the
+// files whose changes must get risk:high: removing or narrowing a glob that
+// covers one of them fails here. Add a path when a new high-risk file appears.
+func TestRiskPathsListCoversHighRiskFiles(t *testing.T) {
+	data, err := os.ReadFile("../.github/risk-paths.json")
+	if err != nil {
+		t.Fatalf("read risk paths list: %v", err)
+	}
+	var list struct {
+		Paths []struct {
+			Glob string `json:"glob"`
+		} `json:"paths"`
+	}
+	if err := json.Unmarshal(data, &list); err != nil {
+		t.Fatalf("parse risk paths list: %v", err)
+	}
+	required := []string{
+		".github/risk-paths.json",
+		".github/workflows/risk-paths.yml",
+		".github/workflows/release.yml",
+		".github/workflows/snapshot.yml",
+		".github/workflows/test.yml",
+		"policies/agent-governance.json",
+		".github/policies/ai-governance.json",
+		".claude/settings.json",
+		".goreleaser.yaml",
+		".svu.yml",
+		"scripts/units.sh",
+		"scripts/check-deb-units.sh",
+		"download/download.go",
+		"download/decompress.go",
+		"manifest/gpg.go",
+		"manifest/manifest.go",
+		"internal/httpclient/httpclient.go",
+		"updex/list.go",
+		"config/transfer.go",
+		"catalog/catalog.go",
+		"catalog/repo.go",
+		"catalog/cache.go",
+		"imagecompat/erofs.go",
+		"sysext/manager.go",
+		"sysext/runner.go",
+		"systemd/manager.go",
+		"updex/install.go",
+		"updex/imagegate.go",
+		"updex/rollback.go",
+		"updex/activation.go",
+		"updex/features.go",
+		"updex/catalog.go",
+		"updex/daemon.go",
+		"updex/fsguard.go",
+	}
+	for _, file := range required {
+		if _, err := os.Lstat(filepath.Join("..", filepath.FromSlash(file))); err != nil {
+			t.Errorf("required high-risk file %q does not exist; update this test and the list: %v", file, err)
+			continue
+		}
+		covered := slices.ContainsFunc(list.Paths, func(entry struct {
+			Glob string `json:"glob"`
+		}) bool {
+			return matchRiskPathGlob(entry.Glob, file)
+		})
+		if !covered {
+			t.Errorf("no glob in .github/risk-paths.json matches the high-risk file %q", file)
 		}
 	}
 }

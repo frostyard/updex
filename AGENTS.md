@@ -197,7 +197,7 @@ and [the risk-paths spec](https://github.com/frostyard/core/blob/main/docs/specs
 `updex/risk_paths_contract_test.go` pins the caller shape, the list schema,
 the boundary-plus-category `why`, rule C, strict JSON without duplicate keys,
 the glob syntax of the spec, and a full match of each glob against at least 1
-repository file. Core's validator is the authority. A rename or move of a
+repository file, and `TestRiskPathsListCoversHighRiskFiles` requires that the list covers each named high-risk file. Core's validator is the authority. A rename or move of a
 listed file must update the list in the same PR.
 `updex/snapshot_workflow_contract_test.go` pins the snapshot contract above —
 the `goreleaser-nightly` group with boolean `cancel-in-progress: true`, the
