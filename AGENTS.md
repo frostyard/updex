@@ -299,6 +299,11 @@ Key packages:
 - `sysext/` — systemd-sysext integration with mockable `Runner` interface, `/var/lib/extensions` link management, and the vacuum (`VacuumWith`/`PlanVacuumWith` over `VacuumPaths`: it keeps the linked and the merged version, see "Feature install and retention" below); `DefaultRunner.Refresh` applies merged sysusers.d/tmpfiles.d in the sequence chosen by systemd version (ADR-0019)
 - `systemd/` — Generates/installs systemd timer+service units, mockable `Runner` interface
 - `imagecompat/` — Minimum-image-version check (ADR-0016): reads `extension-release.*` from a staged sysext image without mounting it (pure-Go GPT + EROFS reader for uncompressed images, `dump.erofs` fallback for compressed ones, `ReadExtensionRelease`), finds the next-boot `IMAGE_VERSION` (`NextBootImageVersion`: `bootc status --json` through the mockable `BootcRunner` — a queued rollback, else a staged deployment, and either one without an image version is an error (`ErrStagedWithoutVersion` for the staged one, #464) — else the booted `os-release`) and the running one (`BootedImageVersion`, os-release only, no bootc) and compares both as numbers (`CheckMinImageVersion`, key `UPDEX_MIN_IMAGE_VERSION`). No CLI imports; treats the image as untrusted input
+- `internal/fault/` — error classes (`network`, `http_status`, `signature`,
+  `checksum`, `disk_space`, `link`, `config`, `other`): `fault.Mark` wraps an
+  error and keeps `Error()` byte for byte (with `Unwrap`), `fault.ClassOf`
+  reads the outermost mark; errors are marked where they are made and the
+  last-run record reports the class (ADR-0020)
 - `internal/retry/`, `internal/httpclient/`, `internal/testutil/` — HTTP retry policy, the shared default-HTTP-client constructor (`internal/httpclient.New`; enforces the HTTPS-to-HTTP redirect downgrade refusal used by `updex.NewClient`, `manifest.Fetch`, and `download.Download` when no caller-supplied client is given), and shared test helpers (HTTP test server)
 
 Entry point: `cmd/updex-cli/main.go` → `cmd/updex/root.go`
@@ -316,6 +321,7 @@ updex/
 │   ├── install.go            # Stage/link/vacuum pipeline for a feature's transfers
 │   ├── lock.go               # ErrBusy and the operation lock (flock)
 │   ├── rollback.go           # RollbackFeature and the rollback record
+│   ├── lastrun.go            # The last-run record and the error classifier
 │   └── catalog.go            # Catalog operations
 ├── cmd/
 │   ├── updex/                # Cobra commands and SDK adapters
@@ -336,6 +342,7 @@ updex/
 ├── imagecompat/              # Minimum image version: extension-release reader, bootc version, check
 ├── version/                  # Pattern matching and version comparison
 ├── internal/
+│   ├── fault/                # Error classes (Mark, ClassOf) for the last-run record
 │   ├── retry/                # Internal HTTP retry policy
 │   ├── httpclient/           # Shared default HTTP client (redirect downgrade refusal)
 │   └── testutil/             # Shared test utilities
@@ -655,6 +662,31 @@ in the `config/` structs and parse functions. Always finish with
   warning line on stderr and is not an error. The timer (`--no-refresh`) runs
   none of it. A new refresh call site must call `runner.Refresh()`, never
   `systemd-sysext refresh` directly.
+- **Last-run record (ADR-0020).** Every `UpdateFeatures` run that is not a
+  dry run writes `RuntimePaths.LastRunPath` (default
+  `/var/lib/updex/last-run.json`, `DefaultLastRunPath`), format 1, contract in
+  [docs/specs/last-run-record.md](docs/specs/last-run-record.md): run
+  outcome, refresh state, and per feature origin, outcome, error class and
+  version, never error text (`updex/lastrun.go`). The class of a transfer
+  error is `classifyError`: cancelled → `other`, `ENOSPC`/`EDQUOT` →
+  `disk_space`, network (`isUnreachable`, reset, aborted, TLS/x509
+  verification) → `network`, else the outermost `internal/fault` mark, else
+  `other`. **Mark a new error kind where it is made** with `fault.Mark` (never
+  by matching text, and never on a wrapper such as `signature verification
+  failed: %w` that can hold another class). The failed transfer's version is
+  `transferInstall.attempted`; `installOutcome` and `UpdateResult.Version`
+  do not change. A run that holds the operation lock writes the record
+  **before** it releases the lock (a `defer` registered after `defer
+  release()` in `updateFeatures`), so an older run never replaces a newer
+  record; `UpdateFeatures` writes only for a run without the lock, and
+  `lastRun.written` keeps it to one write. A busy run lists its features as
+  `skipped_busy` only when the existing record ended before it started; a
+  named run, busy or not, carries the other enabled features' entries; a run
+  refused by `selectFeatures`, busy or not, and a dry run write nothing. The
+  write holds a `flock` on the record directory (2 s
+  bounded, non-blocking retries), refuses a symlink or non-regular file and
+  a non-directory parent, and a failure is one `c.warn`: it never changes
+  the results or the returned error.
 - **CLI.** `features update` that gets `ErrBusy` exits 0 with one stderr line
   only when `runningUnderSystemd()` (non-empty `INVOCATION_ID`; the packaged
   timer runs exactly `updex features update --no-refresh`); every other
@@ -950,8 +982,8 @@ Go 1.26. Use modern idioms: `any`, `slices`/`maps`/`cmp` packages, `t.Context()`
 - Every mutating SDK operation takes the lock at `RuntimePaths.LockPath`, which
   defaults to `/run/updex/lock` (not writable by the test user), so a test must
   never rely on that default. Package `updex` tests get temporary defaults from
-  `TestMain` (`updex/main_test.go` sets the unexported `lockPathDefault` and
-  `rollbackDirDefault`, `definitionRootsDefault`, `osReleasePathsDefault`,
+  `TestMain` (`updex/main_test.go` sets the unexported `lockPathDefault`,
+  `rollbackDirDefault`, `lastRunPathDefault`, `definitionRootsDefault`, `osReleasePathsDefault`,
   `catalogConfigRootsDefault`, `catalogTargetPathDefault`,
   `sysextLinkDirDefault`, `runExtensionsDirDefault`, and empty temporary
   `sysext.MergedHierarchies`), so no test touches `/run/updex`,
@@ -988,8 +1020,8 @@ Go 1.26. Use modern idioms: `any`, `slices`/`maps`/`cmp` packages, `t.Context()`
   seam stays the zero `updex.RuntimePaths`, so behaviour is unchanged;
   `TestHandlerTestsDoNotReadHostMergedState` and
   `TestHandlerTestsDoNotReadHostPaths` guard it. `TestMain` also sets a
-  temporary `LockPath` and `RollbackDir`, so no handler test touches
-  `/run/updex` or `/var/lib/updex`; a test that inspects rollback records sets
+  temporary `LockPath`, `RollbackDir` and `LastRunPath`, so no handler test
+  touches `/run/updex` or `/var/lib/updex`; a test that inspects rollback records sets
   its own `RollbackDir`; a handler test that builds its own
   `updex.NewClient` must pass `Paths: runtimePaths`. Tests of the
   `INVOCATION_ID` behaviour use `t.Setenv("INVOCATION_ID", ...)` and hold the

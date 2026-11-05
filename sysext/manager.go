@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/frostyard/updex/v2/config"
+	"github.com/frostyard/updex/v2/internal/fault"
 	"github.com/frostyard/updex/v2/version"
 )
 
@@ -21,12 +22,12 @@ import (
 func parseTargetPatterns(t *config.Transfer) ([]*version.Pattern, error) {
 	patternStrs := t.Target.Patterns()
 	if len(patternStrs) == 0 {
-		return nil, fmt.Errorf("no target match patterns defined")
+		return nil, fault.Mark(fault.Config, fmt.Errorf("no target match patterns defined"))
 	}
 
 	patterns, firstErr := version.ParsePatterns(patternStrs)
 	if len(patterns) == 0 {
-		return nil, fmt.Errorf("invalid target pattern: %w", firstErr)
+		return nil, fault.Mark(fault.Config, fmt.Errorf("invalid target pattern: %w", firstErr))
 	}
 
 	return patterns, nil

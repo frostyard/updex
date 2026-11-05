@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/frostyard/updex/v2/internal/fault"
 	"github.com/frostyard/updex/v2/internal/httpclient"
 	"github.com/frostyard/updex/v2/internal/retry"
 )
@@ -88,10 +89,10 @@ func Fetch(ctx context.Context, httpClient *http.Client, baseURL string, verify 
 		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError {
-			return retry.Transient(fmt.Errorf("manifest fetch failed with status: %s", resp.Status))
+			return retry.Transient(fault.Mark(fault.HTTPStatus, fmt.Errorf("manifest fetch failed with status: %s", resp.Status)))
 		}
 		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("manifest fetch failed with status: %s", resp.Status)
+			return fault.Mark(fault.HTTPStatus, fmt.Errorf("manifest fetch failed with status: %s", resp.Status))
 		}
 
 		content, err = io.ReadAll(io.LimitReader(resp.Body, maxManifestSize+1))
@@ -185,7 +186,7 @@ func VerifyHash(filePath string, expectedHash string) error {
 
 	actualHash := fmt.Sprintf("%x", h.Sum(nil))
 	if actualHash != strings.ToLower(expectedHash) {
-		return fmt.Errorf("hash mismatch: expected %s, got %s", expectedHash, actualHash)
+		return fault.Mark(fault.Checksum, fmt.Errorf("hash mismatch: expected %s, got %s", expectedHash, actualHash))
 	}
 
 	return nil
@@ -228,7 +229,7 @@ func (h *HashVerifyReader) Verify() error {
 		return fmt.Errorf("file not fully read yet")
 	}
 	if h.actualHash != h.expectedHash {
-		return fmt.Errorf("hash mismatch: expected %s, got %s", h.expectedHash, h.actualHash)
+		return fault.Mark(fault.Checksum, fmt.Errorf("hash mismatch: expected %s, got %s", h.expectedHash, h.actualHash))
 	}
 	return nil
 }

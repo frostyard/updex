@@ -61,6 +61,9 @@ func TestMain(m *testing.M) {
 		// Rollback records live here; the production default
 		// /var/lib/updex/rollback is never touched by a test.
 		RollbackDir: filepath.Join(root, "var-updex", "rollback"),
+		// The last-run record is written here; the production default
+		// /var/lib/updex/last-run.json is never touched by a test.
+		LastRunPath: filepath.Join(root, "var-updex", "last-run.json"),
 	}
 	for _, d := range []string{
 		testRuntimePaths.DefinitionRoots[0],
@@ -103,6 +106,9 @@ func setRuntimePaths(t *testing.T, rp updex.RuntimePaths) {
 	}
 	if rp.RollbackDir == "" {
 		rp.RollbackDir = testRuntimePaths.RollbackDir
+	}
+	if rp.LastRunPath == "" {
+		rp.LastRunPath = testRuntimePaths.LastRunPath
 	}
 	if rp.CatalogTargetPath == "" {
 		rp.CatalogTargetPath = testRuntimePaths.CatalogTargetPath
@@ -162,6 +168,10 @@ func TestHandlerTestsDoNotReadHostMergedState(t *testing.T) {
 		t.Errorf("runtimePaths.RollbackDir = %q: handler tests would write the production rollback records", runtimePaths.RollbackDir)
 	}
 
+	if runtimePaths.LastRunPath == "" || runtimePaths.LastRunPath == updex.DefaultLastRunPath {
+		t.Errorf("runtimePaths.LastRunPath = %q: handler tests would write the production last-run record", runtimePaths.LastRunPath)
+	}
+
 	if runtimePaths.RunExtensionsDir == "" {
 		t.Error("runtimePaths.RunExtensionsDir is empty: handler tests would skip the runtime search check")
 	}
@@ -203,4 +213,5 @@ func TestHandlerTestsDoNotReadHostPaths(t *testing.T) {
 	}
 	check("catalog target path", runtimePaths.CatalogTargetPath)
 	check("sysext link dir", runtimePaths.SysextLinkDir)
+	check("last-run path", runtimePaths.LastRunPath)
 }

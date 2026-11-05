@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/frostyard/updex/v2/internal/fault"
 	"github.com/frostyard/updex/v2/internal/httpclient"
 	"github.com/frostyard/updex/v2/internal/retry"
 )
@@ -163,10 +164,10 @@ func Download(ctx context.Context, httpClient *http.Client, url, targetPath, exp
 		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError {
-			return retry.Transient(fmt.Errorf("download failed with status: %s", resp.Status))
+			return retry.Transient(fault.Mark(fault.HTTPStatus, fmt.Errorf("download failed with status: %s", resp.Status)))
 		}
 		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("download failed with status: %s", resp.Status)
+			return fault.Mark(fault.HTTPStatus, fmt.Errorf("download failed with status: %s", resp.Status))
 		}
 
 		// Reject an over-limit payload before streaming when the server
@@ -204,7 +205,7 @@ func Download(ctx context.Context, httpClient *http.Client, url, targetPath, exp
 		// Verify hash of compressed file
 		actualHash := fmt.Sprintf("%x", hasher.Sum(nil))
 		if actualHash != strings.ToLower(expectedHash) {
-			return fmt.Errorf("hash mismatch: expected %s, got %s", expectedHash, actualHash)
+			return fault.Mark(fault.Checksum, fmt.Errorf("hash mismatch: expected %s, got %s", expectedHash, actualHash))
 		}
 
 		// Persist the verified bytes before the temp file is closed and

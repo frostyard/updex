@@ -131,6 +131,7 @@ type RuntimePaths struct {
     SysextHierarchies  []string // Hierarchies whose .systemd-sysext metadata records merged images; default: sysext.MergedHierarchies
     LockPath           string   // Lock file every mutating operation holds (flock); default: updex.DefaultLockPath (/run/updex/lock)
     RollbackDir        string   // Directory of per-feature rollback records; default: updex.DefaultRollbackDir (/var/lib/updex/rollback)
+    LastRunPath        string   // Last-run record every non-dry-run UpdateFeatures writes; default: updex.DefaultLastRunPath (/var/lib/updex/last-run.json)
 }
 
 // DisableCatalogCache is a RuntimePaths.CatalogCacheDir sentinel that
@@ -250,6 +251,27 @@ CLI maps the sentinel to exit status 0 only for `updex features update` under
 systemd: after the normal output and the run's usual progress and warning
 lines, it adds the one skip line; an interactive run returns the error, and
 `--json` output is unchanged.
+
+### Last-run record and `DefaultLastRunPath`
+
+```go
+const DefaultLastRunPath = "/var/lib/updex/last-run.json"
+```
+
+Every `UpdateFeatures` call that is not a dry run writes a JSON record to
+`RuntimePaths.LastRunPath` (zero value: `DefaultLastRunPath`) when it ends:
+format 1, the run outcome (`completed`, `failed`, `skipped_busy`,
+`skipped_unreachable`), the refresh state, and per feature its origin,
+outcome, error class and version, never error text. The contract is
+[specs/last-run-record.md](last-run-record.md)
+([ADR-0020](../adr/0020-write-a-machine-readable-last-run-record.md)). A dry
+run, and a run whose names `selectFeatures` refuses, write nothing. A busy
+run (`ErrBusy`) records its features as `skipped_busy` unless the existing
+record ended at or after it started. A failure to write the record is one
+reporter warning (`last-run record not written: …`); the results and the
+returned error are the same as without the record. The error classes come
+from the module-internal `internal/fault` marks set where each error is made;
+`Error()` of every marked error is unchanged.
 
 ## Methods
 
@@ -483,6 +505,8 @@ Downloads and installs the newest available version for each enabled feature's *
 **Retention.** After a feature's links succeeded, `sysext.VacuumWith` removes old staged images but keeps, per transfer: the linked version, the merged version (hierarchy metadata, ADR-0015), `ProtectVersion=`, the legacy `CurrentSymlink` target and the newest `InstancesMax` (default 2). A host that linked a new revision and still runs an older one keeps up to 3. A vacuum that cannot read the link or the merged state deletes nothing and reports a warning (`vacuum failed for <component>: …`) while the update still succeeds.
 
 **Lock.** Except with `DryRun`, `UpdateFeatures` holds the operation lock (see [Operation lock and `ErrBusy`](#operation-lock-and-errbusy)) and returns an error wrapping `ErrBusy` when another operation holds it. Manifests are cached by source URL — transfers sharing the same source avoid redundant HTTP requests. Parsed source patterns are returned from version listing and reused by the install pipeline to avoid redundant pattern compilation. Refresh is batched — a single `systemd-sysext refresh` runs after all components are processed. If that final refresh fails, the per-feature results are still returned as recorded (a component that was downloaded and linked keeps `Installed=true`; it is staged but not activated) and the method returns `sysext refresh failed: …` — joined with `one or more components failed to update` when a component also failed — so callers and the CLI (non-zero exit, `--json` still emits the array) never mistake an unactivated update for a completed one. With `NoRefresh: true` (the daemon path) no refresh is attempted. With `DryRun: true`, manifests are fetched and versions are selected, but download, legacy cleanup, sysext linking, refresh, and vacuum deletion are skipped. Returns per-feature results with per-component status.
+
+**Last-run record.** Except with `DryRun`, the run ends by writing `RuntimePaths.LastRunPath` (see [Last-run record and `DefaultLastRunPath`](#last-run-record-and-defaultlastrunpath)); a write failure is only a warning.
 
 The manifest cache key is `Transfer.Source.Path` only, but verification is a property of the transfer, not of load order: `manifest.Manifest.Verified` records whether a cached entry passed GPG verification, and `getAvailableVersions` (shared with `CheckFeatures`) never lets a transfer that requires verification (per `Client.verifyPolicy`: `ClientConfig.Verify`, `Verify=true`, or a catalog-generated transfer whose repo lacks `AllowUnsigned=yes`) consume an unverified cached manifest — it refetches with verification and the verified manifest replaces the cache entry. A verified manifest may serve unverified transfers, never the reverse. Two transfers sharing a source with the same verification requirement still make one HTTP request. Changes that require different auth behavior per transfer must still change the cache key or bypass caching.
 

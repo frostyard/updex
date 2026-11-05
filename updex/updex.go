@@ -100,6 +100,16 @@ type RuntimePaths struct {
 	// symlink or other non-directory is refused. Zero value uses
 	// DefaultRollbackDir (/var/lib/updex/rollback).
 	RollbackDir string
+
+	// LastRunPath is the machine-readable record of the last UpdateFeatures
+	// run that was not a dry run (format 1, docs/specs/last-run-record.md).
+	// Every such run writes it with a temp file plus rename, mode 0644; its
+	// parent directory is created with mode 0755 when missing. A symlink or
+	// other non-regular file at the path, and a parent that is not a
+	// directory, are refused with a warning: a failed write never fails the
+	// update. Zero value uses DefaultLastRunPath
+	// (/var/lib/updex/last-run.json).
+	LastRunPath string
 }
 
 // DisableCatalogCache is a sentinel value for RuntimePaths.CatalogCacheDir
@@ -120,6 +130,7 @@ type runtimePaths struct {
 	sysextHierarchies  []string
 	lockPath           string
 	rollbackDir        string
+	lastRunPath        string
 }
 
 // The unexported defaults below are the paths a client uses when its
@@ -242,6 +253,12 @@ func resolveRuntimePaths(rp RuntimePaths) runtimePaths {
 		p.rollbackDir = rp.RollbackDir
 	} else {
 		p.rollbackDir = rollbackDirDefault
+	}
+
+	if rp.LastRunPath != "" {
+		p.lastRunPath = rp.LastRunPath
+	} else {
+		p.lastRunPath = lastRunPathDefault
 	}
 
 	return p

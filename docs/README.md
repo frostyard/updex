@@ -98,6 +98,13 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
   merge; a sysusers failure is a refresh failure that keeps a successful
   merge visible as `ErrActivationIncomplete`, a tmpfiles failure only a
   warning
+- [ADR-0020](adr/0020-write-a-machine-readable-last-run-record.md) —
+  every `UpdateFeatures` run that is not a dry run writes
+  `/var/lib/updex/last-run.json` (format 1): run outcome, refresh state, and
+  per feature its origin, outcome, error class and version, never error text;
+  errors get their class at their origin through `internal/fault`; a busy run
+  never replaces a newer record, a named run carries the other features'
+  entries, and a failed write is only a warning
 
 ### Design
 
@@ -117,6 +124,9 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
   `yeti/sdk-api.md`)
 - [Configuration reference](specs/config-reference.md) — `.transfer` /
   `.feature` / `.catalog` file formats (formerly `yeti/config-reference.md`)
+- [Last-run record](specs/last-run-record.md) — the format 1 contract of
+  `/var/lib/updex/last-run.json` that snosi's health collector reads: fields,
+  enums, error classes, busy and merge rules
 - [PR review rubric](specs/pr-review-rubric.md) — the checks every pull
   request review verifies and how findings are labelled
   (`docs/review-rubric.md` resolves here)

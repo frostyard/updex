@@ -19,6 +19,6 @@
     { "glob": "sysext/**", "why": "installation-and-update: destructive operations, sysext links, vacuum (delete) and refresh as root" },
     { "glob": "systemd/**", "why": "installation-and-update: destructive operations, write and remove of systemd units as root" },
     { "glob": "updex/{install,imagegate,rollback,activation}.go", "why": "installation-and-update: destructive operations, the stage, gate, link, vacuum and rollback pipeline" },
-    { "glob": "updex/{features,catalog,daemon,daemon_legacy,fsguard}.go", "why": "installation-and-update: destructive operations, enable, disable, remove and root writes of managed files" }
+    { "glob": "updex/{features,catalog,daemon,daemon_legacy,fsguard,lastrun}.go", "why": "installation-and-update: destructive operations, enable, disable, remove and root writes of managed files and the last-run record" }
   ]
 }

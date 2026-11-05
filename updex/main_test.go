@@ -16,7 +16,8 @@ import (
 // /var/lib/extensions, /run/extensions, or the host's other sysext images
 // (the production defaults), and at empty temporary merged-state hierarchies,
 // so the vacuum that follows an install never reads the host's
-// /usr/.systemd-sysext and /opt/.systemd-sysext. Tests run one after another
+// /usr/.systemd-sysext and /opt/.systemd-sysext. The last-run record goes to
+// a temporary file too, never /var/lib/updex/last-run.json. Tests run one after another
 // in a shared process, so one set of defaults is enough; a test that runs
 // clients concurrently, that tests the lock itself, or that needs other paths
 // gives each client its own RuntimePaths. A test that replaces a
@@ -31,6 +32,7 @@ func TestMain(m *testing.M) {
 	}
 	lockPathDefault = filepath.Join(dir, "lock")
 	rollbackDirDefault = filepath.Join(dir, "rollback")
+	lastRunPathDefault = filepath.Join(dir, "last-run", "last-run.json")
 	definitionRootsDefault = []string{filepath.Join(dir, "definitions")}
 	osReleasePathsDefault = []string{filepath.Join(dir, "os-release")}
 	catalogConfigRootsDefault = []string{filepath.Join(dir, "catalogs")}
@@ -107,4 +109,5 @@ func TestDefaultClientPathsAreTemporary(t *testing.T) {
 	check("run extensions dir", client.paths.runExtensionsDir)
 	check("lock path", client.paths.lockPath)
 	check("rollback dir", client.paths.rollbackDir)
+	check("last-run path", client.paths.lastRunPath)
 }
