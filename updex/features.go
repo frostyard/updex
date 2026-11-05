@@ -788,13 +788,17 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 	}
 	run := newLastRun(time.Now(), opts)
 	results, err := c.updateFeatures(ctx, opts, run)
+	// A run that held the operation lock wrote its record before it released
+	// the lock; this writes the record of a run that did not get the lock
+	// (busy, or a lock error).
 	c.writeLastRun(run, time.Now(), err)
 	return results, err
 }
 
 // updateFeatures is UpdateFeatures. It fills run, the last-run record, when
-// run is not nil (not a dry run).
-func (c *Client) updateFeatures(ctx context.Context, opts UpdateFeaturesOptions, run *lastRun) ([]UpdateFeaturesResult, error) {
+// run is not nil (not a dry run), and writes it while it still holds the
+// operation lock.
+func (c *Client) updateFeatures(ctx context.Context, opts UpdateFeaturesOptions, run *lastRun) (_ []UpdateFeaturesResult, err error) {
 	// Record what this run's HTTP requests saw, so a run that every source
 	// could not reach is told apart from a run that failed (ADR-0018).
 	ctx, tracker := withSourceTracker(ctx)
@@ -812,6 +816,14 @@ func (c *Client) updateFeatures(ctx context.Context, opts UpdateFeaturesOptions,
 		return nil, err
 	}
 	defer release()
+	// Deferred after release, so it runs first: the record is written while
+	// this run still holds the operation lock (ADR-0020). It reads the final
+	// error of the run.
+	defer func() {
+		if run != nil {
+			c.writeLastRun(run, time.Now(), err)
+		}
+	}()
 
 	features, transfers, err := c.loadDomain(opts.Component)
 	if err != nil {

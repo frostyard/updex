@@ -809,3 +809,141 @@ func TestClassifyError(t *testing.T) {
 		})
 	}
 }
+
+// writeOldRecord writes a format 1 record that ended in 2020 with the given
+// features, and returns its bytes.
+func writeOldRecord(t *testing.T, path string, features ...lastRunFeature) []byte {
+	t.Helper()
+	rec := lastRunRecord{
+		Format: 1, Started: "2020-01-01T00:00:00Z", Finished: "2020-01-01T00:00:10Z",
+		Outcome: "completed", Refresh: "done", Features: features,
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+// A busy run that names a feature carries the previous entries of the other
+// enabled features, as a named run that gets the lock does.
+func TestLastRun_NamedBusyRunCarries(t *testing.T) {
+	f := newLastRunFixture(t, map[string]string{"testext": goodServer(t, "testext"), "othertex": goodServer(t, "othertex")}, nil)
+	writeOldRecord(t, f.lastRun,
+		lastRunFeature{Feature: "feature-testext", Origin: "unknown", Outcome: "current", Version: "0.9.0", At: "2020-01-01T00:00:10Z", Transfers: []lastRunTransfer{}},
+		lastRunFeature{Feature: "feature-othertex", Origin: "unknown", Outcome: "current", Version: "0.8.0", At: "2020-01-01T00:00:05Z", Transfers: []lastRunTransfer{}},
+	)
+	release, err := f.client.lockMutation(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+
+	if _, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{Features: []string{"feature-testext"}}); !errors.Is(err, ErrBusy) {
+		t.Fatalf("UpdateFeatures() error = %v, want ErrBusy", err)
+	}
+	rec, _ := readLastRun(t, f.lastRun)
+	if rec.Outcome != "skipped_busy" || !rec.Selected || len(rec.Features) != 2 {
+		t.Fatalf("record = %+v, want skipped_busy, selected, 2 features", rec)
+	}
+	if a := featureEntry(t, rec, "feature-testext"); a.Outcome != "skipped_busy" || a.At != rec.Finished {
+		t.Errorf("feature-testext = %+v, want skipped_busy at %s", a, rec.Finished)
+	}
+	if b := featureEntry(t, rec, "feature-othertex"); b.Outcome != "current" || b.Version != "0.8.0" || b.At != "2020-01-01T00:00:05Z" {
+		t.Errorf("feature-othertex = %+v, want the previous entry with its own at", b)
+	}
+}
+
+// A busy run whose names selectFeatures refuses writes nothing, as the same
+// names write nothing for a run that gets the lock; ErrBusy is still returned.
+func TestLastRun_BusyRefusedSelectionWritesNothing(t *testing.T) {
+	tests := []struct {
+		name  string
+		names []string
+	}{
+		{name: "unknown name", names: []string{"nope"}},
+		{name: "disabled name", names: []string{"feature-offext"}},
+		{name: "masked name", names: []string{"feature-maskext"}},
+		{name: "a good and a refused name", names: []string{"feature-testext", "nope"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newLastRunFixture(t, map[string]string{"testext": goodServer(t, "testext")}, nil)
+			createFeatureTransferFile(t, f.configDir, "offext", "feature-offext", "http://127.0.0.1:1")
+			createFeatureFile(t, f.configDir, "feature-offext", false)
+			createFeatureTransferFile(t, f.configDir, "maskext", "feature-maskext", "http://127.0.0.1:1")
+			createFeatureFile(t, f.configDir, "feature-maskext", true)
+			maskFeature(t, f.configDir, "feature-maskext")
+			before := writeOldRecord(t, f.lastRun,
+				lastRunFeature{Feature: "feature-testext", Origin: "unknown", Outcome: "current", At: "2020-01-01T00:00:10Z", Transfers: []lastRunTransfer{}},
+			)
+			release, err := f.client.lockMutation(false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer release()
+
+			if _, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{Features: tt.names}); !errors.Is(err, ErrBusy) {
+				t.Fatalf("UpdateFeatures() error = %v, want ErrBusy", err)
+			}
+			after, err := os.ReadFile(f.lastRun)
+			if err != nil || !bytes.Equal(after, before) {
+				t.Errorf("record = %s (%v), want it unchanged: %s", after, err, before)
+			}
+		})
+	}
+}
+
+// A run that holds the operation lock writes its record before it releases
+// the lock, so a later run that waited for the lock cannot write first and
+// then lose its newer record to this older one.
+func TestLastRun_WrittenUnderOperationLock(t *testing.T) {
+	tests := []struct {
+		name    string
+		sources func(t *testing.T) map[string]string
+		opts    UpdateFeaturesOptions
+	}{
+		{name: "completed run", sources: func(t *testing.T) map[string]string {
+			return map[string]string{"testext": goodServer(t, "testext")}
+		}, opts: UpdateFeaturesOptions{NoRefresh: true}},
+		{name: "failed run", sources: func(t *testing.T) map[string]string {
+			s := testutil.NewErrorServer(t, http.StatusNotFound)
+			t.Cleanup(s.Close)
+			return map[string]string{"testext": s.URL}
+		}, opts: UpdateFeaturesOptions{}},
+		{name: "named run", sources: func(t *testing.T) map[string]string {
+			return map[string]string{"testext": goodServer(t, "testext"), "othertex": goodServer(t, "othertex")}
+		}, opts: UpdateFeaturesOptions{NoRefresh: true, Features: []string{"feature-othertex"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newLastRunFixture(t, tt.sources(t), nil)
+			calls := 0
+			var lockErr error
+			lastRunBeforeWrite = func() {
+				calls++
+				release, err := acquireLock(f.client.paths.lockPath)
+				if err == nil {
+					release()
+				}
+				lockErr = err
+			}
+			t.Cleanup(func() { lastRunBeforeWrite = nil })
+
+			_, _ = f.client.UpdateFeatures(t.Context(), tt.opts)
+			if calls != 1 {
+				t.Fatalf("the record was written %d times, want 1", calls)
+			}
+			if !errors.Is(lockErr, ErrBusy) {
+				t.Errorf("lock at the record write: %v, want ErrBusy (the run must still hold the operation lock)", lockErr)
+			}
+			readLastRun(t, f.lastRun)
+		})
+	}
+}

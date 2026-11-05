@@ -38,11 +38,15 @@ byte (`Unwrap` keeps `errors.Is`/`errors.As`). `download`, `manifest`,
 link errors at their origin; `updex` classifies a transfer error in a fixed
 order (cancelled, disk space, network, the outermost mark, other).
 
-A busy run records the features it would have acted on as `skipped_busy`, but
-only when the existing record ended before the busy run started, so it never
-replaces the record the lock holder writes. A run that names features carries
-the previous entries of the other enabled features. Writers serialise on a
-`flock` of the record directory with a 2-second bounded, non-blocking wait.
+A run that got the operation lock writes its record before it releases the
+lock, so a later run always writes after it and an older record never
+replaces a newer one. A busy run records the features it would have acted on
+as `skipped_busy`, but only when the existing record ended before the busy run
+started, so it never replaces the record the lock holder writes. A run that
+names features, busy or not, carries the previous entries of the other enabled
+features. A run whose names are refused writes nothing, also when it is busy.
+Writers serialise on a `flock` of the record directory with a 2-second
+bounded, non-blocking wait.
 
 The record never fails the update: a failure to write it is one warning, and
 the results and the returned error stay the same.

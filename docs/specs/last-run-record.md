@@ -126,10 +126,14 @@ Path: `RuntimePaths.LastRunPath`, default `updex.DefaultLastRunPath`
 
 - A run that is not a dry run writes the record when it ends, with a temp
   file in the same directory plus rename, mode `0644`. The parent directory is
-  created with mode `0755` when missing.
+  created with mode `0755` when missing. Each run writes the record at most
+  once.
+- A run that got the operation lock writes its record **before** it releases
+  the lock. So a later run, which can start only after the release, always
+  writes after it, and an older run never replaces a newer run's record.
 - A dry run writes nothing and reads nothing.
 - A run whose feature names `selectFeatures` refuses (not found, masked, not
-  enabled) writes nothing: nothing ran.
+  enabled) writes nothing: nothing ran. This is also true for a busy run.
 - A domain that cannot be loaded writes run `outcome` `failed`,
   `error_class` `config`, `refresh` `not_run` and no feature. A lock error that
   is not `ErrBusy` writes `failed`, `error_class` `other`, `not_run`, no
@@ -150,14 +154,18 @@ Path: `RuntimePaths.LastRunPath`, default `updex.DefaultLastRunPath`
   is `skipped_unreachable`.
 - Busy run (`ErrBusy`): the record lists every enabled, unmasked, selected
   feature with an associated transfer as `skipped_busy` (each active transfer
-  too), run `outcome` `skipped_busy`, `refresh` `not_run`. It is written only
+  too), run `outcome` `skipped_busy`, `refresh` `not_run`. When the busy run
+  cannot load the domain, the record has no feature. Names that
+  `selectFeatures` refuses make the busy run write nothing. A busy run that
+  names features carries the previous entries of the other features (see
+  Merge). The busy record is written only
   when the existing record's `finished` is before this run's `started`
   (compared in whole seconds): otherwise the lock holder already wrote a
   newer record, and it is kept. An unreadable, malformed or other-format
   existing record does not stop the write.
-- Merge: a run that names features carries each entry of the previous
-  format 1 record for a feature that is enabled and unmasked in the current
-  domain and was not in this run, with its own `at`. A run that names no
+- Merge: a run that names features, busy or not, carries each entry of the
+  previous format 1 record for a feature that is enabled and unmasked in the
+  current domain and was not in this run, with its own `at`. A run that names no
   feature carries nothing.
 - Every write holds an exclusive `flock` on the parent directory while it
   reads the previous record and renames the new one. It takes the lock with

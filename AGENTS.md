@@ -675,10 +675,15 @@ in the `config/` structs and parse functions. Always finish with
   by matching text, and never on a wrapper such as `signature verification
   failed: %w` that can hold another class). The failed transfer's version is
   `transferInstall.attempted`; `installOutcome` and `UpdateResult.Version`
-  do not change. A busy run lists its features as `skipped_busy` only when
-  the existing record ended before it started; a named run carries the other
-  enabled features' entries; a run refused by `selectFeatures` and a dry run
-  write nothing. The write holds a `flock` on the record directory (2 s
+  do not change. A run that holds the operation lock writes the record
+  **before** it releases the lock (a `defer` registered after `defer
+  release()` in `updateFeatures`), so an older run never replaces a newer
+  record; `UpdateFeatures` writes only for a run without the lock, and
+  `lastRun.written` keeps it to one write. A busy run lists its features as
+  `skipped_busy` only when the existing record ended before it started; a
+  named run, busy or not, carries the other enabled features' entries; a run
+  refused by `selectFeatures`, busy or not, and a dry run write nothing. The
+  write holds a `flock` on the record directory (2 s
   bounded, non-blocking retries), refuses a symlink or non-regular file and
   a non-directory parent, and a failure is one `c.warn`: it never changes
   the results or the returned error.

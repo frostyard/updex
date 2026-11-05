@@ -39,6 +39,11 @@ const lastRunFormat = 1
 // maxLastRunRecordSize bounds the bytes read from a previous record.
 const maxLastRunRecordSize = 1 << 20
 
+// lastRunBeforeWrite is a test seam: when it is not nil, storeLastRun calls
+// it after every check and just before it renames the new record into place.
+// Production never sets it.
+var lastRunBeforeWrite func()
+
 // lastRunLockWait and lastRunLockRetry bound the wait for the record
 // directory's flock: the write is skipped with a warning when another writer
 // holds it for longer. They are variables so a test can shorten the wait.
@@ -116,6 +121,10 @@ type lastRun struct {
 	// skip reports that the run must write nothing: selectFeatures refused
 	// it, so nothing ran.
 	skip bool
+
+	// written reports that writeLastRun ran for this run, so the record is
+	// written at most once.
+	written bool
 
 	// busy reports that another operation held the lock.
 	busy bool
@@ -337,7 +346,11 @@ func skipUnreachable(f lastRunFeature) lastRunFeature {
 // busyFeatures records the features a busy run would have acted on: every
 // enabled, unmasked, selected feature with an associated transfer, each
 // skipped_busy. It loads the domain read-only and without warnings (the busy
-// run's output is unchanged); on any error it lists no feature.
+// run's output is unchanged); when the domain cannot be loaded it lists no
+// feature. Names that selectFeatures refuses make the busy run write nothing,
+// as the same names do for a run that gets the lock. A busy run that names
+// features carries the previous entries of the other enabled features, as a
+// named run does.
 func (c *Client) busyFeatures(r *lastRun, opts UpdateFeaturesOptions) {
 	quiet := *c
 	quiet.reporter = reporter.NoopReporter{}
@@ -347,8 +360,10 @@ func (c *Client) busyFeatures(r *lastRun, opts UpdateFeaturesOptions) {
 	}
 	selected, err := selectFeatures(features, opts.Features)
 	if err != nil {
+		r.skip = true
 		return
 	}
+	r.setDomain(features)
 	imageName := config.ImageNameFrom(c.paths.osReleasePaths)
 	for _, f := range features {
 		if !f.Enabled || f.Masked || (selected != nil && !selected[f.Name]) {
@@ -367,10 +382,16 @@ func (c *Client) busyFeatures(r *lastRun, opts UpdateFeaturesOptions) {
 	}
 }
 
-// writeLastRun writes the record of the run. A failure is a warning: the
-// record never fails the update.
+// writeLastRun writes the record of the run, once. A failure is a warning:
+// the record never fails the update. A run that holds the operation lock
+// calls it before it releases the lock, so a later run that waited for the
+// lock cannot write first and then lose its newer record to this one.
 func (c *Client) writeLastRun(r *lastRun, finished time.Time, runErr error) {
-	if r == nil || r.skip {
+	if r == nil || r.written {
+		return
+	}
+	r.written = true
+	if r.skip {
 		return
 	}
 	if err := c.storeLastRun(r, r.record(finished, runErr)); err != nil {
@@ -426,6 +447,9 @@ func (c *Client) storeLastRun(r *lastRun, rec lastRunRecord) error {
 		return fmt.Errorf("encode last-run record: %w", err)
 	}
 	data = append(data, '\n')
+	if lastRunBeforeWrite != nil {
+		lastRunBeforeWrite()
+	}
 	if err := writeManagedFileWithMode(path, data, 0o644); err != nil {
 		return fmt.Errorf("write last-run record: %w", err)
 	}
