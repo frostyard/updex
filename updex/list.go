@@ -9,6 +9,7 @@ import (
 
 	"github.com/frostyard/updex/v2/catalog"
 	"github.com/frostyard/updex/v2/config"
+	"github.com/frostyard/updex/v2/internal/fault"
 	"github.com/frostyard/updex/v2/manifest"
 	"github.com/frostyard/updex/v2/version"
 )
@@ -26,7 +27,7 @@ import (
 // transfer sharing a Source.Path happened to load first.
 func (c *Client) getAvailableVersions(ctx context.Context, transfer *config.Transfer, cachedManifest *manifest.Manifest) ([]string, *manifest.Manifest, []*version.Pattern, error) {
 	if transfer.Source.Type != "url-file" {
-		return nil, nil, nil, fmt.Errorf("unsupported source type: %s", transfer.Source.Type)
+		return nil, nil, nil, fault.Mark(fault.Config, fmt.Errorf("unsupported source type: %s", transfer.Source.Type))
 	}
 
 	policy := c.verifyPolicy(transfer)
@@ -43,7 +44,14 @@ func (c *Client) getAvailableVersions(ctx context.Context, transfer *config.Tran
 		m, err = manifest.Fetch(ctx, c.httpClient, transfer.Source.Path, needVerify, manifest.WithRetryNotify(c.retryNotify("manifest fetch")))
 		if err != nil {
 			if errors.Is(err, manifest.ErrSignatureNotFound) {
-				return nil, nil, nil, fmt.Errorf("%s: %w", policy.explain(transfer), err)
+				err = fmt.Errorf("%s: %w", policy.explain(transfer), err)
+				if policy.failsClosedOnConfig() {
+					// The signature is required only because the catalog
+					// that owns the transfer is missing or cannot be read:
+					// the host's configuration is the cause.
+					err = fault.Mark(fault.Config, err)
+				}
+				return nil, nil, nil, err
 			}
 			return nil, nil, nil, err
 		}
@@ -57,7 +65,7 @@ func (c *Client) getAvailableVersions(ctx context.Context, transfer *config.Tran
 	c.debug("matching against pattern(s): %v", patternStrs)
 	patterns, firstErr := version.ParsePatterns(patternStrs)
 	if len(patterns) == 0 && firstErr != nil {
-		return nil, nil, nil, fmt.Errorf("invalid source pattern: %w", firstErr)
+		return nil, nil, nil, fault.Mark(fault.Config, fmt.Errorf("invalid source pattern: %w", firstErr))
 	}
 
 	versionSet := make(map[string]bool)
@@ -151,6 +159,15 @@ func (c *Client) verifyPolicy(transfer *config.Transfer) verifyPolicy {
 		return verifyPolicy{required: true, reason: verifyCatalogStaleSource, repo: owner}
 	}
 	return verifyPolicy{required: transfer.Transfer.Verify, reason: verifyByCatalog, repo: owner}
+}
+
+// failsClosedOnConfig reports that verification is required only because the
+// catalog that owns the transfer cannot be consulted: it is not configured,
+// its .catalog file cannot be loaded, or the transfer's catalog marker names
+// no recognizable catalog. A missing signature is then a configuration
+// failure of this host (fault.Config), not of the source.
+func (p verifyPolicy) failsClosedOnConfig() bool {
+	return (p.reason == verifyCatalogNotAllowed && p.loadErr != nil) || p.reason == verifyUnknownOwner
 }
 
 // explain describes why verification was required, for wrapping a missing

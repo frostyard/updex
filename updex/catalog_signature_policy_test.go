@@ -661,3 +661,63 @@ func renderForTest(t *testing.T, repo catalog.Repo) string {
 	}
 	return string(out)
 }
+
+// TestCatalogSignaturePolicy_LastRunClass checks the error class the last-run
+// record gives a missing signature: signature while the catalog is configured
+// and only lacks the opt-in, config once the catalog itself is missing, so
+// signature verification fails closed because of this host's configuration.
+func TestCatalogSignaturePolicy_LastRunClass(t *testing.T) {
+	env := newSignaturePolicyEnv(t, signaturePolicyCatalog{verifyLine: "Verify=false"})
+	env.writeRepo(t, "AllowUnsigned=yes\n")
+	client := env.client(false)
+	lastRun := filepath.Join(t.TempDir(), "last-run.json")
+	client.paths.lastRunPath = lastRun
+	if _, err := client.CatalogAdd(t.Context(), signaturePolicySysext, CatalogAddOptions{NoRefresh: true}); err != nil {
+		t.Fatalf("CatalogAdd() error = %v", err)
+	}
+
+	classOf := func() string {
+		t.Helper()
+		if _, err := client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true}); err == nil {
+			t.Fatal("UpdateFeatures() error = nil, want the missing signature")
+		}
+		rec, _ := readLastRun(t, lastRun)
+		fe := featureEntry(t, rec, signaturePolicySysext)
+		if fe.Origin != "catalog" {
+			t.Errorf("origin = %q, want catalog", fe.Origin)
+		}
+		return fe.ErrorClass
+	}
+
+	env.writeRepo(t, "")
+	if got := classOf(); got != "signature" {
+		t.Errorf("not opted in: class = %q, want signature", got)
+	}
+	if err := os.Remove(filepath.Join(env.catalogRoot, env.repo+".catalog")); err != nil {
+		t.Fatal(err)
+	}
+	if got := classOf(); got != "config" {
+		t.Errorf("catalog removed: class = %q, want config", got)
+	}
+}
+
+func TestVerifyPolicyFailsClosedOnConfig(t *testing.T) {
+	tests := []struct {
+		policy verifyPolicy
+		want   bool
+	}{
+		{verifyPolicy{reason: verifyCatalogNotAllowed, loadErr: catalog.ErrRepoNotFound}, true},
+		{verifyPolicy{reason: verifyCatalogNotAllowed, loadErr: errors.New("bad value")}, true},
+		{verifyPolicy{reason: verifyUnknownOwner}, true},
+		{verifyPolicy{reason: verifyCatalogNotAllowed}, false},
+		{verifyPolicy{reason: verifyForced}, false},
+		{verifyPolicy{reason: verifyByTransfer}, false},
+		{verifyPolicy{reason: verifyByCatalog}, false},
+		{verifyPolicy{reason: verifyCatalogStaleSource}, false},
+	}
+	for _, tt := range tests {
+		if got := tt.policy.failsClosedOnConfig(); got != tt.want {
+			t.Errorf("%+v.failsClosedOnConfig() = %v, want %v", tt.policy, got, tt.want)
+		}
+	}
+}

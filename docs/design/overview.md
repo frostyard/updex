@@ -45,6 +45,11 @@ updex/                          Public SDK (Client + methods)
                                 sysupdate.d(5) rule (ADR-0017)
   rollback.go                   RollbackFeature(), the rollback record
                                 (/var/lib/updex/rollback/<feature>, RuntimePaths.RollbackDir)
+  lastrun.go                    the last-run record every non-dry-run
+                                UpdateFeatures writes (classifyError(), busy and
+                                merge rules; /var/lib/updex/last-run.json,
+                                RuntimePaths.LastRunPath, DefaultLastRunPath;
+                                ADR-0020, specs/last-run-record.md)
   lock.go                       ErrBusy, acquireLock() — the exclusive,
                                 non-blocking flock every mutating operation holds
                                 (RuntimePaths.LockPath, default /run/updex/lock)
@@ -89,6 +94,13 @@ internal/retry/                 bounded retry policy shared by download/ and man
 internal/httpclient/            shared default *http.Client constructor (timeout +
                                 HTTPS-to-HTTP downgrade refusal) used by updex.NewClient,
                                 manifest.Fetch, and download.Download (module-internal)
+internal/fault/                 error classes (network, http_status, signature,
+                                checksum, disk_space, link, config, other): Mark()
+                                wraps an error and keeps Error() byte for byte,
+                                ClassOf() reads the outermost mark; set where
+                                download/, manifest/, sysext/ and updex/ make the
+                                error, read by the last-run record (module-internal,
+                                ADR-0020)
 internal/testutil/              HTTP test server helpers (module-internal)
 ```
 
@@ -154,7 +166,7 @@ CLI (cmd/daemon.go) ─┘                version, sysext, systemd, imagecompat
 
 ### Public API (Issue #13)
 
-All core packages (`config`, `version`, `download`, `manifest`, `sysext`, `systemd`) are exported as public API at `github.com/frostyard/updex/v2/<package>`. This was an intentional decision: the types in these packages (e.g., `Transfer`, `Feature`, `Pattern`, `Manifest`) were designed with exported fields and are suitable for external consumption. Three packages stay module-internal: `internal/retry`, the bounded retry policy shared by `download` and `manifest` ([ADR-0008](../adr/0008-bounded-retry-no-resume.md)); `internal/httpclient`, the shared default `*http.Client` constructor (timeout plus HTTPS-to-HTTP downgrade refusal) that `updex.NewClient`, `manifest.Fetch`, and `download.Download` each fall back to when their caller supplies no client; and `internal/testutil`, the HTTP test server helpers.
+All core packages (`config`, `version`, `download`, `manifest`, `sysext`, `systemd`) are exported as public API at `github.com/frostyard/updex/v2/<package>`. This was an intentional decision: the types in these packages (e.g., `Transfer`, `Feature`, `Pattern`, `Manifest`) were designed with exported fields and are suitable for external consumption. Four packages stay module-internal: `internal/fault`, the error classes that the last-run record reports ([ADR-0020](../adr/0020-write-a-machine-readable-last-run-record.md)); `internal/retry`, the bounded retry policy shared by `download` and `manifest` ([ADR-0008](../adr/0008-bounded-retry-no-resume.md)); `internal/httpclient`, the shared default `*http.Client` constructor (timeout plus HTTPS-to-HTTP downgrade refusal) that `updex.NewClient`, `manifest.Fetch`, and `download.Download` each fall back to when their caller supplies no client; and `internal/testutil`, the HTTP test server helpers.
 
 ### Version and pattern conventions
 

@@ -7,9 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/frostyard/updex/v2/catalog"
 	"github.com/frostyard/updex/v2/config"
+	"github.com/frostyard/updex/v2/internal/fault"
 	"github.com/frostyard/updex/v2/manifest"
 	"github.com/frostyard/updex/v2/sysext"
 	"github.com/frostyard/updex/v2/version"
@@ -772,19 +774,50 @@ func (c *Client) disableFeature(ctx context.Context, name string, opts DisableFe
 // Except in a dry run, UpdateFeatures holds the operation lock; when another
 // updex operation holds it, UpdateFeatures changes nothing and returns an
 // error that wraps ErrBusy.
+//
+// Except in a dry run, UpdateFeatures writes the last-run record
+// (RuntimePaths.LastRunPath, ADR-0020) when it ends: the outcome, the error
+// class and the version of every feature, never the error text. A busy run
+// records its features as skipped_busy unless the lock holder already wrote
+// a newer record. A run whose feature names selectFeatures refuses writes
+// nothing. A failure to write the record is a warning: the results and the
+// returned error stay the same.
 func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions) ([]UpdateFeaturesResult, error) {
+	if opts.DryRun {
+		return c.updateFeatures(ctx, opts, nil)
+	}
+	run := newLastRun(time.Now(), opts)
+	results, err := c.updateFeatures(ctx, opts, run)
+	c.writeLastRun(run, time.Now(), err)
+	return results, err
+}
+
+// updateFeatures is UpdateFeatures. It fills run, the last-run record, when
+// run is not nil (not a dry run).
+func (c *Client) updateFeatures(ctx context.Context, opts UpdateFeaturesOptions, run *lastRun) ([]UpdateFeaturesResult, error) {
 	// Record what this run's HTTP requests saw, so a run that every source
 	// could not reach is told apart from a run that failed (ADR-0018).
 	ctx, tracker := withSourceTracker(ctx)
 
 	release, err := c.lockMutation(opts.DryRun)
 	if err != nil {
+		if run != nil {
+			if errors.Is(err, ErrBusy) {
+				run.busy = true
+				c.busyFeatures(run, opts)
+			} else {
+				run.runClass = fault.Other
+			}
+		}
 		return nil, err
 	}
 	defer release()
 
 	features, transfers, err := c.loadDomain(opts.Component)
 	if err != nil {
+		if run != nil {
+			run.runClass = fault.Config
+		}
 		return nil, err
 	}
 
@@ -793,7 +826,16 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 	// run with nothing changed. selected is nil when no names were given.
 	selected, err := selectFeatures(features, opts.Features)
 	if err != nil {
+		if run != nil {
+			// Nothing ran, so there is nothing to record.
+			run.skip = true
+		}
 		return nil, err
+	}
+	run.setDomain(features)
+	var imageName string
+	if run != nil {
+		imageName = config.ImageNameFrom(c.paths.osReleasePaths)
 	}
 
 	// Initialize as a non-nil slice so empty results serialize as JSON `[]`
@@ -979,6 +1021,10 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 		}
 
 		allResults = append(allResults, featureResult)
+		if run != nil {
+			origin, _ := featureOrigin(f.FilePath, imageName, c.paths.definitionRoots, c.config.Definitions != "")
+			run.addFeature(f.Name, origin, installs)
+		}
 	}
 
 	// The refresh activates every pending link on the host. This run's own
@@ -1005,21 +1051,28 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 	}
 
 	var refreshErr error
+	refreshState := refreshNotRequested
 	switch {
 	case refreshSkipped != "":
+		refreshState = refreshSkippedGate
 		c.msg("Skipping sysext refresh: %s", refreshSkipped)
 	case opts.DryRun:
 		c.msg("Dry run: skipping sysext refresh")
 	case !opts.NoRefresh:
+		refreshState = refreshDone
 		if err := c.runner.Refresh(); err != nil {
 			// Installs and links are on disk but not activated. Results stay
 			// populated (Installed=true is accurate); the error tells the
 			// caller activation did not happen and the CLI exits non-zero.
 			refreshErr = fmt.Errorf("sysext refresh failed: %w", err)
+			refreshState = refreshFailed
 			c.warn("%s", refreshErr)
 		}
 	default:
 		c.msg("Skipping sysext refresh (--no-refresh)")
+	}
+	if run != nil {
+		run.refresh = refreshState
 	}
 
 	if hasErrors {

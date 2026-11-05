@@ -434,6 +434,16 @@ the identical units that older updex releases wrote).
   `etc` when a file in `/etc/systemd/system` overrides the package), whether the
   timer is masked (`Masked: yes`), the next run and the time and result of the
   last run. The run log is `journalctl -u updex-update.service`.
+- **Last-run record:** every `updex features update` that is not a dry run
+  writes `/var/lib/updex/last-run.json`: the run outcome (`completed`,
+  `failed`, `skipped_busy`, `skipped_unreachable`), the refresh state, and per
+  feature its origin, outcome (`updated`, `current`, `held_by_rollback`,
+  `needs_image`, `failed`, ...), error class (`network`, `http_status`,
+  `signature`, `checksum`, `disk_space`, `link`, `config`, `other`) and
+  version. It never contains error text. Health tools such as snosi's
+  collector read it instead of the journal; the format is
+  [docs/specs/last-run-record.md](docs/specs/last-run-record.md). A failure to
+  write it is a warning and never fails the update.
 - **Opt out:** `sudo systemctl mask updex-update.timer` stops automatic updates
   on the whole host and survives image updates. A mask is a symlink to
   `/dev/null`; `updex daemon disable` stops and disables the timer and removes

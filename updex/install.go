@@ -11,6 +11,7 @@ import (
 
 	"github.com/frostyard/updex/v2/config"
 	"github.com/frostyard/updex/v2/download"
+	"github.com/frostyard/updex/v2/internal/fault"
 	"github.com/frostyard/updex/v2/manifest"
 	"github.com/frostyard/updex/v2/sysext"
 	"github.com/frostyard/updex/v2/version"
@@ -51,6 +52,12 @@ type stagedTransfer struct {
 
 	// relink reports that link is needed although nothing was downloaded.
 	relink bool
+
+	// attempted is the version the stage step selected, also when a later
+	// step of the stage failed; empty when the stage failed before it
+	// selected a version. The last-run record reports it for a failed
+	// transfer. It does not change outcome.Version.
+	attempted string
 }
 
 // stageTransfer is the stage step of an install: it selects the newest
@@ -60,7 +67,8 @@ type stagedTransfer struct {
 // If opts.CachedManifest is non-nil, it is used instead of fetching the
 // manifest over HTTP.
 func (c *Client) stageTransfer(ctx context.Context, transfer *config.Transfer, opts installTransferOptions) (stagedTransfer, error) {
-	fail := func(err error) (stagedTransfer, error) { return stagedTransfer{}, err }
+	var attempted string
+	fail := func(err error) (stagedTransfer, error) { return stagedTransfer{attempted: attempted}, err }
 
 	// Get available versions (applies MinVersion filter)
 	available, m, patterns, err := c.getAvailableVersions(ctx, transfer, opts.CachedManifest)
@@ -75,6 +83,7 @@ func (c *Client) stageTransfer(ctx context.Context, transfer *config.Transfer, o
 	// Sort and get newest
 	version.Sort(available)
 	versionToInstall := available[0]
+	attempted = versionToInstall
 	c.debug("selected version %s (from %d available)", versionToInstall, len(available))
 
 	// Check if already installed and current
@@ -95,7 +104,7 @@ func (c *Client) stageTransfer(ctx context.Context, transfer *config.Transfer, o
 			// but linked nothing, a hand-edited link dir). The link step
 			// restores it without re-downloading; a correct link is left
 			// untouched.
-			staged := stagedTransfer{outcome: installOutcome{Version: versionToInstall, Manifest: m}}
+			staged := stagedTransfer{outcome: installOutcome{Version: versionToInstall, Manifest: m}, attempted: versionToInstall}
 			if !opts.DryRun {
 				linked, err := sysext.LinkIsCurrentAt(transfer, c.paths.sysextLinkDir)
 				if err != nil {
@@ -133,7 +142,7 @@ func (c *Client) stageTransfer(ctx context.Context, transfer *config.Transfer, o
 	downloadURL := transfer.Source.Path + "/" + sourceFile
 	if opts.DryRun {
 		c.debug("would download %s → %s", downloadURL, targetPath)
-		return stagedTransfer{outcome: installOutcome{Version: versionToInstall, Manifest: m, Downloaded: true}}, nil
+		return stagedTransfer{outcome: installOutcome{Version: versionToInstall, Manifest: m, Downloaded: true}, attempted: versionToInstall}, nil
 	}
 
 	c.debug("downloading %s → %s", downloadURL, targetPath)
@@ -143,8 +152,9 @@ func (c *Client) stageTransfer(ctx context.Context, transfer *config.Transfer, o
 	}
 
 	return stagedTransfer{
-		outcome: installOutcome{Version: versionToInstall, Manifest: m, Downloaded: true},
-		link:    true,
+		outcome:   installOutcome{Version: versionToInstall, Manifest: m, Downloaded: true},
+		link:      true,
+		attempted: versionToInstall,
 	}, nil
 }
 
@@ -160,6 +170,11 @@ type transferInstall struct {
 	// err is why the transfer is not installed: its own stage or link
 	// failure, or errNotLinked when another transfer of its feature failed.
 	err error
+
+	// attempted is the version the stage step selected (see
+	// stagedTransfer.attempted); empty when the stage did not run or failed
+	// before it selected a version.
+	attempted string
 
 	// notLinked reports that err is errNotLinked: this transfer did nothing
 	// wrong, but its feature stayed on the old links.
@@ -369,6 +384,7 @@ func (c *Client) installTransfers(ctx context.Context, feature string, transfers
 		}
 		staged[i] = st
 		results[i].outcome = st.outcome
+		results[i].attempted = st.attempted
 		if err != nil {
 			results[i].err = err
 			failed = true
@@ -617,7 +633,7 @@ func (c *Client) linkAllOrNone(transfers []*config.Transfer, link func(i int, t 
 			// Nothing is linked yet, so there is nothing to undo. The
 			// backups taken so far are redundant: the files they stand for
 			// were never replaced.
-			return i, nil, err
+			return i, nil, fault.Mark(fault.Link, err)
 		}
 		snapshots = append(snapshots, snap)
 	}
@@ -630,7 +646,7 @@ func (c *Client) linkAllOrNone(transfers []*config.Transfer, link func(i int, t 
 				if rerr == nil {
 					continue
 				}
-				rerr = fmt.Errorf("failed to restore sysext link for %s: %w", transfers[j].Component, rerr)
+				rerr = fault.Mark(fault.Link, fmt.Errorf("failed to restore sysext link for %s: %w", transfers[j].Component, rerr))
 				c.warn("%s", rerr)
 				errs = append(errs, rerr)
 				// The failing transfer's link may have moved before link
@@ -640,7 +656,7 @@ func (c *Client) linkAllOrNone(transfers []*config.Transfer, link func(i int, t 
 				}
 				restoreFailed[j] = rerr
 			}
-			return i, restoreFailed, errors.Join(errs...)
+			return i, restoreFailed, fault.Mark(fault.Link, errors.Join(errs...))
 		}
 	}
 	return -1, nil, nil
@@ -793,9 +809,9 @@ func buildTargetFilename(targetPatterns []string, ver string) (string, error) {
 		return fallback, nil
 	}
 	if firstErr != nil {
-		return "", fmt.Errorf("invalid target pattern: %w", firstErr)
+		return "", fault.Mark(fault.Config, fmt.Errorf("invalid target pattern: %w", firstErr))
 	}
-	return "", fmt.Errorf("no target pattern configured")
+	return "", fault.Mark(fault.Config, fmt.Errorf("no target pattern configured"))
 }
 
 // validateTargetFilename rejects a filename built from a runtime-substituted
@@ -808,7 +824,7 @@ func buildTargetFilename(targetPatterns []string, ver string) (string, error) {
 // untrusted manifest.
 func validateTargetFilename(name string) error {
 	if name == "." || name == ".." || strings.ContainsAny(name, "/\\") || filepath.Base(name) != name {
-		return fmt.Errorf("invalid target filename %q: must not contain path separators or traverse directories", name)
+		return fault.Mark(fault.Config, fmt.Errorf("invalid target filename %q: must not contain path separators or traverse directories", name))
 	}
 	return nil
 }

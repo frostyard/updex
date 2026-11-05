@@ -11,6 +11,7 @@ import (
 
 	"github.com/ProtonMail/go-crypto/openpgp"
 
+	"github.com/frostyard/updex/v2/internal/fault"
 	"github.com/frostyard/updex/v2/internal/retry"
 )
 
@@ -49,7 +50,7 @@ func verifySignature(ctx context.Context, client *http.Client, sigURL string, co
 	// Load keyring
 	keyring, err := loadKeyring()
 	if err != nil {
-		return fmt.Errorf("failed to load keyring: %w", err)
+		return fault.Mark(fault.Signature, fmt.Errorf("failed to load keyring: %w", err))
 	}
 
 	// Verify signature
@@ -60,7 +61,7 @@ func verifySignature(ctx context.Context, client *http.Client, sigURL string, co
 		nil,
 	)
 	if err != nil {
-		return fmt.Errorf("invalid signature: %w", err)
+		return fault.Mark(fault.Signature, fmt.Errorf("invalid signature: %w", err))
 	}
 
 	return nil
@@ -83,13 +84,13 @@ func fetchSignature(ctx context.Context, client *http.Client, sigURL string, rs 
 		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError {
-			return retry.Transient(fmt.Errorf("signature fetch failed with status: %s", resp.Status))
+			return retry.Transient(fault.Mark(fault.HTTPStatus, fmt.Errorf("signature fetch failed with status: %s", resp.Status)))
 		}
 		if resp.StatusCode == http.StatusNotFound {
-			return fmt.Errorf("%w: signature fetch failed with status: %s", ErrSignatureNotFound, resp.Status)
+			return fault.Mark(fault.Signature, fmt.Errorf("%w: signature fetch failed with status: %s", ErrSignatureNotFound, resp.Status))
 		}
 		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("signature fetch failed with status: %s", resp.Status)
+			return fault.Mark(fault.HTTPStatus, fmt.Errorf("signature fetch failed with status: %s", resp.Status))
 		}
 
 		sigData, err = io.ReadAll(io.LimitReader(resp.Body, maxSigSize+1))
@@ -122,7 +123,7 @@ func loadKeyring() (openpgp.EntityList, error) {
 		return keyring, nil
 	}
 
-	return nil, fmt.Errorf("no keyring found in %v", KeyringPaths)
+	return nil, fault.Mark(fault.Signature, fmt.Errorf("no keyring found in %v", KeyringPaths))
 }
 
 // readKeyringFile reads a GPG keyring from a single file path.
