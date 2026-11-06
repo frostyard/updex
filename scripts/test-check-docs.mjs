@@ -31,6 +31,8 @@ function buildFixture(name) {
   for (const cat of ["adr", "design", "specs", "plans"]) {
     mkdirSync(join(root, "docs", cat), { recursive: true });
   }
+  mkdirSync(join(root, ".agents", "skills", "example"), { recursive: true });
+  writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "# Example skill\n");
   writeFileSync(join(root, "docs", "adr", "0001-example.md"), "# ADR 0001\n\nExample decision.\n");
   writeFileSync(join(root, "docs", "design", "example.md"), "# Design\n\nExample design doc.\n");
   writeFileSync(
@@ -88,6 +90,231 @@ assertCase(
   },
   1,
   "link: docs/design/example.md -> ./nonexistent.md does not resolve",
+);
+
+assertCase(
+  "escaped-backticks-guard-real-link",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "\\` [x](missing.md) \\`\n");
+  },
+  1,
+  "-> missing.md does not resolve",
+);
+
+assertCase(
+  "spans-match-by-backtick-run-length",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "`` a ` `` [x](missing.md)\n");
+  },
+  1,
+  "-> missing.md does not resolve",
+);
+
+assertCase(
+  "unclosed-double-backtick-run-guards-link",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "`` [x](missing.md) `\n");
+  },
+  1,
+  "-> missing.md does not resolve",
+);
+
+assertCase(
+  "adjacent-headings-unpaired-backticks-guard-link",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "# First `\n# [x](missing.md) `\n");
+  },
+  1,
+  "-> missing.md does not resolve",
+);
+
+assertCase(
+  "multiline-span-guards-link-outside-pair",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "`code\ncontinued` [x](missing.md) `tail`\n");
+  },
+  1,
+  "-> missing.md does not resolve",
+);
+
+assertCase(
+  "standalone-gfm-table-row-guards-link",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "| ` | [x](missing.md) ` |\n");
+  },
+  1,
+  "-> missing.md does not resolve",
+);
+
+assertCase(
+  "gfm-table-header-delimiter-guards-link",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "| Code | Link |\n| --- | --- |\n| ` | [x](missing.md) ` |\n");
+  },
+  1,
+  "-> missing.md does not resolve",
+);
+
+assertCase(
+  "raw-html-backtick-guards-link",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "<span title=\"`\">[x](missing.md)`</span>\n");
+  },
+  1,
+  "-> missing.md does not resolve",
+);
+
+assertCase(
+  "email-autolink-backtick-guards-link",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "<1`@example.com> [x](missing.md) `\n");
+  },
+  1,
+  "-> missing.md does not resolve",
+);
+
+assertCase(
+  "code-span-in-link-text-does-not-hide-link",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "[`code`](missing.md)\n");
+  },
+  1,
+  "-> missing.md does not resolve",
+);
+
+assertCase(
+  "go-generic-calls-in-code-spans-pass",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "- `errors.AsType[T](err)`\n\n`reflect.TypeAssert[T](v)`\n");
+  },
+  0,
+  null,
+);
+
+assertCase(
+  "double-backtick-span-exact-run-length",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "`` a ` [x](missing.md) ``\n");
+  },
+  0,
+  null,
+);
+
+assertCase(
+  "less-than-without-greater-than-permits-code-span",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "Go <1.26 and `errors.AsType[T](err)`\n");
+  },
+  0,
+  null,
+);
+
+assertCase(
+  "naive-fence-removal-keeps-cross-fence-link",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "` ```x` y``` [l](missing.md) `\n");
+  },
+  1,
+  "-> missing.md does not resolve",
+);
+
+assertCase(
+  "list-item-fence-does-not-hide-later-link",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "- ```\n  code\n  ```\n[x](missing.md)\n\n```\nz\n```\n");
+  },
+  1,
+  "-> missing.md does not resolve",
+);
+
+assertCase(
+  "link-destination-backtick-is-not-span-delimiter",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "[a](https://example.com/a`b) [x](missing.md) `tail\n");
+  },
+  1,
+  "-> missing.md does not resolve",
+);
+
+assertCase(
+  "link-title-backtick-is-not-span-delimiter",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "[a](u \"t`\") [x](missing.md) `tail\n");
+  },
+  1,
+  "-> missing.md does not resolve",
+);
+
+assertCase(
+  "full-reference-label-backtick-is-not-span-delimiter",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "[a][b`c] [x](missing.md) `tail\n\n[b`c]: https://example.com\n");
+  },
+  1,
+  "-> missing.md does not resolve",
+);
+
+assertCase(
+  "unicode-blank-line-does-not-hide-link",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "`head\n\u00a0\nend` [x](missing.md) `tail\n");
+  },
+  1,
+  "-> missing.md does not resolve",
+);
+
+assertCase(
+  "lone-cr-line-endings-do-not-hide-link",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "`head\r\r[x](missing.md) `tail\r");
+  },
+  1,
+  "-> missing.md does not resolve",
+);
+
+assertCase(
+  "crlf-line-endings-permit-code-span",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "Use `errors.AsType[T](err)` here.\r\n");
+  },
+  0,
+  null,
+);
+
+assertCase(
+  "gfm-www-autolink-consumes-backtick",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "www.example.com/a`b [x](missing.md) `tail\n");
+  },
+  1,
+  "-> missing.md does not resolve",
+);
+
+assertCase(
+  "gfm-https-autolink-consumes-backtick",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "https://example.com/a`b [x](missing.md) `tail\n");
+  },
+  1,
+  "-> missing.md does not resolve",
+);
+
+assertCase(
+  "inline-math-consumes-backtick",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "$a`$ [x](missing.md) `tail\n");
+  },
+  1,
+  "-> missing.md does not resolve",
+);
+
+assertCase(
+  "autolink-and-go-generic-markers-in-code-spans-pass",
+  (root) => {
+    writeFileSync(join(root, ".agents", "skills", "example", "SKILL.md"), "See `https://example.com/x` and `errors.AsType[T](err)`.\n");
+  },
+  0,
+  null,
 );
 
 assertCase(
