@@ -133,8 +133,8 @@ verify: verify-static
 	@echo "==> unit tests"
 	$(GO) test $$($(GO) list ./... | grep -v '/tests/e2e$$')
 
-## ci: Run the credential-free CI gate (verify-static, docs integrity, then coverage, race, and cross-build)
-ci: verify-static
+## ci: Run the credential-free CI gate (verify first, then docs integrity, coverage, race, and cross-build; the non-E2E tests run again with coverage)
+ci: verify
 	@echo "==> docs-integrity checker self-test"
 	$(MAKE) test-docs-check
 	@echo "==> docs integrity"

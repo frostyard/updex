@@ -210,7 +210,7 @@ func TestGoReleaserShipsUnitsDisabled(t *testing.T) {
 //     and runs systemd-analyze verify on both files;
 //   - the snapshot workflow checks the amd64 .deb after GoReleaser ran.
 func TestUnitsWorkflowChecks(t *testing.T) {
-	tests := readGoReleaserWorkflow(t, "../.github/workflows/test.yml")
+	tests := readGoReleaserWorkflow(t, "../.github/workflows/ci.yml")
 	job, ok := tests.Jobs["units"]
 	if !ok {
 		t.Fatal("Tests workflow is missing the units job")

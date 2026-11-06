@@ -9,23 +9,21 @@ commits instead of copying logs.
 
 ## Current state
 
-- ACMM conformance realigned with the fleet (2026-08-18):
-  [ADR-0012](../docs/adr/0012-acmm-conformance-via-canonical-aliases.md)'s
-  alias lattice (`AGENTS.md` canonical; `docs/specs/pr-review-rubric.md`,
-  `docs/specs/pr-acceptance-metric.md`, `docs/design/quality-loop.md`
-  canonical with `docs/review-rubric.md`, `docs/metrics.md`,
-  `docs/quality.md` aliases), the docs-integrity gate
-  (`scripts/check-docs.mjs`, `docs-gate` CI job), and `.claude/settings.json`
-  tool-layer limits.
+- Repository baseline adopted: frostyard/core
+  [ADR-0071](https://github.com/frostyard/core/blob/main/docs/adr/0071-hold-every-code-repository-to-one-baseline.md)
+  rows B1 to B16, landed by this PR (`.github/workflows/ci.yml` runs
+  `make ci` from the `Verify` job, `make ci` calls `make verify`, least-privilege
+  workflow permissions, the root `SECURITY.md`, and
+  `updex/repository_baseline_contract_test.go` pinning each row).
 
 ## Last landed
 
-- #313 propagate golangci-lint failures; #322/#319 catalog GitHub-token
-  origin restriction; #316 scanner JSON output fix.
+- #488 the last-run record; #491 `github.com/frostyard/std` 0.3.1;
+  v2.2.0 released 2026-11-03.
 
 ## Next
 
-- #323 (catalog HTTPS-only URLs / redirect downgrade refusal) — separate
-  security work item.
-- #274 (daemon lifecycle orchestration behind the SDK boundary) — separate
-  architecture work item.
+- Follow-up PR: the docs site (baseline row B9, core ADR-0070,
+  `frostyard-docs-site` skill).
+- Follow-up PR: the toolchain bump (baseline row B11: Go 1.27,
+  golangci-lint 2.15.0).

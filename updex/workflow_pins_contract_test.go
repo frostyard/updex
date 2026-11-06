@@ -19,8 +19,9 @@ import (
 //     `# <label>` comment naming the version it was pinned from;
 //   - the same SHA carries the same label everywhere (a bump bot updates the
 //     SHA and the comment together; a stale label misleads reviewers);
-//   - every workflow declares top-level `permissions:` (`{}` or an explicit
-//     minimal map);
+//   - every workflow declares top-level `permissions:` as `{}` or an explicit
+//     map whose every value is `read` or `none` — a write scope belongs on the
+//     one job that needs it (frostyard/core ADR-0071, baseline row B5);
 //   - every actions/checkout step sets `persist-credentials: false` unless its
 //     job is in pushingJobs — none today: release.yml and snapshot.yml publish
 //     through the GitHub API with GITHUB_TOKEN and never `git push`.
@@ -97,6 +98,7 @@ func TestWorkflowsPinActionsAndLeastPrivilege(t *testing.T) {
 		if workflow.Permissions == nil {
 			t.Errorf("%s: no top-level permissions: block (ADR-0021: start from permissions: {} or an explicit minimal grant)", name)
 		}
+		assertLeastPrivilegeTopLevel(t, name, workflow.Permissions)
 		for jobID, job := range workflow.Jobs {
 			for _, step := range job.Steps {
 				if !strings.HasPrefix(step.Uses, "actions/checkout@") || pushingJobs[name+"/"+jobID] {
@@ -117,6 +119,28 @@ func TestWorkflowsPinActionsAndLeastPrivilege(t *testing.T) {
 			}
 			sort.Strings(seen)
 			t.Errorf("commit %s is labelled inconsistently: %s", sha[:12], strings.Join(seen, ", "))
+		}
+	}
+}
+
+// assertLeastPrivilegeTopLevel enforces frostyard/core ADR-0071 row B5: a
+// workflow's top-level `permissions:` is `{}` or a map whose every value is
+// `read` or `none`. A write scope belongs on the single job that needs it, so
+// that a new job cannot inherit it. The zero `permissions:` state (nil) is
+// reported by the caller.
+func assertLeastPrivilegeTopLevel(t *testing.T, name string, permissions any) {
+	t.Helper()
+	if permissions == nil {
+		return
+	}
+	grants, ok := permissions.(map[string]any)
+	if !ok {
+		t.Errorf("%s: top-level permissions: must be `{}` or a map of read/none grants, got %T (core ADR-0071 B5)", name, permissions)
+		return
+	}
+	for scope, value := range grants {
+		if value != "read" && value != "none" {
+			t.Errorf("%s: top-level permissions.%s = %v, want `read` or `none`: move a write scope onto the one job that needs it (core ADR-0071 B5)", name, scope, value)
 		}
 	}
 }

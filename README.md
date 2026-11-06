@@ -2,7 +2,7 @@
 
 updex is a Go SDK and CLI for managing [systemd-sysext](https://www.freedesktop.org/software/systemd/man/latest/systemd-sysext.html) images. It provides the `url-file` transfer functionality of `systemd-sysupdate` on systems such as Debian Trixie that do not ship that tool. Use the CLI to manage extensions or import `github.com/frostyard/updex/v2/updex` from Go.
 
-[![Tests](https://github.com/frostyard/updex/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/frostyard/updex/actions/workflows/test.yml?query=branch%3Amain)
+[![Tests](https://github.com/frostyard/updex/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/frostyard/updex/actions/workflows/ci.yml?query=branch%3Amain)
 [![codecov](https://codecov.io/gh/frostyard/updex/graph/badge.svg?branch=main)](https://codecov.io/gh/frostyard/updex)
 
 ## Features
@@ -561,9 +561,17 @@ staged; the text table shows `linked` in its `STATUS` column for that row, not
 Use `updex features list --json | jq '.[] | select(.enabled)'` to list enabled
 features for a script.
 
+## Security
+
+updex runs as root and installs system extensions. Please report a
+vulnerability privately through GitHub private vulnerability reporting, never
+in a public issue: see [SECURITY.md](SECURITY.md) for the supported versions,
+the report steps, and the most sensitive areas of the code.
+
 ## More documentation
 
 - [Contributing and development](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
 - [Configuration reference](docs/specs/config-reference.md)
 - [SDK API reference](docs/specs/sdk-api.md)
 - [Documentation index](docs/README.md)

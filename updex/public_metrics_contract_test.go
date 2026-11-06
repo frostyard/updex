@@ -30,7 +30,7 @@ func TestPublicMetricsIndexIsSubstantive(t *testing.T) {
 		"## Signal index",
 		"## Pull-request acceptance",
 		"## Publication and privacy contract",
-		"https://github.com/frostyard/updex/actions/workflows/test.yml",
+		"https://github.com/frostyard/updex/actions/workflows/ci.yml",
 		"https://codecov.io/gh/frostyard/updex",
 		// The Coverage row must name the enforced floor's public source, not
 		// only the best-effort Codecov dashboard.

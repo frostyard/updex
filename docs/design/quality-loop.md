@@ -7,7 +7,7 @@ Contracts: [specs/pr-review-rubric.md](../specs/pr-review-rubric.md),
 `docs/quality.md` is a conformance alias for this file (ADR-0012); this page
 is also the quality dashboard (formerly `docs/AI-QUALITY-ASSURANCE.md`).
 
-[![Tests](https://github.com/frostyard/updex/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/frostyard/updex/actions/workflows/test.yml?query=branch%3Amain)
+[![Tests](https://github.com/frostyard/updex/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/frostyard/updex/actions/workflows/ci.yml?query=branch%3Amain)
 [![codecov](https://codecov.io/gh/frostyard/updex/graph/badge.svg?branch=main)](https://codecov.io/gh/frostyard/updex) (best-effort, pending onboarding on codecov.io — the enforced coverage gate is the in-repo floor and ratchet below)
 
 ## Overview
@@ -21,7 +21,7 @@ One loop, five stations:
 
 ```
 PR template ──► review rubric ──► CI gates ──► corrections ──► promotion
-(checklist)     (spec)            (test.yml,   (.memory/)      (AGENTS.md,
+(checklist)     (spec)            (ci.yml,     (.memory/)      (AGENTS.md,
      ▲                             docs-gate)                    docs, skills)
      └────────────── acceptance metric (spec) observes the stream ─────────┘
 ```
@@ -40,13 +40,14 @@ PR template ──► review rubric ──► CI gates ──► corrections ─
   (`.github/workflows/claude-code-review.yml`) requests an advisory review
   for each non-draft PR; maintainers audit its findings and CI history
   before merge and remain accountable for the decision.
-- **Gate** — [.github/workflows/test.yml](../../.github/workflows/test.yml)
+- **Gate** — [.github/workflows/ci.yml](../../.github/workflows/ci.yml)
   runs on every PR, every push to `main`, and every `merge_group` event so the
   required checks also report on merge-queue branches
   ([frostyard/core ADR-0042](https://github.com/frostyard/core/blob/main/docs/adr/0042-adopt-a-merge-queue-on-the-default-branch.md));
-  each job is capped at 15 minutes
-  (`timeout-minutes: 15`) so a hung step fails the gate within minutes
-  instead of pending for GitHub's 360-minute default:
+  each job is capped at 15 minutes (`timeout-minutes: 15`; the *Verify* job
+  gets 30, `timeout-minutes: 30`, because it runs the whole `make ci` gate)
+  so a hung step fails the gate within minutes instead of pending for
+  GitHub's 360-minute default:
   - *Lint* (pinned golangci-lint — the release
     [`mise.toml`](../../mise.toml) pins, installed from
     [`mise.lock`](../../mise.lock) by `jdx/mise-action` in the Lint job,
@@ -61,10 +62,11 @@ PR template ──► review rubric ──► CI gates ──► corrections ─
     by `make test-coverage-check` against fixture profiles); a regression
     below the effective floor fails the gate —
     *E2E Tests* ([tests/e2e/README.md](../../tests/e2e/README.md)), *Race
-    Detection*, *Verify* (tidy, `go vet`, gofmt), and *Build* for linux
-    amd64/arm64 — `make ci` reproduces that credential-free subset locally,
-    including the E2E suite as its own non-coverage step, in the same fail-fast
-    order.
+    Detection*, *Verify* (runs `make ci` itself, baseline row B12), and *Build*
+    for linux amd64/arm64 — `make ci` reproduces that credential-free subset
+    locally, starting with `make verify` (static checks plus the non-E2E
+    tests, which then run again with coverage), including the E2E suite as its
+    own non-coverage step, in the same fail-fast order.
   - *Docs integrity* (`docs-gate`): `node scripts/check-docs.mjs` checks
     docs-index coverage, relative-link integrity, and symlink resolution
     against [.coverage-thresholds.json](../../.coverage-thresholds.json) —

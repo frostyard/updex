@@ -94,8 +94,10 @@ func TestReleaseWorkflowRequestsAptPublicationForTags(t *testing.T) {
 }
 
 // TestReleaseWorkflowAttestsBuildProvenance pins the provenance contract:
-// the tag release workflow grants id-token: write and attestations: write and
-// runs actions/attest-build-provenance (pinned to a full commit SHA) over a
+// the tag release workflow's `goreleaser` job grants contents: write,
+// id-token: write and attestations: write while the top-level permissions stay
+// `{}` (frostyard/core ADR-0071 row B5: least privilege starts at the top), and
+// it runs actions/attest-build-provenance (pinned to a full commit SHA) over a
 // subject-path that includes checksums.txt, so a published artifact carries an
 // authenticity signal beyond the same-origin checksums.txt (README
 // "Installation": `gh attestation verify <artifact> --repo frostyard/updex`).
@@ -109,7 +111,8 @@ func TestReleaseWorkflowAttestsBuildProvenance(t *testing.T) {
 	var workflow struct {
 		Permissions map[string]string `yaml:"permissions"`
 		Jobs        map[string]struct {
-			Steps []struct {
+			Permissions map[string]string `yaml:"permissions"`
+			Steps       []struct {
 				Uses string            `yaml:"uses"`
 				With map[string]string `yaml:"with"`
 			} `yaml:"steps"`
@@ -119,15 +122,18 @@ func TestReleaseWorkflowAttestsBuildProvenance(t *testing.T) {
 		t.Fatalf("parse release workflow: %v", err)
 	}
 
-	for _, scope := range []string{"id-token", "attestations"} {
-		if got := workflow.Permissions[scope]; got != "write" {
-			t.Errorf("permissions.%s = %q, want %q (actions/attest-build-provenance needs it)", scope, got, "write")
-		}
+	if workflow.Permissions == nil || len(workflow.Permissions) != 0 {
+		t.Errorf("top-level permissions = %v, want `{}` (core ADR-0071 B5: the job grants what it needs)", workflow.Permissions)
 	}
 
 	job, ok := workflow.Jobs["goreleaser"]
 	if !ok {
 		t.Fatal("release workflow is missing goreleaser job")
+	}
+	for _, scope := range []string{"contents", "id-token", "attestations"} {
+		if got := job.Permissions[scope]; got != "write" {
+			t.Errorf("jobs.goreleaser.permissions.%s = %q, want %q", scope, got, "write")
+		}
 	}
 	pinned := regexp.MustCompile(`^actions/attest-build-provenance@[0-9a-f]{40}$`)
 	for _, step := range job.Steps {

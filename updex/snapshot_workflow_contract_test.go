@@ -32,9 +32,11 @@ func TestSnapshotWorkflowCancelsStaleRollingReleases(t *testing.T) {
 			Group            string `yaml:"group"`
 			CancelInProgress any    `yaml:"cancel-in-progress"`
 		} `yaml:"concurrency"`
-		Jobs map[string]struct {
-			If    string `yaml:"if"`
-			Steps []struct {
+		Permissions map[string]string `yaml:"permissions"`
+		Jobs        map[string]struct {
+			If          string            `yaml:"if"`
+			Permissions map[string]string `yaml:"permissions"`
+			Steps       []struct {
 				Uses string         `yaml:"uses"`
 				With map[string]any `yaml:"with"`
 			} `yaml:"steps"`
@@ -69,6 +71,16 @@ func TestSnapshotWorkflowCancelsStaleRollingReleases(t *testing.T) {
 	if !ok {
 		t.Fatal("snapshot workflow is missing the snapshot job (core ADR-0034)")
 	}
+	// Least privilege (frostyard/core ADR-0071 row B5): the workflow grants
+	// nothing at the top, and the one job that publishes the dev release
+	// holds the only write scope it needs.
+	if workflow.Permissions == nil || len(workflow.Permissions) != 0 {
+		t.Errorf("top-level permissions = %v, want `{}` (core ADR-0071 B5)", workflow.Permissions)
+	}
+	if len(job.Permissions) != 1 || job.Permissions["contents"] != "write" {
+		t.Errorf("snapshot job permissions = %v, want exactly {contents: write} (core ADR-0071 B5)", job.Permissions)
+	}
+
 	if !strings.Contains(job.If, "github.event.workflow_run.conclusion == 'success'") {
 		t.Errorf("snapshot job guard = %q, want it to require github.event.workflow_run.conclusion == 'success' (core ADR-0034: only a successful Tests run publishes the dev release)", job.If)
 	}

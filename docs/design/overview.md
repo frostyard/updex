@@ -1107,7 +1107,7 @@ which supersedes [ADR-0007](../adr/0007-daemon-stages-never-activates.md).
   them, `scripts/units.sh` runs it as a GoReleaser `before.hooks` entry (next to
   `completions.sh` and `manpages.sh`; output in the gitignored `units/`), and
   `nfpms.contents` installs them with mode 0644. CI verifies them with
-  `systemd-analyze verify` (`units` job in `test.yml`) and the nightly checks the
+  `systemd-analyze verify` (`units` job in `ci.yml`) and the nightly checks the
   `.deb` listing (`scripts/check-deb-units.sh`, `snapshot.yml`).
 - **The units.** Service: the sandboxed `oneshot` (`SandboxDirectives`),
   `ExecStart=/usr/bin/updex features update --no-refresh`,
@@ -1284,10 +1284,13 @@ Global flags:
 
 ## CI and Releases
 
-`make ci` is the canonical credential-free local gate. It mirrors the
-host-independent pull-request checks in fail-fast order: the shared
-`make verify-static` checks (module tidiness, vet, formatting, golangci-lint
-at the exact pin), the docs-integrity checker's fixture self-test
+`make ci` is the canonical credential-free local gate. It starts with
+`make verify` (core ADR-0044: `ci` calls `verify` and adds what CI alone
+runs), so the shared `verify-static` checks (module tidiness, vet, formatting,
+golangci-lint at the exact pin) and the non-E2E tests run first, and the
+non-E2E tests then run again with coverage below. It mirrors the
+host-independent pull-request checks in fail-fast order: those static checks,
+the docs-integrity checker's fixture self-test
 (`make test-docs-check`) and the docs-integrity gate itself
 (`node scripts/check-docs.mjs`, the same two steps as the `docs-gate` job, so
 `make ci` needs Node.js), all non-E2E package tests (with `-coverprofile`),
@@ -1300,9 +1303,11 @@ amd64 and arm64 builds. The unit and race stages do not filter by test name,
 so every hermetic package test runs; the E2E suite also retains its dedicated
 workflow job. `make verify` is the non-mutating subset for read-only
 reviewers (such as Snowcat `pr-review` workers): `verify-static` plus the
-non-E2E tests, with nothing that formats or rewrites the checkout.
+non-E2E tests, with nothing that formats or rewrites the checkout. The
+`Verify` CI job runs `make ci` itself (core ADR-0071 baseline row B12) rather
+than repeating the static steps.
 
-The credentialed `Release config` job in `.github/workflows/test.yml` closes
+The credentialed `Release config` job in `.github/workflows/ci.yml` closes
 the remaining pre-merge release-surface gap: on pull requests, pushes to
 `main`, and merge-queue branches it runs the same SHA-pinned GoReleaser Pro v2
 action as the publishing workflows, with `args: check`, read-only repository
