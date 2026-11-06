@@ -76,7 +76,7 @@ make lint         # Run golangci-lint (.golangci.yml; fails if not installed)
 make svu-version-check  # Fail unless svu is the mise.toml pin (make bump runs it first)
 make check        # fmt + lint + test (mutating: fmt rewrites files)
 make verify       # Non-mutating, credential-free gate for read-only reviewers: tidy diff, vet, gofmt -l, exact-pin lint, non-E2E tests
-make ci           # Credential-free gate matching CI's fail-fast order (verify-static, docs integrity, then coverage, E2E, race, cross-build)
+make ci           # Credential-free gate matching CI's fail-fast order: make verify first, then docs integrity, coverage, E2E, race, cross-build
 make test-cover   # Tests with HTML coverage report
 make coverage-check        # Enforce the absolute floor and committed coverage ratchet
 make test-coverage-check   # Self-test scripts/check-coverage.sh with fixture profiles
@@ -89,11 +89,14 @@ Run a single test: `go test -v -run TestName ./updex/`
 
 Build workflow: make code changes → `make fmt` → `make build` → smoke-test
 with `./build/updex --help`. Use `make check` for the quick development loop.
-Run `make ci` before opening a pull request. It checks module tidiness, vet,
-formatting, lint, docs integrity (the same `make test-docs-check` and
-`node scripts/check-docs.mjs` the `docs-gate` CI job runs, so it needs Node.js
-too), non-E2E unit and race tests, the separate black-box E2E
-suite, and Linux amd64/arm64 builds, and requires `golangci-lint`. The lint
+Run `make ci` before opening a pull request. It runs `make verify` first — so
+module tidiness, vet, formatting, the lint pin check, and lint run once, and the
+non-E2E tests run there and again with coverage below, as core ADR-0044
+prescribes ("`ci` calls `verify` and adds what CI alone runs") — then docs
+integrity (the same `make test-docs-check` and `node scripts/check-docs.mjs`
+the `docs-gate` CI job runs, so it needs Node.js too), non-E2E unit tests with
+coverage, the separate black-box E2E suite, the race tests, and Linux
+amd64/arm64 builds. It requires `golangci-lint` and node. The lint
 step first runs `make lint-version-check`, which fails unless the installed
 `golangci-lint` matches the pin in `mise.toml` (currently 2.13.1) and was
 built with a Go no older than `go.mod`'s toolchain — the CI Lint job installs
@@ -159,7 +162,7 @@ ref is `refs/tags/<tag>`, never `refs/heads/<default>`) and is not
 `continue-on-error`. apt-publisher publishes the `.deb` files, then dispatches
 `build` to `frostyard/snosi` once they are installable, so this workflow
 neither publishes packages nor dispatches to snosi itself.
-The `Release config` job in `.github/workflows/test.yml` runs the same
+The `Release config` job in `.github/workflows/ci.yml` runs the same
 SHA-pinned GoReleaser Pro v2 action with `args: check` on pull requests, pushes
 to `main`, and merge-queue branches. Trusted runs fail when the Pro key is
 missing; fork and Dependabot pull requests, which cannot receive repository
@@ -238,7 +241,7 @@ line), pins the
 `.goreleaser.yaml` hook order, both `nfpms.contents` destinations and the
 absence of maintainer scripts, pins the CI steps below, and runs
 `scripts/check-deb-units.sh` against a fake `dpkg-deb`. The `units` job in
-`.github/workflows/test.yml` builds updex, runs `scripts/units.sh`, installs
+`.github/workflows/ci.yml` builds updex, runs `scripts/units.sh`, installs
 the binary at `/usr/bin/updex` with `sudo install` (the service's `ExecStart`,
 so the shipped text is verified as it is) and runs `systemd-analyze verify` on
 both files; because `systemd-analyze verify` exits 0 for an unknown directive,
@@ -1060,9 +1063,12 @@ privilege, data-handling, prompt-injection, and human-review requirements,
 and the machine-readable controls in
 [`.github/policies/ai-governance.json`](.github/policies/ai-governance.json).
 
-If you believe you have found a security vulnerability, do not open a public
-issue. Report it privately by emailing the maintainer at
-[bketelsen@gmail.com](mailto:bketelsen@gmail.com).
+If you believe you have found a security vulnerability, read
+[`SECURITY.md`](SECURITY.md). Do not open a public issue: use GitHub private
+vulnerability reporting at
+[frostyard/updex security](https://github.com/frostyard/updex/security) (the
+"Report a vulnerability" button) first. If you cannot use GitHub, email the
+maintainer at [bketelsen@gmail.com](mailto:bketelsen@gmail.com) as a fallback.
 
 ## Troubleshooting
 
@@ -1161,11 +1167,14 @@ and dependency changes by the `label` job in
 to [`.github/labeler.yml`](.github/labeler.yml). The label job adds matching
 labels without removing labels applied by contributors or reviewers.
 
-CI runs on every pull request (`.github/workflows/test.yml`) and must pass:
+CI runs on every pull request (`.github/workflows/ci.yml`) and must pass:
 lint (golangci-lint), security scan (`govulncheck`), unit tests with coverage,
-end-to-end tests, race-detector tests, verification (`go mod tidy`
-cleanliness, `go vet`, `gofmt`), docs integrity (`scripts/check-docs.mjs`),
-and cross-compiled builds for linux/amd64 and linux/arm64. The unit test job
+end-to-end tests, race-detector tests, the `Verify` job — which runs the whole
+credential-free gate with `make ci`, not only `go mod tidy` cleanliness,
+`go vet` and `gofmt` — docs integrity (`scripts/check-docs.mjs`), and
+cross-compiled builds for linux/amd64 and linux/arm64. Each of those jobs keeps
+its own id and `name:` so every required check name stays as branch rules
+expect it (baseline row B12, core ADR-0071). The unit test job
 enforces `max(80.0, baseline - 0.5)` total statement coverage
 (`make coverage-check`, `scripts/check-coverage.sh`, and
 `.coverage-baseline`); that absolute floor plus ratchet is the enforced
@@ -1177,6 +1186,10 @@ statuses `codecov.yml` describes are pending onboarding and not required
 checks. The whole loop — declare, review, gate,
 learn, observe — is described in
 [docs/design/quality-loop.md](docs/design/quality-loop.md).
+`updex/repository_baseline_contract_test.go` pins the repository baseline
+(frostyard/core ADR-0071, rows B1 to B16) the same way: one test per row, each
+naming its row, so a missing `AGENTS.md`, a dropped `ci:` prerequisite or a
+removed `SECURITY.md` fails the unit tests on the pull request that does it.
 
 ## Org-wide decisions
 

@@ -41,7 +41,7 @@ func readGoReleaserWorkflow(t *testing.T, path string) goreleaserWorkflow {
 }
 
 func TestReleaseConfigWorkflowValidatesBeforeMerge(t *testing.T) {
-	workflow := readGoReleaserWorkflow(t, "../.github/workflows/test.yml")
+	workflow := readGoReleaserWorkflow(t, "../.github/workflows/ci.yml")
 	for _, event := range []string{"push", "pull_request", "merge_group"} {
 		if _, ok := workflow.On[event]; !ok {
 			t.Errorf("Tests workflow is missing %s trigger", event)
@@ -113,7 +113,7 @@ func TestReleaseConfigWorkflowValidatesBeforeMerge(t *testing.T) {
 }
 
 func TestReleaseConfigWorkflowMatchesReleaseAction(t *testing.T) {
-	testWorkflow := readGoReleaserWorkflow(t, "../.github/workflows/test.yml")
+	testWorkflow := readGoReleaserWorkflow(t, "../.github/workflows/ci.yml")
 	releaseWorkflow := readGoReleaserWorkflow(t, "../.github/workflows/release.yml")
 	snapshotWorkflow := readGoReleaserWorkflow(t, "../.github/workflows/snapshot.yml")
 

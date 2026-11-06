@@ -8,7 +8,7 @@ import (
 )
 
 // docsGateInvocations are the two commands the `docs-gate` job in
-// .github/workflows/test.yml runs. `make ci` claims to be the credential-free
+// .github/workflows/ci.yml runs. `make ci` claims to be the credential-free
 // local equivalent of that workflow, so it must run both as well.
 var docsGateInvocations = []struct {
 	name    string

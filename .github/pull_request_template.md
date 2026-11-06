@@ -19,7 +19,7 @@ closes. -->
 - [ ] CLI/e2e changes: `go test -v ./cmd/updex ./tests/e2e/...` green
 - [ ] New or changed behavior has focused tests, including failure paths
 
-## Risk classification
+## Risk tier
 
 <!-- Select the highest applicable tier from docs/risk-tiers.md and give the
 rationale. A PR with the label `risk:high` (a path in

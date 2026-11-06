@@ -158,10 +158,13 @@ jobs:
       - name: Run tests with race detector
         run: go test -race -short -v $(go list ./... | grep -v '/tests/e2e$')
 
+  # The Verify job runs `make ci`, the whole credential-free gate (baseline
+  # row B12, core ADR-0071). The other jobs stay so that each required check
+  # keeps its name.
   verify:
     name: Verify
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -175,14 +178,17 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Verify go.mod is tidy
-        run: go mod tidy -diff
+      # mise.toml and mise.lock are the single source of every tool pin
+      # (core ADR-0043). The gate needs golangci-lint and node.
+      - name: Install pinned tools
+        uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
+        with:
+          install: true
+          install_args: golangci-lint node
+          cache: true
 
-      - name: Run go vet
-        run: go vet ./...
-
-      - name: Check formatting
-        run: test -z "$(gofmt -l $(git ls-files '*.go'))"
+      - name: make ci
+        run: make ci
 
   build:
     name: Build
