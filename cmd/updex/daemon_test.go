@@ -787,3 +787,20 @@ func TestRunDaemonStatus_Masked(t *testing.T) {
 		t.Errorf("status output shows a schedule for a mask:\n%s", out)
 	}
 }
+
+func TestRunDaemonStatus_CharacterizesEmptyScheduleAndLastRun(t *testing.T) {
+	mock := &systemd.MockSystemctlRunner{}
+	dir := daemonTestEnv(t, mock)
+	seedUnits(t, dir)
+	maskCLIUnit(t, dir, ".timer")
+
+	out, err := captureStdout(t, func() error { return runDaemonStatus(daemonTestCommand(t), nil) })
+	if err != nil {
+		t.Fatalf("status failed: %v", err)
+	}
+	for _, want := range []string{"  Schedule: -\n", "  Last run: none recorded since boot\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status output missing %q:\n%s", want, out)
+		}
+	}
+}
