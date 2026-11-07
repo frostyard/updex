@@ -278,11 +278,8 @@ func runCatalogAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Added %s/%s and enabled feature '%s'.\n", result.Repo, result.Name, result.Name)
-	if result.Enable != nil && len(result.Enable.DownloadedFiles) > 0 {
-		fmt.Printf("Downloaded %d extension(s):\n", len(result.Enable.DownloadedFiles))
-		for _, f := range result.Enable.DownloadedFiles {
-			fmt.Printf("  - %s\n", f)
-		}
+	if result.Enable != nil {
+		printFileList("Downloaded %d extension(s):", result.Enable.DownloadedFiles)
 	}
 
 	return nil
@@ -315,11 +312,8 @@ func runCatalogRemove(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if err != nil {
-		if result != nil && len(result.RemovedFiles) > 0 {
-			fmt.Printf("Deleted %d definition file(s):\n", len(result.RemovedFiles))
-			for _, f := range result.RemovedFiles {
-				fmt.Printf("  - %s\n", f)
-			}
+		if result != nil {
+			printFileList("Deleted %d definition file(s):", result.RemovedFiles)
 		}
 		return err
 	}
@@ -331,12 +325,7 @@ func runCatalogRemove(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Removed %s/%s.\n", result.Repo, result.Name)
-	if len(result.RemovedFiles) > 0 {
-		fmt.Printf("Deleted %d definition file(s):\n", len(result.RemovedFiles))
-		for _, f := range result.RemovedFiles {
-			fmt.Printf("  - %s\n", f)
-		}
-	}
+	printFileList("Deleted %d definition file(s):", result.RemovedFiles)
 	if catalogRemoveForce {
 		fmt.Printf("Warning: Reboot required for changes to take effect.\n")
 	}

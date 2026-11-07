@@ -2,6 +2,8 @@ package updex
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -399,4 +401,65 @@ func TestRunFeaturesEnable_NowJSONListsOtherPendingActivations(t *testing.T) {
 	if len(result.PendingActivations) != 1 || result.PendingActivations[0] != want {
 		t.Errorf("PendingActivations = %+v, want [%+v]", result.PendingActivations, want)
 	}
+}
+
+func TestRunFeaturesCheck_CharacterizesEmptyCurrentAndNewest(t *testing.T) {
+	h := newStatusHost(t)
+	failedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.NotFound(w, nil)
+	}))
+	t.Cleanup(failedServer.Close)
+	writeFeatureFile(t, h.configDir, "alpha", true)
+	writeTransferFile(t, h.configDir, h.targetDir, "alpha", "alpha", failedServer.URL, "")
+
+	output, err := h.run(t, false, runFeaturesCheck)
+	if err == nil {
+		t.Fatal("runFeaturesCheck = nil error, want the manifest fetch to fail")
+	}
+	if got := strings.Join(rowFields(t, output, "alpha"), " "); got != "alpha alpha - - - - error" {
+		t.Errorf("row = %q, want empty CURRENT and NEWEST to render as '-'", got)
+	}
+}
+
+func TestRunFeaturesList_CharacterizesTransfersColumnCounts(t *testing.T) {
+	t.Run("zero", func(t *testing.T) {
+		h := newStatusHost(t)
+		writeFeatureFile(t, h.configDir, "alpha", true)
+
+		output, err := h.run(t, false, runFeaturesList)
+		if err != nil {
+			t.Fatalf("runFeaturesList: %v", err)
+		}
+		fields := rowFields(t, output, "alpha")
+		if got := strings.Join(fields[len(fields)-3:], " "); got != "- - -" {
+			t.Errorf("TRANSFERS/RUNNING/LINKED = %q, want '- - -'", got)
+		}
+	})
+
+	t.Run("one", func(t *testing.T) {
+		h := newStatusHost(t)
+		h.feature(t, "alpha", true, "")
+
+		output, err := h.run(t, false, runFeaturesList)
+		if err != nil {
+			t.Fatalf("runFeaturesList: %v", err)
+		}
+		fields := rowFields(t, output, "alpha")
+		if got := strings.Join(fields[len(fields)-3:], " "); got != "alpha - -" {
+			t.Errorf("TRANSFERS/RUNNING/LINKED = %q, want 'alpha - -'", got)
+		}
+	})
+
+	t.Run("two", func(t *testing.T) {
+		h := newStatusHost(t)
+		h.feature(t, "alpha", true, "2.0.0", "2.0.0")
+		writeTransferFile(t, h.configDir, h.targetDir, "beta", "alpha", h.serverURL, "")
+		h.merge(t, map[string]string{"alpha": "2.0.0"})
+
+		output, err := h.run(t, false, runFeaturesList)
+		if err != nil {
+			t.Fatalf("runFeaturesList: %v", err)
+		}
+		assertContains(t, output, "alpha, beta", "2.0.0, -")
+	})
 }

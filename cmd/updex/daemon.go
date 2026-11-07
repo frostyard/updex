@@ -237,24 +237,16 @@ func runDaemonStatus(cmd *cobra.Command, args []string) error {
 	for _, path := range status.UnitFiles {
 		fmt.Printf("  Unit file: %s\n", path)
 	}
-	fmt.Printf("  Schedule: %s\n", orDash(status.Schedule))
+	fmt.Printf("  Schedule: %s\n", dashIfEmpty(status.Schedule))
 	if status.NextRun != "" {
 		fmt.Printf("  Next run: %s\n", status.NextRun)
 	} else {
 		fmt.Println("  Next run: none scheduled")
 	}
 	if status.LastRun != "" {
-		fmt.Printf("  Last run: %s (%s)\n", status.LastRun, orDash(status.LastResult))
+		fmt.Printf("  Last run: %s (%s)\n", status.LastRun, dashIfEmpty(status.LastResult))
 	} else {
 		fmt.Println("  Last run: none recorded since boot")
 	}
 	return nil
-}
-
-// orDash returns value, or "-" when it is empty.
-func orDash(value string) string {
-	if value == "" {
-		return "-"
-	}
-	return value
 }
