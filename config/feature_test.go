@@ -449,3 +449,192 @@ Description=Second Drop-in
 		t.Errorf("Description = %q, want %q", f.Description, "Second Drop-in")
 	}
 }
+
+func TestLoadFeaturesDropInDocumentationAndAppStream(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	baseFeature := `[Feature]
+Description=Base Description
+Documentation=https://example.com/base-docs
+AppStream=https://example.com/base-appstream.xml
+Enabled=false
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "test.feature"), []byte(baseFeature), 0644); err != nil {
+		t.Fatalf("failed to write base feature file: %v", err)
+	}
+
+	dropInDir := filepath.Join(tmpDir, "test.feature.d")
+	if err := os.MkdirAll(dropInDir, 0755); err != nil {
+		t.Fatalf("failed to create drop-in directory: %v", err)
+	}
+
+	dropIn := `[Feature]
+Documentation=https://example.com/drop-in-docs
+AppStream=https://example.com/drop-in-appstream.xml
+`
+	if err := os.WriteFile(filepath.Join(dropInDir, "10-override.conf"), []byte(dropIn), 0644); err != nil {
+		t.Fatalf("failed to write drop-in file: %v", err)
+	}
+
+	features, err := LoadFeatures(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadFeatures() error = %v", err)
+	}
+	if len(features) != 1 {
+		t.Fatalf("expected 1 feature, got %d", len(features))
+	}
+
+	f := features[0]
+	if f.Documentation != "https://example.com/drop-in-docs" {
+		t.Errorf("Documentation = %q, want %q", f.Documentation, "https://example.com/drop-in-docs")
+	}
+	if f.AppStream != "https://example.com/drop-in-appstream.xml" {
+		t.Errorf("AppStream = %q, want %q", f.AppStream, "https://example.com/drop-in-appstream.xml")
+	}
+}
+
+func TestLoadFeaturesDropInEnabledOrder(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	baseFeature := `[Feature]
+Enabled=false
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "test.feature"), []byte(baseFeature), 0644); err != nil {
+		t.Fatalf("failed to write base feature file: %v", err)
+	}
+
+	dropInDir := filepath.Join(tmpDir, "test.feature.d")
+	if err := os.MkdirAll(dropInDir, 0755); err != nil {
+		t.Fatalf("failed to create drop-in directory: %v", err)
+	}
+
+	dropInTrue := `[Feature]
+Enabled=true
+`
+	if err := os.WriteFile(filepath.Join(dropInDir, "10-enable.conf"), []byte(dropInTrue), 0644); err != nil {
+		t.Fatalf("failed to write enable drop-in: %v", err)
+	}
+
+	dropInFalse := `[Feature]
+Enabled=false
+`
+	if err := os.WriteFile(filepath.Join(dropInDir, "20-disable.conf"), []byte(dropInFalse), 0644); err != nil {
+		t.Fatalf("failed to write disable drop-in: %v", err)
+	}
+
+	features, err := LoadFeatures(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadFeatures() error = %v", err)
+	}
+	if len(features) != 1 {
+		t.Fatalf("expected 1 feature, got %d", len(features))
+	}
+	if features[0].Enabled {
+		t.Errorf("Enabled = %v, want %v (20-disable.conf is last)", features[0].Enabled, false)
+	}
+}
+
+func TestLoadFeaturesDropInInvalidEnabledPreservesValue(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	baseFeature := `[Feature]
+Enabled=true
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "test.feature"), []byte(baseFeature), 0644); err != nil {
+		t.Fatalf("failed to write base feature file: %v", err)
+	}
+
+	dropInDir := filepath.Join(tmpDir, "test.feature.d")
+	if err := os.MkdirAll(dropInDir, 0755); err != nil {
+		t.Fatalf("failed to create drop-in directory: %v", err)
+	}
+
+	dropIn := `[Feature]
+Enabled=maybe
+`
+	if err := os.WriteFile(filepath.Join(dropInDir, "10-invalid.conf"), []byte(dropIn), 0644); err != nil {
+		t.Fatalf("failed to write drop-in file: %v", err)
+	}
+
+	features, err := LoadFeatures(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadFeatures() error = %v", err)
+	}
+	if len(features) != 1 {
+		t.Fatalf("expected 1 feature, got %d", len(features))
+	}
+	if !features[0].Enabled {
+		t.Errorf("Enabled = %v, want %v (invalid drop-in keeps earlier value)", features[0].Enabled, true)
+	}
+}
+
+func TestLoadFeaturesBaseInvalidEnabledDefaultsFalse(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	baseFeature := `[Feature]
+Enabled=maybe
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "test.feature"), []byte(baseFeature), 0644); err != nil {
+		t.Fatalf("failed to write base feature file: %v", err)
+	}
+
+	features, err := LoadFeatures(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadFeatures() error = %v", err)
+	}
+	if len(features) != 1 {
+		t.Fatalf("expected 1 feature, got %d", len(features))
+	}
+	if features[0].Enabled {
+		t.Errorf("Enabled = %v, want %v (invalid base value uses false default)", features[0].Enabled, false)
+	}
+}
+
+func TestLoadFeaturesDropInWithoutFeatureSectionChangesNothing(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	baseFeature := `[Feature]
+Description=Base Description
+Documentation=https://example.com/docs
+AppStream=https://example.com/appstream.xml
+Enabled=true
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "test.feature"), []byte(baseFeature), 0644); err != nil {
+		t.Fatalf("failed to write base feature file: %v", err)
+	}
+
+	dropInDir := filepath.Join(tmpDir, "test.feature.d")
+	if err := os.MkdirAll(dropInDir, 0755); err != nil {
+		t.Fatalf("failed to create drop-in directory: %v", err)
+	}
+
+	dropIn := `[Other]
+Description=Ignored Description
+Enabled=false
+`
+	if err := os.WriteFile(filepath.Join(dropInDir, "10-other.conf"), []byte(dropIn), 0644); err != nil {
+		t.Fatalf("failed to write drop-in file: %v", err)
+	}
+
+	features, err := LoadFeatures(tmpDir)
+	if err != nil {
+		t.Fatalf("LoadFeatures() error = %v", err)
+	}
+	if len(features) != 1 {
+		t.Fatalf("expected 1 feature, got %d", len(features))
+	}
+
+	f := features[0]
+	if f.Description != "Base Description" {
+		t.Errorf("Description = %q, want %q", f.Description, "Base Description")
+	}
+	if f.Documentation != "https://example.com/docs" {
+		t.Errorf("Documentation = %q, want %q", f.Documentation, "https://example.com/docs")
+	}
+	if f.AppStream != "https://example.com/appstream.xml" {
+		t.Errorf("AppStream = %q, want %q", f.AppStream, "https://example.com/appstream.xml")
+	}
+	if !f.Enabled {
+		t.Errorf("Enabled = %v, want %v", f.Enabled, true)
+	}
+}
