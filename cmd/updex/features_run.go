@@ -47,13 +47,7 @@ func runFeaturesList(cmd *cobra.Command, args []string) error {
 
 		transfersStr := "-"
 		if len(f.Transfers) > 0 {
-			transfersStr = ""
-			for i, t := range f.Transfers {
-				if i > 0 {
-					transfersStr += ", "
-				}
-				transfersStr += t
-			}
+			transfersStr = strings.Join(f.Transfers, ", ")
 		}
 
 		running, linked := formatTransferVersions(f.TransferStatus)
@@ -121,6 +115,18 @@ func dashIfEmpty(v string) string {
 	return v
 }
 
+// printFileList prints header, a format with one %d for the number of files,
+// then one "  - <file>" line per file. It prints nothing when files is empty.
+func printFileList(header string, files []string) {
+	if len(files) == 0 {
+		return
+	}
+	fmt.Printf(header+"\n", len(files))
+	for _, f := range files {
+		fmt.Printf("  - %s\n", f)
+	}
+}
+
 // writePendingReboot prints the footer that marks sysexts whose linked
 // version is not the running one: they take effect at the next boot (or the
 // next systemd-sysext refresh). It prints nothing when pending is empty.
@@ -178,7 +184,7 @@ func runFeaturesEnable(cmd *cobra.Command, args []string) error {
 			// Everything but activation succeeded: show what was done, then
 			// the failure and how to finish. The command still exits non-zero.
 			fmt.Printf("Feature '%s' enabled.\n", result.Feature)
-			printDownloadedFiles(result.DownloadedFiles)
+			printFileList("Downloaded %d extension(s):", result.DownloadedFiles)
 			fmt.Printf("Error: %s\n%s\n", result.RefreshError, result.NextActionMessage)
 		case result.Error != "":
 			fmt.Printf("Error: %s\n", result.Error)
@@ -189,7 +195,7 @@ func runFeaturesEnable(cmd *cobra.Command, args []string) error {
 			} else {
 				fmt.Printf("Feature '%s' enabled.\n", result.Feature)
 				if len(result.DownloadedFiles) > 0 {
-					printDownloadedFiles(result.DownloadedFiles)
+					printFileList("Downloaded %d extension(s):", result.DownloadedFiles)
 				} else if !featureEnableNow {
 					fmt.Printf("Run 'updex features update' to download extensions.\n")
 				}
@@ -202,16 +208,6 @@ func runFeaturesEnable(cmd *cobra.Command, args []string) error {
 	}
 
 	return err
-}
-
-func printDownloadedFiles(files []string) {
-	if len(files) == 0 {
-		return
-	}
-	fmt.Printf("Downloaded %d extension(s):\n", len(files))
-	for _, f := range files {
-		fmt.Printf("  - %s\n", f)
-	}
 }
 
 // printInactiveTransfers prints one line per transfer that a command did not
@@ -228,16 +224,6 @@ func printInactiveTransfers(feature string, inactive []updex.InactiveTransfer) {
 func printKeptTransfers(kept []updex.KeptTransfer) {
 	for _, k := range kept {
 		fmt.Printf("%s: kept: still active through feature(s) %s\n", k.Component, strings.Join(k.ActiveThrough, ", "))
-	}
-}
-
-func printRemovedFiles(files []string) {
-	if len(files) == 0 {
-		return
-	}
-	fmt.Printf("Removed %d file(s):\n", len(files))
-	for _, f := range files {
-		fmt.Printf("  - %s\n", f)
 	}
 }
 
@@ -270,7 +256,7 @@ func runFeaturesDisable(cmd *cobra.Command, args []string) error {
 			if result.Unmerged {
 				fmt.Printf("Extensions unmerged.\n")
 			}
-			printRemovedFiles(result.RemovedFiles)
+			printFileList("Removed %d file(s):", result.RemovedFiles)
 			printKeptTransfers(result.Kept)
 			fmt.Printf("Error: %s\n%s\n", result.RefreshError, result.NextActionMessage)
 		case result.Error != "":
@@ -284,7 +270,7 @@ func runFeaturesDisable(cmd *cobra.Command, args []string) error {
 				if result.Unmerged {
 					fmt.Printf("Extensions unmerged.\n")
 				}
-				printRemovedFiles(result.RemovedFiles)
+				printFileList("Removed %d file(s):", result.RemovedFiles)
 				printKeptTransfers(result.Kept)
 				if !featureDisableNow {
 					fmt.Printf("Its extensions stay installed and merged. Run 'updex features disable %s --now' to remove them.\n", result.Feature)
@@ -562,14 +548,8 @@ func runFeaturesCheck(cmd *cobra.Command, args []string) error {
 			if r.NextBootImageVersion != "" {
 				nextBoot = r.NextBootImageVersion
 			}
-			current := r.CurrentVersion
-			if current == "" {
-				current = "-"
-			}
-			newest := r.NewestVersion
-			if newest == "" {
-				newest = "-"
-			}
+			current := dashIfEmpty(r.CurrentVersion)
+			newest := dashIfEmpty(r.NewestVersion)
 			// A component that could not be checked is marked "error" so the table
 			// never reads as "no update" for it. Details are available in r.Error and
 			// may be reported on stderr by the SDK reporter (suppressed under --silent).
