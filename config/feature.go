@@ -164,6 +164,26 @@ func loadFeaturesFromPaths(searchPaths []string) ([]*Feature, error) {
 	return features, nil
 }
 
+// applyFeatureSection applies the [Feature] keys of cfg to f. A key that is
+// absent keeps the current value, and an Enabled value that is not a boolean
+// keeps the current Enabled.
+func applyFeatureSection(f *Feature, cfg *ini.File) {
+	if sec, err := cfg.GetSection("Feature"); err == nil {
+		if key, err := sec.GetKey("Description"); err == nil {
+			f.Description = key.String()
+		}
+		if key, err := sec.GetKey("Documentation"); err == nil {
+			f.Documentation = key.String()
+		}
+		if key, err := sec.GetKey("AppStream"); err == nil {
+			f.AppStream = key.String()
+		}
+		if key, err := sec.GetKey("Enabled"); err == nil {
+			f.Enabled = key.MustBool(f.Enabled)
+		}
+	}
+}
+
 // parseFeatureFile parses a .feature file and applies drop-ins
 func parseFeatureFile(filePath, name string, searchPaths []string) (*Feature, error) {
 	// Check if masked (symlink to /dev/null)
@@ -188,21 +208,7 @@ func parseFeatureFile(filePath, name string, searchPaths []string) (*Feature, er
 		Enabled:  false, // Default to disabled
 	}
 
-	// Parse [Feature] section
-	if sec, err := cfg.GetSection("Feature"); err == nil {
-		if key, err := sec.GetKey("Description"); err == nil {
-			f.Description = key.String()
-		}
-		if key, err := sec.GetKey("Documentation"); err == nil {
-			f.Documentation = key.String()
-		}
-		if key, err := sec.GetKey("AppStream"); err == nil {
-			f.AppStream = key.String()
-		}
-		if key, err := sec.GetKey("Enabled"); err == nil {
-			f.Enabled = key.MustBool(false)
-		}
-	}
+	applyFeatureSection(f, cfg)
 
 	// Apply drop-ins from all search paths
 	if err := applyFeatureDropIns(f, name, searchPaths); err != nil {
@@ -265,20 +271,7 @@ func applyFeatureDropIn(f *Feature, dropInPath string) error {
 		return fmt.Errorf("failed to load drop-in file: %w", err)
 	}
 
-	if sec, err := cfg.GetSection("Feature"); err == nil {
-		if key, err := sec.GetKey("Description"); err == nil {
-			f.Description = key.String()
-		}
-		if key, err := sec.GetKey("Documentation"); err == nil {
-			f.Documentation = key.String()
-		}
-		if key, err := sec.GetKey("AppStream"); err == nil {
-			f.AppStream = key.String()
-		}
-		if key, err := sec.GetKey("Enabled"); err == nil {
-			f.Enabled = key.MustBool(f.Enabled)
-		}
-	}
+	applyFeatureSection(f, cfg)
 
 	return nil
 }
