@@ -11,6 +11,9 @@ updates:
     commit-message:
       prefix: "build"
       include: "scope"
+    groups:
+      gomod:
+        patterns: ["*"]
 
   # Maintain GitHub Actions
   - package-ecosystem: "github-actions"
@@ -21,3 +24,6 @@ updates:
     commit-message:
       prefix: "ci"
       include: "scope"
+    groups:
+      actions:
+        patterns: ["*"]

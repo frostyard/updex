@@ -31,6 +31,7 @@ The ones that bind updex:
 - [ADR-0068 — Label pull requests that touch high-risk paths](https://github.com/frostyard/core/blob/main/docs/adr/0068-label-pull-requests-that-touch-high-risk-paths.md) — `.github/risk-paths.json` names high-risk paths and `.github/workflows/risk-paths.yml` adds `risk:high`; pinned by `updex/risk_paths_contract_test.go`
 - [ADR-0070 — Build tool docs sites with MaterialX on GitHub Pages](https://github.com/frostyard/core/blob/main/docs/adr/0070-build-tool-docs-sites-with-materialx-on-github-pages.md) — updex has no docs site yet; a follow-up PR adds it with the `frostyard-docs-site` skill
 - [ADR-0071 — Hold every code repository to one baseline](https://github.com/frostyard/core/blob/main/docs/adr/0071-hold-every-code-repository-to-one-baseline.md) — rows B1 to B16 of core's `docs/specs/repository-baseline.md`; this repository's rows are pinned by `updex/repository_baseline_contract_test.go`
+- [ADR-0075 — Group Dependabot updates and sync skills once a day](https://github.com/frostyard/core/blob/main/docs/adr/0075-batch-routine-pull-requests.md) — each entry of [`.github/dependabot.yml`](../.github/dependabot.yml) has 1 `patterns: ["*"]` group, so Dependabot opens at most 1 version-update PR for each ecosystem and run; security updates stay 1 PR each
 
 When changing behavior covered by one of these, update or supersede the ADR
 in frostyard/core first, then change this repo in the same effort.
