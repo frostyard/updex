@@ -3,7 +3,10 @@
 # workflow, on every pull request. A pull request that touches a glob in
 # .github/risk-paths.json gets 1 level label, level:L1 to level:L4 (L1 read
 # every line, L2 read the diff, L3 skim, L4 title and CI), and risk:high for
-# L1 and L2. The workflow removes ready-for-human when the head moves after
+# L1 and L2. The organization floors can raise the computed level, and an
+# existing stricter level label stays (the workflow never lowers 1). A missing
+# risk:high label fails the job; the 4 level labels only give a warning when
+# absent. The workflow removes ready-for-human when the head moves after
 # the label or CI is not green at the label, and it writes a "would
 # auto-merge" shadow comment on some Dependabot pull requests; it never merges.
 #

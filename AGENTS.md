@@ -196,7 +196,10 @@ declares `permissions: {}`, with the job at `contents: read` +
 `pull-requests: write`. It reads `.github/risk-paths.json` at the base SHA and
 checks out nothing. It adds 1 level label, `level:L1` to `level:L4` (L1 read
 every line, L2 read the diff, L3 skim, L4 title and CI), and `risk:high` for L1
-and L2; it never removes `risk:high`, and it removes `ready-for-human` when the
+and L2; the organization floors can raise the computed level, and an existing
+stricter level label stays (the workflow never lowers 1). A missing
+`risk:high` label fails the job; the 4 level labels only give a warning
+when absent. It never removes `risk:high`, and it removes `ready-for-human` when the
 head moves after the label ([core ADR-0077](https://github.com/frostyard/core/blob/main/docs/adr/0077-bind-ready-for-human-to-the-head-commit.md)).
 The labeler is in the same workflow because `actions/labeler` reads the labels and
 then sets the whole list, so a label added between the read and the write is

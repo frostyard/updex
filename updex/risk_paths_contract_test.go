@@ -7,12 +7,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
-
-	"go.yaml.in/yaml/v3"
 )
 
 var riskPathsCategories = []string{
@@ -40,170 +37,99 @@ func TestRiskPathsCallerContract(t *testing.T) {
 	}
 }
 
-// checkRiskPathsCaller gives 1 problem string for each way the workflow
-// departs from the caller contract: the labeler stays in this workflow before
-// the core job (updex#483) and it is not woken by an edit or a label change,
-// the core job runs as pr-triage after the label job, and that job calls core's
-// pr-triage workflow pinned to a full commit SHA.
-func checkRiskPathsCaller(data []byte) []string {
-	var problems []string
-	problem := func(format string, args ...any) {
-		problems = append(problems, fmt.Sprintf(format, args...))
-	}
+// riskCallerUses is the 1 body line of the caller that may vary: the core pin,
+// with 40 lowercase hex characters and an optional trailing " # comment".
+const riskCallerUses = "    uses: " + prTriageUses + "<SHA>[ # comment]"
 
-	var workflow struct {
-		On struct {
-			PullRequestTarget struct {
-				Types []string `yaml:"types"`
-			} `yaml:"pull_request_target"`
-		} `yaml:"on"`
-		Permissions map[string]any `yaml:"permissions"`
-		Jobs        map[string]struct {
-			If          string         `yaml:"if"`
-			Needs       any            `yaml:"needs"`
-			Permissions map[string]any `yaml:"permissions"`
-			Steps       []struct {
-				Uses string         `yaml:"uses"`
-				With map[string]any `yaml:"with"`
-			} `yaml:"steps"`
-			Secrets any `yaml:"secrets"`
-			With    any `yaml:"with"`
-		} `yaml:"jobs"`
-	}
-	if err := yaml.Unmarshal(data, &workflow); err != nil {
-		return append(problems, fmt.Sprintf("parse risk paths workflow: %v", err))
-	}
-
-	var generic map[string]any
-	if err := yaml.Unmarshal(data, &generic); err != nil {
-		return append(problems, fmt.Sprintf("parse risk paths workflow keys: %v", err))
-	}
-	// One run per pull request at a time, never cancelled in progress: the
-	// label job of a later run must not overlap the pr-triage job of an
-	// earlier run (updex#483 race).
-	wantGroup := "risk-paths-${{ github.event.pull_request.number }}"
-	if concurrency, ok := generic["concurrency"].(map[string]any); !ok {
-		problem("risk paths workflow has no concurrency map; want group %q with cancel-in-progress false", wantGroup)
-	} else {
-		if got := concurrency["group"]; got != wantGroup {
-			problem("concurrency.group = %v, want %q", got, wantGroup)
-		}
-		if got, ok := concurrency["cancel-in-progress"].(bool); !ok || got {
-			problem("concurrency.cancel-in-progress = %v, want boolean false", concurrency["cancel-in-progress"])
-		}
-	}
-	onValue, ok := generic["on"]
-	if !ok {
-		problem("risk paths workflow has no on map")
-	} else {
-		onMap, ok := onValue.(map[string]any)
-		if !ok {
-			problem("risk paths workflow on = %T, want a map", onValue)
-		} else if len(onMap) != 1 {
-			problem("risk paths workflow on has %d keys, want exactly 1 (%v)", len(onMap), onMap)
-		} else if _, ok := onMap["pull_request_target"]; !ok {
-			problem("risk paths workflow on keys = %v, want only pull_request_target", onMap)
-		}
-	}
-
-	// "labeled": the levels step of pr-triage skips a label event, but the
-	// run must still see the new head and remove ready-for-human when needed.
-	wantTypes := []string{"opened", "synchronize", "reopened", "edited", "labeled"}
-	if !slices.Equal(workflow.On.PullRequestTarget.Types, wantTypes) {
-		problem("on.pull_request_target.types = %v, want %v", workflow.On.PullRequestTarget.Types, wantTypes)
-	}
-	if workflow.Permissions == nil {
-		problem("risk paths workflow is missing top-level permissions")
-	} else if len(workflow.Permissions) != 0 {
-		problem("top-level permissions = %v, want an empty map", workflow.Permissions)
-	}
-	if len(workflow.Jobs) != 2 {
-		problem("risk paths workflow jobs = %v, want exactly two jobs: label and pr-triage", workflow.Jobs)
-	}
-	label, ok := workflow.Jobs["label"]
-	if !ok {
-		problem("risk paths workflow is missing the label job")
-	}
-	// No labeler run for an edit or a label change: a label change is made by
-	// pr-triage itself, and the labeler would then set the whole label list.
-	wantLabelIf := "github.event.action != 'edited' && github.event.action != 'labeled'"
-	if label.If != wantLabelIf {
-		problem("label job if = %q, want %q", label.If, wantLabelIf)
-	}
-	wantPermissions := map[string]any{"contents": "read", "pull-requests": "write"}
-	if len(label.Permissions) != len(wantPermissions) {
-		problem("label permissions = %v, want %v", label.Permissions, wantPermissions)
-	} else {
-		for key, want := range wantPermissions {
-			if got, ok := label.Permissions[key]; !ok || got != want {
-				problem("label permissions[%q] = %v, want %v", key, got, want)
-			}
-		}
-	}
-	if len(label.Steps) != 1 {
-		problem("label job has %d steps, want exactly 1", len(label.Steps))
-	} else {
-		pinnedLabeler := regexp.MustCompile(`^actions/labeler@[0-9a-f]{40}$`)
-		if !pinnedLabeler.MatchString(label.Steps[0].Uses) {
-			problem("label step uses = %q, want actions/labeler pinned to a 40-character SHA", label.Steps[0].Uses)
-		}
-		if got, ok := label.Steps[0].With["sync-labels"]; !ok || got != false {
-			problem("label step sync-labels = %v, want false", got)
-		}
-	}
-	labelMap, ok := genericJobMap(generic, "label")
-	if !ok {
-		problem("risk paths workflow cannot find label job in generic YAML map")
-	}
-	if _, exists := labelMap["steps"]; !exists {
-		problem("label job must contain a steps list")
-	}
-	for _, forbidden := range []string{"uses", "secrets"} {
-		if _, exists := labelMap[forbidden]; exists {
-			problem("label job must not contain %q", forbidden)
-		}
-	}
-
-	job, ok := workflow.Jobs["pr-triage"]
-	if !ok {
-		problem("risk paths workflow is missing the pr-triage job; the job id of the caller must be pr-triage")
-	}
-	if needsLabel(job.Needs) == false {
-		problem("pr-triage needs = %v, want label", job.Needs)
-	}
-	if job.If != "${{ !cancelled() }}" {
-		problem("pr-triage if = %q, want %q", job.If, "${{ !cancelled() }}")
-	}
-	if len(job.Permissions) != len(wantPermissions) {
-		problem("pr-triage permissions = %v, want %v", job.Permissions, wantPermissions)
-	} else {
-		for key, want := range wantPermissions {
-			if got, ok := job.Permissions[key]; !ok || got != want {
-				problem("pr-triage permissions[%q] = %v, want %v", key, got, want)
-			}
-		}
-	}
-	// The pin must sit in the pr-triage job itself: a uses: under another job,
-	// or a line inside a block scalar, calls nothing.
-	if uses, hasUses := jobUses(string(data), prTriageJob); !hasUses {
-		problem("risk paths workflow has no %s job with a uses: key at indent 4", prTriageJob)
-	} else if !pinnedRiskUses(uses) {
-		problem("pr-triage uses = %q, want %s pinned to a 40-character SHA", uses, prTriageUses)
-	}
-	if len(job.Steps) != 0 {
-		problem("pr-triage job steps = %v, want no steps", job.Steps)
-	}
-	jobMap, ok := genericJobMap(generic, "pr-triage")
-	if !ok {
-		problem("risk paths workflow cannot find pr-triage job in generic YAML map")
-	}
-	for _, forbidden := range []string{"steps", "secrets", "with"} {
-		if _, exists := jobMap[forbidden]; exists {
-			problem("pr-triage job must not contain %q", forbidden)
-		}
-	}
-	return problems
+// riskCallerBody is the caller after its leading comment block: every line must
+// equal this body exactly (core ADR-0068, ADR-0077, ADR-0078; the risk-paths
+// and PR triage specs). The labeler stays in this workflow before the core job
+// with its concurrency group (updex#483). An exact text check cannot be fooled
+// by a comment that holds a key, by a quoted scalar or by a second types: list.
+var riskCallerBody = []string{
+	"name: PR triage",
+	"",
+	"on:",
+	"  pull_request_target:",
+	"    types: [opened, synchronize, reopened, edited, labeled]",
+	"",
+	"permissions: {}",
+	"",
+	"concurrency:",
+	"  group: risk-paths-${{ github.event.pull_request.number }}",
+	"  cancel-in-progress: false",
+	"",
+	"jobs:",
+	"  label:",
+	"    name: Apply path labels",
+	"    if: github.event.action != 'edited' && github.event.action != 'labeled'",
+	"    runs-on: ubuntu-latest",
+	"    timeout-minutes: 5",
+	"    permissions:",
+	"      contents: read",
+	"      pull-requests: write",
+	"    steps:",
+	"      # pull_request_target can label fork PRs. Never check out or execute",
+	"      # pull-request-controlled code in this privileged workflow.",
+	"      - name: Apply labels",
+	"        uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7",
+	"        with:",
+	"          sync-labels: false",
+	"",
+	"  pr-triage:",
+	"    needs: label",
+	"    if: ${{ !cancelled() }}",
+	"    permissions:",
+	"      contents: read",
+	"      pull-requests: write",
+	riskCallerUses,
 }
+
+// checkRiskPathsCaller compares the caller with its canonical body and reports
+// the first difference.
+func checkRiskPathsCaller(data []byte) []string {
+	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	start := 0
+	for start < len(lines) && (strings.TrimSpace(lines[start]) == "" || strings.HasPrefix(strings.TrimSpace(lines[start]), "#")) {
+		start++
+	}
+	body := lines[start:]
+	for i, want := range riskCallerBody {
+		if i >= len(body) {
+			return []string{fmt.Sprintf("caller ends at line %d, want line %d: %q", len(body), i+1, want)}
+		}
+		if want == riskCallerUses {
+			if problem := checkRiskCallerUses(body[i], i+1); problem != "" {
+				return []string{problem}
+			}
+			continue
+		}
+		if body[i] != want {
+			return []string{fmt.Sprintf("caller line %d is %q, want %q", i+1, body[i], want)}
+		}
+	}
+	if len(body) > len(riskCallerBody) {
+		return []string{fmt.Sprintf("caller has an extra line %d: %q", len(riskCallerBody)+1, body[len(riskCallerBody)])}
+	}
+	return nil
+}
+
+// checkRiskCallerUses holds when line calls core's PR triage workflow at a full
+// 40-character lowercase commit SHA, with an optional " # comment" after it.
+func checkRiskCallerUses(line string, number int) string {
+	rest, ok := strings.CutPrefix(line, "    uses: "+prTriageUses)
+	if !ok {
+		return fmt.Sprintf("caller line %d is %q, want %q", number, line, riskCallerUses)
+	}
+	sha, _, _ := strings.Cut(rest, " #")
+	if len(sha) != 40 || strings.Trim(sha, "0123456789abcdef") != "" {
+		return fmt.Sprintf("caller line %d holds the SHA %q, want 40 lowercase hex characters", number, sha)
+	}
+	return ""
+}
+
+// riskCaller is the caller workflow file: its name stays risk-paths.yml.
+const riskCaller = ".github/workflows/risk-paths.yml"
 
 // prTriageJob and prTriageUses name the job and the reusable workflow the
 // caller must use: the pin sits in that job, at a full commit SHA (core
@@ -212,119 +138,6 @@ const (
 	prTriageJob  = "pr-triage"
 	prTriageUses = "frostyard/core/.github/workflows/pr-triage.yml@"
 )
-
-// pinnedRiskUses holds when value is core's PR triage workflow at a full
-// 40-character commit SHA.
-func pinnedRiskUses(value string) bool {
-	if !strings.HasPrefix(value, prTriageUses) {
-		return false
-	}
-	ref := strings.TrimPrefix(value, prTriageUses)
-	return len(ref) == 40 && strings.Trim(ref, "0123456789abcdef") == ""
-}
-
-// opensBlockScalar holds when a trimmed line starts a block scalar: the text
-// after its last colon begins with "|" or ">" (with or without a chomping
-// indicator, as in "run: |" or "env: >-").
-func opensBlockScalar(trimmed string) bool {
-	field := trimmed
-	if i := strings.LastIndex(field, ":"); i >= 0 {
-		field = strings.TrimSpace(field[i+1:])
-	}
-	return strings.HasPrefix(field, "|") || strings.HasPrefix(field, ">")
-}
-
-// stripComment drops a trailing YAML comment: a "#" starts a comment only at
-// the start of the value or after a space or a tab, and a "#" inside a single-
-// or double-quoted scalar is part of the value. Backslash escapes in a
-// double-quoted scalar are not read; no caller value here needs them.
-func stripComment(value string) string {
-	quote := byte(0)
-	for i := 0; i < len(value); i++ {
-		c := value[i]
-		switch {
-		case quote != 0:
-			if c == quote {
-				quote = 0
-			}
-		case c == '"' || c == '\'':
-			quote = c
-		case c == '#' && (i == 0 || value[i-1] == ' ' || value[i-1] == '\t'):
-			return strings.TrimSpace(value[:i])
-		}
-	}
-	return strings.TrimSpace(value)
-}
-
-// unquoteScalar drops the quotes of 1 scalar that is wholly quoted.
-func unquoteScalar(value string) string {
-	if len(value) >= 2 && (value[0] == '"' || value[0] == '\'') && value[len(value)-1] == value[0] {
-		return value[1 : len(value)-1]
-	}
-	return value
-}
-
-// jobUses gives the value of the uses: key at indent 4 in the job with id job,
-// which is a key at indent 2 under the top-level jobs: map. The jobs: map ends
-// at the next indent-0 key, so a job header or a uses: line inside another
-// top-level block never counts. The value drops a trailing comment
-// (quote-aware) and the quotes of a quoted scalar. A blank line or a
-// comment-only line at any indent does not end the job block; only a
-// non-comment line at indent 2 or less does. A line inside a block scalar
-// (after a key that ends with "|" or ">") is text, not structure.
-func jobUses(text, job string) (string, bool) {
-	inJobs := false
-	inJob := false
-	blockIndent := -1
-	for _, line := range strings.Split(text, "\n") {
-		trimmed := strings.TrimSpace(line)
-		indent := len(line) - len(strings.TrimLeft(line, " "))
-		if blockIndent >= 0 {
-			if trimmed == "" || indent > blockIndent {
-				continue
-			}
-			blockIndent = -1
-		}
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		if opensBlockScalar(trimmed) {
-			blockIndent = indent
-		}
-		if indent == 0 {
-			inJobs = strings.HasPrefix(trimmed, "jobs:")
-			inJob = false
-			continue
-		}
-		if !inJobs {
-			continue
-		}
-		if indent <= 2 {
-			inJob = indent == 2 && strings.HasPrefix(trimmed, job+":")
-			continue
-		}
-		if !inJob || blockIndent == indent {
-			continue
-		}
-		if indent == 4 && strings.HasPrefix(trimmed, "uses:") {
-			return unquoteScalar(stripComment(strings.TrimPrefix(trimmed, "uses:"))), true
-		}
-	}
-	return "", false
-}
-
-func needsLabel(needs any) bool {
-	if got, ok := needs.(string); ok {
-		return got == "label"
-	}
-	if got, ok := needs.([]any); ok {
-		return len(got) == 1 && got[0] == "label"
-	}
-	if got, ok := needs.([]string); ok {
-		return len(got) == 1 && got[0] == "label"
-	}
-	return false
-}
 
 func TestNoOtherWorkflowSetsPullRequestLabels(t *testing.T) {
 	files, err := filepath.Glob("../.github/workflows/*")
@@ -345,17 +158,6 @@ func TestNoOtherWorkflowSetsPullRequestLabels(t *testing.T) {
 	}
 }
 
-func genericJobMap(workflow map[string]any, name string) (map[string]any, bool) {
-	jobs, ok := workflow["jobs"].(map[string]any)
-	if !ok {
-		return nil, false
-	}
-	job, ok := jobs[name].(map[string]any)
-	return job, ok
-}
-
-// riskPathLevels are the 4 levels of a version 2 list (frostyard/core
-// ADR-0078), strictest first.
 var riskPathLevels = []string{"L1", "L2", "L3", "L4"}
 
 // riskPathsRequiredPaths are the 2 paths rule C of the risk-paths spec requires
@@ -610,171 +412,69 @@ func TestRiskPathsRequiredLevels(t *testing.T) {
 	}
 }
 
-// TestRiskPathsCallerRejectsOldForm gives 1 failing case for each way a caller
-// can keep the pre-triage form: pinning core's risk-paths workflow, dropping
-// the labeled event, or naming the job something other than pr-triage.
-func TestRiskPathsCallerRejectsOldForm(t *testing.T) {
-	data, err := os.ReadFile("../.github/workflows/risk-paths.yml")
+func TestCheckRiskPathsCaller(t *testing.T) {
+	data, err := os.ReadFile("../" + riskCaller)
 	if err != nil {
-		t.Fatalf("read risk paths workflow: %v", err)
-	}
-	pinned := regexp.MustCompile(`frostyard/core/\.github/workflows/pr-triage\.yml@[0-9a-f]{40}`).Find(data)
-	if pinned == nil {
-		t.Fatal("the caller does not pin frostyard/core/.github/workflows/pr-triage.yml; the cases below need it")
-	}
-	tests := []struct {
-		name string
-		old  string
-		new  string
-		want string
-	}{
-		{
-			name: "pins the old risk-paths workflow",
-			old:  string(pinned),
-			new:  strings.Replace(string(pinned), "pr-triage.yml", "risk-paths.yml", 1),
-			want: "pr-triage.yml@ pinned to a 40-character SHA",
-		},
-		{
-			name: "no labeled event",
-			old:  "types: [opened, synchronize, reopened, edited, labeled]",
-			new:  "types: [opened, synchronize, reopened, edited]",
-			want: "want [opened synchronize reopened edited labeled]",
-		},
-		{
-			// The labeled type under the wrong trigger: pull_request: is not
-			// pull_request_target:.
-			name: "labeled only under pull_request",
-			old:  "    types: [opened, synchronize, reopened, edited, labeled]\n",
-			new:  "    types: [opened, synchronize, reopened, edited]\n  pull_request:\n    types: [labeled]\n",
-			want: "want [opened synchronize reopened edited labeled]",
-		},
-		{
-			// A "#" inside a quoted scalar is part of the value, not a comment:
-			// the 5th type is "labeled # x", not labeled.
-			name: "labeled inside a quoted scalar",
-			old:  "    types: [opened, synchronize, reopened, edited, labeled]",
-			new:  `    types: [opened, synchronize, reopened, edited, "labeled # x"]`,
-			want: "want [opened synchronize reopened edited labeled]",
-		},
-		{
-			name: "labeller woken by a label change",
-			old:  "if: github.event.action != 'edited' && github.event.action != 'labeled'",
-			new:  "if: github.event.action != 'edited'",
-			want: "label job if",
-		},
-		{
-			name: "core job not named pr-triage",
-			old:  "\n  pr-triage:\n",
-			new:  "\n  risk-paths:\n",
-			want: "pr-triage",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if !strings.Contains(string(data), tt.old) {
-				t.Fatalf("the caller does not contain %q, so this case cannot run", tt.old)
-			}
-			mutated := strings.Replace(string(data), tt.old, tt.new, 1)
-			problems := checkRiskPathsCaller([]byte(mutated))
-			if len(problems) == 0 {
-				t.Fatalf("the caller accepted the old form, want a problem naming %q", tt.want)
-			}
-			if !slices.ContainsFunc(problems, func(problem string) bool { return strings.Contains(problem, tt.want) }) {
-				t.Errorf("problems = %v, want one naming %q", problems, tt.want)
-			}
-		})
-	}
-}
-
-// TestRiskPathsCallerBindsThePinToTheJob holds the pin to the pr-triage job
-// itself. A gate that finds the pin anywhere in the file accepts a uses: under
-// another job or a line inside a block scalar, and the run calls nothing.
-func TestRiskPathsCallerBindsThePinToTheJob(t *testing.T) {
-	data, err := os.ReadFile("../.github/workflows/risk-paths.yml")
-	if err != nil {
-		t.Fatalf("read risk paths workflow: %v", err)
+		t.Fatalf("read %s: %v", riskCaller, err)
 	}
 	text := string(data)
-	pin := regexp.MustCompile(regexp.QuoteMeta(prTriageUses) + `[0-9a-f]{40}`).FindString(text)
-	if pin == "" {
-		t.Fatalf("the caller does not pin %s<40 hex>; the cases below need it", prTriageUses)
-	}
+	usesPrefix := "    uses: " + prTriageUses
 	usesLine := ""
 	for _, line := range strings.Split(text, "\n") {
-		if strings.HasPrefix(line, "    uses: ") && strings.Contains(line, pin) {
+		if strings.HasPrefix(line, usesPrefix) && len(strings.Split(line, "@")) > 1 {
+			if strings.Contains(line, "actions/labeler@") {
+				continue
+			}
 			usesLine = line
 			break
 		}
 	}
 	if usesLine == "" {
-		t.Fatalf("the caller has no uses: line at indent 4 with the pin %q", pin)
+		t.Fatalf("%s has no uses: line for the core pin", riskCaller)
 	}
+	sha, _, _ := strings.Cut(strings.TrimPrefix(usesLine, usesPrefix), " #")
+	if len(sha) != 40 {
+		t.Fatalf("%s pins %q, want a 40-character SHA", riskCaller, sha)
+	}
+	types := "    types: [opened, synchronize, reopened, edited, labeled]"
 	tests := []struct {
-		name   string
-		mutate func(string) string
-		want   string
+		name string
+		text string
+		want string
 	}{
-		{
-			name: "pin under another job",
-			mutate: func(s string) string {
-				return strings.Replace(s, usesLine+"\n", "", 1) +
-					"\n  other:\n    permissions:\n      contents: read\n" + usesLine + "\n"
-			},
-			want: "has no pr-triage job with a uses: key",
-		},
-		{
-			name: "pin inside a block scalar of the pr-triage job",
-			mutate: func(s string) string {
-				return strings.Replace(s, usesLine+"\n", "    steps:\n      - run: |\n          uses: "+pin+"\n", 1)
-			},
-			want: "has no pr-triage job with a uses: key",
-		},
-		{
-			// Comments at indent 0 and 2 and a blank line are not structure: they
-			// do not end the job block, so the pin still counts.
-			name: "comments and a blank line before the uses line",
-			mutate: func(s string) string {
-				return strings.Replace(s, usesLine+"\n", "# a comment at indent 0\n\n  # a comment at indent 2\n"+usesLine+"\n", 1)
-			},
-			want: "",
-		},
-		{
-			// The jobs: map ends at the next indent-0 key, and a block scalar is
-			// text: a job header and a uses: line inside it are not a job.
-			name: "job and pin inside a top-level block scalar",
-			mutate: func(s string) string {
-				s = strings.Replace(s, "\n  pr-triage:\n", "\n  other:\n", 1)
-				return s + "\nrun-name: |\n  pr-triage:\n    uses: " + pin + "\n"
-			},
-			want: "has no pr-triage job with a uses: key",
-		},
-		{
-			// Inline comments in 5 places, including a "[" and "]" in the types
-			// comment: the list ends at the first "]" and every comment is
-			// dropped, so the caller is valid.
-			name: "inline comments in 5 places",
-			mutate: func(s string) string {
-				s = strings.Replace(s, "\non:\n", "\non: # events\n", 1)
-				s = strings.Replace(s, "\n  pull_request_target:\n", "\n  pull_request_target: # base branch\n", 1)
-				s = strings.Replace(s, "    types: [opened, synchronize, reopened, edited, labeled]\n",
-					"    types: [opened, synchronize, reopened, edited, labeled] # readiness [L1]\n", 1)
-				s = strings.Replace(s, "\n  pr-triage:\n", "\n  pr-triage: # core\n", 1)
-				return strings.Replace(s, usesLine+"\n", "    uses: "+pin+" # pinned\n", 1)
-			},
-			want: "",
-		},
+		{"the committed caller", text, ""},
+		{"another SHA and another trailing comment",
+			strings.Replace(text, usesLine, usesPrefix+strings.Repeat("a", 40)+" # pinned", 1), ""},
+		{"pin under another job name",
+			strings.Replace(text, "\n  "+prTriageJob+":\n", "\n  other:\n", 1), `want "  ` + prTriageJob + `:"`},
+		{"caller that pins risk-paths.yml",
+			strings.Replace(text, prTriageUses, "frostyard/core/.github/workflows/risk-paths.yml@", 1), prTriageUses + "<SHA>"},
+		{"short SHA", strings.Replace(text, usesPrefix+sha, usesPrefix+sha[:7], 1), "40 lowercase hex"},
+		{"no labeled type", strings.Replace(text, types, "    types: [opened, synchronize, reopened, edited]", 1), types},
+		{"commented-out pull-requests scope",
+			strings.Replace(text, "      pull-requests: write", "      # pull-requests: write", 1), "pull-requests: write"},
+		{"an extra permission",
+			strings.Replace(text, "      pull-requests: write\n", "      pull-requests: write\n      actions: read\n", 1), "actions: read"},
+		{"a scalar job header with a comment",
+			strings.Replace(text, "\n  "+prTriageJob+":\n", "\n  "+prTriageJob+": | # note: text\n", 1), prTriageJob + ": | # note: text"},
+		{"the types list inside a comment",
+			strings.Replace(text, types, "    types: # [opened, synchronize, reopened, edited, labeled]", 1), "types: #"},
+		{"an added merge_group trigger",
+			strings.Replace(text, "\n  "+prTriageJob+":\n", "\n  merge_group:\n  "+prTriageJob+":\n", 1), "merge_group"},
+		{"an extra line inside the job",
+			strings.Replace(text, "      contents: read\n", "      contents: read\n    timeout-minutes: 5\n", 1), "timeout-minutes"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			problems := checkRiskPathsCaller([]byte(tt.mutate(text)))
+			got := strings.Join(checkRiskPathsCaller([]byte(tt.text)), "; ")
 			if tt.want == "" {
-				if len(problems) != 0 {
-					t.Fatalf("problems = %v, want none", problems)
+				if got != "" {
+					t.Fatalf("checkRiskPathsCaller(%s) = %q, want no finding", tt.name, got)
 				}
 				return
 			}
-			if !slices.ContainsFunc(problems, func(problem string) bool { return strings.Contains(problem, tt.want) }) {
-				t.Errorf("problems = %v, want one naming %q", problems, tt.want)
+			if !strings.Contains(got, tt.want) {
+				t.Errorf("checkRiskPathsCaller(%s) = %q, want it to name %q", tt.name, got, tt.want)
 			}
 		})
 	}
@@ -1031,21 +731,26 @@ func matchRiskPathSegments(globSegments, pathSegments []string) bool {
 
 // matchRiskPathSegment matches 1 path segment against 1 glob segment with the
 // rules of core's segmentPattern: "?" is exactly 1 character, "*" is 0 or more
-// characters, and every other character is literal. A character class or a
-// backslash is literal, as core reads it, not syntax.
+// characters, and every other character is literal. "*" and "?" are recognized
+// before literal equality, so "*a" matches "*ba" and "*" matches "**", as in
+// core. A character class or a backslash is literal, as core reads it, not
+// syntax.
 func matchRiskPathSegment(glob, segment string) bool {
 	pattern, value := []rune(glob), []rune(segment)
 	i, j := 0, 0
 	star, mark := -1, 0
 	for j < len(value) {
 		switch {
-		case i < len(pattern) && (pattern[i] == '?' || pattern[i] == value[j]):
-			i++
-			j++
 		case i < len(pattern) && pattern[i] == '*':
 			star = i
 			mark = j
 			i++
+		case i < len(pattern) && pattern[i] == '?':
+			i++
+			j++
+		case i < len(pattern) && pattern[i] == value[j]:
+			i++
+			j++
 		case star >= 0:
 			i = star + 1
 			mark++
@@ -1205,6 +910,19 @@ func TestMatchRiskPathGlob(t *testing.T) {
 		{name: "backslash does not escape", glob: `a\b`, path: "ab", match: false},
 		{name: "character class is literal", glob: "[ab]", path: "[ab]", match: true},
 		{name: "character class does not match its member", glob: "[ab]", path: "a", match: false},
+		// "*" and "?" come before literal equality, as in core's segmentPattern.
+		{name: "star before literal equality", glob: "*a", path: "*ba", match: true},
+		{name: "star matches a star", glob: "*", path: "**", match: true},
+		{name: "2 stars in 1 segment match 2 stars", glob: "a*b", path: "a**b", match: true},
+		{name: "question mark matches a star", glob: "?", path: "*", match: true},
+		{name: "question mark matches itself", glob: "?", path: "?", match: true},
+		{name: "question mark matches a star in the middle", glob: "a?c", path: "a*c", match: true},
+		{name: "star file pattern matches a star file", glob: "*.go", path: "*.go", match: true},
+		{name: "star then question mark", glob: "*?", path: "**", match: true},
+		{name: "trailing star does not match a leading star", glob: "*b", path: "b*", match: false},
+		{name: "literal question marks match", glob: "a?c", path: "a?c", match: true},
+		{name: "star segment matches a star segment", glob: "a/*/c", path: "a/*/c", match: true},
+		{name: "double star then star", glob: "**/*a", path: "x/*ba", match: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
