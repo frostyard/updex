@@ -103,6 +103,11 @@ var riskCallerBody = []string{
 // checkRiskPathsCaller compares the caller with its canonical body and reports
 // the first difference.
 func checkRiskPathsCaller(data []byte) []string {
+	// YAML also breaks a line at CR (and YAML 1.1 at NEL, LS and PS), so a
+	// comment that holds one could hide a key: reject them before any check.
+	if i := strings.IndexAny(string(data), "\r\u0085\u2028\u2029"); i >= 0 {
+		return []string{fmt.Sprintf("caller holds a line break other than LF at byte %d; YAML can read it as a new line", i)}
+	}
 	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
 	start := 0
 	for start < len(lines) && (strings.TrimSpace(lines[start]) == "" || strings.HasPrefix(strings.TrimSpace(lines[start]), "#")) {
@@ -478,6 +483,13 @@ func TestCheckRiskPathsCaller(t *testing.T) {
 		{"the committed caller", text, ""},
 		{"another SHA and another trailing comment",
 			strings.Replace(text, usesLine, usesPrefix+strings.Repeat("a", 40)+" # pinned", 1), ""},
+		{"CR in the core pin comment",
+			strings.Replace(text, usesLine, usesLine+"\r    if: false", 1), "line break other than LF"},
+		{"CR in the labeler pin comment",
+			strings.Replace(text, labelerLine, labelerLine+"\r        if: false", 1), "line break other than LF"},
+		{"CR in the leading comment block", "# header\r" + text, "line break other than LF"},
+		{"NEL in the core pin comment",
+			strings.Replace(text, usesLine, usesLine+"\u0085    if: false", 1), "line break other than LF"},
 		{"another labeler SHA (a Dependabot bump)",
 			strings.Replace(text, labelerLine, "        uses: actions/labeler@"+strings.Repeat("b", 40)+" # v7.1", 1), ""},
 		{"labeler on a tag",
