@@ -1,16 +1,4 @@
 {
-  "extraKnownMarketplaces": {
-    "frostyard-ai": {
-      "source": {
-        "source": "github",
-        "repo": "frostyard/frostyard-ai"
-      }
-    }
-  },
-  "enabledPlugins": {
-    "frostyard-dev@frostyard-ai": true,
-    "frostyard-os@frostyard-ai": true
-  },
   "permissions": {
     "deny": [
       "Bash(gh pr merge:*)",
