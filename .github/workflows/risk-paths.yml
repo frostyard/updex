@@ -1,14 +1,24 @@
-# Risk paths (frostyard/core ADR-0068, docs/specs/risk-paths.md): runs core's
-# reusable risk-paths workflow on every pull request. A pull request that
-# touches a glob in .github/risk-paths.json gets the label risk:high.
+# PR triage (frostyard/core ADR-0068, ADR-0077, ADR-0078; docs/specs/risk-paths.md,
+# docs/specs/pr-triage.md): runs the labeler, then core's reusable pr-triage
+# workflow, on every pull request. A pull request that touches a glob in
+# .github/risk-paths.json gets 1 level label, level:L1 to level:L4 (L1 read
+# every line, L2 read the diff, L3 skim, L4 title and CI), and risk:high for
+# L1 and L2. The organization floors can raise the computed level, and an
+# existing stricter level label stays (the workflow never lowers 1). A missing
+# risk:high label fails the job; the 4 level labels only give a warning when
+# absent. The workflow removes ready-for-human when the head moves after
+# the label or CI is not green at the label, and it writes a "would
+# auto-merge" shadow comment on some Dependabot pull requests; it never merges.
 #
-# The labeler runs in this workflow before risk-paths because actions/labeler
+# The labeler runs in this workflow before pr-triage because actions/labeler
 # reads the current labels and then sets the whole label list. A label that
 # another job adds between that read and that write is lost (updex#483:
 # risk:high added at 19:36:25Z, removed at 19:36:26Z). So within a run the
-# risk-paths job runs after the label job, and the concurrency group runs at
+# pr-triage job runs after the label job, and the concurrency group runs at
 # most 1 run per pull request at a time (no cancel: a queued run waits), so the
-# label job of a later run never overlaps the risk-paths job of an earlier one.
+# label job of a later run never overlaps the pr-triage job of an earlier one.
+# A "labeled" event re-runs pr-triage (the levels step skips it: a label change
+# moves no file) but not the labeler, which would then read and set labels.
 # Do not add another workflow that sets pull-request labels.
 #
 # pull_request_target runs this file and the list from the base branch, so a
@@ -16,11 +26,11 @@
 # reusable workflow checks out nothing and runs no pull-request code.
 # Pinned to a full core commit SHA (ADR-0021). No merge_group trigger, and
 # not a required check.
-name: Risk paths
+name: PR triage
 
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize, reopened, edited, labeled]
 
 permissions: {}
 
@@ -31,7 +41,7 @@ concurrency:
 jobs:
   label:
     name: Apply path labels
-    if: github.event.action != 'edited'
+    if: github.event.action != 'edited' && github.event.action != 'labeled'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -45,10 +55,10 @@ jobs:
         with:
           sync-labels: false
 
-  risk-paths:
+  pr-triage:
     needs: label
     if: ${{ !cancelled() }}
     permissions:
       contents: read
       pull-requests: write
-    uses: frostyard/core/.github/workflows/risk-paths.yml@1b02a129026329cef2b46d1fbd0465a863c1cd81 # core#194
+    uses: frostyard/core/.github/workflows/pr-triage.yml@c996ea3fb54bcf1a3c621113522213702a7673e2 # frostyard/core main, 2026-11-09 (core#225)

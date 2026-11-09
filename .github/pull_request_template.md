@@ -23,7 +23,9 @@ closes. -->
 
 <!-- Select the highest applicable tier from docs/risk-tiers.md and give the
 rationale. A PR with the label `risk:high` (a path in
-.github/risk-paths.json) is Tier 4. -->
+.github/risk-paths.json at level L1 or L2) is Tier 4. Each path in that list
+also adds a `level:L1` to `level:L4` label: L1 read every line, L2 read the
+diff, L3 skim, L4 title and CI. -->
 
 - [ ] Tier 1: Low
 - [ ] Tier 2: Moderate
