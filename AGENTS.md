@@ -189,23 +189,29 @@ the same label in every file, each workflow declares top-level
 `persist-credentials: false` (no job pushes; release and snapshot publish
 through the API).
 `.github/workflows/risk-paths.yml` runs the `label` job first, then calls
-`frostyard/core/.github/workflows/risk-paths.yml` pinned to a core commit SHA,
-on `pull_request_target` (opened, synchronize, reopened, edited), without
-`merge_group`, and as no required check. It declares `permissions: {}`, with
-the job at `contents: read` + `pull-requests: write`. It reads
-`.github/risk-paths.json` at the base SHA, checks out nothing, and adds
-`risk:high` when a changed file matches; it never removes the label. The
-labeler is in the same workflow because `actions/labeler` reads the labels and
+core's `frostyard/core/.github/workflows/pr-triage.yml` as job `pr-triage`,
+pinned to a core commit SHA, on `pull_request_target` (opened, synchronize,
+reopened, edited, labeled), without `merge_group`, and as no required check. It
+declares `permissions: {}`, with the job at `contents: read` +
+`pull-requests: write`. It reads `.github/risk-paths.json` at the base SHA and
+checks out nothing. It adds 1 level label, `level:L1` to `level:L4` (L1 read
+every line, L2 read the diff, L3 skim, L4 title and CI), and `risk:high` for L1
+and L2; it never removes `risk:high`, and it removes `ready-for-human` when the
+head moves after the label ([core ADR-0077](https://github.com/frostyard/core/blob/main/docs/adr/0077-bind-ready-for-human-to-the-head-commit.md)).
+The labeler is in the same workflow because `actions/labeler` reads the labels and
 then sets the whole list, so a label added between the read and the write is
-lost (updex#483). The `risk-paths` job runs after the `label` job
-(`needs: label`, `if: ${{ !cancelled() }}`), and the concurrency group
-`risk-paths-<PR number>` (no cancel in progress) runs at most 1 run per pull
-request at a time, so no label job overlaps a risk-paths job. Do not add
+lost (updex#483). The `pr-triage` job runs after the `label` job
+(`needs: label`, `if: ${{ !cancelled() }}`), the `label` job skips an edit and
+a label change, and the concurrency group `risk-paths-<PR number>` (no cancel
+in progress) runs at most 1 run per pull request at a time, so no label job
+overlaps a pr-triage job. Do not add
 another workflow that sets pull-request labels. The rule
-is in [core ADR-0068](https://github.com/frostyard/core/blob/main/docs/adr/0068-label-pull-requests-that-touch-high-risk-paths.md)
+is in [core ADR-0068](https://github.com/frostyard/core/blob/main/docs/adr/0068-label-pull-requests-that-touch-high-risk-paths.md),
+[ADR-0078](https://github.com/frostyard/core/blob/main/docs/adr/0078-sort-pull-requests-by-levels-l1-to-l4.md)
 and [the risk-paths spec](https://github.com/frostyard/core/blob/main/docs/specs/risk-paths.md).
-`updex/risk_paths_contract_test.go` pins the caller shape, the list schema,
-the boundary-plus-category `why`, rule C, strict JSON without duplicate keys,
+`updex/risk_paths_contract_test.go` pins the caller shape, the version 2 list
+schema with a level on each glob, the boundary-plus-category `why`, rule C with
+levels, strict JSON without duplicate keys,
 the glob syntax of the spec, and a full match of each glob against at least 1
 repository file, and `TestRiskPathsListCoversHighRiskFiles` requires that the list covers each named high-risk file. Core's validator is the authority. A rename or move of a
 listed file must update the list in the same PR.
@@ -1144,8 +1150,10 @@ their canonical targets, never the aliases. `docs/review-rubric.md`,
    include the tier rationale in the pull request
    ([`.github/pull_request_template.md`](.github/pull_request_template.md)
    walks through it).
-   A PR with `risk:high` is Tier 4. The author removes the label only when the
-   risky change leaves the PR, with the reason in the PR body. The PR body names
+   A PR with `risk:high` (a path at level L1 or L2) is Tier 4. Each path in
+   `.github/risk-paths.json` also adds a `level:L1` to `level:L4` label. The
+   author removes the label only when the risky change leaves the PR, with the
+   reason in the PR body. The PR body names
    each matched path and why the change is safe.
 7. Open the PR with a description of what changed and why, and link any
    related issue.
