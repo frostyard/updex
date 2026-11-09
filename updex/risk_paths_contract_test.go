@@ -41,6 +41,21 @@ func TestRiskPathsCallerContract(t *testing.T) {
 // with 40 lowercase hex characters and an optional trailing " # comment".
 const riskCallerUses = "    uses: " + prTriageUses + "<SHA>[ # comment]"
 
+// riskCallerLabeler is the labeler pin: Dependabot bumps it, so any full
+// 40-character SHA with an optional trailing " # comment" passes (ADR-0021).
+const riskCallerLabeler = "        uses: actions/labeler@<SHA>[ # comment]"
+
+// labelerPinned holds when line pins actions/labeler to a full 40-character
+// lowercase commit SHA, with an optional " # comment" after it.
+func labelerPinned(line string) bool {
+	rest, ok := strings.CutPrefix(line, "        uses: actions/labeler@")
+	if !ok {
+		return false
+	}
+	sha, _, _ := strings.Cut(rest, " #")
+	return len(sha) == 40 && strings.Trim(sha, "0123456789abcdef") == ""
+}
+
 // riskCallerBody is the caller after its leading comment block: every line must
 // equal this body exactly (core ADR-0068, ADR-0077, ADR-0078; the risk-paths
 // and PR triage specs). The labeler stays in this workflow before the core job
@@ -72,7 +87,7 @@ var riskCallerBody = []string{
 	"      # pull_request_target can label fork PRs. Never check out or execute",
 	"      # pull-request-controlled code in this privileged workflow.",
 	"      - name: Apply labels",
-	"        uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7",
+	riskCallerLabeler,
 	"        with:",
 	"          sync-labels: false",
 	"",
@@ -97,6 +112,12 @@ func checkRiskPathsCaller(data []byte) []string {
 	for i, want := range riskCallerBody {
 		if i >= len(body) {
 			return []string{fmt.Sprintf("caller ends at line %d, want line %d: %q", len(body), i+1, want)}
+		}
+		if want == riskCallerLabeler {
+			if !labelerPinned(body[i]) {
+				return []string{fmt.Sprintf("caller line %d is %q, want actions/labeler pinned to a 40-character commit SHA", i+1, body[i])}
+			}
+			continue
 		}
 		if want == riskCallerUses {
 			if problem := checkRiskCallerUses(body[i], i+1); problem != "" {
@@ -436,6 +457,18 @@ func TestCheckRiskPathsCaller(t *testing.T) {
 	if len(sha) != 40 {
 		t.Fatalf("%s pins %q, want a 40-character SHA", riskCaller, sha)
 	}
+	// The labeler line is read from the file: Dependabot bumps its SHA, and a
+	// fixed SHA here would break the test on every bump.
+	labelerLine := ""
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "        uses: actions/labeler@") {
+			labelerLine = line
+			break
+		}
+	}
+	if labelerLine == "" {
+		t.Fatalf("%s has no actions/labeler line", riskCaller)
+	}
 	types := "    types: [opened, synchronize, reopened, edited, labeled]"
 	tests := []struct {
 		name string
@@ -445,6 +478,10 @@ func TestCheckRiskPathsCaller(t *testing.T) {
 		{"the committed caller", text, ""},
 		{"another SHA and another trailing comment",
 			strings.Replace(text, usesLine, usesPrefix+strings.Repeat("a", 40)+" # pinned", 1), ""},
+		{"another labeler SHA (a Dependabot bump)",
+			strings.Replace(text, labelerLine, "        uses: actions/labeler@"+strings.Repeat("b", 40)+" # v7.1", 1), ""},
+		{"labeler on a tag",
+			strings.Replace(text, labelerLine, "        uses: actions/labeler@v7", 1), "actions/labeler pinned"},
 		{"pin under another job name",
 			strings.Replace(text, "\n  "+prTriageJob+":\n", "\n  other:\n", 1), `want "  ` + prTriageJob + `:"`},
 		{"caller that pins risk-paths.yml",
