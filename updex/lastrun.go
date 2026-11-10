@@ -553,13 +553,17 @@ func readLastRunStatus(path string) (*LastRunRecord, error) {
 	if len(data) > maxLastRunRecordSize {
 		return nil, fmt.Errorf("read last-run record: larger than 1 MiB")
 	}
-	var header struct {
-		Format int `json:"format"`
-	}
-	if err := json.Unmarshal(data, &header); err != nil {
+	if !json.Valid(data) {
 		return nil, fmt.Errorf("malformed last-run record: invalid JSON")
 	}
-	if header.Format != lastRunFormat {
+	var header map[string]json.RawMessage
+	if err := json.Unmarshal(data, &header); err != nil {
+		return nil, fmt.Errorf("malformed last-run record: not a JSON object")
+	}
+	// A missing format, or one that is not the integer 1 (another number, a
+	// string), is an unknown format: no record.
+	var format int
+	if err := json.Unmarshal(header["format"], &format); err != nil || format != lastRunFormat {
 		return nil, nil
 	}
 	var rec LastRunRecord

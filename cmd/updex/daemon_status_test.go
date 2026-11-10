@@ -24,6 +24,8 @@ func TestRunDaemonStatusLastUpdate(t *testing.T) {
 			{Feature: "updated-hidden", Outcome: "updated", Transfers: []sdk.LastRunTransfer{}},
 			{Feature: "current-hidden", Outcome: "current", Transfers: []sdk.LastRunTransfer{}},
 			{Feature: "unsafe\x1b[31m\n", Outcome: "failed", Version: "1\r\t\u202e", Transfers: []sdk.LastRunTransfer{}},
+			{Feature: "same-run", Outcome: "needs_image", At: "2026-11-05T10:00:42Z", Transfers: []sdk.LastRunTransfer{}},
+			{Feature: "carried", Outcome: "failed", ErrorClass: "checksum", At: "2026-11-01T08:00:00Z", Transfers: []sdk.LastRunTransfer{}},
 		},
 	}
 	for _, tt := range []struct {
@@ -89,16 +91,29 @@ func TestRunDaemonStatusLastUpdate(t *testing.T) {
 			}
 			switch tt.record {
 			case "good":
-				want := "  Last update: 2026-11-05T10:00:42Z failed (class config, refresh not_requested, named features)\n" +
-					"    incus: failed (class network, version 1.2.3)\n" +
-					"    busy: skipped_busy\n" +
-					"    held: held_by_rollback (version 2.0)\n" +
-					"    \"unsafe\\x1b[31m\\n\": failed (version \"1\\r\\t\\u202e\")\n"
+				ind := ""
+				if tt.installed {
+					ind = "  "
+				}
+				want := ind + "Last update: 2026-11-05T10:00:42Z failed (class config, refresh not_requested, named features)\n" +
+					ind + "  incus: failed (class network, version 1.2.3)\n" +
+					ind + "  busy: skipped_busy\n" +
+					ind + "  held: held_by_rollback (version 2.0)\n" +
+					ind + "  \"unsafe\\x1b[31m\\n\": failed (version \"1\\r\\t\\u202e\")\n" +
+					ind + "  same-run: needs_image\n" +
+					ind + "  carried: failed (class checksum, at 2026-11-01T08:00:00Z)\n"
+				if !tt.installed && !strings.HasPrefix(out, "Auto-update daemon: not installed\nRun 'updex daemon enable' to enable automatic updates.\nLast update: ") {
+					t.Fatalf("unexpected output without a timer: %q", out)
+				}
 				if !strings.HasSuffix(out, want) || strings.Contains(out, "-hidden") || strings.ContainsAny(out, "\x1b\r\t\u202e") {
 					t.Fatalf("unexpected output: %q", out)
 				}
 			case "bad":
-				if !strings.Contains(out, "  Last update: unreadable: malformed last-run record: invalid JSON\n") {
+				want := "Last update: unreadable: malformed last-run record: invalid JSON\n"
+				if tt.installed {
+					want = "  " + want
+				}
+				if !strings.HasSuffix(out, "\n"+want) {
 					t.Fatalf("got %q", out)
 				}
 			default:
@@ -115,16 +130,22 @@ func TestRunDaemonStatusLastUpdate(t *testing.T) {
 }
 
 func TestPrintLastUpdateWithoutOptionalDetails(t *testing.T) {
-	out, err := captureStdout(t, func() error {
-		printLastUpdate(&sdk.DaemonStatusResult{LastUpdate: &sdk.LastRunRecord{
-			Finished: "2026-11-05T10:00:42Z", Outcome: "failed", Refresh: "not_requested",
-		}})
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out != "  Last update: 2026-11-05T10:00:42Z failed (refresh not_requested)\n" {
-		t.Fatalf("got %q", out)
+	for _, installed := range []bool{true, false} {
+		out, err := captureStdout(t, func() error {
+			printLastUpdate(&sdk.DaemonStatusResult{Installed: installed, LastUpdate: &sdk.LastRunRecord{
+				Finished: "2026-11-05T10:00:42Z", Outcome: "failed", Refresh: "not_requested",
+			}})
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "Last update: 2026-11-05T10:00:42Z failed (refresh not_requested)\n"
+		if installed {
+			want = "  " + want
+		}
+		if out != want {
+			t.Fatalf("installed=%v: got %q, want %q", installed, out, want)
+		}
 	}
 }

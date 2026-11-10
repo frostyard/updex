@@ -185,7 +185,8 @@ Path: `RuntimePaths.LastRunPath`, default `updex.DefaultLastRunPath`
   identity, and caps the read at 1 MiB. Format 1 requires valid RFC 3339
   `started` and `finished`, non-empty run `outcome` and `refresh`, non-null
   `features`, and each feature's non-empty name and outcome and non-null
-  `transfers`. Unknown fields are accepted. Invalid or unreadable records set
+  `transfers`. A `format` that is not the integer 1 (absent, another number,
+  a string) is an unknown format. Unknown fields are accepted. Invalid or unreadable records set
   `LastUpdateError` (`last_update_error`); status still succeeds. The writer's
   previous-record reader keeps its existing permissive behavior.
 
@@ -195,7 +196,7 @@ Path: `RuntimePaths.LastRunPath`, default `updex.DefaultLastRunPath`
 | --- | --- |
 | snosi `snosi-health` collector | reads this file only |
 | `updex/lastrun.go` (`readLastRunStatus`) | read-only consumer for `DaemonStatus`, normalizes unknown enums |
-| `updex/lastrun_status_test.go` | pins the reader's bounds, file safety, validation, normalization and status integration |
+| `updex/lastrun_status_test.go` | pins the reader's bound, its `Lstat` refusal of a symlink, FIFO or directory, format and field validation, normalization and status integration |
 | `cmd/updex/daemon_status_test.go` | pins last-update text, JSON and terminal control escaping |
 | `updex/lastrun_test.go` | pins the classes, outcomes, busy and merge rules through `UpdateFeatures` |
 

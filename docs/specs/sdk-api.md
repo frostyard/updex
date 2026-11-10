@@ -448,7 +448,9 @@ type LastRunTransfer struct {
 
 `daemon status` text adds the finished timestamp, run outcome, optional run
 class, refresh state and named-feature selection. It lists each feature except
-`updated` and `current`, with its optional class and version. Non-printable
+`updated` and `current`, with its optional class and version, and with
+`at <time>` when its `at` differs from the run's `finished` (an entry that a
+named run carried from an earlier run). Non-printable
 record strings are quoted and escaped for the terminal. An installed timer
 without a record shows `Last update: none recorded`; without a timer, an
 absent record adds no text. Unreadable records show `Last update: unreadable`.

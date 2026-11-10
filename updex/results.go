@@ -55,7 +55,8 @@ type DaemonStatusResult struct {
 	// "exit-code", ...); empty when LastRun is empty.
 	LastResult string `json:"last_result,omitempty"`
 	// LastUpdate is the normalized persistent last-run record, including manual
-	// updates; nil when absent or of an unknown format. Unknown enums are other.
+	// updates; nil when absent or of an unknown format. An unknown outcome,
+	// refresh or error_class value is "other".
 	LastUpdate *LastRunRecord `json:"last_update,omitzero"`
 	// LastUpdateError describes an unreadable or invalid last-run record.
 	// LastUpdate is nil when this is set; timer status remains available.

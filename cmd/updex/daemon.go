@@ -257,9 +257,17 @@ func runDaemonStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// printLastUpdate prints the last-run record. Under an installed timer the
+// lines are indented like the other status fields; without a timer they
+// follow the two unindented "not installed" lines. A feature entry that a
+// named run carried from an earlier run shows its own time.
 func printLastUpdate(status *updex.DaemonStatusResult) {
+	indent := ""
+	if status.Installed {
+		indent = "  "
+	}
 	if status.LastUpdateError != "" {
-		fmt.Printf("  Last update: unreadable: %s\n", lastUpdateText(status.LastUpdateError))
+		fmt.Printf("%sLast update: unreadable: %s\n", indent, lastUpdateText(status.LastUpdateError))
 		return
 	}
 	rec := status.LastUpdate
@@ -274,13 +282,17 @@ func printLastUpdate(status *updex.DaemonStatusResult) {
 	if rec.Selected {
 		details = append(details, "named features")
 	}
-	fmt.Printf("  Last update: %s %s (%s)\n", lastUpdateText(rec.Finished), lastUpdateText(rec.Outcome), strings.Join(details, ", "))
+	fmt.Printf("%sLast update: %s %s (%s)\n", indent, lastUpdateText(rec.Finished), lastUpdateText(rec.Outcome), strings.Join(details, ", "))
 	for _, feature := range rec.Features {
 		if feature.Outcome == "updated" || feature.Outcome == "current" {
 			continue
 		}
-		fmt.Printf("    %s: %s", lastUpdateText(feature.Feature), lastUpdateText(feature.Outcome))
-		if details := lastUpdateDetails(feature.ErrorClass, feature.Version); len(details) > 0 {
+		fmt.Printf("%s  %s: %s", indent, lastUpdateText(feature.Feature), lastUpdateText(feature.Outcome))
+		details := lastUpdateDetails(feature.ErrorClass, feature.Version)
+		if feature.At != "" && feature.At != rec.Finished {
+			details = append(details, "at "+lastUpdateText(feature.At))
+		}
+		if len(details) > 0 {
 			fmt.Printf(" (%s)", strings.Join(details, ", "))
 		}
 		fmt.Println()
