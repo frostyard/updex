@@ -441,7 +441,9 @@ func (c *Client) daemonUnitFileInUse(suffix string) (path, source string, ok boo
 
 // DaemonStatus reports whether the automatic update timer is installed,
 // enabled, and active, which unit files are in use, its schedule, the next
-// run, and the time and result of the last run.
+// run, and the time and result of the last run. It also reads the persistent
+// last-update record, even without a timer. This takes no lock and writes
+// nothing; an unreadable or invalid record sets LastUpdateError, not an error.
 //
 // Installed means a timer unit file exists in /etc/systemd/system or in the
 // packaged directory. Source is "etc" when the timer file in use is in
@@ -465,7 +467,11 @@ func (c *Client) DaemonStatus(ctx context.Context, _ DaemonStatusOptions) (*Daem
 		return nil, fmt.Errorf("get daemon status: %w", err)
 	}
 
-	status := &DaemonStatusResult{}
+	lastUpdate, err := readLastRunStatus(c.paths.lastRunPath)
+	status := &DaemonStatusResult{LastUpdate: lastUpdate}
+	if err != nil {
+		status.LastUpdateError = err.Error()
+	}
 	timerPath, source, timerFound := c.daemonUnitFileInUse(".timer")
 	if !timerFound {
 		return status, nil

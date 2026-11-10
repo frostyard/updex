@@ -73,13 +73,13 @@ func newLastRunFixture(t *testing.T, sources map[string]string, configure func(*
 }
 
 // readLastRun decodes the record at path; it fails the test when there is none.
-func readLastRun(t *testing.T, path string) (lastRunRecord, []byte) {
+func readLastRun(t *testing.T, path string) (LastRunRecord, []byte) {
 	t.Helper()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read last-run record: %v", err)
 	}
-	var rec lastRunRecord
+	var rec LastRunRecord
 	if err := json.Unmarshal(data, &rec); err != nil {
 		t.Fatalf("decode last-run record %q: %v", data, err)
 	}
@@ -96,7 +96,7 @@ func noLastRun(t *testing.T, path string) {
 	}
 }
 
-func featureEntry(t *testing.T, rec lastRunRecord, name string) lastRunFeature {
+func featureEntry(t *testing.T, rec LastRunRecord, name string) LastRunFeature {
 	t.Helper()
 	for _, f := range rec.Features {
 		if f.Feature == name {
@@ -104,7 +104,7 @@ func featureEntry(t *testing.T, rec lastRunRecord, name string) lastRunFeature {
 		}
 	}
 	t.Fatalf("record has no feature %q: %+v", name, rec.Features)
-	return lastRunFeature{}
+	return LastRunFeature{}
 }
 
 // closedPortURL returns a loopback URL that refuses the connection.
@@ -384,9 +384,9 @@ func TestLastRun_Busy(t *testing.T) {
 
 	t.Run("a newer record is kept", func(t *testing.T) {
 		f := newLastRunFixture(t, map[string]string{"testext": goodServer(t, "testext")}, nil)
-		newer := lastRunRecord{
+		newer := LastRunRecord{
 			Format: 1, Started: recordTime(time.Now()), Finished: recordTime(time.Now().Add(time.Hour)),
-			Outcome: "completed", Refresh: "done", Features: []lastRunFeature{},
+			Outcome: "completed", Refresh: "done", Features: []LastRunFeature{},
 		}
 		data, _ := json.Marshal(newer)
 		if err := os.MkdirAll(filepath.Dir(f.lastRun), 0o755); err != nil {
@@ -412,9 +412,9 @@ func TestLastRun_Busy(t *testing.T) {
 
 	t.Run("an older record is replaced", func(t *testing.T) {
 		f := newLastRunFixture(t, map[string]string{"testext": goodServer(t, "testext")}, nil)
-		older := lastRunRecord{
+		older := LastRunRecord{
 			Format: 1, Started: "2020-01-01T00:00:00Z", Finished: "2020-01-01T00:00:10Z",
-			Outcome: "completed", Refresh: "done", Features: []lastRunFeature{},
+			Outcome: "completed", Refresh: "done", Features: []LastRunFeature{},
 		}
 		data, _ := json.Marshal(older)
 		if err := os.MkdirAll(filepath.Dir(f.lastRun), 0o755); err != nil {
@@ -463,7 +463,7 @@ func TestLastRun_UpdatedCurrentNeedsImage(t *testing.T) {
 	if pair.Outcome != "needs_image" || pair.ErrorClass != "" || pair.Version != newVersion || pair.Origin != "local" {
 		t.Errorf("pair = %+v, want needs_image %s, origin local", pair, newVersion)
 	}
-	byComp := map[string]lastRunTransfer{}
+	byComp := map[string]LastRunTransfer{}
 	for _, tr := range pair.Transfers {
 		byComp[tr.Component] = tr
 	}
@@ -597,14 +597,14 @@ func TestLastRun_LockError(t *testing.T) {
 // A named run keeps the previous entries of the enabled features it did not
 // act on, with their own at; an unnamed run carries nothing.
 func TestLastRun_NamedRunMerges(t *testing.T) {
-	previous := lastRunRecord{
+	previous := LastRunRecord{
 		Format: 1, Started: "2020-01-01T00:00:00Z", Finished: "2020-01-01T00:00:10Z",
 		Outcome: "completed", Refresh: "done",
-		Features: []lastRunFeature{
-			{Feature: "feature-othertex", Origin: "unknown", Outcome: "current", Version: "0.9.0", At: "2020-01-01T00:00:10Z", Transfers: []lastRunTransfer{{Component: "othertex", Outcome: "current", Version: "0.9.0"}}},
-			{Feature: "feature-offext", Origin: "unknown", Outcome: "current", At: "2020-01-01T00:00:10Z", Transfers: []lastRunTransfer{}},
-			{Feature: "gone", Origin: "unknown", Outcome: "current", At: "2020-01-01T00:00:10Z", Transfers: []lastRunTransfer{}},
-			{Feature: "feature-testext", Origin: "unknown", Outcome: "failed", ErrorClass: "network", At: "2020-01-01T00:00:10Z", Transfers: []lastRunTransfer{}},
+		Features: []LastRunFeature{
+			{Feature: "feature-othertex", Origin: "unknown", Outcome: "current", Version: "0.9.0", At: "2020-01-01T00:00:10Z", Transfers: []LastRunTransfer{{Component: "othertex", Outcome: "current", Version: "0.9.0"}}},
+			{Feature: "feature-offext", Origin: "unknown", Outcome: "current", At: "2020-01-01T00:00:10Z", Transfers: []LastRunTransfer{}},
+			{Feature: "gone", Origin: "unknown", Outcome: "current", At: "2020-01-01T00:00:10Z", Transfers: []LastRunTransfer{}},
+			{Feature: "feature-testext", Origin: "unknown", Outcome: "failed", ErrorClass: "network", At: "2020-01-01T00:00:10Z", Transfers: []LastRunTransfer{}},
 		},
 	}
 	setup := func(t *testing.T) *lastRunFixture {
@@ -630,7 +630,7 @@ func TestLastRun_NamedRunMerges(t *testing.T) {
 		if !rec.Selected {
 			t.Error("selected = false for a named run")
 		}
-		names := map[string]lastRunFeature{}
+		names := map[string]LastRunFeature{}
 		for _, fe := range rec.Features {
 			names[fe.Feature] = fe
 		}
@@ -812,9 +812,9 @@ func TestClassifyError(t *testing.T) {
 
 // writeOldRecord writes a format 1 record that ended in 2020 with the given
 // features, and returns its bytes.
-func writeOldRecord(t *testing.T, path string, features ...lastRunFeature) []byte {
+func writeOldRecord(t *testing.T, path string, features ...LastRunFeature) []byte {
 	t.Helper()
-	rec := lastRunRecord{
+	rec := LastRunRecord{
 		Format: 1, Started: "2020-01-01T00:00:00Z", Finished: "2020-01-01T00:00:10Z",
 		Outcome: "completed", Refresh: "done", Features: features,
 	}
@@ -836,8 +836,8 @@ func writeOldRecord(t *testing.T, path string, features ...lastRunFeature) []byt
 func TestLastRun_NamedBusyRunCarries(t *testing.T) {
 	f := newLastRunFixture(t, map[string]string{"testext": goodServer(t, "testext"), "othertex": goodServer(t, "othertex")}, nil)
 	writeOldRecord(t, f.lastRun,
-		lastRunFeature{Feature: "feature-testext", Origin: "unknown", Outcome: "current", Version: "0.9.0", At: "2020-01-01T00:00:10Z", Transfers: []lastRunTransfer{}},
-		lastRunFeature{Feature: "feature-othertex", Origin: "unknown", Outcome: "current", Version: "0.8.0", At: "2020-01-01T00:00:05Z", Transfers: []lastRunTransfer{}},
+		LastRunFeature{Feature: "feature-testext", Origin: "unknown", Outcome: "current", Version: "0.9.0", At: "2020-01-01T00:00:10Z", Transfers: []LastRunTransfer{}},
+		LastRunFeature{Feature: "feature-othertex", Origin: "unknown", Outcome: "current", Version: "0.8.0", At: "2020-01-01T00:00:05Z", Transfers: []LastRunTransfer{}},
 	)
 	release, err := f.client.lockMutation(false)
 	if err != nil {
@@ -881,7 +881,7 @@ func TestLastRun_BusyRefusedSelectionWritesNothing(t *testing.T) {
 			createFeatureFile(t, f.configDir, "feature-maskext", true)
 			maskFeature(t, f.configDir, "feature-maskext")
 			before := writeOldRecord(t, f.lastRun,
-				lastRunFeature{Feature: "feature-testext", Origin: "unknown", Outcome: "current", At: "2020-01-01T00:00:10Z", Transfers: []lastRunTransfer{}},
+				LastRunFeature{Feature: "feature-testext", Origin: "unknown", Outcome: "current", At: "2020-01-01T00:00:10Z", Transfers: []LastRunTransfer{}},
 			)
 			release, err := f.client.lockMutation(false)
 			if err != nil {

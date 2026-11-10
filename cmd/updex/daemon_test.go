@@ -47,6 +47,7 @@ func TestDaemonHandlersStayBehindSDKBoundary(t *testing.T) {
 func daemonTestEnv(t *testing.T, mock *systemd.MockSystemctlRunner) (unitDir string) {
 	t.Helper()
 	unitDir = t.TempDir()
+	setRuntimePaths(t, sdk.RuntimePaths{LastRunPath: filepath.Join(t.TempDir(), "last-run.json")})
 
 	oldManager := systemdManager
 	oldGetEUID, oldJSON, oldDryRun := getEUID, clix.JSONOutput, clix.DryRun

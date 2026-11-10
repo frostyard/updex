@@ -20,6 +20,7 @@ func newDaemonTestClient(t *testing.T, runner systemd.SystemctlRunner) (*Client,
 	unitPath := t.TempDir()
 	client := NewClient(ClientConfig{
 		SystemdManager: systemd.NewTestManager(unitPath, runner),
+		Paths:          RuntimePaths{LastRunPath: filepath.Join(t.TempDir(), "last-run.json")},
 	})
 	return client, unitPath
 }

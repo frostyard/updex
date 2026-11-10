@@ -408,7 +408,8 @@ binary needs it on the host. The unit tests do not run it.
   timer. The package ships the units in `/usr/lib/systemd/system`; `enable`
   writes marked units to `/etc/systemd/system` only when the package does not,
   and `disable` removes only marked (or exactly legacy) files there. `status`
-  also reports the next run and the last result
+  also reports the next run, the last service result, and the last update
+  from the persistent last-run record
 - `units --output-dir DIR` (hidden) — release tooling that writes the packaged
   unit files (`scripts/units.sh`)
 - `catalog list|search <query>|add <name>|remove <name>` — browse and manage
@@ -698,7 +699,8 @@ in the `config/` structs and parse functions. Always finish with
   write holds a `flock` on the record directory (2 s
   bounded, non-blocking retries), refuses a symlink or non-regular file and
   a non-directory parent, and a failure is one `c.warn`: it never changes
-  the results or the returned error.
+  the results or the returned error. `DaemonStatus` reads the record read-only,
+  even without a timer; unknown enum values map to `other`.
 - **CLI.** `features update` that gets `ErrBusy` exits 0 with one stderr line
   only when `runningUnderSystemd()` (non-empty `INVOCATION_ID`; the packaged
   timer runs exactly `updex features update --no-refresh`); every other

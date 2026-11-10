@@ -322,6 +322,15 @@ error. Packaged units are never touched. It returns "timer not installed"
 when neither directory has the timer. Every step is attempted, and stop,
 disable, removal and reload failures are contextualized and joined;
 `DisableDaemon` returns that error with no success result.
+`DaemonStatus` reads `RuntimePaths.LastRunPath` without a lock or writes,
+including when no timer is installed. `LastUpdate` is the persistent format 1
+record, with unknown enum values normalized to `other`; absent files and
+unknown formats leave it nil. Invalid or unreadable records instead set
+`LastUpdateError` and never fail status. The bounded reader refuses symlinks
+and non-regular files and validates required fields; see the
+[last-run record spec](last-run-record.md). The existing systemd fields and
+query error behavior are unchanged.
+
 `DaemonStatus` reports a missing timer without querying systemctl. For an
 installed timer (a timer file in either directory) it reports enabled/active
 state, `Source` (`etc` when the timer file in use is in the `/etc` unit
@@ -398,9 +407,52 @@ type DaemonStatusResult struct {
     NextRun    string   `json:"next_run,omitempty"`
     LastRun    string   `json:"last_run,omitempty"`
     LastResult string   `json:"last_result,omitempty"`
+    LastUpdate *LastRunRecord `json:"last_update,omitzero"` // normalized persistent record, nil if absent/unknown format
+    LastUpdateError string `json:"last_update_error,omitempty"` // record read/validation error, not a status failure
     Masked     bool     `json:"masked,omitempty"` // the timer file in use is a symlink to /dev/null
 }
 ```
+
+The exported record types are shared by the writer and status reader. Their
+JSON fields retain the format 1 [last-run record contract](last-run-record.md):
+
+```go
+type LastRunRecord struct {
+    Format int `json:"format"`
+    Started string `json:"started"`
+    Finished string `json:"finished"`
+    Outcome string `json:"outcome"`
+    ErrorClass string `json:"error_class,omitempty"`
+    Refresh string `json:"refresh"`
+    Selected bool `json:"selected"`
+    Features []LastRunFeature `json:"features"`
+}
+
+type LastRunFeature struct {
+    Feature string `json:"feature"`
+    Origin string `json:"origin"`
+    Outcome string `json:"outcome"`
+    ErrorClass string `json:"error_class,omitempty"`
+    Version string `json:"version,omitempty"`
+    At string `json:"at"`
+    Transfers []LastRunTransfer `json:"transfers"`
+}
+
+type LastRunTransfer struct {
+    Component string `json:"component"`
+    Outcome string `json:"outcome"`
+    ErrorClass string `json:"error_class,omitempty"`
+    Version string `json:"version,omitempty"`
+}
+```
+
+`daemon status` text adds the finished timestamp, run outcome, optional run
+class, refresh state and named-feature selection. It lists each feature except
+`updated` and `current`, with its optional class and version. Non-printable
+record strings are quoted and escaped for the terminal. An installed timer
+without a record shows `Last update: none recorded`; without a timer, an
+absent record adds no text. Unreadable records show `Last update: unreadable`.
+JSON uses the result fields above without text formatting.
 
 The CLI keeps root authorization at its boundary, then forwards the Cobra
 context and formats these result types. SDK callers inject

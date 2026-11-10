@@ -3,7 +3,7 @@
 This contract governs the machine-readable record that every
 `UpdateFeatures` run that is not a dry run writes: the outcome of the run, and
 per feature its origin, outcome, error class and version. snosi's health
-collector (`snosi-health`) reads only this file; any other tool that wants to
+collector (`snosi-health`) and `updex daemon status` read this file; any other tool that wants to
 know how the last update went reads it the same way. The service result of
 `updex-update.service` does not carry this information: a busy run and a run
 whose sources are all unreachable both exit 0 under systemd
@@ -179,12 +179,24 @@ Path: `RuntimePaths.LastRunPath`, default `updex.DefaultLastRunPath`
 - Consumers: an absent file, or a file with an unknown `format`, means "no
   record". A consumer MUST map an enum value it does not know (`outcome`,
   `refresh`, `error_class`) to `other`, so a later updex can add a value.
+  `updex daemon status` reads it without a lock or writes, even without a
+  timer, through `DaemonStatusResult.LastUpdate` (`last_update` in JSON).
+  Its reader refuses symlinks and non-regular files, checks the opened file
+  identity, and caps the read at 1 MiB. Format 1 requires valid RFC 3339
+  `started` and `finished`, non-empty run `outcome` and `refresh`, non-null
+  `features`, and each feature's non-empty name and outcome and non-null
+  `transfers`. Unknown fields are accepted. Invalid or unreadable records set
+  `LastUpdateError` (`last_update_error`); status still succeeds. The writer's
+  previous-record reader keeps its existing permissive behavior.
 
 ## Derived artifacts
 
 | Artifact | Derivation |
 | --- | --- |
 | snosi `snosi-health` collector | reads this file only |
+| `updex/lastrun.go` (`readLastRunStatus`) | read-only consumer for `DaemonStatus`, normalizes unknown enums |
+| `updex/lastrun_status_test.go` | pins the reader's bounds, file safety, validation, normalization and status integration |
+| `cmd/updex/daemon_status_test.go` | pins last-update text, JSON and terminal control escaping |
 | `updex/lastrun_test.go` | pins the classes, outcomes, busy and merge rules through `UpdateFeatures` |
 
 ## References

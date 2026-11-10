@@ -46,7 +46,9 @@ updex/                          Public SDK (Client + methods)
   rollback.go                   RollbackFeature(), the rollback record
                                 (/var/lib/updex/rollback/<feature>, RuntimePaths.RollbackDir)
   lastrun.go                    the last-run record every non-dry-run
-                                UpdateFeatures writes (classifyError(), busy and
+                                UpdateFeatures writes and DaemonStatus reads
+                                (LastRunRecord, LastRunFeature, LastRunTransfer,
+                                classifyError(), busy and
                                 merge rules; /var/lib/updex/last-run.json,
                                 RuntimePaths.LastRunPath, DefaultLastRunPath;
                                 ADR-0020, specs/last-run-record.md)
@@ -1181,7 +1183,18 @@ which supersedes [ADR-0007](../adr/0007-daemon-stages-never-activates.md).
   nothing is scheduled, and `LastRun` and `LastResult` are empty when the service
   has not run since boot (`Result` is `success` for a service that never ran, so it
   is read only when `LastRun` is set). A failed query fails the command, as for the
-  enabled and active queries.
+  enabled and active queries. Independently, `DaemonStatus` reads the persistent
+  last-run record at `RuntimePaths.LastRunPath` before checking for a timer:
+  `LastUpdate` (`last_update` in JSON) includes the run outcome, refresh state,
+  and feature/transfer results, also for manual updates and after reboot.
+  The reader uses Lstat, a non-following non-blocking open, an identity check
+  and a 1 MiB bound, without locks or writes. Absent files and unknown formats
+  mean no record; unknown enums become `other`. Invalid or unreadable records
+  set `LastUpdateError` (`last_update_error`), without failing status. The CLI
+  lists unsuccessful features with class and version and escapes non-printable
+  strings. The shared exported record types preserve the writer's JSON shape
+  and behavior; see [the record spec](../specs/last-run-record.md) and
+  `updex/lastrun_status_test.go` / `cmd/updex/daemon_status_test.go`.
 - `--dry-run` on `daemon enable`/`daemon disable` passes `DryRun` into the SDK options: the context check and the installed/not-installed precondition still run, but no unit file is written or removed and no systemctl call is made. The `DaemonActionResult` carries `DryRun` and the absolute `UnitFiles` paths (timer then service), and the CLI prints the result's `Message` with a `[DRY RUN] ` prefix in text mode
 - `Client.EnableDaemon`, `Client.DisableDaemon`, and `Client.DaemonStatus`
   own unit construction and lifecycle sequencing; the daemon CLI retains only

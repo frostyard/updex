@@ -2,6 +2,9 @@ package updex
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
+	"unicode"
 
 	"github.com/frostyard/clix"
 	"github.com/frostyard/updex/v2/updex"
@@ -198,6 +201,7 @@ OUTPUT:
   Schedule   - When updates run (the effective OnCalendar, drop-ins included)
   Next run   - When the timer fires next
   Last run   - When the service last finished, and its result
+  Last update - Persistent update outcome, refresh state and unsuccessful features
 
 The run log is in the journal: journalctl -u updex-update.service`,
 		Example: `  # Check daemon status
@@ -224,6 +228,7 @@ func runDaemonStatus(cmd *cobra.Command, args []string) error {
 	if !status.Installed {
 		fmt.Println("Auto-update daemon: not installed")
 		fmt.Println("Run 'updex daemon enable' to enable automatic updates.")
+		printLastUpdate(status)
 		return nil
 	}
 
@@ -248,5 +253,58 @@ func runDaemonStatus(cmd *cobra.Command, args []string) error {
 	} else {
 		fmt.Println("  Last run: none recorded since boot")
 	}
+	printLastUpdate(status)
 	return nil
+}
+
+func printLastUpdate(status *updex.DaemonStatusResult) {
+	if status.LastUpdateError != "" {
+		fmt.Printf("  Last update: unreadable: %s\n", lastUpdateText(status.LastUpdateError))
+		return
+	}
+	rec := status.LastUpdate
+	if rec == nil {
+		if status.Installed {
+			fmt.Println("  Last update: none recorded")
+		}
+		return
+	}
+	details := lastUpdateDetails(rec.ErrorClass, "")
+	details = append(details, "refresh "+lastUpdateText(rec.Refresh))
+	if rec.Selected {
+		details = append(details, "named features")
+	}
+	fmt.Printf("  Last update: %s %s (%s)\n", lastUpdateText(rec.Finished), lastUpdateText(rec.Outcome), strings.Join(details, ", "))
+	for _, feature := range rec.Features {
+		if feature.Outcome == "updated" || feature.Outcome == "current" {
+			continue
+		}
+		fmt.Printf("    %s: %s", lastUpdateText(feature.Feature), lastUpdateText(feature.Outcome))
+		if details := lastUpdateDetails(feature.ErrorClass, feature.Version); len(details) > 0 {
+			fmt.Printf(" (%s)", strings.Join(details, ", "))
+		}
+		fmt.Println()
+	}
+}
+
+func lastUpdateDetails(class, version string) []string {
+	var details []string
+	if class != "" {
+		details = append(details, "class "+lastUpdateText(class))
+	}
+	if version != "" {
+		details = append(details, "version "+lastUpdateText(version))
+	}
+	return details
+}
+
+// lastUpdateText quotes untrusted record strings only when they contain
+// non-printable runes, so terminal controls cannot change the display.
+func lastUpdateText(value string) string {
+	for _, r := range value {
+		if !unicode.IsPrint(r) {
+			return strconv.Quote(value)
+		}
+	}
+	return value
 }
