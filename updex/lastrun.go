@@ -18,7 +18,7 @@ import (
 	"github.com/frostyard/updex/v2/internal/fault"
 )
 
-// This file writes the last-run record (ADR-0020,
+// This file writes and reads the last-run record (ADR-0020,
 // docs/specs/last-run-record.md): a machine-readable summary of the last
 // UpdateFeatures run that was not a dry run. snosi's health collector reads
 // only this file. It carries classes and enums, never error text.
@@ -81,8 +81,9 @@ const (
 	outcomeNotLinked          = "not_linked"
 )
 
-// lastRunRecord is the JSON content of the last-run record, format 1.
-type lastRunRecord struct {
+// LastRunRecord is the format 1 last-run record defined in
+// docs/specs/last-run-record.md.
+type LastRunRecord struct {
 	Format     int              `json:"format"`
 	Started    string           `json:"started"`
 	Finished   string           `json:"finished"`
@@ -90,22 +91,23 @@ type lastRunRecord struct {
 	ErrorClass string           `json:"error_class,omitempty"`
 	Refresh    string           `json:"refresh"`
 	Selected   bool             `json:"selected"`
-	Features   []lastRunFeature `json:"features"`
+	Features   []LastRunFeature `json:"features"`
 }
 
-// lastRunFeature is the record of one feature.
-type lastRunFeature struct {
+// LastRunFeature records one feature, as defined in docs/specs/last-run-record.md.
+type LastRunFeature struct {
 	Feature    string            `json:"feature"`
 	Origin     string            `json:"origin"`
 	Outcome    string            `json:"outcome"`
 	ErrorClass string            `json:"error_class,omitempty"`
 	Version    string            `json:"version,omitempty"`
 	At         string            `json:"at"`
-	Transfers  []lastRunTransfer `json:"transfers"`
+	Transfers  []LastRunTransfer `json:"transfers"`
 }
 
-// lastRunTransfer is the record of one active transfer of a feature.
-type lastRunTransfer struct {
+// LastRunTransfer records one active transfer of a feature, as defined in
+// docs/specs/last-run-record.md.
+type LastRunTransfer struct {
 	Component  string `json:"component"`
 	Outcome    string `json:"outcome"`
 	ErrorClass string `json:"error_class,omitempty"`
@@ -135,7 +137,7 @@ type lastRun struct {
 	runClass fault.Class
 
 	refresh  string
-	features []lastRunFeature
+	features []LastRunFeature
 
 	// carry holds, for a run limited to named features, every enabled and
 	// unmasked feature of the loaded domain, in domain order: their entries
@@ -172,7 +174,7 @@ func (r *lastRun) addFeature(name, origin string, installs []transferInstall) {
 	if r == nil {
 		return
 	}
-	transfers := make([]lastRunTransfer, 0, len(installs))
+	transfers := make([]LastRunTransfer, 0, len(installs))
 	for _, in := range installs {
 		transfers = append(transfers, lastRunTransferFor(in))
 	}
@@ -180,8 +182,8 @@ func (r *lastRun) addFeature(name, origin string, installs []transferInstall) {
 }
 
 // lastRunTransferFor maps the install result of a transfer to its record.
-func lastRunTransferFor(in transferInstall) lastRunTransfer {
-	t := lastRunTransfer{Component: in.transfer.Component}
+func lastRunTransferFor(in transferInstall) LastRunTransfer {
+	t := LastRunTransfer{Component: in.transfer.Component}
 	switch {
 	case in.err != nil && in.notLinked:
 		t.Outcome = outcomeNotLinked
@@ -225,8 +227,8 @@ var featureOutcomeRank = map[string]int{
 // with no active transfer is current. The class is the class of its first
 // failed transfer (not a not_linked one); the version is the single distinct
 // non-empty transfer version, else empty.
-func lastRunFeatureFor(name, origin string, transfers []lastRunTransfer) lastRunFeature {
-	f := lastRunFeature{Feature: name, Origin: origin, Outcome: outcomeCurrent, Transfers: transfers}
+func lastRunFeatureFor(name, origin string, transfers []LastRunTransfer) LastRunFeature {
+	f := LastRunFeature{Feature: name, Origin: origin, Outcome: outcomeCurrent, Transfers: transfers}
 	versions := map[string]bool{}
 	for _, t := range transfers {
 		if featureOutcomeRank[t.Outcome] > featureOutcomeRank[f.Outcome] {
@@ -292,15 +294,15 @@ func recordTime(t time.Time) string {
 }
 
 // record builds the record of the run, which ended at finished with runErr.
-func (r *lastRun) record(finished time.Time, runErr error) lastRunRecord {
-	rec := lastRunRecord{
+func (r *lastRun) record(finished time.Time, runErr error) LastRunRecord {
+	rec := LastRunRecord{
 		Format:     lastRunFormat,
 		Started:    recordTime(r.started),
 		Finished:   recordTime(finished),
 		ErrorClass: string(r.runClass),
 		Refresh:    r.refresh,
 		Selected:   r.selected,
-		Features:   make([]lastRunFeature, 0, len(r.features)),
+		Features:   make([]LastRunFeature, 0, len(r.features)),
 	}
 	unreachable := errors.Is(runErr, ErrSourcesUnreachable)
 	switch {
@@ -326,8 +328,8 @@ func (r *lastRun) record(finished time.Time, runErr error) lastRunRecord {
 
 // skipUnreachable turns the failed feature and transfers of a run that no
 // source answered into skipped_unreachable, class network.
-func skipUnreachable(f lastRunFeature) lastRunFeature {
-	transfers := make([]lastRunTransfer, len(f.Transfers))
+func skipUnreachable(f LastRunFeature) LastRunFeature {
+	transfers := make([]LastRunTransfer, len(f.Transfers))
 	for i, t := range f.Transfers {
 		if t.Outcome == outcomeFailed {
 			t.Outcome = outcomeSkippedUnreachable
@@ -374,9 +376,9 @@ func (c *Client) busyFeatures(r *lastRun, opts UpdateFeaturesOptions) {
 			continue
 		}
 		origin, _ := featureOrigin(f.FilePath, imageName, c.paths.definitionRoots, c.config.Definitions != "")
-		entry := lastRunFeature{Feature: f.Name, Origin: origin, Outcome: outcomeSkippedBusy, Transfers: make([]lastRunTransfer, 0, len(split.active))}
+		entry := LastRunFeature{Feature: f.Name, Origin: origin, Outcome: outcomeSkippedBusy, Transfers: make([]LastRunTransfer, 0, len(split.active))}
 		for _, t := range split.active {
-			entry.Transfers = append(entry.Transfers, lastRunTransfer{Component: t.Component, Outcome: outcomeSkippedBusy})
+			entry.Transfers = append(entry.Transfers, LastRunTransfer{Component: t.Component, Outcome: outcomeSkippedBusy})
 		}
 		r.features = append(r.features, entry)
 	}
@@ -403,7 +405,7 @@ func (c *Client) writeLastRun(r *lastRun, finished time.Time, runErr error) {
 // directory: it reads the previous record, keeps a newer one for a busy run,
 // carries the previous entries a named run did not act on, and renames the
 // new record into place (ADR-0005: Lstat checks, temp file plus rename).
-func (c *Client) storeLastRun(r *lastRun, rec lastRunRecord) error {
+func (c *Client) storeLastRun(r *lastRun, rec LastRunRecord) error {
 	path := c.paths.lastRunPath
 	dir := filepath.Dir(path)
 	switch info, err := os.Lstat(dir); {
@@ -460,18 +462,18 @@ func (c *Client) storeLastRun(r *lastRun, rec lastRunRecord) error {
 // a feature in carry (enabled and unmasked now) that this run did not act on
 // keeps its previous entry, with its own at. The result is in carry order,
 // with any entry of this run that is not in carry at the end.
-func carryFeatures(current, previous []lastRunFeature, carry []string) []lastRunFeature {
-	byName := make(map[string]lastRunFeature, len(current))
+func carryFeatures(current, previous []LastRunFeature, carry []string) []LastRunFeature {
+	byName := make(map[string]LastRunFeature, len(current))
 	for _, f := range current {
 		byName[f.Feature] = f
 	}
-	prevByName := make(map[string]lastRunFeature, len(previous))
+	prevByName := make(map[string]LastRunFeature, len(previous))
 	for _, f := range previous {
 		if _, seen := prevByName[f.Feature]; !seen && f.Feature != "" {
 			prevByName[f.Feature] = f
 		}
 	}
-	out := make([]lastRunFeature, 0, len(carry))
+	out := make([]LastRunFeature, 0, len(carry))
 	used := make(map[string]bool, len(current))
 	for _, name := range carry {
 		if f, ok := byName[name]; ok {
@@ -481,7 +483,7 @@ func carryFeatures(current, previous []lastRunFeature, carry []string) []lastRun
 		}
 		if f, ok := prevByName[name]; ok {
 			if f.Transfers == nil {
-				f.Transfers = []lastRunTransfer{}
+				f.Transfers = []LastRunTransfer{}
 			}
 			out = append(out, f)
 		}
@@ -497,7 +499,7 @@ func carryFeatures(current, previous []lastRunFeature, carry []string) []lastRun
 // readLastRunRecord returns the previous record, or nil when there is none
 // or it cannot be used: unreadable, larger than the bound, malformed, or of
 // another format. The open does not follow a symlink.
-func readLastRunRecord(path string) *lastRunRecord {
+func readLastRunRecord(path string) *LastRunRecord {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		return nil
@@ -511,11 +513,112 @@ func readLastRunRecord(path string) *lastRunRecord {
 	if err != nil || len(data) > maxLastRunRecordSize {
 		return nil
 	}
-	var rec lastRunRecord
+	var rec LastRunRecord
 	if err := json.Unmarshal(data, &rec); err != nil || rec.Format != lastRunFormat {
 		return nil
 	}
 	return &rec
+}
+
+// readLastRunStatus reads a record for status without a lock or a write.
+// Unknown formats mean no record; unknown enum values become other.
+// The writer's readLastRunRecord deliberately retains its permissive behavior.
+func readLastRunStatus(path string) (*LastRunRecord, error) {
+	before, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("check last-run record: %w", err)
+	}
+	if !before.Mode().IsRegular() {
+		return nil, fmt.Errorf("check last-run record: not a regular file")
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, fmt.Errorf("open last-run record: %w", err)
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("stat last-run record: %w", err)
+	}
+	if !info.Mode().IsRegular() || !os.SameFile(before, info) {
+		return nil, fmt.Errorf("check last-run record: file changed or is not regular")
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxLastRunRecordSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("read last-run record: %w", err)
+	}
+	if len(data) > maxLastRunRecordSize {
+		return nil, fmt.Errorf("read last-run record: larger than 1 MiB")
+	}
+	if !json.Valid(data) {
+		return nil, fmt.Errorf("malformed last-run record: invalid JSON")
+	}
+	var header map[string]json.RawMessage
+	if err := json.Unmarshal(data, &header); err != nil {
+		return nil, fmt.Errorf("malformed last-run record: not a JSON object")
+	}
+	// A missing format, or one that is not the integer 1 (another number, a
+	// string), is an unknown format: no record.
+	var format int
+	if err := json.Unmarshal(header["format"], &format); err != nil || format != lastRunFormat {
+		return nil, nil
+	}
+	var rec LastRunRecord
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return nil, fmt.Errorf("malformed last-run record: invalid field type")
+	}
+	for _, value := range []string{rec.Started, rec.Finished} {
+		if _, err := time.Parse(time.RFC3339, value); err != nil {
+			return nil, fmt.Errorf("malformed last-run record: started and finished must be RFC 3339 timestamps")
+		}
+	}
+	if rec.Outcome == "" || rec.Refresh == "" || rec.Features == nil {
+		return nil, fmt.Errorf("malformed last-run record: outcome, refresh and features are required")
+	}
+	rec.Outcome = knownLastRunEnum(rec.Outcome, runCompleted, runFailed, runSkippedBusy, runSkippedUnreachable)
+	rec.Refresh = knownLastRunEnum(rec.Refresh, refreshDone, refreshFailed, refreshSkippedGate, refreshNotRequested, refreshNotRun)
+	rec.ErrorClass = normalizeLastRunClass(rec.ErrorClass)
+	for i := range rec.Features {
+		feature := &rec.Features[i]
+		if feature.Feature == "" || feature.Outcome == "" || feature.Transfers == nil {
+			return nil, fmt.Errorf("malformed last-run record: feature name, outcome and transfers are required")
+		}
+		feature.Outcome = normalizeLastRunOutcome(feature.Outcome, false)
+		feature.ErrorClass = normalizeLastRunClass(feature.ErrorClass)
+		for j := range feature.Transfers {
+			transfer := &feature.Transfers[j]
+			transfer.Outcome = normalizeLastRunOutcome(transfer.Outcome, true)
+			transfer.ErrorClass = normalizeLastRunClass(transfer.ErrorClass)
+		}
+	}
+	return &rec, nil
+}
+
+func knownLastRunEnum(value string, known ...string) string {
+	for _, candidate := range known {
+		if value == candidate {
+			return value
+		}
+	}
+	return string(fault.Other)
+}
+
+func normalizeLastRunClass(value string) string {
+	// An absent optional class stays absent, rather than becoming a failure.
+	return knownLastRunEnum(value, "", string(fault.Network), string(fault.HTTPStatus),
+		string(fault.Signature), string(fault.Checksum), string(fault.DiskSpace),
+		string(fault.Link), string(fault.Config), string(fault.Other))
+}
+
+func normalizeLastRunOutcome(value string, transfer bool) string {
+	if transfer && value == outcomeNotLinked {
+		return value
+	}
+	return knownLastRunEnum(value, outcomeUpdated, outcomeCurrent, outcomeHeldByRollback,
+		outcomeNeedsImage, outcomeFailed, outcomeSkippedUnreachable, outcomeSkippedBusy)
 }
 
 // lockLastRunDir takes an exclusive flock on the record directory, so two

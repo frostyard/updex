@@ -54,6 +54,13 @@ type DaemonStatusResult struct {
 	// LastResult is the service's Result for the last run ("success",
 	// "exit-code", ...); empty when LastRun is empty.
 	LastResult string `json:"last_result,omitempty"`
+	// LastUpdate is the normalized persistent last-run record, including manual
+	// updates; nil when absent or of an unknown format. An unknown outcome,
+	// refresh or error_class value is "other".
+	LastUpdate *LastRunRecord `json:"last_update,omitzero"`
+	// LastUpdateError describes an unreadable or invalid last-run record.
+	// LastUpdate is nil when this is set; timer status remains available.
+	LastUpdateError string `json:"last_update_error,omitempty"`
 	// Masked reports that the timer file in use is a systemd mask: a symlink
 	// to /dev/null. A masked timer never fires, so Schedule is empty.
 	Masked bool `json:"masked,omitempty"`

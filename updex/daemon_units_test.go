@@ -20,7 +20,8 @@ func newPackagedDaemonTestClient(t *testing.T, runner systemd.SystemctlRunner) (
 	packagedPath = t.TempDir()
 	manager := systemd.NewTestManager(etcPath, runner)
 	manager.PackagedUnitPath = packagedPath
-	return NewClient(ClientConfig{SystemdManager: manager}), etcPath, packagedPath
+	return NewClient(ClientConfig{SystemdManager: manager,
+		Paths: RuntimePaths{LastRunPath: filepath.Join(t.TempDir(), "last-run.json")}}), etcPath, packagedPath
 }
 
 func writeUnit(t *testing.T, dir, suffix, content string) string {

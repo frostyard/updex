@@ -2,6 +2,9 @@ package updex
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
+	"unicode"
 
 	"github.com/frostyard/clix"
 	"github.com/frostyard/updex/v2/updex"
@@ -198,6 +201,7 @@ OUTPUT:
   Schedule   - When updates run (the effective OnCalendar, drop-ins included)
   Next run   - When the timer fires next
   Last run   - When the service last finished, and its result
+  Last update - Persistent update outcome, refresh state and unsuccessful features
 
 The run log is in the journal: journalctl -u updex-update.service`,
 		Example: `  # Check daemon status
@@ -224,6 +228,7 @@ func runDaemonStatus(cmd *cobra.Command, args []string) error {
 	if !status.Installed {
 		fmt.Println("Auto-update daemon: not installed")
 		fmt.Println("Run 'updex daemon enable' to enable automatic updates.")
+		printLastUpdate(status)
 		return nil
 	}
 
@@ -248,5 +253,70 @@ func runDaemonStatus(cmd *cobra.Command, args []string) error {
 	} else {
 		fmt.Println("  Last run: none recorded since boot")
 	}
+	printLastUpdate(status)
 	return nil
+}
+
+// printLastUpdate prints the last-run record. Under an installed timer the
+// lines are indented like the other status fields; without a timer they
+// follow the two unindented "not installed" lines. A feature entry that a
+// named run carried from an earlier run shows its own time.
+func printLastUpdate(status *updex.DaemonStatusResult) {
+	indent := ""
+	if status.Installed {
+		indent = "  "
+	}
+	if status.LastUpdateError != "" {
+		fmt.Printf("%sLast update: unreadable: %s\n", indent, lastUpdateText(status.LastUpdateError))
+		return
+	}
+	rec := status.LastUpdate
+	if rec == nil {
+		if status.Installed {
+			fmt.Println("  Last update: none recorded")
+		}
+		return
+	}
+	details := lastUpdateDetails(rec.ErrorClass, "")
+	details = append(details, "refresh "+lastUpdateText(rec.Refresh))
+	if rec.Selected {
+		details = append(details, "named features")
+	}
+	fmt.Printf("%sLast update: %s %s (%s)\n", indent, lastUpdateText(rec.Finished), lastUpdateText(rec.Outcome), strings.Join(details, ", "))
+	for _, feature := range rec.Features {
+		if feature.Outcome == "updated" || feature.Outcome == "current" {
+			continue
+		}
+		fmt.Printf("%s  %s: %s", indent, lastUpdateText(feature.Feature), lastUpdateText(feature.Outcome))
+		details := lastUpdateDetails(feature.ErrorClass, feature.Version)
+		if feature.At != "" && feature.At != rec.Finished {
+			details = append(details, "at "+lastUpdateText(feature.At))
+		}
+		if len(details) > 0 {
+			fmt.Printf(" (%s)", strings.Join(details, ", "))
+		}
+		fmt.Println()
+	}
+}
+
+func lastUpdateDetails(class, version string) []string {
+	var details []string
+	if class != "" {
+		details = append(details, "class "+lastUpdateText(class))
+	}
+	if version != "" {
+		details = append(details, "version "+lastUpdateText(version))
+	}
+	return details
+}
+
+// lastUpdateText quotes untrusted record strings only when they contain
+// non-printable runes, so terminal controls cannot change the display.
+func lastUpdateText(value string) string {
+	for _, r := range value {
+		if !unicode.IsPrint(r) {
+			return strconv.Quote(value)
+		}
+	}
+	return value
 }

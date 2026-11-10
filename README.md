@@ -393,7 +393,7 @@ Use `REPO/NAME` to disambiguate; a bare `NAME` works when unambiguous.
 
 ```bash
 sudo updex daemon enable             # Enable and start the update timer
-updex daemon status                  # Enabled/active, next run, last result
+updex daemon status                  # Timer state, next run, last update
 sudo updex --dry-run daemon enable   # Preview what enable would do
 sudo updex daemon disable            # Stop and disable it
 ```
@@ -433,7 +433,14 @@ the identical units that older updex releases wrote).
 - **Status:** `updex daemon status` shows the unit files in use (`packaged`, or
   `etc` when a file in `/etc/systemd/system` overrides the package), whether the
   timer is masked (`Masked: yes`), the next run and the time and result of the
-  last run. The run log is `journalctl -u updex-update.service`.
+  last run since boot. It also reads the persistent last-update record, even
+  without a timer: the finished time, run outcome, refresh state, and each
+  feature that did not succeed, with its error class and version when known.
+  This distinguishes a busy or unreachable run from systemd's successful exit
+  and keeps the update result visible after a reboot. `--json` includes
+  `last_update`, or `last_update_error` when the record cannot be read. A
+  missing or unknown-format record means no record; an invalid record does
+  not fail status. The run log is `journalctl -u updex-update.service`.
 - **Last-run record:** every `updex features update` that is not a dry run
   writes `/var/lib/updex/last-run.json`: the run outcome (`completed`,
   `failed`, `skipped_busy`, `skipped_unreachable`), the refresh state, and per
