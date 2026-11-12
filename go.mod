@@ -2,7 +2,7 @@ module github.com/frostyard/updex/v2
 
 go 1.26.6
 
-toolchain go1.26.10
+toolchain go1.26.11
 
 require (
 	github.com/ProtonMail/go-crypto v1.5.2
