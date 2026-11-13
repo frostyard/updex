@@ -102,6 +102,9 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 			if status.Error != "" {
 				c.warn("%s: %s", t.Component, status.Error)
 			}
+			if t.ProtectVersionError != nil {
+				c.warn("%s: %v; it protects no version", t.Component, t.ProtectVersionError)
+			}
 			if f.Enabled && !f.Masked && status.Error == "" {
 				// Why a staged image is not linked (ADR-0016). A failure
 				// here is a warning: the listing never breaks.

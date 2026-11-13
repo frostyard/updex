@@ -827,7 +827,7 @@ type PendingActivation struct {
 
 Defined in `updex/status.go` (ADR-0016, "Status and logs"). `RunningVersion` is read from the merged-state metadata under the client's `sysextHierarchies` ([ADR-0015](../adr/0015-detect-merged-sysexts-from-hierarchy-metadata.md)) with `sysext.MergedVersionIn`; `LinkedVersion` from `sysext.LinkedVersionAt` with the client's `SysextLinkDir`. The JSON keys `running_version` and `linked_version` are always present: an empty string means none, so a consumer can tell "not merged" from an absent key of an older updex.
 
-`PendingReboot` is true when the next boot changes what the host runs: `LinkedVersion` is non-empty and differs from `RunningVersion`. It is false when `RunningVersion` is `unknown` (the two cannot be compared; a false alarm on every host with old-style metadata would hide real ones) and when `Error` is set. `Error` carries `failed to read merged state: …` and/or `failed to inspect sysext link: …`; the value that could be read stays set. The CLI renders `RunningVersion` and `LinkedVersion` as the `RUNNING` and `LINKED` columns (`-` for empty, `error` when `Error` is set) and lists the pending transfers in a `PENDING REBOOT:` footer.
+`PendingReboot` is true when the next boot changes what the host runs: `LinkedVersion` is non-empty and differs from `RunningVersion`. It is false when `RunningVersion` is `unknown` (the two cannot be compared; a false alarm on every host with old-style metadata would hide real ones) and when `Error` is set. `Error` carries `failed to read merged state: …` and/or `failed to inspect sysext link: …`, and the transfer's `config.Transfer.SpecifierError` (an empty specifier in a `MatchPattern`, #511); the value that could be read stays set. The CLI renders `RunningVersion` and `LinkedVersion` as the `RUNNING` and `LINKED` columns (`-` for empty, `error` when `Error` is set) and lists the pending transfers in a `PENDING REBOOT:` footer.
 
 ### FeatureActionResult
 
@@ -942,6 +942,8 @@ type CheckResult struct {
 - `GetTransfersForFeature(transfers []*Transfer, featureName string) []*Transfer` — Get transfers associated with a specific feature by membership in `Features` or `RequisiteFeatures`; this is association lookup only, and must not decide what is downloaded, linked or removed (use `CheckTransferActivation`)
 - `GetEnabledFeatureNames(features []*Feature) []string`
 - `IsFeatureEnabled(features []*Feature, name string) bool`
+- `Transfer.SpecifierError error` — Set by the load when a specifier in a `Source` or `Target` `MatchPattern` expanded to an empty string (the first one only), marked `fault.Config`: `Target MatchPattern "foo_@v_%w_%a.raw": specifier %w is empty: os-release has no VERSION_ID`. The load still succeeds. `Client` returns it from every version lookup (`UpdateFeatures`, `CheckFeatures`, `EnableFeature{Now}`) and puts it in `TransferStatus.Error`; teardown (`DisableFeature`) and the vacuum ignore it (#511)
+- `Transfer.ProtectVersionError error` — The same for `ProtectVersion=`; not an error of the transfer: `Features` and the vacuum report it as a warning, and `ProtectVersion` protects nothing
 
 **Component discovery** (`config/component.go`; see `docs/design/overview.md` "Components" for the full design):
 

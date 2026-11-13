@@ -334,7 +334,7 @@ cleartext.
 
 ### Systemd specifiers
 
-Transfer file values support systemd-style `%` specifiers. See [Configuration Reference](../specs/config-reference.md#systemd-specifiers) for the full list.
+Transfer file values support systemd-style `%` specifiers. See [Configuration Reference](../specs/config-reference.md#systemd-specifiers) for the full list. A specifier that expands to an empty string in a `MatchPattern` (for example `%w` without `VERSION_ID`) is recorded as `config.Transfer.SpecifierError` (class `config`): the load succeeds, every version lookup and the transfer status report it, and teardown and the vacuum go on (#511).
 
 ## Catalogs (`catalog/`, `updex/catalog.go`)
 

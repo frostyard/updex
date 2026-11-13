@@ -429,6 +429,9 @@ func (c *Client) installTransfers(ctx context.Context, feature string, transfers
 	// exists it keeps the rejected version.
 	if !opts.NoVacuum {
 		for _, transfer := range transfers {
+			if transfer.ProtectVersionError != nil {
+				c.warn("%s: %v; it protects no version", transfer.Component, transfer.ProtectVersionError)
+			}
 			if _, _, err := sysext.VacuumWith(transfer, c.vacuumPaths(holds.rejected[transfer.Component])); err != nil {
 				c.warn("vacuum failed for %s: %v", transfer.Component, err)
 			}

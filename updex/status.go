@@ -82,6 +82,11 @@ type TransferStatus struct {
 func (c *Client) featureTransferStatus(t *config.Transfer, holds rollbackHolds, reason *rollbackHoldReason, owner string, holdErr error) TransferStatus {
 	status := c.transferStatus(t)
 	var problems []string
+	// An empty specifier in a MatchPattern: the link and the merged state are
+	// read with a pattern that matches no image of this host.
+	if t.SpecifierError != nil {
+		problems = append(problems, t.SpecifierError.Error())
+	}
 	if err := holds.errs[t.Component]; err != nil {
 		problems = append(problems, err.Error())
 	}
