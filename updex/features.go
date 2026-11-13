@@ -997,13 +997,18 @@ func (c *Client) updateFeatures(ctx context.Context, opts UpdateFeaturesOptions,
 						// protect the version it names now.
 						paths := c.vacuumPaths(in.rejected)
 						paths.LinkDir = ""
-						removed, _, err := sysext.PlanVacuumWith(transfer, v, paths)
+						plan, err := sysext.PlanVacuumWithReport(transfer, v, paths)
 						if err != nil {
 							c.warn("failed to plan vacuum for %s: %v", transfer.Component, err)
 						}
+						removed := plan.Removed
 						result.RemovedVersions = removed
 						if len(removed) > 0 {
 							result.NextActionMessage += fmt.Sprintf("; would remove old versions: %v", removed)
+						}
+						result.RemovedOtherSuiteImages = plan.OtherSuiteRemoved
+						if len(plan.OtherSuiteRemoved) > 0 {
+							result.NextActionMessage += fmt.Sprintf("; would remove other-suite images: %v", plan.OtherSuiteRemoved)
 						}
 					}
 					c.msg("Would install version %s", v)
