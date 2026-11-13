@@ -21,12 +21,26 @@ Download the latest CLI package for your system from the
 | Alpine                    | `frostyard-updex_<version>_x86_64.apk` or `frostyard-updex_<version>_aarch64.apk`     |
 | Other Linux distributions | `updex_<version>_linux_amd64.tar.gz` or `updex_<version>_linux_arm64.tar.gz`          |
 
-The matrix above is the whole set of release artifacts. A Debian-family host
-installs the downloaded file with:
+The matrix lists the package and archive formats. Each release also publishes
+`checksums.txt`. A Debian-family host installs the downloaded file with:
 
 ```bash
 sudo apt install ./frostyard-updex_<version>_amd64.deb
 ```
+
+Download `checksums.txt` from the same release and verify the artifact before
+installing it:
+
+```bash
+sha256sum --ignore-missing --check checksums.txt
+gh attestation verify <downloaded-artifact> --repo frostyard/updex
+```
+
+The checksum detects corruption or truncation; the GitHub build-provenance
+attestation binds the artifact to a tag release built by this repository's
+workflow, rather than trusting only a checksum served alongside it. The
+[GitHub CLI](https://cli.github.com/) is needed for attestation verification;
+`gh attestation verify` also works on `checksums.txt`.
 
 A host with a compressed EROFS sysext also needs `erofs-utils >= 1.8.5`; see
 [erofs-utils for compressed sysext images](../design/packaging-and-maintainers.md).

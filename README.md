@@ -33,8 +33,8 @@ tool. Use the CLI to manage extensions, or import
   a newer one is published.
   [Rolling back](docs/specs/cli-reference.md#rolling-back)
 - **Revisions that need a newer base.** A revision that sets
-  `UPDEX_MIN_IMAGE_VERSION` stays staged until the host boots a new enough
-  image. [Minimum image version](docs/specs/cli-reference.md#minimum-image-version)
+  `UPDEX_MIN_IMAGE_VERSION` stays staged until the image for the next boot is
+  new enough. [Minimum image version](docs/specs/cli-reference.md#minimum-image-version)
 - **Automatic updates.** A systemd timer downloads, verifies and links new
   revisions, which take effect at the next boot.
   [Automatic updates](docs/specs/cli-reference.md#automatic-updates)

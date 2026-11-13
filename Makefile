@@ -95,7 +95,7 @@ bump-main-check:
 		echo "make bump must run on main (core ADR-0012); found $$branch, not main: check out main and update it first"; \
 		exit 1; \
 	fi; \
-	if ! git fetch --quiet origin main; then \
+	if ! git fetch --quiet origin +refs/heads/main:refs/remotes/origin/main; then \
 		echo "make bump cannot fetch origin main; check the remote and your network access, then retry"; \
 		exit 1; \
 	fi; \

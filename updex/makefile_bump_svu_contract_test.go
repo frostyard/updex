@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -281,7 +282,7 @@ func TestMakefileBumpRecipeChecksMain(t *testing.T) {
 	}
 
 	checkRecipe := extractRecipe(t, makefile, "bump-main-check:")
-	for _, want := range []string{"git symbolic-ref", "git fetch", "refs/remotes/origin/main", "git rev-parse HEAD"} {
+	for _, want := range []string{"git symbolic-ref", "git fetch", "+refs/heads/main:refs/remotes/origin/main", "refs/remotes/origin/main", "git rev-parse HEAD"} {
 		if !strings.Contains(checkRecipe, want) {
 			t.Errorf("Makefile bump-main-check recipe does not use %q; got:\n%s", want, checkRecipe)
 		}
@@ -304,7 +305,8 @@ func TestMakefileBumpRecipeChecksMain(t *testing.T) {
 // TestBumpMainCheckBehaviour runs the real bump-main-check recipe in temporary
 // repositories whose origin is a temporary bare repository, so each failure
 // branch keeps its message: another branch, a detached HEAD, unpushed local
-// commits, and a HEAD behind origin/main.
+// commits, a HEAD behind origin/main, and a stale tracking ref that a
+// remote without a fetch refspec would otherwise leave in place.
 func TestBumpMainCheckBehaviour(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping the make bump-main-check subprocess test in -short mode")
@@ -329,44 +331,59 @@ func TestBumpMainCheckBehaviour(t *testing.T) {
 
 	tests := []struct {
 		name         string
-		prepare      func(t *testing.T, repo string)
+		prepare      func(t *testing.T, repo bumpRepo)
 		wantErr      bool
 		wantContains []string
 	}{
 		{
 			name:    "on main and equal to origin main",
-			prepare: func(t *testing.T, repo string) {},
+			prepare: func(t *testing.T, repo bumpRepo) {},
 		},
 		{
 			name: "another branch",
-			prepare: func(t *testing.T, repo string) {
-				runGit(t, repo, "checkout", "-b", "release-candidate")
+			prepare: func(t *testing.T, repo bumpRepo) {
+				runGit(t, repo.dir, "checkout", "-b", "release-candidate")
 			},
 			wantErr:      true,
 			wantContains: []string{"must run on main", "release-candidate"},
 		},
 		{
 			name: "detached HEAD",
-			prepare: func(t *testing.T, repo string) {
-				runGit(t, repo, "checkout", "--detach")
+			prepare: func(t *testing.T, repo bumpRepo) {
+				runGit(t, repo.dir, "checkout", "--detach")
 			},
 			wantErr:      true,
 			wantContains: []string{"must run on main", "detached HEAD"},
 		},
 		{
 			name: "local commit origin does not have",
-			prepare: func(t *testing.T, repo string) {
-				commit(t, repo, "unpushed.txt")
+			prepare: func(t *testing.T, repo bumpRepo) {
+				commit(t, repo.dir, "unpushed.txt")
 			},
 			wantErr:      true,
 			wantContains: []string{"is not origin/main", "pull or push first"},
 		},
 		{
 			name: "behind origin main",
-			prepare: func(t *testing.T, repo string) {
-				commit(t, repo, "pushed-elsewhere.txt")
-				runGit(t, repo, "push", "origin", "main")
-				runGit(t, repo, "reset", "--hard", "HEAD~1")
+			prepare: func(t *testing.T, repo bumpRepo) {
+				commit(t, repo.dir, "pushed-elsewhere.txt")
+				runGit(t, repo.dir, "push", "origin", "main")
+				runGit(t, repo.dir, "reset", "--hard", "HEAD~1")
+			},
+			wantErr:      true,
+			wantContains: []string{"is not origin/main", "pull or push first"},
+		},
+		{
+			// A remote without a fetch refspec leaves `git fetch origin main`
+			// writing only FETCH_HEAD, so refs/remotes/origin/main keeps its old
+			// value and a guard that trusts it passes on a stale ref (#510
+			// cross-review, finding 1). The explicit destination fixes that.
+			name: "stale tracking ref, remote without a fetch refspec",
+			prepare: func(t *testing.T, repo bumpRepo) {
+				runGit(t, repo.dir, "config", "--unset-all", "remote.origin.fetch")
+				peer := cloneBumpOrigin(t, repo, "peer")
+				commit(t, peer, "moved-on.txt")
+				runGit(t, peer, "push", "origin", "main")
 			},
 			wantErr:      true,
 			wantContains: []string{"is not origin/main", "pull or push first"},
@@ -379,7 +396,7 @@ func TestBumpMainCheckBehaviour(t *testing.T) {
 			tt.prepare(t, repo)
 
 			cmd := exec.Command("make", "-s", "-f", makefile, "bump-main-check")
-			cmd.Dir = repo
+			cmd.Dir = repo.dir
 			cmd.Env = isolatedGitEnv(t)
 			var output bytes.Buffer
 			cmd.Stdout = &output
@@ -401,24 +418,44 @@ func TestBumpMainCheckBehaviour(t *testing.T) {
 	}
 }
 
-// newBumpRepo creates a working repository on main plus a bare repository as
-// its origin, both with 1 pushed commit, and returns the working directory.
-func newBumpRepo(t *testing.T) string {
+// bumpRepo is a temporary working repository on main plus the bare repository
+// that serves as its origin, both with 1 pushed commit.
+type bumpRepo struct {
+	// root holds the bare origin and every clone made from it.
+	root string
+	// origin is the bare repository the working repository pushes to.
+	origin string
+	// dir is the working repository, set as a command's directory.
+	dir string
+}
+
+// newBumpRepo creates a working repository on main and a bare repository as
+// its origin, both with 1 pushed commit.
+func newBumpRepo(t *testing.T) bumpRepo {
 	t.Helper()
 	root := t.TempDir()
 	origin := filepath.Join(root, "origin.git")
 	runGit(t, root, "init", "--bare", origin)
 	runGit(t, origin, "symbolic-ref", "HEAD", "refs/heads/main")
 
-	repo := filepath.Join(root, "work")
-	runGit(t, root, "init", "-b", "main", repo)
-	runGit(t, repo, "remote", "add", "origin", origin)
-	writeRepoFile(t, repo, "first.txt")
-	runGit(t, repo, "add", "-A")
-	runGit(t, repo, "commit", "-m", "first commit")
-	runGit(t, repo, "push", "origin", "main")
+	repo := bumpRepo{root: root, origin: origin, dir: filepath.Join(root, "work")}
+	runGit(t, root, "init", "-b", "main", repo.dir)
+	runGit(t, repo.dir, "remote", "add", "origin", origin)
+	writeRepoFile(t, repo.dir, "first.txt")
+	runGit(t, repo.dir, "add", "-A")
+	runGit(t, repo.dir, "commit", "-m", "first commit")
+	runGit(t, repo.dir, "push", "origin", "main")
 
 	return repo
+}
+
+// cloneBumpOrigin clones repo's origin into a sibling directory on main, so a
+// test can advance origin the way another maintainer's push would.
+func cloneBumpOrigin(t *testing.T, repo bumpRepo, name string) string {
+	t.Helper()
+	clone := filepath.Join(repo.root, name)
+	runGit(t, repo.root, "clone", "-b", "main", repo.origin, clone)
+	return clone
 }
 
 // writeRepoFile writes a distinct file into repo so a commit has content.
@@ -446,19 +483,60 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(out.String())
 }
 
-// isolatedGitEnv returns this process's environment with the host's global and
-// system git configuration dropped, so a developer's user.name, remote
-// rewrite, or safe.directory setting cannot decide a test result.
+// isolatedGitEnv returns this process's environment with every GIT_* variable
+// dropped, then adds a null global and system git configuration. So neither the
+// host's configuration (user.name, url rewrites, safe.directory) nor an
+// inherited repository selection (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE,
+// GIT_CONFIG_PARAMETERS, GIT_CONFIG_COUNT) can decide a test result or point a
+// test command's index at a caller's file.
 func isolatedGitEnv(t *testing.T) []string {
 	t.Helper()
 	env := make([]string, 0, len(os.Environ())+2)
 	for _, entry := range os.Environ() {
-		if strings.HasPrefix(entry, "GIT_CONFIG_GLOBAL=") || strings.HasPrefix(entry, "GIT_CONFIG_SYSTEM=") {
+		if strings.HasPrefix(entry, "GIT_") {
 			continue
 		}
 		env = append(env, entry)
 	}
 	return append(env, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+}
+
+// TestIsolatedGitEnvDropsRepositorySelection pins that inherited GIT_*
+// variables neither survive into a test command's environment nor let a test
+// git command write a caller's index (#510 cross-review, finding 2).
+func TestIsolatedGitEnvDropsRepositorySelection(t *testing.T) {
+	indexPath := filepath.Join(t.TempDir(), "inherited-index")
+	gitDir := filepath.Join(t.TempDir(), "inherited-git-dir")
+	workTree := t.TempDir()
+
+	for name, value := range map[string]string{
+		"GIT_DIR":               gitDir,
+		"GIT_WORK_TREE":         workTree,
+		"GIT_INDEX_FILE":        indexPath,
+		"GIT_CONFIG_PARAMETERS": "'user.name=leaked'",
+		"GIT_CONFIG_COUNT":      "1",
+	} {
+		t.Setenv(name, value)
+	}
+
+	env := isolatedGitEnv(t)
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "GIT_") && entry != "GIT_CONFIG_GLOBAL=/dev/null" && entry != "GIT_CONFIG_SYSTEM=/dev/null" {
+			t.Errorf("isolatedGitEnv kept the inherited variable %q", entry)
+		}
+	}
+	for _, want := range []string{"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null"} {
+		if !slices.Contains(env, want) {
+			t.Errorf("isolatedGitEnv does not set %s; got %v", want, env)
+		}
+	}
+
+	// A full fixture built while GIT_INDEX_FILE is inherited must not touch
+	// that file: git would otherwise write its index there.
+	newBumpRepo(t)
+	if _, err := os.Stat(indexPath); !os.IsNotExist(err) {
+		t.Errorf("git wrote the inherited GIT_INDEX_FILE %s (stat error: %v)", indexPath, err)
+	}
 }
 
 // writeFakeSvu writes an executable stand-in whose `--version` prints line, so

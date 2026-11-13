@@ -265,7 +265,10 @@ GoReleaser. Maintainers run `make bump`, which first runs
 `make svu-version-check` — it fails with the install command (`mise install`)
 when svu is missing or is not the `mise.toml` pin — then
 `make bump-main-check`, which fails unless the current branch is `main` and
-`HEAD` equals `origin/main` after a `git fetch origin main` (core ADR-0012:
+`HEAD` equals `origin/main` after
+`git fetch origin +refs/heads/main:refs/remotes/origin/main` (an explicit
+destination, so a remote without a fetch refspec cannot leave a stale
+tracking ref; core ADR-0012:
 `make bump` releases `main` only, so another branch, a detached HEAD, an
 unpushed commit, or a HEAD behind the remote is refused), then builds, tests,
 formats, lints, and tags the next version with `$(SVU) next` from a clean
@@ -1141,6 +1144,10 @@ maintainer at [bketelsen@gmail.com](mailto:bketelsen@gmail.com) as a fallback.
   install steps; the root `README.md` is a short front page that follows the
   core README spec (kind `tool`, at most 1000 words), so new detail goes to
   the CLI reference, not to the README
+- When text moves out of the README, every true fact keeps a home (the CLI
+  reference, the configuration reference, the packaging guide or
+  `SECURITY.md`), and a README summary must not be stronger or weaker than the
+  reference it links.
 - `docs/design/overview.md`, `docs/specs/sdk-api.md`,
   `docs/specs/config-reference.md` — the agent-oriented architecture,
   SDK, and configuration references
