@@ -304,6 +304,27 @@ A missing `SHA256SUMS.gpg` on a transfer that requires one fails with an
 error naming the rule that applied (`manifest.ErrSignatureNotFound` is in the
 chain). SHA256 hash checks are unconditional.
 
+What still protects an unsigned catalog: HTTPS authenticates the server and
+protects transport (redirects from HTTPS to HTTP are refused, and
+`AllowUnsigned` does not relax the HTTPS requirement), and every image must
+match its `SHA256SUMS` entry before it is installed. What is lost: an
+unsigned checksum does not authenticate the publisher, so anyone able to
+replace both the image and `SHA256SUMS` on the hosting infrastructure can
+serve a different image.
+
+**Upgrading from v2.0.0:** sysexts added with v2.0.0 kept the catalog's
+`Verify=false` and stop updating with a signature error until their catalog
+sets `AllowUnsigned=yes`. No re-add is needed unless the catalog's `SiteURL`
+has changed since (for example from `http://` to `https://`): the opt-in
+only covers sysexts whose transfer still fetches from the current `SiteURL`,
+so re-run `sudo updex catalog add <repo>/<name>` for those.
+
+**Upgrading from v2.0.1 or v2.0.2:** these releases dropped the catalog's
+`Verify=` from generated transfers, so sysexts added with them keep requiring
+a signature. Add `AllowUnsigned=yes`, then re-run
+`sudo updex catalog add <repo>/<name>` for each affected sysext to regenerate
+its transfer.
+
 `catalog add` writes the generated `<sysext>.transfer`/`<sysext>.feature`
 into `/etc/sysupdate.<Component>.d/`, which is discovered as a normal named
 component (see "Components" above).
@@ -350,8 +371,9 @@ that annotation.
 Both values are compared as numbers of any length (leading zeros ignored).
 When the key is set and the image version is lower, missing or not digits
 only, or the key value itself is not digits only, the revision is not linked
-and updex reports `needs image >= <value>`; see `README.md` for what stays and
-what continues.
+and updex reports `needs image >= <value>`; see [Minimum image
+version](cli-reference.md#minimum-image-version) for what stays and what
+continues.
 
 An immediate `systemd-sysext refresh` merges into the *running* image, so
 before every refresh updex runs it compares the key of each sysext the refresh
@@ -389,7 +411,7 @@ Version candidates extracted from the manifest are deduplicated in a set and ret
 
 ## Retention and Active Versions
 
-`InstancesMax` controls how many installed versions are normally retained. The vacuum that `updex features update` (and `features enable --now`) runs after a feature's links succeeded always keeps, besides the newest `InstancesMax` versions: the version that the sysext link `/var/lib/extensions/<component>.<ext>` names (linked), the version merged now (read from the `.systemd-sysext` metadata of the merged hierarchies, ADR-0015), `ProtectVersion`, the version a rollback record rejected for the transfer while the record exists (`/var/lib/updex/rollback/<feature>`, see `updex features rollback`), and a legacy active version pointed to by `CurrentSymlink`. They are kept in addition to the newest `InstancesMax` versions (one that is among the newest counts as one of them), so a host that has linked a new revision but still runs an older one keeps up to `InstancesMax` + 1 images per transfer until its next reboot. If updex cannot read the link or the merged state, it deletes nothing. If `InstancesMax <= 0`, vacuum falls back to the default of `2`.
+`InstancesMax` controls how many installed versions are normally retained. The vacuum that `updex features update` (and `features enable --now`) runs after a feature's links succeeded always keeps, besides the newest `InstancesMax` versions: the version that the sysext link `/var/lib/extensions/<component>.<ext>` names (linked), the version merged now (read from the `.systemd-sysext` metadata of the merged hierarchies, ADR-0015), `ProtectVersion`, the version a rollback record rejected for the transfer while the record exists (`/var/lib/updex/rollback/<feature>`, see `updex features rollback`), and a legacy active version pointed to by `CurrentSymlink`. They are kept in addition to the newest `InstancesMax` versions (one that is among the newest counts as one of them), so a host that has linked a new revision but still runs an older one keeps up to `InstancesMax` + 1 images per transfer until its next reboot. If updex cannot read the link or the merged state, it deletes nothing and warns. If `InstancesMax <= 0`, vacuum falls back to the default of `2`.
 
 Dry-run updates call `sysext.PlanVacuumWith` with the would-install version as the active-version override, which lets the SDK report `RemovedVersions` without touching disk. Real installs call `sysext.VacuumWith`, so the update result currently does not include removed-version details for non-dry-run runs.
 

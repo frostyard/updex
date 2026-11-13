@@ -1,4 +1,4 @@
-.PHONY: all build clean fmt lint lint-version-check svu-version-check test test-cover coverage-check test-coverage-check test-docs-check tidy check verify-static verify ci install help
+.PHONY: all build clean fmt lint lint-version-check svu-version-check bump-main-check test test-cover coverage-check test-coverage-check test-docs-check tidy check verify-static verify ci install help
 
 # Build variables
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -88,6 +88,23 @@ svu-version-check:
 		exit 1; \
 	fi
 
+## bump-main-check: Fail unless HEAD is the main branch and equals origin/main (make bump tags only main)
+bump-main-check:
+	@branch="$$(git symbolic-ref --quiet --short HEAD)" || branch="detached HEAD"; \
+	if [ "$$branch" != "main" ]; then \
+		echo "make bump must run on main (core ADR-0012); found $$branch, not main: check out main and update it first"; \
+		exit 1; \
+	fi; \
+	if ! git fetch --quiet origin +refs/heads/main:refs/remotes/origin/main; then \
+		echo "make bump cannot fetch origin main; check the remote and your network access, then retry"; \
+		exit 1; \
+	fi; \
+	head="$$(git rev-parse HEAD)" && remote="$$(git rev-parse refs/remotes/origin/main)" || exit 1; \
+	if [ "$$head" != "$$remote" ]; then \
+		echo "HEAD ($$(git rev-parse --short HEAD)) is not origin/main ($$(git rev-parse --short refs/remotes/origin/main)); pull or push first so the tag lands on the released commit"; \
+		exit 1; \
+	fi
+
 ## test: Run tests
 test:
 	$(GO) test -v ./...
@@ -162,6 +179,7 @@ help:
 
 bump: ## generate a new version with svu
 	@$(MAKE) --no-print-directory svu-version-check
+	@$(MAKE) --no-print-directory bump-main-check
 	@$(MAKE) build
 	@$(MAKE) test
 	@$(MAKE) fmt
@@ -170,6 +188,7 @@ bump: ## generate a new version with svu
 		echo "Working directory is not clean. Please commit or stash changes before bumping version."; \
 		exit 1; \
 	fi
+	@$(MAKE) --no-print-directory bump-main-check
 	@echo "Creating new tag..."
 	@version=$$($(SVU) next); \
 		git tag -a $$version -m "Version $$version"; \

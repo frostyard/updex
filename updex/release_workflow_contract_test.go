@@ -99,8 +99,9 @@ func TestReleaseWorkflowRequestsAptPublicationForTags(t *testing.T) {
 // `{}` (frostyard/core ADR-0071 row B5: least privilege starts at the top), and
 // it runs actions/attest-build-provenance (pinned to a full commit SHA) over a
 // subject-path that includes checksums.txt, so a published artifact carries an
-// authenticity signal beyond the same-origin checksums.txt (README
-// "Installation": `gh attestation verify <artifact> --repo frostyard/updex`).
+// authenticity signal beyond the same-origin checksums.txt (docs/specs/
+// cli-reference.md "Install": `gh attestation verify <artifact> --repo
+// frostyard/updex`).
 // The workflow only runs on a tag push, so this test is the pull-request gate.
 func TestReleaseWorkflowAttestsBuildProvenance(t *testing.T) {
 	data, err := os.ReadFile("../.github/workflows/release.yml")

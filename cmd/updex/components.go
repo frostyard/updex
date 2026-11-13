@@ -16,7 +16,8 @@ sysupdate.<name>.d directory (see sysupdate.d(5) "Components"), searched
 across /etc, /run, /usr/local/lib, and /usr/lib in that priority order. This
 does not list the legacy default sysupdate.d directory itself; use
 'updex features list' (which reads the union of the default directory and
-every component below) to see everything.
+every component below) to see everything. It refuses -C/--definitions: a
+definitions override is 1 flat directory with no components.
 
 OUTPUT COLUMNS:
   COMPONENT  - Component name

@@ -112,4 +112,5 @@ unit.
 - Builds on: [ADR-0008](0008-bounded-retry-no-resume.md) (bounded retries and
   the network errors that are transient)
 - Shapes: [design/overview.md](../design/overview.md),
-  [specs/sdk-api.md](../specs/sdk-api.md), [README.md](../../README.md)
+  [specs/sdk-api.md](../specs/sdk-api.md),
+  [specs/cli-reference.md](../specs/cli-reference.md)

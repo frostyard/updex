@@ -87,9 +87,9 @@ ListURL=https://api.github.com/repos/fedora-sysexts/community/contents/
 - `Component` (optional) — the systemd-sysupdate component the generated files
   are written under; defaults to `catalog-<name>`.
 
-See the [Sysext Catalogs](../../README.md#sysext-catalogs) section of the
-README and the [configuration reference](../specs/config-reference.md) for the
-full `.catalog` file format.
+See the [Catalogs](../specs/cli-reference.md#catalogs) section of the updex
+CLI reference and the [configuration reference](../specs/config-reference.md)
+for the full `.catalog` file format.
 
 ### 4. `erofs-utils` >= 1.8.5 for compressed sysext images
 

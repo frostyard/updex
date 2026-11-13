@@ -11,9 +11,9 @@ import (
 // TestFeaturesMutationHelpNamesBothDropInPaths pins the help text of
 // `features enable` and `features disable` to the drop-in locations
 // writeFeatureDropIn actually uses: the legacy default directory and the
-// component-scoped directory (see README "Components" and
-// docs/design/overview.md). A future edit that drops either path from the
-// Long text fails here.
+// component-scoped directory (see docs/specs/cli-reference.md "Features and
+// components" and docs/design/overview.md). A future edit that drops either
+// path from the Long text fails here.
 func TestFeaturesMutationHelpNamesBothDropInPaths(t *testing.T) {
 	t.Parallel()
 

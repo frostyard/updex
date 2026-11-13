@@ -74,6 +74,7 @@ make build        # Build binary to build/updex
 make test         # Run all tests
 make lint         # Run golangci-lint (.golangci.yml; fails if not installed)
 make svu-version-check  # Fail unless svu is the mise.toml pin (make bump runs it first)
+make bump-main-check   # Fail unless HEAD is main and equals origin/main (make bump runs it after svu-version-check and again before tagging)
 make check        # fmt + lint + test (mutating: fmt rewrites files)
 make verify       # Non-mutating, credential-free gate for read-only reviewers: tidy diff, vet, gofmt -l, exact-pin lint, non-E2E tests
 make ci           # Credential-free gate matching CI's fail-fast order: make verify first, then docs integrity, coverage, E2E, race, cross-build
@@ -262,13 +263,25 @@ are listed as 0644 files.
 Releases are tagged with semantic versions (`vMAJOR.MINOR.PATCH`) and built by
 GoReleaser. Maintainers run `make bump`, which first runs
 `make svu-version-check` — it fails with the install command (`mise install`)
-when svu is missing or is not the `mise.toml` pin — then builds, tests,
+when svu is missing or is not the `mise.toml` pin — then
+`make bump-main-check`, which fails unless the current branch is `main` and
+`HEAD` equals `origin/main` after
+`git fetch origin +refs/heads/main:refs/remotes/origin/main` (an explicit
+destination, so a remote without a fetch refspec cannot leave a stale
+tracking ref; core ADR-0012:
+`make bump` releases `main` only, so another branch, a detached HEAD, an
+unpushed commit, or a HEAD behind the remote is refused), then builds, tests,
 formats, lints, and tags the next version with `$(SVU) next` from a clean
-working tree. Build metadata (version, build time) is embedded via ldflags;
-`--version` prints it. `updex/makefile_bump_svu_contract_test.go` pins the
+working tree. `bump-main-check` runs a second time directly before the tag is
+derived, so a branch change during the long build cannot tag the wrong commit.
+Build metadata (version, build time) is embedded via ldflags; `--version`
+prints it. `updex/makefile_bump_svu_contract_test.go` pins the
 svu pin, its `mise.lock` checksums for linux-x64 and linux-arm64, the check's
 placement before `$(SVU) next`, and its failure modes (missing binary,
-wrong release, and an svu build with no `GitVersion:` line).
+wrong release, and an svu build with no `GitVersion:` line), and pins
+`bump-main-check`'s 2 call sites plus its behaviour in a temporary repository
+(clean main passes; another branch, a detached HEAD, an unpushed commit, and a
+HEAD behind `origin/main` fail).
 
 ## Releases and dependencies
 
@@ -282,7 +295,9 @@ detail is in [Release Automation](#release-automation) above.
   (GoReleaser Pro). After the release it sends `publish-deb` to
   `frostyard/apt-publisher`, which publishes the `frostyard-updex` `.deb` files
   and then dispatches `build` to `frostyard/snosi`.
-- Who tags: Brian, with `make bump`. Agents never tag, push tags or release.
+- Who tags: Brian, with `make bump`, from `main` with `HEAD` equal to
+  `origin/main` (`make bump-main-check` enforces it, core ADR-0012). Agents
+  never tag, push tags or release.
 - Version rule: `svu next` (svu pinned in `mise.toml`, configured by
   `.svu.yml`) over the Conventional Commit subjects on `main`;
   `build(deps)`/`ci(deps)` bumps alone give a patch.
@@ -403,7 +418,9 @@ binary needs it on the host. The unit tests do not run it.
   domain, is masked or is not enabled is an error, and nothing changes
   (`selectFeatures` in `updex/features.go`, validated after the lock and the
   domain load)
-- `components` — list discovered systemd-sysext components
+- `components` — list discovered systemd-sysext components (refuses
+  `-C`/`--definitions`: a definitions override is 1 flat directory with no
+  components)
 - `daemon enable|disable|status` — enable/disable/inspect the auto-update
   timer. The package ships the units in `/usr/lib/systemd/system`; `enable`
   writes marked units to `/etc/systemd/system` only when the package does not,
@@ -808,6 +825,12 @@ package-versioned sysext transfers) without updex losing track of them.
   structs carry a `Component string` field for this; extend the options
   struct for new component-scoped operations, never add package-level flag
   state to the SDK.
+- `updex.Client.Components(ctx)` does discovery only, so a client with a
+  `Definitions` override (`-C`/`--definitions`) gets an error instead of the
+  host-wide list: `components cannot be combined with a definitions
+  override (--definitions): a definitions directory has no components`
+  (#508). That refusal comes before any discovery or reporter message, and
+  `updex components` surfaces it as the command's error.
 
 ### Catalog Support (`catalog/`, `updex/catalog.go`, `cmd/updex/catalog.go`)
 
@@ -1101,7 +1124,13 @@ maintainer at [bketelsen@gmail.com](mailto:bketelsen@gmail.com) as a fallback.
   `svu <pinned> is required for make bump (not installed; run: mise install)` or
   `expected svu <pinned>, found <installed> (run: mise install)` → run
   `mise install` (`found unknown` means an svu build that prints no
-  `GitVersion:` line).
+  `GitVersion:` line). `make bump` also fails with
+  `make bump must run on main (core ADR-0012); found <branch>` (name the branch
+  `main` again), with `found detached HEAD` (run `git checkout main`), or with
+  `HEAD (<sha>) is not origin/main (<sha>); pull or push first …` (pull, or push
+  the commit, so the tag lands on the released commit);
+  `make bump cannot fetch origin main` means the remote or network is
+  unavailable.
 - **Runtime issues:** "configuration not found" → ensure `.transfer` files
   exist under the standard search paths; "permission denied" → most mutating
   operations require root; download failures → check network connectivity
@@ -1111,7 +1140,14 @@ maintainer at [bketelsen@gmail.com](mailto:bketelsen@gmail.com) as a fallback.
 
 **update documentation** After any change to source code, update relevant documentation in AGENTS.md, README.md and the `docs/` tree. A task is not complete without reviewing and updating relevant documentation. When behavior changes, update:
 
-- `README.md` — user-facing usage and flags
+- `docs/specs/cli-reference.md` — user-facing commands, flags, output and
+  install steps; the root `README.md` is a short front page that follows the
+  core README spec (kind `tool`, at most 1000 words), so new detail goes to
+  the CLI reference, not to the README
+- When text moves out of the README, every true fact keeps a home (the CLI
+  reference, the configuration reference, the packaging guide or
+  `SECURITY.md`), and a README summary must not be stronger or weaker than the
+  reference it links.
 - `docs/design/overview.md`, `docs/specs/sdk-api.md`,
   `docs/specs/config-reference.md` — the agent-oriented architecture,
   SDK, and configuration references
