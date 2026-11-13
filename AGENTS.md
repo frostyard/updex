@@ -427,6 +427,10 @@ binary needs it on the host. The unit tests do not run it.
   ADR-0021) acts only on the features whose sysext link points to an image of
   another suite (`sysext.LinkedOtherSuiteAt`, the `%w` any-suite pattern), as
   a named run, then refreshes; with none it takes no lock and writes nothing.
+  It selects again under the lock before any download, records a domain load
+  failure like any update, and skips its refresh (`RefreshSkipped`, not an
+  error) when another activation is pending, so it never activates an update
+  the timer linked for the next boot (ADR-0016).
   It refuses names and `--no-refresh`, and under systemd a busy lock is an
   error for it, not a skip
 - `components` — list discovered systemd-sysext components (refuses
@@ -553,7 +557,7 @@ in the `config/` structs and parse functions. Always finish with
   file (parent dir 0755, file 0600). Read-only operations never take it, and
   neither does an `UpdateFeatures` with `SuiteSwitchOnly` that finds no link
   to another suite's image (it selects its features read-only before the
-  lock, ADR-0021). A method that calls another mutating method must call its unexported,
+  lock, and again under the lock before it downloads, ADR-0021). A method that calls another mutating method must call its unexported,
   lock-free form (`CatalogAdd` → `enableFeature`, `CatalogRemove` →
   `disableFeature`): a second `flock` from the same process would block on
   itself. A new mutating operation takes the lock the same way.

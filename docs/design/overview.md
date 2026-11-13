@@ -1149,9 +1149,15 @@ which supersedes [ADR-0007](../adr/0007-daemon-stages-never-activates.md).
   (`UpdateFeaturesOptions.SuiteSwitchOnly`) reads, without the lock, which
   enabled features have a link that `sysext.LinkedOtherSuiteAt` names as
   another suite's image (the target matches `Target.AnySuitePatterns` and not
-  the current pattern). None: nothing happens and nothing is written. Some: a
-  named update of exactly those features, through every gate, then the normal
-  refresh. `systemd.ServiceConfig` gained `Before`, `UnitDirectives`,
+  the current pattern). None: nothing happens and nothing is written. Some:
+  the run takes the lock and selects again before any download (an empty
+  selection then writes nothing either), then a named update of exactly those
+  features, through every gate, then the refresh. A domain load failure goes
+  to the locked path and is recorded (class `config`). The refresh runs only
+  when no other activation is pending (`suiteSwitchWaiting` over
+  `pendingActivationLinks`): an update the timer linked earlier on this boot
+  waits for the next boot (ADR-0016), so the run keeps its links and reports
+  `RefreshSkipped` instead. `systemd.ServiceConfig` gained `Before`, `UnitDirectives`,
   `Directives` and `WantedBy`, and `systemd.Manager` gained `InstallService`
   for a unit that no timer activates.
 - `updex daemon enable`: when the manager's `PackagedUnitPath` has

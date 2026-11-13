@@ -34,13 +34,34 @@ enabled feature, such as docker, after every suite switch.
   of another suite: the base name of the link target matches the transfer's
   any-suite pattern (`config.TargetSection.AnySuitePatterns`, `%w` as a
   wildcard) and not its current pattern (`sysext.LinkedOtherSuiteAt`).
-  - With no such feature, the run does nothing: no lock, no download, no
-    link, no refresh, and no last-run record (the timer's record stays).
+  - The first selection is a fast path, read without the lock. With no such
+    feature, the run does nothing: no lock, no download, no link, no
+    refresh, and no last-run record (the timer's record stays).
+  - Otherwise the run takes the lock, loads the domain again and selects
+    again before it downloads anything, because another updex operation can
+    have moved the links between both reads. An empty selection under the
+    lock ends the run the same way: no download, no refresh, no record.
   - With such features, it runs the normal update for exactly those features,
-    as a run that names them, and then the normal refresh: the operation
-    lock, the rollback holds, the minimum-image gate, the refresh gate
-    (ADR-0016) and the activation sequence (ADR-0019) all apply. The last-run
-    record (ADR-0020) records a named run.
+    as a run that names them: the operation lock, the rollback holds, the
+    minimum-image gate, the refresh gate (ADR-0016) and the activation
+    sequence (ADR-0019) all apply. The last-run record (ADR-0020) records a
+    named run.
+  - A domain that cannot be loaded is not a fast-path exit: the run goes on to
+    the locked path, which records the failure (class `config`) as every
+    update does. Only refused options and a confirmed empty selection write
+    no record.
+  - **It activates only its own links.** The refresh merges every pending
+    link of the host. A pending activation outside the run (a link whose
+    merged version is not known to equal it, or whose state cannot be read)
+    is an update that waits for the next boot under ADR-0016, for example a
+    newer image that the timer linked with `--no-refresh` earlier on this
+    boot. Then the run keeps its new links and skips the refresh
+    (`RefreshSkipped`: `refresh skipped: <component> has an update that waits
+    for the next boot; the suite switch takes effect at the next boot`); it is
+    not an error. A pending deactivation (merged, not linked) does not count:
+    updex cannot tell it from an image that another systemd-sysext directory
+    provides. At boot, systemd-sysext merged every compatible link, so this
+    case needs a timer run on the same boot before the unit.
   - It takes no feature names and cannot be combined with `NoRefresh`. Under
     systemd, a busy lock is an error for this run (not a skip): there is no
     later run on this boot.
@@ -82,9 +103,10 @@ Only the boot-time unit refreshes, and only on the boot that needs it.
 - When the new suite has no image published yet, the run fails, the unit is
   marked failed, and the feature stays missing until an image is published
   and a later boot or a manual run links it, as before.
-- The refresh merges every pending link on the host (ADR-0016 refresh
-  warning), not only the suite-switch features. On that boot that is the
-  intended effect.
+- The run never activates an update that ADR-0016 holds for the next boot.
+  In the rare case that one is pending (the timer ran first on this boot),
+  the suite switch also waits for the next boot, as the timer would have made
+  it.
 - snosi must enable the new unit with a preset line
   (`enable updex-suite-switch.service`), as it does for the timer; until
   then, only `updex daemon enable` enables it.

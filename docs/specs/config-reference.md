@@ -255,9 +255,12 @@ The load itself does not fail, so a host can still list, disable and vacuum.
 `features update`, `check` and `enable --now` fail for that transfer with the
 message (the last-run record gets the error class `config`), and
 `features list` shows it as the transfer's error. An empty specifier in
-`ProtectVersion=` is only a warning (`… ; it protects no version`), printed by
-`features list` and before the vacuum: `ProtectVersion` then protects nothing,
-as before. Fix the host's os-release (or the transfer), not updex.
+`ProtectVersion=` is only a warning, printed by `features list` and before
+the vacuum. It names the empty specifier and the value it expands to: the
+literal part stays, so `ProtectVersion=1%w` protects version `1`
+(`… ; it expands to "1" and protects that version`), and only a value that
+expands to nothing protects no version (`… ; it expands to an empty value and
+protects no version`). Fix the host's os-release (or the transfer), not updex.
 
 Expansion happens at config load time only: catalog-generated `.transfer`
 files keep `%w`/`%a` unexpanded on disk so definitions track the running OS

@@ -168,3 +168,177 @@ func TestUpdateFeatures_SuiteSwitchRefusesNamesAndNoRefresh(t *testing.T) {
 		t.Errorf("staging changed: %v", entries)
 	}
 }
+
+// addBar adds feature "bar" with transfer "bar" (bar_@v.raw, no %w), its
+// staged images, its link target and its merged version ("" for not merged).
+func (f *suiteFixture) addBar(t *testing.T, staged []string, linkTarget, merged string) {
+	t.Helper()
+	createFeatureFile(t, f.defDir, "bar", true)
+	transfer := "[Transfer]\nFeatures=bar\nVerify=false\n\n[Source]\nType=url-file\nPath=" + f.server.URL +
+		"\nMatchPattern=bar_@v.raw\n\n[Target]\nPath=" + f.targetDir + "\nMatchPattern=bar_@v.raw\n"
+	if err := os.WriteFile(filepath.Join(f.defDir, "bar.transfer"), []byte(transfer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range staged {
+		if err := os.WriteFile(filepath.Join(f.targetDir, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if linkTarget != "" {
+		if err := os.Symlink(filepath.Join(f.targetDir, linkTarget), filepath.Join(f.linkDir, "bar.raw")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if merged != "" {
+		data, err := json.Marshal(map[string]any{"extensions": map[string]any{
+			"bar": map[string]string{"path": filepath.Join(f.targetDir, merged)},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeMergedState(t, f.hierarchy, string(data))
+	}
+}
+
+func (f *suiteFixture) barLink(t *testing.T) string {
+	t.Helper()
+	target, err := os.Readlink(filepath.Join(f.linkDir, "bar.raw"))
+	if err != nil {
+		return ""
+	}
+	return filepath.Base(target)
+}
+
+// The timer linked a newer bar image with --no-refresh earlier on this boot:
+// it waits for the next boot (ADR-0016). The suite-switch run keeps its new
+// link, skips the refresh and says why; it is not an error. With nothing
+// else pending (bar runs what it links, or bar is only merged), it
+// refreshes.
+func TestUpdateFeatures_SuiteSwitchKeepsOtherActivationsForNextBoot(t *testing.T) {
+	tests := []struct {
+		name        string
+		barLink     string
+		barMerged   string
+		wantRefresh int
+	}{
+		{name: "other update linked by the timer", barLink: "bar_2.0.raw", barMerged: "bar_1.0.raw", wantRefresh: 0},
+		{name: "other link already merged", barLink: "bar_2.0.raw", barMerged: "bar_2.0.raw", wantRefresh: 1},
+		{name: "other image merged but not linked", barMerged: "bar_1.0.raw", wantRefresh: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newSuiteFixture(t, forky, []string{"foo_1.0_13.raw"}, "foo_1.0_13.raw")
+			f.server.publish("2.0_14")
+			f.addBar(t, []string{"bar_1.0.raw", "bar_2.0.raw"}, tt.barLink, tt.barMerged)
+
+			results, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{SuiteSwitchOnly: true})
+			if err != nil {
+				t.Fatalf("UpdateFeatures(SuiteSwitchOnly) error = %v\n%s", err, f.out)
+			}
+			if len(results) != 1 || results[0].Feature != "grp" {
+				t.Fatalf("results = %+v, want only feature grp", results)
+			}
+			if got := f.link(t); got != "foo_2.0_14.raw" {
+				t.Errorf("link = %q, want foo_2.0_14.raw", got)
+			}
+			if got := f.barLink(t); got != tt.barLink {
+				t.Errorf("bar link = %q, want %q", got, tt.barLink)
+			}
+			if f.runner.refreshes != tt.wantRefresh {
+				t.Errorf("refreshes = %d, want %d\n%s", f.runner.refreshes, tt.wantRefresh, f.out)
+			}
+			rec, _ := readLastRun(t, f.lastRun)
+			if tt.wantRefresh == 0 {
+				want := "refresh skipped: bar has an update that waits for the next boot; the suite switch takes effect at the next boot"
+				if results[0].RefreshSkipped != want {
+					t.Errorf("RefreshSkipped = %q, want %q", results[0].RefreshSkipped, want)
+				}
+				if rec.Refresh != "skipped" || rec.Outcome != "completed" {
+					t.Errorf("last-run record = %+v, want completed with refresh skipped", rec)
+				}
+				return
+			}
+			if results[0].RefreshSkipped != "" || rec.Refresh != "done" {
+				t.Errorf("RefreshSkipped = %q, record refresh = %q; want the refresh done", results[0].RefreshSkipped, rec.Refresh)
+			}
+		})
+	}
+}
+
+// The scan before the lock is a fast path only: the run selects again under
+// the lock. When another operation linked the running suite's image between
+// both scans, the run downloads, links and refreshes nothing and writes no
+// last-run record.
+func TestUpdateFeatures_SuiteSwitchSelectsAgainUnderLock(t *testing.T) {
+	f := newSuiteFixture(t, forky, []string{"foo_1.0_13.raw", "foo_1.0_14.raw"}, "foo_1.0_13.raw")
+	f.server.publish("2.0_14")
+	scans := 0
+	f.client.afterSuiteSwitchScan = func() {
+		scans++
+		link := filepath.Join(f.linkDir, "foo.raw")
+		if err := os.Remove(link); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(f.targetDir, "foo_1.0_14.raw"), link); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	results, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{SuiteSwitchOnly: true})
+	if err != nil {
+		t.Fatalf("UpdateFeatures(SuiteSwitchOnly) error = %v\n%s", err, f.out)
+	}
+	if scans != 1 {
+		t.Fatalf("hook ran %d times, want 1", scans)
+	}
+	if results == nil || len(results) != 0 {
+		t.Errorf("results = %#v, want an empty, non-nil slice", results)
+	}
+	if got := f.link(t); got != "foo_1.0_14.raw" {
+		t.Errorf("link = %q, want foo_1.0_14.raw", got)
+	}
+	if got := f.server.fileGets.Load(); got != 0 {
+		t.Errorf("downloads = %d, want 0", got)
+	}
+	if f.runner.refreshes != 0 {
+		t.Errorf("refreshes = %d, want 0", f.runner.refreshes)
+	}
+	if _, err := os.Stat(f.lastRun); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("last-run record written: %v", err)
+	}
+}
+
+// A domain that cannot be loaded is a failed suite-switch run of class
+// config: it replaces the previous record, as the normal path does
+// (ADR-0020). Refused options still write nothing.
+func TestUpdateFeatures_SuiteSwitchRecordsDomainFailure(t *testing.T) {
+	f := newSuiteFixture(t, forky, []string{"foo_1.0_13.raw"}, "foo_1.0_13.raw")
+	previous := `{"format":1,"started":"2026-11-13T00:00:00Z","finished":"2026-11-13T00:01:00Z","outcome":"completed","refresh":"not_run","selected":false,"features":[]}`
+	if err := os.WriteFile(f.lastRun, []byte(previous), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{SuiteSwitchOnly: true, NoRefresh: true}); err == nil {
+		t.Fatal("UpdateFeatures(SuiteSwitchOnly, NoRefresh) succeeded, want an error")
+	}
+	if data, _ := os.ReadFile(f.lastRun); string(data) != previous {
+		t.Fatalf("a refused run changed the record:\n%s", data)
+	}
+
+	if err := os.WriteFile(filepath.Join(f.defDir, "broken.transfer"), []byte("[Transfer\nFeatures=grp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{SuiteSwitchOnly: true})
+	if err == nil {
+		t.Fatal("UpdateFeatures(SuiteSwitchOnly) error = nil, want the domain error")
+	}
+	rec, data := readLastRun(t, f.lastRun)
+	if rec.Outcome != "failed" || rec.ErrorClass != "config" || rec.Refresh != "not_run" || !rec.Selected || len(rec.Features) != 0 {
+		t.Errorf("record = %s, want a failed selected run of class config, refresh not_run, no features", data)
+	}
+	if got := f.link(t); got != "foo_1.0_13.raw" {
+		t.Errorf("link = %q, want it unchanged", got)
+	}
+	if f.runner.refreshes != 0 {
+		t.Errorf("refreshes = %d, want 0", f.runner.refreshes)
+	}
+}

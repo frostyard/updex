@@ -120,10 +120,18 @@ missing until the timer links the forky image and the host reboots.
 - For those features it runs the normal update (download when needed, link
   through the usual checks) and then the refresh, so the running suite's image
   is merged on this boot. The last-run record records a run that names those
-  features.
+  features. It selects again under the lock before it downloads anything.
+- It activates only its own links. When another sysext has a linked update
+  that waits for the next boot (the timer linked it with `--no-refresh`
+  earlier on this boot), it keeps the new links, skips the refresh and prints
+  `refresh skipped: <component> has an update that waits for the next boot;
+  the suite switch takes effect at the next boot`. That is a warning, not an
+  error.
 - When no link points to another suite, it prints
   `No sysext link points to an image of another suite; nothing to do.` and
-  exits 0: no lock, no download, no refresh, no last-run record.
+  exits 0: no lock, no download, no refresh, no last-run record. Definitions
+  that cannot be loaded are an error, and the last-run record says so (class
+  `config`).
 - It takes no feature name and cannot be combined with `--no-refresh`.
   Under systemd, a busy lock fails the run (no skip): there is no later run on
   this boot.

@@ -46,10 +46,15 @@ type UpdateFeaturesOptions struct {
 	// suite switch (bootc switch), when systemd-sysext refuses that image
 	// and the feature is missing. Those features are updated as a run that
 	// names them (download when needed, link through the normal gates) and
-	// the run refreshes, so the right image is merged on this boot. When no
-	// link points to another suite, the run takes no lock, downloads,
-	// links and refreshes nothing, and writes no last-run record. It cannot
-	// be combined with Features or NoRefresh (ADR-0021).
+	// the run refreshes, so the right image is merged on this boot. The
+	// features are selected without the lock, then again under it before
+	// any download. When no link points to another suite, the run takes no
+	// lock (or, found under the lock, gives it back), downloads, links and
+	// refreshes nothing, and writes no last-run record. The run activates
+	// only its own links: when another activation is pending (an update
+	// linked for the next boot, ADR-0016), it keeps its links and skips the
+	// refresh (UpdateFeaturesResult.RefreshSkipped). It cannot be combined
+	// with Features or NoRefresh (ADR-0021).
 	SuiteSwitchOnly bool
 }
 

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/frostyard/std/reporter"
+	"github.com/frostyard/updex/v2/config"
 	"github.com/frostyard/updex/v2/internal/fault"
 	"github.com/frostyard/updex/v2/sysext"
 )
@@ -26,6 +27,8 @@ type suiteFixture struct {
 	targetDir string
 	linkDir   string
 	lastRun   string
+	defDir    string
+	hierarchy string
 }
 
 func newSuiteFixture(t *testing.T, osRelease string, staged []string, linkTarget string) *suiteFixture {
@@ -46,6 +49,8 @@ func newSuiteFixture(t *testing.T, osRelease string, staged []string, linkTarget
 		targetDir: t.TempDir(),
 		linkDir:   t.TempDir(),
 		lastRun:   filepath.Join(t.TempDir(), "last-run.json"),
+		defDir:    defDir,
+		hierarchy: t.TempDir(),
 	}
 	createFeatureFile(t, defDir, "grp", true)
 	transfer := "[Transfer]\nFeatures=grp\nVerify=false\n\n[Source]\nType=url-file\nPath=" + f.server.URL +
@@ -70,7 +75,7 @@ func newSuiteFixture(t *testing.T, osRelease string, staged []string, linkTarget
 			DefinitionRoots:   []string{root},
 			OSReleasePaths:    []string{osReleasePath},
 			SysextLinkDir:     f.linkDir,
-			SysextHierarchies: []string{t.TempDir()},
+			SysextHierarchies: []string{f.hierarchy},
 			RunExtensionsDir:  t.TempDir(),
 			LockPath:          filepath.Join(t.TempDir(), "lock"),
 			RollbackDir:       filepath.Join(t.TempDir(), "rollback"),
@@ -207,5 +212,29 @@ func TestSpecifierPresentUpdatesAsBefore(t *testing.T) {
 	}
 	if got := f.link(t); got != "foo_2.0_13.raw" {
 		t.Errorf("link = %q, want foo_2.0_13.raw", got)
+	}
+}
+
+// A ProtectVersion= value with an empty specifier keeps its literal part:
+// the warning names the empty specifier and the expanded value, and says
+// that nothing is protected only when the value is empty.
+func TestProtectVersionWarningNamesExpandedValue(t *testing.T) {
+	cause := fault.Mark(fault.Config, errors.New(`ProtectVersion "1%w": specifier %w is empty: os-release has no VERSION_ID`))
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "literal and specifier", value: "1", want: `foo: ProtectVersion "1%w": specifier %w is empty: os-release has no VERSION_ID; it expands to "1" and protects that version`},
+		{name: "specifier only", value: "", want: `foo: ProtectVersion "1%w": specifier %w is empty: os-release has no VERSION_ID; it expands to an empty value and protects no version`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tr := &config.Transfer{Component: "foo", ProtectVersionError: cause}
+			tr.Transfer.ProtectVersion = tt.value
+			if got := protectVersionWarning(tr); got != tt.want {
+				t.Errorf("protectVersionWarning() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

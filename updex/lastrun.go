@@ -149,8 +149,10 @@ type lastRun struct {
 // newLastRun starts the record of a run.
 func newLastRun(started time.Time, opts UpdateFeaturesOptions) *lastRun {
 	return &lastRun{
-		started:  started,
-		selected: len(opts.Features) > 0,
+		started: started,
+		// A suite-switch run is a run that names its features, also when
+		// it fails before it could select them.
+		selected: len(opts.Features) > 0 || opts.SuiteSwitchOnly,
 		refresh:  refreshNotRun,
 	}
 }
@@ -358,6 +360,10 @@ func (c *Client) busyFeatures(r *lastRun, opts UpdateFeaturesOptions) {
 	quiet.reporter = reporter.NoopReporter{}
 	features, transfers, err := quiet.loadDomain(opts.Component)
 	if err != nil {
+		return
+	}
+	if opts.SuiteSwitchOnly && len(opts.Features) == 0 {
+		// The scan before the lock selected nothing it could name.
 		return
 	}
 	selected, err := selectFeatures(features, opts.Features)

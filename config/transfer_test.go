@@ -1055,6 +1055,7 @@ func TestSpecifierErrorEmptyValue(t *testing.T) {
 		protect   string
 		wantErr   string // empty: no SpecifierError
 		wantProt  string // empty: no ProtectVersionError
+		wantValue string // the expanded ProtectVersion
 	}{
 		{
 			name:      "target %w without VERSION_ID",
@@ -1096,6 +1097,15 @@ func TestSpecifierErrorEmptyValue(t *testing.T) {
 			target:    "foo_@v.raw",
 			protect:   "%w",
 			wantProt:  `ProtectVersion "%w": specifier %w is empty: os-release has no VERSION_ID`,
+		},
+		{
+			name:      "ProtectVersion keeps its literal part",
+			osRelease: "ID=debian\n",
+			source:    "foo_@v.raw",
+			target:    "foo_@v.raw",
+			protect:   "1%w",
+			wantProt:  `ProtectVersion "1%w": specifier %w is empty: os-release has no VERSION_ID`,
+			wantValue: "1",
 		},
 	}
 	for _, tt := range tests {
@@ -1143,6 +1153,9 @@ func TestSpecifierErrorEmptyValue(t *testing.T) {
 			}
 			checkErr("SpecifierError", tr.SpecifierError, tt.wantErr)
 			checkErr("ProtectVersionError", tr.ProtectVersionError, tt.wantProt)
+			if tr.Transfer.ProtectVersion != tt.wantValue {
+				t.Errorf("ProtectVersion = %q, want %q", tr.Transfer.ProtectVersion, tt.wantValue)
+			}
 		})
 	}
 }
