@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-04",
+  "scope": "risk-paths",
+  "correction": "A local check of .github/risk-paths.json must be as strict as core's validator (duplicate JSON keys, glob syntax) and must match each whole glob against real files; a base-directory heuristic let manifest/*** and a glob that matches nothing pass, and an invalid list on main stops all labels",
+  "evidence": "updex#482 cross-review (openai/gpt-6.1-sol), findings 2 and 3",
+  "promoted_to": "updex/risk_paths_contract_test.go"
+}

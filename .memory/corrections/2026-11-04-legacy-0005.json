@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-04",
+  "scope": "risk-paths",
+  "correction": "Job order in 1 run does not stop a label-setting job of a later run from overlapping the risk-paths job of an earlier run; the risk-paths workflow also needs a per-PR concurrency group without cancel-in-progress",
+  "evidence": "updex#485 cross-review (openai/gpt-6.1-sol), finding 1",
+  "promoted_to": "updex/risk_paths_contract_test.go"
+}

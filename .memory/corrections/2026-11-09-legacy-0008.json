@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-09",
+  "scope": "risk-paths",
+  "correction": "A caller check reads the caller as YAML structure, not as text: the labeled type comes from on: pull_request_target: only, jobs are read only inside the top-level jobs: mapping with block-scalar text dropped, the workflow pin is a uses: key at indent 4 of the pr-triage job, rule C matches globs as core's matchGlob does (\"?\" is 1 character, \"**/\" matches 0 directories), inline comments are dropped, and a comment strip is quote-aware so a \"#\" inside a quoted scalar stays in the value.",
+  "evidence": "the same defects that cross-review (openai/gpt-6.1-sol) found in the caller checks of bketelsen/agentic-template#9, frostyard/homebrew-tap#37 and frostyard/flatpak-index#14",
+  "promoted_to": "updex/risk_paths_contract_test.go"
+}
