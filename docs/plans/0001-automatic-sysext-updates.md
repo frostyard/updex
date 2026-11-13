@@ -129,6 +129,31 @@ Phase 8 checks real hosts. Nothing starts before the ADR is Accepted.
   image update fails the check for the features with the key until it
   reboots.
 - **Done when:** both hosts run a new revision that no person installed.
+- **Status (2026-11-13): done for its Done-when line on both hosts;** the
+  `UPDEX_MIN_IMAGE_VERSION` item above stays open. Read-only checks on
+  each host:
+  - selfie: the preset enabled `updex-update.timer`; it runs on the 6-hour
+    schedule, and its last run (12:36) ended with `Result=success`. From
+    2026-10-28 to 2026-11-12 the service installed new tailscale, incus,
+    k3s and docker revisions with no person. `updex features check` showed
+    `LINKED` = the new revision before a reboot and `RUNNING` = it after
+    one. `find /var/lib/extensions -xtype l` found no broken link.
+  - framework: the timer is enabled with a next run; its last run (12:36)
+    ended with `Result=success`, exit 0, and `updex daemon status` shows the
+    packaged units, the schedule `*-*-* 00/6:00:00` and that result. With no
+    person, the service installed tailscale 1.104.7+r1 (11-12),
+    chatgpt 26.1111.21308+r2 and claude-desktop 5.11492.0+r1 (11-13 00:29),
+    and github-copilot 1.4.0+r1 and obsidian 1.15.1 (11-13 12:36). After a
+    reboot, tailscale and chatgpt show `RUNNING` = `LINKED`.
+    github-copilot and obsidian show `LINKED` = the new revision and
+    `RUNNING` = the old one, `PENDING REBOOT`, as this phase expects.
+    `find /var/lib/extensions -xtype l` printed nothing.
+  - Open: no published revision carries `UPDEX_MIN_IMAGE_VERSION` yet, so
+    the check that a host on an older image keeps its old link has not run.
+    Trigger: the first base-dependent revision that snosi publishes with
+    the key. Check the 3 prerequisites above on the host's image at that
+    time: the 2026-11-13 checks did not look at updex#463, updex#464 or
+    the snosi#1125 annotation.
 
 ## Open questions
 
