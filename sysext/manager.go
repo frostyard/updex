@@ -661,10 +661,12 @@ func protectedVersions(t *config.Transfer, patterns []*version.Pattern, p Vacuum
 // metadata records. Like protectedVersions it reads everything before the
 // vacuum deletes anything, and fails on a read error instead of guessing.
 //
-// keepAll reports that a hierarchy's metadata names the transfer's component
-// (an origin entry for it, or its name in the older extensions list) but no
-// image file of the transfer: the merged image could be any of them, so the
-// vacuum keeps every image of another suite.
+// keepAll reports that a hierarchy's metadata names the extension
+// t.Component (an origin key, or the bare name in the older extensions list)
+// and origin gives that key no path whose base name is an image of the
+// transfer: the merged image could be any of them, so the vacuum keeps every
+// image of another suite. Another entry never resolves it, even one that
+// matches the transfer's pattern.
 func otherSuiteProtected(t *config.Transfer, current, anySuite []*version.Pattern, p VacuumPaths) (protected map[string]bool, keepAll bool, err error) {
 	protected = make(map[string]bool)
 	isImage := func(name string) bool {
@@ -700,8 +702,12 @@ func otherSuiteProtected(t *config.Transfer, current, anySuite []*version.Patter
 	}
 
 	for _, hierarchy := range p.Hierarchies {
-		// named: the metadata names the component; resolved: it names an
-		// image file of the transfer.
+		// named: the metadata names the extension t.Component (origin key or
+		// bare extensions entry); resolved: origin gives that same key a path
+		// whose base name is an image of the transfer. Only the entry of that
+		// extension resolves it: another entry that matches the pattern (such
+		// as foo_bar_9.0_14_x86-64 for foo_@v_14_x86-64.raw) is another
+		// extension and says nothing about which image foo merged.
 		var named, resolved bool
 		stateDir := filepath.Join(hierarchy, MergedStateDirName)
 		data, err := readLimitedFile(filepath.Join(stateDir, "origin"), 1<<20)
@@ -710,7 +716,8 @@ func otherSuiteProtected(t *config.Transfer, current, anySuite []*version.Patter
 			var origin mergedExtensionOrigin
 			if json.Unmarshal(data, &origin) == nil {
 				for key, entry := range origin.Extensions {
-					if t.Component != "" && key == t.Component {
+					own := t.Component != "" && key == t.Component
+					if own {
 						named = true
 					}
 					if entry.Path == "" {
@@ -718,7 +725,7 @@ func otherSuiteProtected(t *config.Transfer, current, anySuite []*version.Patter
 					}
 					name := filepath.Base(entry.Path)
 					protected[name] = true
-					if isImage(name) {
+					if own && isImage(name) {
 						resolved = true
 					}
 				}
@@ -739,9 +746,6 @@ func otherSuiteProtected(t *config.Transfer, current, anySuite []*version.Patter
 					named = true
 				}
 				protected[name+targetExtension(t)] = true
-				if isImage(name + targetExtension(t)) {
-					resolved = true
-				}
 			}
 		case !errors.Is(err, fs.ErrNotExist):
 			return nil, false, fmt.Errorf("read merged version: read merged state: %w", err)

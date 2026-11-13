@@ -845,10 +845,13 @@ the other-suite image the link points to (by base name), one the merged-state
 `origin`/`extensions` names, or a legacy `CurrentSymlink` target; it reads them
 (`otherSuiteProtected`) before it deletes anything and fails closed like
 `protectedVersions` (a `CurrentSymlink` that cannot be inspected is an error;
-only an absent path or a non-symlink is skipped). When a hierarchy's metadata
-names the component but no image file of it (older systemd writes only the
-`extensions` list, which holds the extension name `foo`), the merged image
-could be any of them: the vacuum keeps every other-suite image and sets
+only an absent path or a non-symlink is skipped). The decision is per
+extension: when a hierarchy's metadata names the extension `<component>` (an
+`origin` key, or the bare name in the `extensions` list, which is all that
+older systemd writes) and `origin` gives that same key no path whose base name
+is an image of the transfer, the merged image could be any of them. Another
+entry never resolves it, even one that matches the pattern
+(`foo_bar_9.0_14_x86-64` matches `foo_@v_14_x86-64.raw`). Then the vacuum keeps every other-suite image and sets
 `VacuumReport.OtherSuiteMergedUnknown`, and `installTransfers` prints
 `Kept every other-suite image of <component>: …`. The running suite's rule
 does not change. `VacuumWithReport`/`PlanVacuumWithReport` return the

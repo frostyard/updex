@@ -229,3 +229,28 @@ func TestDisableFeatureNow_RefusesMergedOtherSuiteImage(t *testing.T) {
 		})
 	}
 }
+
+// The disable guard fails closed on mixed metadata too: a bare foo entry
+// next to another entry that matches the pattern still needs --force.
+func TestDisableFeatureNow_RefusesMixedMergedMetadata(t *testing.T) {
+	runner := &sysext.MockRunner{}
+	f := newOtherSuiteFixture(t, runner)
+	stateDir := filepath.Join(f.hierarchy, sysext.MergedStateDirName)
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "extensions"), []byte("foo_bar_9.0_14\nfoo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stagedBefore := f.staged(t)
+
+	if _, err := f.client.DisableFeature(t.Context(), "grp", DisableFeatureOptions{Now: true, NoRefresh: true}); err == nil || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("DisableFeature error = %v, want a refusal that asks for --force", err)
+	}
+	if runner.UnmergeCalled {
+		t.Error("unmerge called")
+	}
+	if got := f.staged(t); !slices.Equal(got, stagedBefore) {
+		t.Errorf("staged = %v, want %v", got, stagedBefore)
+	}
+}

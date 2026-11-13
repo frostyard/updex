@@ -521,8 +521,10 @@ in the `config/` structs and parse functions. Always finish with
   of each other suite (a switch back relinks without a download), the image
   the link points to (by base name) and a merged image, reads them before it
   deletes and fails closed (also on a `CurrentSymlink` it cannot inspect); when
-  the merged state names the component without an image file (systemd < 258),
-  it keeps every other-suite image (`VacuumReport.OtherSuiteMergedUnknown`).
+  the merged state names the extension `<component>` and `origin` gives that
+  same key no image path of the transfer (systemd < 258), it keeps every
+  other-suite image (`VacuumReport.OtherSuiteMergedUnknown`); decide per
+  extension, never from another entry that matches the pattern.
   `RemoveAllVersionsAt` (`features disable --now`) removes every suite, so the
   disable guard checks `sysext.ActiveOtherSuiteWith` after
   `GetActiveVersionWith`: a guard must recognize every suite its removal can

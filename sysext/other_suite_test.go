@@ -381,3 +381,47 @@ func TestVacuumWithOtherSuiteFailsClosedOnCurrentSymlink(t *testing.T) {
 		})
 	}
 }
+
+// Only the entry of the extension foo resolves which image foo merged.
+// Another entry that matches the pattern (foo_bar_9.0_14_x86-64 matches
+// foo_@v_14_x86-64.raw with version bar_9.0) is another extension: with a
+// bare foo entry and no origin path for foo, every other-suite image stays,
+// whatever the order of the entries.
+func TestVacuumWithMixedMetadataKeepsOtherSuites(t *testing.T) {
+	tests := []struct {
+		name       string
+		extensions string
+		origin     string // with %s for the target directory
+	}{
+		{name: "bare name first", extensions: "foo\nfoo_bar_9.0_14_x86-64\n"},
+		{name: "bare name last", extensions: "foo_bar_9.0_14_x86-64\nfoo\n"},
+		{name: "origin path for another key", extensions: "foo\n",
+			origin: `{"extensions":{"foo_bar":{"path":"%s/foo_bar_9.0_14_x86-64.raw"}}}`},
+		{name: "origin key without path", origin: `{"extensions":{"foo":{},"foo_bar":{"path":"%s/foo_bar_9.0_14_x86-64.raw"}}}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir, hierarchy := t.TempDir(), t.TempDir()
+			writeImages(t, dir, "foo_1.0_13_x86-64.raw", "foo_2.0_13_x86-64.raw", "foo_1.0_14_x86-64.raw", "foo_bar_9.0_14_x86-64.raw")
+			if tt.extensions != "" {
+				writeMergedStateFile(t, hierarchy, "extensions", tt.extensions)
+			}
+			if tt.origin != "" {
+				writeMergedStateFile(t, hierarchy, "origin", strings.ReplaceAll(tt.origin, "%s", dir))
+			}
+
+			report, err := VacuumWithReport(suiteTransfer(dir, "14"), VacuumPaths{Hierarchies: []string{hierarchy}})
+			if err != nil {
+				t.Fatalf("VacuumWithReport() error = %v", err)
+			}
+			if !report.OtherSuiteMergedUnknown || len(report.OtherSuiteRemoved) != 0 {
+				t.Errorf("report = %+v, want every other-suite image kept as merged unknown", report)
+			}
+			for _, name := range []string{"foo_1.0_13_x86-64.raw", "foo_2.0_13_x86-64.raw"} {
+				if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+					t.Errorf("%s removed: %v", name, err)
+				}
+			}
+		})
+	}
+}

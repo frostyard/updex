@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-13",
+  "scope": "sysext/manager.go otherSuiteProtected",
+  "correction": "Decide merged-state questions per extension identity, never per hierarchy: the image of the extension t.Component is unknown when an origin key or a bare extensions entry names it and origin gives that same key no path whose base name is an image of the transfer; another entry that matches the pattern (foo_bar_9.0_14_x86-64 for foo_@v_14_x86-64.raw) never resolves it, so the vacuum keeps every other-suite image. Guard: TestVacuumWithMixedMetadataKeepsOtherSuites.",
+  "evidence": "frostyard/updex#515 cross-review re-review 1 (openai/gpt-6.1-sol) of head d157992, sysext/manager.go about lines 702-750",
+  "promoted_to": ""
+}

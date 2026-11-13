@@ -441,9 +441,10 @@ after a suite switch the link still points to the old suite's image), an image
 that the merged state records, and a legacy `CurrentSymlink` target. Only
 regular files count. It reads the link, the `CurrentSymlink` and the merged
 state before it deletes anything, and deletes nothing when it cannot read them.
-When the merged state names the component but no image file of it (systemd
-older than 258 writes only the extension name to `extensions`), it keeps every
-image of the other suites. `features disable --now` removes the images of every
+When the merged state names the extension `<component>` but gives it no image
+file of the transfer (systemd older than 258 writes only the extension name to
+`extensions`), it keeps every image of the other suites; another merged
+extension whose name happens to match the pattern does not change that. `features disable --now` removes the images of every
 suite (a match only by the suite wildcard is removed only when it is a regular
 file), and requires `--force` when an image of any suite is active.
 
