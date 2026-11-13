@@ -1,6 +1,7 @@
 package version
 
 import (
+	"fmt"
 	"regexp"
 	"slices"
 	"strconv"
@@ -14,7 +15,34 @@ type Pattern struct {
 	raw      string
 	regex    *regexp.Regexp
 	template string
+
+	// versionGroup is the submatch index of the first @v group.
+	versionGroup int
+	// suiteGroups are the submatch indexes of the SuiteWildcard groups of a
+	// pattern from ParseAnySuitePattern; nil for every other pattern.
+	suiteGroups []int
 }
+
+// SuiteWildcard stands for the suite (os-release VERSION_ID, the %w
+// specifier) in a pattern given to ParseAnySuitePattern. It is a NUL byte: a
+// Linux file name can never hold one, so no pattern that config text spells
+// out can mean it, and ParsePattern keeps treating every other character
+// (a literal "@w" included) as it always did. config builds these patterns as
+// TargetSection.AnySuitePatterns.
+const SuiteWildcard = "\x00"
+
+// suiteRegex matches one VERSION_ID value: 1 or more of 0-9, a-z, '.', '~'
+// and '-'. It has no '_': snosi separates the fields of an image name with
+// '_', so a '_' would let "foo_@v_%w_%a" match images of a component
+// "foo_bar".
+const suiteRegex = `[0-9a-z.~-]+`
+
+// anySuiteVersionRegex is the @v group of a ParseAnySuitePattern pattern: the
+// @v set of ParsePattern without '_'. With a '_', "foo_@v_<suite>_x86-64.raw"
+// would still match "foo_bar_1.0_13_x86-64.raw" (version "bar_1.0"), an image
+// of the component "foo_bar". A Debian version never holds a '_'; an image
+// whose version does is simply not matched, so a cleanup keeps it.
+const anySuiteVersionRegex = `([a-zA-Z0-9.+:~-]+)`
 
 // Placeholder definitions for pattern matching
 var placeholders = map[string]string{
@@ -34,6 +62,19 @@ var placeholders = map[string]string{
 
 // ParsePattern parses a match pattern string into a Pattern struct
 func ParsePattern(pattern string) (*Pattern, error) {
+	return parsePattern(pattern, false)
+}
+
+// ParseAnySuitePattern parses a pattern in which each SuiteWildcard matches
+// any suite (a VERSION_ID value, see suiteRegex). All wildcards of 1 file
+// name must match the same value. @v matches what it matches for
+// ParsePattern except '_' (see anySuiteVersionRegex). Every other character
+// means what it means to ParsePattern. Suite reports the value a file name matched.
+func ParseAnySuitePattern(pattern string) (*Pattern, error) {
+	return parsePattern(pattern, true)
+}
+
+func parsePattern(pattern string, anySuite bool) (*Pattern, error) {
 	if pattern == "" {
 		return nil, ErrEmptyPattern
 	}
@@ -48,8 +89,27 @@ func ParsePattern(pattern string) (*Pattern, error) {
 
 	// Replace placeholders with regex patterns
 	for placeholder, regex := range placeholders {
+		if anySuite && placeholder == "@v" {
+			regex = anySuiteVersionRegex
+		}
 		quotedPlaceholder := regexp.QuoteMeta(placeholder)
 		regexStr = strings.ReplaceAll(regexStr, quotedPlaceholder, regex)
+	}
+
+	// Each suite wildcard becomes its own named group (s0, s1, ...), so the
+	// unnamed groups stay the @v groups whatever their order.
+	if anySuite {
+		var b strings.Builder
+		n := 0
+		for i := 0; i < len(regexStr); i++ {
+			if regexStr[i] == SuiteWildcard[0] {
+				fmt.Fprintf(&b, "(?P<s%d>%s)", n, suiteRegex)
+				n++
+				continue
+			}
+			b.WriteByte(regexStr[i])
+		}
+		regexStr = b.String()
 	}
 
 	// Anchor the regex
@@ -60,26 +120,67 @@ func ParsePattern(pattern string) (*Pattern, error) {
 		return nil, err
 	}
 
-	return &Pattern{
-		raw:      pattern,
-		regex:    compiled,
-		template: template,
-	}, nil
+	p := &Pattern{
+		raw:          pattern,
+		regex:        compiled,
+		template:     template,
+		versionGroup: -1,
+	}
+	for i, name := range compiled.SubexpNames() {
+		switch {
+		case i == 0:
+		case name == "":
+			if p.versionGroup < 0 {
+				p.versionGroup = i
+			}
+		default:
+			p.suiteGroups = append(p.suiteGroups, i)
+		}
+	}
+	if p.versionGroup < 0 {
+		return nil, ErrMissingVersionPlaceholder
+	}
+	return p, nil
+}
+
+// match returns the version and the suite a file name matched. The suite is
+// "" for a pattern without SuiteWildcard.
+func (p *Pattern) match(filename string) (ver, suite string, ok bool) {
+	matches := p.regex.FindStringSubmatch(filename)
+	if matches == nil {
+		return "", "", false
+	}
+	for i, g := range p.suiteGroups {
+		if i == 0 {
+			suite = matches[g]
+		} else if matches[g] != suite {
+			return "", "", false
+		}
+	}
+	return matches[p.versionGroup], suite, true
 }
 
 // ExtractVersion extracts the version string from a filename using the pattern
 func (p *Pattern) ExtractVersion(filename string) (string, bool) {
-	matches := p.regex.FindStringSubmatch(filename)
-	if len(matches) < 2 {
+	v, _, ok := p.match(filename)
+	return v, ok
+}
+
+// Suite reports the suite (the value of the SuiteWildcard) that filename
+// matched. It reports false when filename does not match the pattern or the
+// pattern has no SuiteWildcard.
+func (p *Pattern) Suite(filename string) (string, bool) {
+	if len(p.suiteGroups) == 0 {
 		return "", false
 	}
-	// First capture group is the version (@v)
-	return matches[1], true
+	_, suite, ok := p.match(filename)
+	return suite, ok
 }
 
 // Matches checks if a filename matches the pattern
 func (p *Pattern) Matches(filename string) bool {
-	return p.regex.MatchString(filename)
+	_, _, ok := p.match(filename)
+	return ok
 }
 
 // BuildFilename builds a filename from the pattern template with the given version
@@ -117,6 +218,34 @@ func ParsePatterns(patternStrs []string) ([]*Pattern, error) {
 		patterns = append(patterns, p)
 	}
 	return patterns, firstErr
+}
+
+// ParseAnySuitePatterns is ParsePatterns for ParseAnySuitePattern.
+func ParseAnySuitePatterns(patternStrs []string) ([]*Pattern, error) {
+	patterns := make([]*Pattern, 0, len(patternStrs))
+	var firstErr error
+	for _, s := range patternStrs {
+		p, err := ParseAnySuitePattern(s)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		patterns = append(patterns, p)
+	}
+	return patterns, firstErr
+}
+
+// ExtractSuiteParsed is ExtractVersionParsed for patterns from
+// ParseAnySuitePatterns: it also returns the suite the file name matched.
+func ExtractSuiteParsed(filename string, patterns []*Pattern) (version, suite string, ok bool) {
+	for _, p := range patterns {
+		if v, s, matched := p.match(filename); matched {
+			return v, s, true
+		}
+	}
+	return "", "", false
 }
 
 // ExtractVersionParsed tries to extract a version from a filename using pre-parsed patterns.

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/frostyard/updex/v2/version"
 	"gopkg.in/ini.v1"
 )
 
@@ -50,6 +51,15 @@ type TargetSection struct {
 	CurrentSymlink string   // Optional legacy staging symlink name
 	Mode           uint32   // File mode (e.g., 0644)
 	ReadOnly       bool     // Whether to set read-only flag
+
+	// AnySuitePatterns holds, for each target pattern that contains %w, the
+	// same pattern with every other specifier expanded as in MatchPatterns
+	// and %w replaced by version.SuiteWildcard. Parse them with
+	// version.ParseAnySuitePatterns: they match the images of every suite
+	// (os-release VERSION_ID), for example the trixie (13) and forky (14)
+	// images of 1 component in 1 directory. It is nil when no target pattern
+	// contains %w; "%%w" is a literal "%w", not a suite.
+	AnySuitePatterns []string
 }
 
 // Patterns returns MatchPatterns if non-empty, falling back to
@@ -341,6 +351,9 @@ func parseTransferFile(filePath, component string, specCtx *specifierContext) (*
 			patterns := parsePatterns(key.String())
 			for i, p := range patterns {
 				patterns[i] = expandSpecifiers(p, specCtx)
+				if anySuite, ok := expandAnySuite(p, patterns[i], specCtx); ok {
+					t.Target.AnySuitePatterns = append(t.Target.AnySuitePatterns, anySuite)
+				}
 			}
 			t.Target.MatchPatterns = patterns
 			if len(patterns) > 0 {
@@ -416,8 +429,34 @@ func newSpecifierContextFrom(osReleasePaths []string) *specifierContext {
 // It performs a single left-to-right scan so that %% → % cannot trigger
 // a second round of expansion.
 func expandSpecifiers(s string, ctx *specifierContext) string {
+	out, _ := expand(s, ctx, false)
+	return out
+}
+
+// expandAnySuite returns the any-suite variant of raw (see
+// TargetSection.AnySuitePatterns): every specifier expanded as
+// expandSpecifiers expands it, except %w, which becomes
+// version.SuiteWildcard. expanded is expandSpecifiers(raw). It reports false
+// when raw has no %w specifier, or when raw or its expansion already holds a
+// NUL byte: such a pattern matches no file name, and its NUL must never turn
+// into a wildcard.
+func expandAnySuite(raw, expanded string, ctx *specifierContext) (string, bool) {
+	if strings.Contains(expanded, version.SuiteWildcard) || strings.Contains(raw, version.SuiteWildcard) {
+		return "", false
+	}
+	out, sawSuite := expand(raw, ctx, true)
+	if !sawSuite {
+		return "", false
+	}
+	return out, true
+}
+
+// expand is the single-pass specifier scan. With anySuite, %w becomes
+// version.SuiteWildcard instead of VERSION_ID. sawSuite reports whether a %w
+// specifier (not "%%w") was found.
+func expand(s string, ctx *specifierContext, anySuite bool) (out string, sawSuite bool) {
 	if !strings.ContainsRune(s, '%') {
-		return s
+		return s, false
 	}
 
 	var b strings.Builder
@@ -456,7 +495,12 @@ func expandSpecifiers(s string, ctx *specifierContext) string {
 		case 'v':
 			repl = ctx.kernelRelease
 		case 'w':
-			repl = ctx.osRelease["VERSION_ID"]
+			sawSuite = true
+			if anySuite {
+				repl = version.SuiteWildcard
+			} else {
+				repl = ctx.osRelease["VERSION_ID"]
+			}
 		case 'W':
 			repl = ctx.osRelease["VARIANT_ID"]
 		case '%':
@@ -470,7 +514,7 @@ func expandSpecifiers(s string, ctx *specifierContext) string {
 		b.WriteString(repl)
 		i += 2
 	}
-	return b.String()
+	return b.String(), sawSuite
 }
 
 // goarchToSystemd maps Go architecture identifiers to systemd's naming convention.
