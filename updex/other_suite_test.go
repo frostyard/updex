@@ -2,6 +2,7 @@ package updex
 
 import (
 	"bytes"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -22,6 +23,8 @@ type otherSuiteFixture struct {
 	server    *revisionServer
 	targetDir string
 	linkDir   string
+	root      string
+	hierarchy string
 }
 
 func newOtherSuiteFixture(t *testing.T, runner sysext.SysextRunner) *otherSuiteFixture {
@@ -40,6 +43,8 @@ func newOtherSuiteFixture(t *testing.T, runner sysext.SysextRunner) *otherSuiteF
 		server:    newRevisionServer(t, "foo"),
 		targetDir: t.TempDir(),
 		linkDir:   t.TempDir(),
+		root:      root,
+		hierarchy: t.TempDir(),
 	}
 	f.server.publish("2.0_14")
 	f.server.publish("4.0_13")
@@ -67,7 +72,7 @@ func newOtherSuiteFixture(t *testing.T, runner sysext.SysextRunner) *otherSuiteF
 			DefinitionRoots:   []string{root},
 			OSReleasePaths:    []string{osRelease},
 			SysextLinkDir:     f.linkDir,
-			SysextHierarchies: []string{t.TempDir()},
+			SysextHierarchies: []string{f.hierarchy},
 			RunExtensionsDir:  t.TempDir(),
 			LockPath:          filepath.Join(t.TempDir(), "lock"),
 			RollbackDir:       filepath.Join(t.TempDir(), "rollback"),
@@ -143,5 +148,84 @@ func TestDisableFeatureNow_RemovesEverySuite(t *testing.T) {
 	}
 	if len(result.RemovedFiles) != 4 {
 		t.Errorf("RemovedFiles = %v, want 4 files", result.RemovedFiles)
+	}
+}
+
+// treeOf lists every path under root with its content, so a test can tell
+// that nothing was written.
+func treeOf(t *testing.T, root string) map[string]string {
+	t.Helper()
+	tree := make(map[string]string)
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		content := ""
+		if d.Type().IsRegular() {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			content = string(data)
+		}
+		tree[path] = content
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tree
+}
+
+// Disable removes the images of every suite, so a merged image of another
+// suite needs --force as a merged image of the running suite does. The
+// refusal comes before any write, unmerge or removal.
+func TestDisableFeatureNow_RefusesMergedOtherSuiteImage(t *testing.T) {
+	tests := []struct {
+		name  string
+		file  string
+		state func(targetDir string) string
+	}{
+		{name: "origin path", file: "origin", state: func(dir string) string {
+			return `{"extensions":{"foo_1.0_13":{"path":"` + filepath.Join(dir, "foo_1.0_13.raw") + `"}}}`
+		}},
+		{name: "versioned name in the extensions list", file: "extensions", state: func(string) string {
+			return "bar\nfoo_1.0_13\n"
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &sysext.MockRunner{}
+			f := newOtherSuiteFixture(t, runner)
+			stateDir := filepath.Join(f.hierarchy, sysext.MergedStateDirName)
+			if err := os.MkdirAll(stateDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(stateDir, tt.file), []byte(tt.state(f.targetDir)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			defsBefore := treeOf(t, f.root)
+			stagedBefore := f.staged(t)
+
+			result, err := f.client.DisableFeature(t.Context(), "grp", DisableFeatureOptions{Now: true, NoRefresh: true})
+			if err == nil || !strings.Contains(err.Error(), "foo (image foo_1.0_13.raw of another suite)") {
+				t.Fatalf("DisableFeature = %+v, %v; want a refusal that names the other-suite image", result, err)
+			}
+			if !strings.Contains(err.Error(), "--force") {
+				t.Errorf("error = %v, want it to ask for --force", err)
+			}
+			if runner.UnmergeCalled || runner.RefreshCalled {
+				t.Errorf("unmerge %v, refresh %v; want neither", runner.UnmergeCalled, runner.RefreshCalled)
+			}
+			if got := f.staged(t); !slices.Equal(got, stagedBefore) {
+				t.Errorf("staged = %v, want %v", got, stagedBefore)
+			}
+			if _, err := os.Lstat(filepath.Join(f.linkDir, "foo.raw")); err != nil {
+				t.Errorf("link removed: %v", err)
+			}
+			if got := treeOf(t, f.root); !maps.Equal(got, defsBefore) {
+				t.Errorf("definitions changed:\n%v\nwant\n%v", got, defsBefore)
+			}
+		})
 	}
 }

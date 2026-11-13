@@ -238,3 +238,146 @@ func TestRemoveAllVersionsAtRemovesEverySuite(t *testing.T) {
 		t.Errorf("left = %v, want %v", got, wantLeft)
 	}
 }
+
+// ActiveOtherSuiteWith sees every active image of another suite that
+// RemoveAllVersionsAt would remove, and nothing of the running suite or of
+// another component.
+func TestActiveOtherSuiteWith(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, dir, hierarchy, runDir string, tr *config.Transfer)
+		want  string
+	}{
+		{name: "origin path", want: "foo_1.0_13_x86-64.raw", setup: func(t *testing.T, dir, hierarchy, _ string, _ *config.Transfer) {
+			writeMergedStateFile(t, hierarchy, "origin", `{"extensions":{"foo_1.0_13_x86-64":{"path":"`+filepath.Join(dir, "foo_1.0_13_x86-64.raw")+`"}}}`)
+		}},
+		{name: "versioned name in the extensions list", want: "foo_1.0_13_x86-64.raw", setup: func(t *testing.T, _, hierarchy, _ string, _ *config.Transfer) {
+			writeMergedStateFile(t, hierarchy, "extensions", "bar\nfoo_1.0_13_x86-64\n")
+		}},
+		{name: "runtime directory", want: "foo_2.0_12_x86-64.raw", setup: func(t *testing.T, _, _, runDir string, _ *config.Transfer) {
+			writeImages(t, runDir, "foo_2.0_12_x86-64.raw")
+		}},
+		{name: "current symlink", want: "foo_1.0_13_x86-64.raw", setup: func(t *testing.T, dir, _, _ string, tr *config.Transfer) {
+			tr.Target.CurrentSymlink = "foo.raw"
+			if err := os.Symlink("foo_1.0_13_x86-64.raw", filepath.Join(dir, "foo.raw")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "running suite only", setup: func(t *testing.T, dir, hierarchy, runDir string, _ *config.Transfer) {
+			writeMergedStateFile(t, hierarchy, "origin", `{"extensions":{"foo":{"path":"`+filepath.Join(dir, "foo_1.0_14_x86-64.raw")+`"}}}`)
+			writeMergedStateFile(t, hierarchy, "extensions", "foo\nfoo_1.0_14_x86-64\nfoo_bar_1.0_13_x86-64\n")
+			writeImages(t, runDir, "foo_1.0_14_x86-64.raw", "foo_bar_1.0_13_x86-64.raw")
+		}},
+		{name: "no %w", setup: func(t *testing.T, _, hierarchy, _ string, tr *config.Transfer) {
+			tr.Target.AnySuitePatterns = nil
+			writeMergedStateFile(t, hierarchy, "extensions", "foo_1.0_13_x86-64\n")
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir, hierarchy, runDir := t.TempDir(), t.TempDir(), t.TempDir()
+			writeImages(t, dir, "foo_1.0_14_x86-64.raw", "foo_1.0_13_x86-64.raw")
+			tr := suiteTransfer(dir, "14")
+			tt.setup(t, dir, hierarchy, runDir, tr)
+			got, err := ActiveOtherSuiteWith(tr, ActiveStatePaths{Hierarchies: []string{hierarchy}, RunExtensionsDir: runDir})
+			if err != nil || got != tt.want {
+				t.Errorf("ActiveOtherSuiteWith() = %q, %v; want %q", got, err, tt.want)
+			}
+		})
+	}
+
+	t.Run("unreadable state fails closed", func(t *testing.T) {
+		dir, hierarchy := t.TempDir(), t.TempDir()
+		// A directory where the origin file belongs makes the read fail.
+		if err := os.MkdirAll(filepath.Join(hierarchy, MergedStateDirName, "origin"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ActiveOtherSuiteWith(suiteTransfer(dir, "14"), ActiveStatePaths{Hierarchies: []string{hierarchy}}); err == nil {
+			t.Error("ActiveOtherSuiteWith() error = nil, want a read error")
+		}
+	})
+}
+
+// Older merged-state metadata names only the extension ("foo" in the
+// extensions list, no origin): the merged image could be any image of the
+// component, so the vacuum keeps every image of another suite and reports
+// it. The running suite's rule does not change.
+func TestVacuumWithComponentOnlyMetadataKeepsOtherSuites(t *testing.T) {
+	dir, linkDir, hierarchy := t.TempDir(), t.TempDir(), t.TempDir()
+	writeImages(t, dir,
+		"foo_1.0_13_x86-64.raw", "foo_2.0_13_x86-64.raw",
+		"foo_1.0_14_x86-64.raw", "foo_2.0_14_x86-64.raw", "foo_3.0_14_x86-64.raw",
+	)
+	// The link names a newer image than the one that is merged.
+	if err := os.Symlink(filepath.Join(dir, "foo_3.0_14_x86-64.raw"), filepath.Join(linkDir, "foo.raw")); err != nil {
+		t.Fatal(err)
+	}
+	writeMergedStateFile(t, hierarchy, "extensions", "foo\n")
+
+	report, err := VacuumWithReport(suiteTransfer(dir, "14"), VacuumPaths{LinkDir: linkDir, Hierarchies: []string{hierarchy}})
+	if err != nil {
+		t.Fatalf("VacuumWithReport() error = %v", err)
+	}
+	if !report.OtherSuiteMergedUnknown {
+		t.Error("OtherSuiteMergedUnknown = false, want the report to say why every other-suite image stays")
+	}
+	if len(report.OtherSuiteRemoved) != 0 || !slices.Equal(report.OtherSuiteKept, []string{"foo_1.0_13_x86-64.raw", "foo_2.0_13_x86-64.raw"}) {
+		t.Errorf("OtherSuiteRemoved = %v, OtherSuiteKept = %v; want none removed, both kept", report.OtherSuiteRemoved, report.OtherSuiteKept)
+	}
+	if !slices.Equal(report.Removed, []string{"1.0"}) || !slices.Equal(report.Kept, []string{"3.0", "2.0"}) {
+		t.Errorf("current suite removed %v kept %v, want [1.0] and [3.0 2.0]", report.Removed, report.Kept)
+	}
+
+	// Metadata that names an image file resolves it: the older image of the
+	// other suite goes.
+	writeImages(t, dir, "foo_1.0_14_x86-64.raw")
+	writeMergedStateFile(t, hierarchy, "origin", `{"extensions":{"foo":{"path":"`+filepath.Join(dir, "foo_2.0_14_x86-64.raw")+`"}}}`)
+	report, err = VacuumWithReport(suiteTransfer(dir, "14"), VacuumPaths{LinkDir: linkDir, Hierarchies: []string{hierarchy}})
+	if err != nil {
+		t.Fatalf("VacuumWithReport() error = %v", err)
+	}
+	if report.OtherSuiteMergedUnknown || !slices.Equal(report.OtherSuiteRemoved, []string{"foo_1.0_13_x86-64.raw"}) {
+		t.Errorf("report = %+v, want foo_1.0_13_x86-64.raw removed", report)
+	}
+}
+
+// A CurrentSymlink that cannot be inspected fails the vacuum before it
+// deletes anything; an absent one and a regular file in its place do not.
+func TestVacuumWithOtherSuiteFailsClosedOnCurrentSymlink(t *testing.T) {
+	images := []string{"foo_1.0_13_x86-64.raw", "foo_2.0_13_x86-64.raw", "foo_3.0_13_x86-64.raw",
+		"foo_1.0_14_x86-64.raw", "foo_2.0_14_x86-64.raw", "foo_3.0_14_x86-64.raw"}
+
+	t.Run("inspection failure", func(t *testing.T) {
+		dir := t.TempDir()
+		writeImages(t, dir, images...)
+		// A regular file as a path component makes Lstat fail with ENOTDIR.
+		writeImages(t, dir, "sub")
+		tr := suiteTransfer(dir, "14")
+		tr.Target.CurrentSymlink = "sub/foo.raw"
+
+		_, err := VacuumWithReport(tr, VacuumPaths{})
+		if err == nil || !strings.Contains(err.Error(), "inspect current symlink") {
+			t.Fatalf("VacuumWithReport() error = %v, want a current symlink error", err)
+		}
+		if got := listDir(t, dir); len(got) != len(images)+1 {
+			t.Errorf("left = %v, want every image", got)
+		}
+	})
+
+	for name, setup := range map[string]func(dir string){
+		"absent":        func(string) {},
+		"not a symlink": func(dir string) { writeImages(t, dir, "foo.raw") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeImages(t, dir, images...)
+			setup(dir)
+			tr := suiteTransfer(dir, "14")
+			tr.Target.CurrentSymlink = "foo.raw"
+			report, err := VacuumWithReport(tr, VacuumPaths{})
+			if err != nil || !slices.Equal(report.OtherSuiteRemoved, []string{"foo_1.0_13_x86-64.raw", "foo_2.0_13_x86-64.raw"}) {
+				t.Errorf("VacuumWithReport() = %+v, %v; want the older images of suite 13 removed", report, err)
+			}
+		})
+	}
+}

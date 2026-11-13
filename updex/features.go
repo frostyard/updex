@@ -572,11 +572,12 @@ func (c *Client) disableFeature(ctx context.Context, name string, opts DisableFe
 	if willRemoveFiles && len(featureTransfers) > 0 {
 		var mergedExtensions []string
 		for _, t := range featureTransfers {
-			activeVersion, err := sysext.GetActiveVersionWith(t, sysext.ActiveStatePaths{
+			activePaths := sysext.ActiveStatePaths{
 				DefaultDir:       c.paths.sysextLinkDir,
 				RunExtensionsDir: c.paths.runExtensionsDir,
 				Hierarchies:      c.paths.sysextHierarchies,
-			})
+			}
+			activeVersion, err := sysext.GetActiveVersionWith(t, activePaths)
 			if err != nil {
 				c.warn("could not check merge state for %s: %v", t.Component, err)
 				// Fail closed: an unknown merge state still requires --force.
@@ -585,6 +586,18 @@ func (c *Client) disableFeature(ctx context.Context, name string, opts DisableFe
 			}
 			if activeVersion != "" {
 				mergedExtensions = append(mergedExtensions, fmt.Sprintf("%s (version %s)", t.Component, activeVersion))
+				continue
+			}
+			// The removal below deletes the images of every suite, so an
+			// active image of another suite needs --force too.
+			otherImage, err := sysext.ActiveOtherSuiteWith(t, activePaths)
+			if err != nil {
+				c.warn("could not check merge state for %s: %v", t.Component, err)
+				mergedExtensions = append(mergedExtensions, fmt.Sprintf("%s (merge state unknown)", t.Component))
+				continue
+			}
+			if otherImage != "" {
+				mergedExtensions = append(mergedExtensions, fmt.Sprintf("%s (image %s of another suite)", t.Component, otherImage))
 			}
 		}
 

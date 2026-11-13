@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-13",
+  "scope": "sysext/manager.go otherSuiteProtected",
+  "correction": "Merged-state metadata that names the component but no image file (systemd older than 258 writes only the extension name to extensions) does not say which image is merged: the other-suite vacuum keeps every other-suite image of that component and reports VacuumReport.OtherSuiteMergedUnknown, instead of protecting <component>.raw, a name that is no staged image. Guard: TestVacuumWithComponentOnlyMetadataKeepsOtherSuites.",
+  "evidence": "frostyard/updex#515 cross-review (openai/gpt-6.1-sol) of head cb746f6, finding 2 (sysext/manager.go:589)",
+  "promoted_to": ""
+}

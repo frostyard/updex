@@ -439,10 +439,13 @@ without a download while the disk use stays bounded. It always keeps the
 other-suite image that the sysext link points to (compared by file name: right
 after a suite switch the link still points to the old suite's image), an image
 that the merged state records, and a legacy `CurrentSymlink` target. Only
-regular files count. It reads the link and the merged state before it deletes
-anything, and deletes nothing when it cannot read them. `features disable --now`
-removes the images of every suite (a match only by the suite wildcard is removed
-only when it is a regular file).
+regular files count. It reads the link, the `CurrentSymlink` and the merged
+state before it deletes anything, and deletes nothing when it cannot read them.
+When the merged state names the component but no image file of it (systemd
+older than 258 writes only the extension name to `extensions`), it keeps every
+image of the other suites. `features disable --now` removes the images of every
+suite (a match only by the suite wildcard is removed only when it is a regular
+file), and requires `--force` when an image of any suite is active.
 
 Dry-run updates call `sysext.PlanVacuumWithReport` (`PlanVacuumWith` plus the other-suite images) with the would-install version as the active-version override, which lets the SDK report `RemovedVersions` and `RemovedOtherSuiteImages` without touching disk. Real installs call `sysext.VacuumWith`, so the update result currently does not include removed-version details for non-dry-run runs.
 

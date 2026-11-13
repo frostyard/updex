@@ -433,6 +433,9 @@ func (c *Client) installTransfers(ctx context.Context, feature string, transfers
 			for _, name := range report.OtherSuiteRemoved {
 				c.msg("Removed other-suite image %s of %s", name, transfer.Component)
 			}
+			if report.OtherSuiteMergedUnknown {
+				c.msg("Kept every other-suite image of %s: the merged state names it without its image file", transfer.Component)
+			}
 			if err != nil {
 				c.warn("vacuum failed for %s: %v", transfer.Component, err)
 			}

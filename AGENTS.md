@@ -520,8 +520,13 @@ in the `config/` structs and parse functions. Always finish with
   other-suite image (regular files only). The vacuum keeps the newest version
   of each other suite (a switch back relinks without a download), the image
   the link points to (by base name) and a merged image, reads them before it
-  deletes and fails closed; `RemoveAllVersionsAt` (`features disable --now`)
-  removes every suite. A transfer without `%w` gets no new behavior.
+  deletes and fails closed (also on a `CurrentSymlink` it cannot inspect); when
+  the merged state names the component without an image file (systemd < 258),
+  it keeps every other-suite image (`VacuumReport.OtherSuiteMergedUnknown`).
+  `RemoveAllVersionsAt` (`features disable --now`) removes every suite, so the
+  disable guard checks `sysext.ActiveOtherSuiteWith` after
+  `GetActiveVersionWith`: a guard must recognize every suite its removal can
+  match. A transfer without `%w` gets no new behavior.
 - **Activation rule (ADR-0017, #455).** A transfer is active when `Features=`
   is empty or one listed feature is enabled (OR) and every `RequisiteFeatures=`
   entry is enabled (AND); `config.CheckTransferActivation` is the single
