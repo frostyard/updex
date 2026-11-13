@@ -508,12 +508,14 @@ func TestE2E_FeaturesStatusJSONShape(t *testing.T) {
 // flag is never mistaken for a declaration.
 var helpLongFlag = regexp.MustCompile(`^\s+(?:-[A-Za-z],?\s+)?(--[A-Za-z][A-Za-z0-9-]*)(?:\s|$)`)
 
-// TestE2E_GlobalFlagsAreDocumentedInREADME pins README.md's "### Global
-// Flags" table to the binary's own --help output: every global long flag
-// updex advertises must have a row there. Adding or renaming a global flag
-// without updating the table fails here instead of drifting silently, which
-// is how `-s, --silent` went undocumented.
-func TestE2E_GlobalFlagsAreDocumentedInREADME(t *testing.T) {
+// TestE2E_GlobalFlagsAreDocumentedInCLIReference pins the global flags table
+// of docs/specs/cli-reference.md ("### Global flags") to the binary's own
+// --help output: every global long flag updex advertises must have a row
+// there. Adding or renaming a global flag without updating the table fails
+// here instead of drifting silently, which is how `-s, --silent` went
+// undocumented. The table moved out of README.md when the root README became
+// short (frostyard README standard); the reference is its only home now.
+func TestE2E_GlobalFlagsAreDocumentedInCLIReference(t *testing.T) {
 	result := runUpdexCommand(t, "--help")
 	if result.exitCode != 0 {
 		t.Fatalf("updex --help exited %d:\n%s%s", result.exitCode, result.stdout, result.stderr)
@@ -538,7 +540,7 @@ func TestE2E_GlobalFlagsAreDocumentedInREADME(t *testing.T) {
 		// (e.g. "`--silent` takes priority over `--json`") can't satisfy the requirement.
 		row := regexp.MustCompile("(?m)^\\|\\s*`[^`]*" + regexp.QuoteMeta(flag) + "[^`]*`\\s*\\|")
 		if !row.MatchString(table) {
-			t.Errorf("global flag %s is listed by `updex --help` but has no row in README.md's \"### Global Flags\" table", flag)
+			t.Errorf("global flag %s is listed by `updex --help` but has no row in docs/specs/cli-reference.md's \"### Global flags\" table", flag)
 		}
 	}
 }
@@ -568,25 +570,26 @@ func parseHelpGlobalFlags(help string) []string {
 	return flags
 }
 
-// readGlobalFlagsTable returns the body of README.md's "### Global Flags"
-// section, up to the next heading at the same or a higher level.
+// readGlobalFlagsTable returns the body of docs/specs/cli-reference.md's
+// "### Global flags" section, up to the next heading at the same or a higher
+// level.
 func readGlobalFlagsTable(t *testing.T) string {
 	t.Helper()
 	repoRoot, err := repoRootDir()
 	if err != nil {
 		t.Fatalf("locating repo root: %v", err)
 	}
-	readme, err := os.ReadFile(filepath.Join(repoRoot, "README.md"))
+	reference, err := os.ReadFile(filepath.Join(repoRoot, "docs", "specs", "cli-reference.md"))
 	if err != nil {
-		t.Fatalf("reading README.md: %v", err)
+		t.Fatalf("reading docs/specs/cli-reference.md: %v", err)
 	}
 
-	const heading = "### Global Flags"
-	start := strings.Index(string(readme), heading)
+	const heading = "### Global flags"
+	start := strings.Index(string(reference), heading)
 	if start < 0 {
-		t.Fatalf("README.md has no %q heading", heading)
+		t.Fatalf("docs/specs/cli-reference.md has no %q heading", heading)
 	}
-	body := string(readme)[start+len(heading):]
+	body := string(reference)[start+len(heading):]
 	if end := strings.Index(body, "\n#"); end >= 0 {
 		body = body[:end]
 	}

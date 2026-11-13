@@ -208,6 +208,34 @@ func TestClient_Components_NoneDiscovered(t *testing.T) {
 	}
 }
 
+// TestClient_Components_RefusesDefinitionsOverride covers #508: a
+// --definitions/-C directory is 1 flat directory that bypasses component
+// discovery (see "Component Discovery" in AGENTS.md), so it has no
+// components. Asking for them with that override must fail instead of
+// reporting the host-wide component list.
+func TestClient_Components_RefusesDefinitionsOverride(t *testing.T) {
+	roots := withComponentSearchRoots(t)
+	// A component exists under the search roots; the definitions override
+	// must not fall back to it.
+	writeComponentFeature(t, filepath.Join(roots[3], "sysupdate.docker.d"), "docker", true)
+
+	definitions := t.TempDir()
+	writeComponentFeature(t, definitions, "local", false)
+
+	client := NewClient(ClientConfig{Definitions: definitions})
+	components, err := client.Components(t.Context())
+	if err == nil {
+		t.Fatalf("Components() with a definitions override = %+v, want an error", components)
+	}
+	if components != nil {
+		t.Errorf("Components() returned %+v alongside the error, want no list", components)
+	}
+	want := "components cannot be combined with a definitions override (--definitions): a definitions directory has no components"
+	if err.Error() != want {
+		t.Errorf("Components() error = %q, want %q", err.Error(), want)
+	}
+}
+
 // TestWriteFeatureDropIn_ComponentScoped verifies the drop-in path a feature
 // resolves to depends on which systemd-sysupdate component it was
 // discovered under (see config.ComponentOfPath): component-scoped features

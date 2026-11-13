@@ -258,7 +258,9 @@ and that component's own feature count (not counting union collisions) —
 via `config.DiscoverComponents` + `LoadComponentFeatures` per component. It
 does not include the legacy default component; use `Features` with the
 default (empty) `Component` to see the full union, including anything still
-defined there.
+defined there. Because it is discovery over the search roots, it refuses a
+`ClientConfig.Definitions` override (`-C`/`--definitions`), which is 1 flat
+directory with no components.
 
 ### Non-sysext transfers
 
@@ -1349,8 +1351,8 @@ queue ([frostyard/core ADR-0042](https://github.com/frostyard/core/blob/main/doc
 packages, attests build provenance for `dist/checksums.txt` and every
 distributable asset (`actions/attest-build-provenance`, SHA-pinned; workflow
 permissions `id-token: write` and `attestations: write`; users verify with
-`gh attestation verify <artifact> --repo frostyard/updex`, see README
-"Installation"), then dispatches `event-type: build` to `frostyard/snosi` so the
+`gh attestation verify <artifact> --repo frostyard/updex`, see
+[the CLI reference, "Install"](../specs/cli-reference.md#install)), then dispatches `event-type: build` to `frostyard/snosi` so the
 component release promptly fans out into an image rebuild
 ([frostyard/core ADR-0013](https://github.com/frostyard/core/blob/main/docs/adr/0013-release-fanout-via-repository-dispatch.md)).
 The tag-only trigger is the dispatch guard; the step must not check for a

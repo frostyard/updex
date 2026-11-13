@@ -30,7 +30,7 @@ func (c *Client) catalogRepos() ([]catalog.Repo, error) {
 		if len(c.paths.catalogConfigRoots) > 0 {
 			firstRoot = c.paths.catalogConfigRoots[0]
 		}
-		return nil, fmt.Errorf("no catalogs configured: create a <name>.catalog file under %s (see the Catalog section of the README)", firstRoot)
+		return nil, fmt.Errorf("no catalogs configured: create a <name>.catalog file under %s (see the catalogs section of docs/specs/cli-reference.md in the updex repository)", firstRoot)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to load catalogs: %w", err)

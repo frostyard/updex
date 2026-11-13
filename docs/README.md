@@ -120,6 +120,9 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
 
 ### Specs
 
+- [updex CLI reference](specs/cli-reference.md) — the command and flag
+  contract: features, components, catalogs, the update timer, global flags,
+  JSON output, and the install matrix (formerly the root `README.md` manual)
 - [SDK API reference](specs/sdk-api.md) — public Go API surface (formerly
   `yeti/sdk-api.md`)
 - [Configuration reference](specs/config-reference.md) — `.transfer` /

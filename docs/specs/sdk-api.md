@@ -486,6 +486,8 @@ func (c *Client) Components(ctx context.Context) ([]ComponentInfo, error)
 
 Lists discovered systemd-sysupdate components (`sysupdate.<name>.d/` directories, see `config.DiscoverComponents`) — name, highest-priority existing source directory, and that component's own feature count. Does **not** include the legacy default `sysupdate.d/` "component"; call `Features` with the default (empty) `Component` to see the full union.
 
+`Components` is discovery over the search roots, so it cannot run under a `ClientConfig.Definitions` override (`-C`/`--definitions`): that single flat directory bypasses component discovery and has none. Such a client gets an error — `components cannot be combined with a definitions override (--definitions): a definitions directory has no components` — and no list, before any discovery happens (the same rule as `CatalogList`/`CatalogAdd`, which refuse the flag because catalog operations are component-scoped).
+
 ```go
 type ComponentInfo struct {
     Name         string `json:"name"`

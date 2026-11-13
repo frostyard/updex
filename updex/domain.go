@@ -97,7 +97,16 @@ type ComponentInfo struct {
 // legacy default sysupdate.d directory itself; use Features with the
 // default (empty) Component to see the full union domain, including
 // anything still defined there.
+//
+// Components is component discovery over the search roots, so it cannot be
+// combined with a Definitions override (--definitions/-C): that single flat
+// directory bypasses discovery and has no components. Such a client gets an
+// error instead of the host-wide component list.
 func (c *Client) Components(ctx context.Context) ([]ComponentInfo, error) {
+	if c.config.Definitions != "" {
+		return nil, fmt.Errorf("components cannot be combined with a definitions override (--definitions): a definitions directory has no components")
+	}
+
 	c.msg("Discovering components")
 
 	components, err := config.DiscoverComponentsIn(c.paths.definitionRoots)

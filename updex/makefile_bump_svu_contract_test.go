@@ -231,6 +231,236 @@ func TestSvuVersionCheckBehaviour(t *testing.T) {
 	}
 }
 
+// TestMakefileBumpRecipeChecksMain pins the main-branch guard into `make bump`
+// (#504, core ADR-0012): `make bump` is the only sanctioned tagging path and
+// releases main, so the recipe must reject any other branch, a detached HEAD,
+// or a HEAD that differs from origin/main — before it builds or tags anything,
+// and once again after the long build, so a branch change during the build
+// cannot slip through.
+func TestMakefileBumpRecipeChecksMain(t *testing.T) {
+	data, err := os.ReadFile("../Makefile")
+	if err != nil {
+		t.Fatalf("read Makefile: %v", err)
+	}
+	makefile := string(data)
+	recipe := extractRecipe(t, makefile, "bump:")
+
+	checkIdx := strings.Index(recipe, "bump-main-check")
+	if checkIdx < 0 {
+		t.Fatalf("Makefile bump recipe does not run bump-main-check; got:\n%s", recipe)
+	}
+	buildIdx := strings.Index(recipe, "$(MAKE) build")
+	if buildIdx < 0 {
+		t.Fatalf("Makefile bump recipe does not build; got:\n%s", recipe)
+	}
+	if checkIdx > buildIdx {
+		t.Errorf("Makefile bump recipe runs bump-main-check after the build; run it first")
+	}
+
+	if got := strings.Count(recipe, "bump-main-check"); got != 2 {
+		t.Fatalf("Makefile bump recipe runs bump-main-check %d time(s), want 2 (before the build and again directly before tagging); got:\n%s", got, recipe)
+	}
+
+	// The second run must sit after the clean-tree check and before the tag is
+	// derived, so a checkout during the build is caught before anything is
+	// tagged or pushed.
+	cleanIdx := strings.Index(recipe, "git status --porcelain")
+	if cleanIdx < 0 {
+		t.Fatalf("Makefile bump recipe has no clean-tree check; got:\n%s", recipe)
+	}
+	nextIdx := strings.Index(recipe, "$(SVU) next")
+	if nextIdx < 0 {
+		t.Fatalf("Makefile bump recipe does not call `$(SVU) next`; got:\n%s", recipe)
+	}
+	secondIdx := strings.Index(recipe[checkIdx+1:], "bump-main-check") + checkIdx + 1
+	if secondIdx < cleanIdx {
+		t.Errorf("Makefile bump recipe's second bump-main-check runs before the clean-tree check")
+	}
+	if secondIdx > nextIdx {
+		t.Errorf("Makefile bump recipe's second bump-main-check runs after `$(SVU) next`; it must run before the tag is derived")
+	}
+
+	checkRecipe := extractRecipe(t, makefile, "bump-main-check:")
+	for _, want := range []string{"git symbolic-ref", "git fetch", "refs/remotes/origin/main", "git rev-parse HEAD"} {
+		if !strings.Contains(checkRecipe, want) {
+			t.Errorf("Makefile bump-main-check recipe does not use %q; got:\n%s", want, checkRecipe)
+		}
+	}
+	phony := ""
+	for _, line := range strings.Split(makefile, "\n") {
+		if strings.HasPrefix(line, ".PHONY:") {
+			phony = line
+			break
+		}
+	}
+	if !strings.Contains(phony, "bump-main-check") {
+		t.Errorf("Makefile's .PHONY line does not list bump-main-check; got: %q", phony)
+	}
+	if !strings.Contains(makefile, "## bump-main-check: ") {
+		t.Errorf("Makefile bump-main-check has no `## bump-main-check: ...` help line")
+	}
+}
+
+// TestBumpMainCheckBehaviour runs the real bump-main-check recipe in temporary
+// repositories whose origin is a temporary bare repository, so each failure
+// branch keeps its message: another branch, a detached HEAD, unpushed local
+// commits, and a HEAD behind origin/main.
+func TestBumpMainCheckBehaviour(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping the make bump-main-check subprocess test in -short mode")
+	}
+	for _, tool := range []string{"git", "make"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s is not on PATH", tool)
+		}
+	}
+
+	makefile, err := filepath.Abs("../Makefile")
+	if err != nil {
+		t.Fatalf("resolve the module-root Makefile: %v", err)
+	}
+
+	commit := func(t *testing.T, repo string, name string) {
+		t.Helper()
+		writeRepoFile(t, repo, name)
+		runGit(t, repo, "add", "-A")
+		runGit(t, repo, "commit", "-m", "commit "+name)
+	}
+
+	tests := []struct {
+		name         string
+		prepare      func(t *testing.T, repo string)
+		wantErr      bool
+		wantContains []string
+	}{
+		{
+			name:    "on main and equal to origin main",
+			prepare: func(t *testing.T, repo string) {},
+		},
+		{
+			name: "another branch",
+			prepare: func(t *testing.T, repo string) {
+				runGit(t, repo, "checkout", "-b", "release-candidate")
+			},
+			wantErr:      true,
+			wantContains: []string{"must run on main", "release-candidate"},
+		},
+		{
+			name: "detached HEAD",
+			prepare: func(t *testing.T, repo string) {
+				runGit(t, repo, "checkout", "--detach")
+			},
+			wantErr:      true,
+			wantContains: []string{"must run on main", "detached HEAD"},
+		},
+		{
+			name: "local commit origin does not have",
+			prepare: func(t *testing.T, repo string) {
+				commit(t, repo, "unpushed.txt")
+			},
+			wantErr:      true,
+			wantContains: []string{"is not origin/main", "pull or push first"},
+		},
+		{
+			name: "behind origin main",
+			prepare: func(t *testing.T, repo string) {
+				commit(t, repo, "pushed-elsewhere.txt")
+				runGit(t, repo, "push", "origin", "main")
+				runGit(t, repo, "reset", "--hard", "HEAD~1")
+			},
+			wantErr:      true,
+			wantContains: []string{"is not origin/main", "pull or push first"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newBumpRepo(t)
+			tt.prepare(t, repo)
+
+			cmd := exec.Command("make", "-s", "-f", makefile, "bump-main-check")
+			cmd.Dir = repo
+			cmd.Env = isolatedGitEnv(t)
+			var output bytes.Buffer
+			cmd.Stdout = &output
+			cmd.Stderr = &output
+			err := cmd.Run()
+
+			if tt.wantErr && err == nil {
+				t.Fatalf("%s exited 0, want a failure; output:\n%s", strings.Join(cmd.Args, " "), output.String())
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("%s: %v; output:\n%s", strings.Join(cmd.Args, " "), err, output.String())
+			}
+			for _, want := range tt.wantContains {
+				if !strings.Contains(output.String(), want) {
+					t.Errorf("output does not contain %q; got:\n%s", want, output.String())
+				}
+			}
+		})
+	}
+}
+
+// newBumpRepo creates a working repository on main plus a bare repository as
+// its origin, both with 1 pushed commit, and returns the working directory.
+func newBumpRepo(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	origin := filepath.Join(root, "origin.git")
+	runGit(t, root, "init", "--bare", origin)
+	runGit(t, origin, "symbolic-ref", "HEAD", "refs/heads/main")
+
+	repo := filepath.Join(root, "work")
+	runGit(t, root, "init", "-b", "main", repo)
+	runGit(t, repo, "remote", "add", "origin", origin)
+	writeRepoFile(t, repo, "first.txt")
+	runGit(t, repo, "add", "-A")
+	runGit(t, repo, "commit", "-m", "first commit")
+	runGit(t, repo, "push", "origin", "main")
+
+	return repo
+}
+
+// writeRepoFile writes a distinct file into repo so a commit has content.
+func writeRepoFile(t *testing.T, repo, name string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(repo, name), []byte(name+"\n"), 0o644); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+}
+
+// runGit runs 1 git command in dir with a fixed test identity and an isolated
+// configuration, and fails the test when git exits non-zero.
+func runGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	full := append([]string{"-c", "user.name=test", "-c", "user.email=test@example.org"}, args...)
+	cmd := exec.Command("git", full...)
+	cmd.Dir = dir
+	cmd.Env = isolatedGitEnv(t)
+	var out, errOut bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, errOut.String())
+	}
+	return strings.TrimSpace(out.String())
+}
+
+// isolatedGitEnv returns this process's environment with the host's global and
+// system git configuration dropped, so a developer's user.name, remote
+// rewrite, or safe.directory setting cannot decide a test result.
+func isolatedGitEnv(t *testing.T) []string {
+	t.Helper()
+	env := make([]string, 0, len(os.Environ())+2)
+	for _, entry := range os.Environ() {
+		if strings.HasPrefix(entry, "GIT_CONFIG_GLOBAL=") || strings.HasPrefix(entry, "GIT_CONFIG_SYSTEM=") {
+			continue
+		}
+		env = append(env, entry)
+	}
+	return append(env, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+}
+
 // writeFakeSvu writes an executable stand-in whose `--version` prints line, so
 // the recipe's GitVersion parsing is exercised without a real svu install.
 func writeFakeSvu(t *testing.T, line string) string {
