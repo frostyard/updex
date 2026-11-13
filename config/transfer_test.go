@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/frostyard/updex/v2/version"
 )
 
 func TestExpandSpecifiersLiteralPercent(t *testing.T) {
@@ -918,5 +920,124 @@ func TestEnabledFeatureSet(t *testing.T) {
 	got := EnabledFeatureSet(features)
 	if len(got) != 1 || !got["on"] {
 		t.Errorf("EnabledFeatureSet = %v, want only on", got)
+	}
+}
+
+func TestTargetAnySuitePatterns(t *testing.T) {
+	dir := t.TempDir()
+	osRelease := filepath.Join(dir, "os-release")
+	if err := os.WriteFile(osRelease, []byte("ID=debian\nVERSION_ID=13\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	defs := filepath.Join(dir, "defs")
+	if err := os.Mkdir(defs, 0755); err != nil {
+		t.Fatal(err)
+	}
+	arch := goarchToSystemdArch()
+	tests := []struct {
+		name        string
+		target      string
+		wantCurrent []string
+		wantAny     []string
+	}{
+		{
+			name:        "suite specifier",
+			target:      "foo_@v_%w_%a.raw.zst foo_@v_%w_%a.raw",
+			wantCurrent: []string{"foo_@v_13_" + arch + ".raw.zst", "foo_@v_13_" + arch + ".raw"},
+			wantAny: []string{
+				"foo_@v_" + version.SuiteWildcard + "_" + arch + ".raw.zst",
+				"foo_@v_" + version.SuiteWildcard + "_" + arch + ".raw",
+			},
+		},
+		{
+			name:        "only some patterns name the suite",
+			target:      "foo_@v_%w.raw foo_@v.raw",
+			wantCurrent: []string{"foo_@v_13.raw", "foo_@v.raw"},
+			wantAny:     []string{"foo_@v_" + version.SuiteWildcard + ".raw"},
+		},
+		{
+			name:        "no suite specifier",
+			target:      "foo_@v_%a.raw",
+			wantCurrent: []string{"foo_@v_" + arch + ".raw"},
+		},
+		{
+			name:        "escaped percent is a literal %w",
+			target:      "foo_@v_%%w.raw",
+			wantCurrent: []string{"foo_@v_%w.raw"},
+		},
+		{
+			name:        "literal @w is not a suite",
+			target:      "foo_@v_@w.raw",
+			wantCurrent: []string{"foo_@v_@w.raw"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content := "[Source]\nType=url-file\nPath=https://example.com\nMatchPattern=foo_@v_%w.raw\n\n[Target]\nMatchPattern=" + tt.target + "\n"
+			if err := os.WriteFile(filepath.Join(defs, "foo.transfer"), []byte(content), 0644); err != nil {
+				t.Fatal(err)
+			}
+			transfers, err := LoadTransfersIn(defs, nil, []string{osRelease})
+			if err != nil {
+				t.Fatalf("LoadTransfersIn() error = %v", err)
+			}
+			if len(transfers) != 1 {
+				t.Fatalf("got %d transfers, want 1", len(transfers))
+			}
+			tr := transfers[0]
+			if !slices.Equal(tr.Target.MatchPatterns, tt.wantCurrent) {
+				t.Errorf("MatchPatterns = %q, want %q", tr.Target.MatchPatterns, tt.wantCurrent)
+			}
+			if !slices.Equal(tr.Target.AnySuitePatterns, tt.wantAny) {
+				t.Errorf("AnySuitePatterns = %q, want %q", tr.Target.AnySuitePatterns, tt.wantAny)
+			}
+			if tt.wantAny == nil && tr.Target.AnySuitePatterns != nil {
+				t.Errorf("AnySuitePatterns = %#v, want nil", tr.Target.AnySuitePatterns)
+			}
+		})
+	}
+}
+
+func TestTargetAnySuitePatternsMatchEverySuiteOnly(t *testing.T) {
+	dir := t.TempDir()
+	osRelease := filepath.Join(dir, "os-release")
+	if err := os.WriteFile(osRelease, []byte("VERSION_ID=14\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	content := "[Source]\nType=url-file\nPath=https://example.com\nMatchPattern=foo_@v_%w_%a.raw\n\n[Target]\nMatchPattern=foo_@v_%w_%a.raw\n"
+	if err := os.WriteFile(filepath.Join(dir, "foo.transfer"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	transfers, err := LoadTransfersIn(dir, nil, []string{osRelease})
+	if err != nil || len(transfers) != 1 {
+		t.Fatalf("LoadTransfersIn() = %d transfers, %v", len(transfers), err)
+	}
+	patterns, err := version.ParseAnySuitePatterns(transfers[0].Target.AnySuitePatterns)
+	if err != nil || len(patterns) != 1 {
+		t.Fatalf("ParseAnySuitePatterns() = %d, %v", len(patterns), err)
+	}
+	arch := goarchToSystemdArch()
+	for name, wantSuite := range map[string]string{
+		"foo_1.0_13_" + arch + ".raw":     "13",
+		"foo_2.0_14_" + arch + ".raw":     "14",
+		"foo_bar_1.0_13_" + arch + ".raw": "",
+	} {
+		_, suite, ok := version.ExtractSuiteParsed(name, patterns)
+		if ok != (wantSuite != "") || suite != wantSuite {
+			t.Errorf("ExtractSuiteParsed(%q) = %q, %v; want %q", name, suite, ok, wantSuite)
+		}
+	}
+}
+
+func TestExpandAnySuiteRefusesNUL(t *testing.T) {
+	ctx := &specifierContext{osRelease: map[string]string{"VERSION_ID": "13"}}
+	raw := "foo_@v_%w_" + version.SuiteWildcard + ".raw"
+	if got, ok := expandAnySuite(raw, expandSpecifiers(raw, ctx), ctx); ok {
+		t.Errorf("expandAnySuite() = %q, true; want no any-suite pattern for a NUL in the text", got)
+	}
+	ctx.osRelease["ID"] = "x" + version.SuiteWildcard
+	raw = "foo_@v_%w_%o.raw"
+	if got, ok := expandAnySuite(raw, expandSpecifiers(raw, ctx), ctx); ok {
+		t.Errorf("expandAnySuite() = %q, true; want no any-suite pattern for a NUL in a specifier value", got)
 	}
 }
