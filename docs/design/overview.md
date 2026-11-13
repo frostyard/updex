@@ -1154,10 +1154,13 @@ which supersedes [ADR-0007](../adr/0007-daemon-stages-never-activates.md).
   selection then writes nothing either), then a named update of exactly those
   features, through every gate, then the refresh. A domain load failure goes
   to the locked path and is recorded (class `config`). The refresh runs only
-  when no other activation is pending (`suiteSwitchWaiting` over
-  `pendingActivationLinks`): an update the timer linked earlier on this boot
-  waits for the next boot (ADR-0016), so the run keeps its links and reports
-  `RefreshSkipped` instead. `systemd.ServiceConfig` gained `Before`, `UnitDirectives`,
+  when nothing else is pending and the host's pending state is known
+  (`suiteSwitchWaiting` over `pendingActivationLinksHost`, which also returns
+  the error of the host-wide definitions read that `pendingActivationLinks`
+  only warns about): another pending activation (an update the timer linked
+  earlier on this boot, ADR-0016), a pending deactivation (merged, not
+  linked), a state that cannot be read, or host definitions that do not load
+  make the run keep its links and report `RefreshSkipped` instead. `systemd.ServiceConfig` gained `Before`, `UnitDirectives`,
   `Directives` and `WantedBy`, and `systemd.Manager` gained `InstallService`
   for a unit that no timer activates.
 - `updex daemon enable`: when the manager's `PackagedUnitPath` has

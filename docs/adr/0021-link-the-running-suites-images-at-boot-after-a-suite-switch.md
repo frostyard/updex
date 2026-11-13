@@ -50,18 +50,31 @@ enabled feature, such as docker, after every suite switch.
     the locked path, which records the failure (class `config`) as every
     update does. Only refused options and a confirmed empty selection write
     no record.
-  - **It activates only its own links.** The refresh merges every pending
-    link of the host. A pending activation outside the run (a link whose
-    merged version is not known to equal it, or whose state cannot be read)
-    is an update that waits for the next boot under ADR-0016, for example a
-    newer image that the timer linked with `--no-refresh` earlier on this
-    boot. Then the run keeps its new links and skips the refresh
-    (`RefreshSkipped`: `refresh skipped: <component> has an update that waits
-    for the next boot; the suite switch takes effect at the next boot`); it is
-    not an error. A pending deactivation (merged, not linked) does not count:
-    updex cannot tell it from an image that another systemd-sysext directory
-    provides. At boot, systemd-sysext merged every compatible link, so this
-    case needs a timer run on the same boot before the unit.
+  - **It changes only its own links, and fails closed.** The refresh changes
+    every pending state of the host, so the run skips it when anything else
+    is pending, or when it cannot tell:
+    - a pending activation outside the run (a link whose merged version is
+      not known to equal it): an update that waits for the next boot under
+      ADR-0016, for example a newer image that the timer linked with
+      `--no-refresh` earlier on this boot (`refresh skipped: <component> has
+      an update that waits for the next boot; …`);
+    - a pending deactivation outside the run (merged, no usable link): the
+      refresh unmerges it unless another systemd-sysext directory provides
+      the image, which updex cannot prove (`refresh skipped: <component> is
+      merged but not linked; …`);
+    - a transfer whose state cannot be read (`refresh skipped: cannot read
+      the state of <component>; …`);
+    - host definitions that do not load: the run may be scoped to 1
+      component, but the refresh is host-wide, and without the host's
+      definitions updex cannot list what else it changes (`refresh skipped:
+      the host's sysext definitions cannot be read, so what a refresh changes
+      is unknown; …`).
+
+    Every message ends with `the suite switch takes effect at the next boot`.
+    The run keeps its new links, reports `RefreshSkipped` and records
+    `refresh: skipped`; it is not an error. At boot, systemd-sysext merged
+    every compatible link, so an activation case needs a timer run on the
+    same boot before the unit.
   - It takes no feature names and cannot be combined with `NoRefresh`. Under
     systemd, a busy lock is an error for this run (not a skip): there is no
     later run on this boot.

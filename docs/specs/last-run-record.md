@@ -173,8 +173,8 @@ Path: `RuntimePaths.LastRunPath`, default `updex.DefaultLastRunPath`
   the lock or again under it, writes nothing; so does a run whose options are
   refused. A run whose domain cannot be loaded is a failed run of class
   `config` with `selected` `true` and no feature, as for any update. A run
-  that skips its refresh because another update waits for the next boot has
-  `refresh` `skipped`.
+  that skips its refresh because something else is pending (or the host's
+  pending state is unknown) has `refresh` `skipped`.
 - Every write holds an exclusive `flock` on the parent directory while it
   reads the previous record and renames the new one. It takes the lock with
   `LOCK_NB` and retries every 10 ms for up to 2 s, then skips the write.

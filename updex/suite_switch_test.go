@@ -211,19 +211,22 @@ func (f *suiteFixture) barLink(t *testing.T) string {
 
 // The timer linked a newer bar image with --no-refresh earlier on this boot:
 // it waits for the next boot (ADR-0016). The suite-switch run keeps its new
-// link, skips the refresh and says why; it is not an error. With nothing
-// else pending (bar runs what it links, or bar is only merged), it
-// refreshes.
+// link, skips the refresh and says why; it is not an error. So does a bar
+// that is merged but not linked: the refresh would unmerge it. With nothing
+// else pending (bar runs what it links), it refreshes.
 func TestUpdateFeatures_SuiteSwitchKeepsOtherActivationsForNextBoot(t *testing.T) {
 	tests := []struct {
 		name        string
 		barLink     string
 		barMerged   string
 		wantRefresh int
+		wantSkip    string
 	}{
-		{name: "other update linked by the timer", barLink: "bar_2.0.raw", barMerged: "bar_1.0.raw", wantRefresh: 0},
+		{name: "other update linked by the timer", barLink: "bar_2.0.raw", barMerged: "bar_1.0.raw",
+			wantSkip: "refresh skipped: bar has an update that waits for the next boot; the suite switch takes effect at the next boot"},
 		{name: "other link already merged", barLink: "bar_2.0.raw", barMerged: "bar_2.0.raw", wantRefresh: 1},
-		{name: "other image merged but not linked", barMerged: "bar_1.0.raw", wantRefresh: 1},
+		{name: "other image merged but not linked", barMerged: "bar_1.0.raw",
+			wantSkip: "refresh skipped: bar is merged but not linked; the suite switch takes effect at the next boot"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -249,9 +252,8 @@ func TestUpdateFeatures_SuiteSwitchKeepsOtherActivationsForNextBoot(t *testing.T
 			}
 			rec, _ := readLastRun(t, f.lastRun)
 			if tt.wantRefresh == 0 {
-				want := "refresh skipped: bar has an update that waits for the next boot; the suite switch takes effect at the next boot"
-				if results[0].RefreshSkipped != want {
-					t.Errorf("RefreshSkipped = %q, want %q", results[0].RefreshSkipped, want)
+				if results[0].RefreshSkipped != tt.wantSkip {
+					t.Errorf("RefreshSkipped = %q, want %q", results[0].RefreshSkipped, tt.wantSkip)
 				}
 				if rec.Refresh != "skipped" || rec.Outcome != "completed" {
 					t.Errorf("last-run record = %+v, want completed with refresh skipped", rec)
@@ -340,5 +342,56 @@ func TestUpdateFeatures_SuiteSwitchRecordsDomainFailure(t *testing.T) {
 	}
 	if f.runner.refreshes != 0 {
 		t.Errorf("refreshes = %d, want 0", f.runner.refreshes)
+	}
+}
+
+// A run scoped to 1 component still refreshes the whole host, so it must
+// know every pending change of the host. When the host's definitions do not
+// load (a malformed transfer in another component), an unrelated pending
+// update would go unseen: the run keeps its links and skips the refresh.
+func TestUpdateFeatures_SuiteSwitchHostDefinitionsUnreadable(t *testing.T) {
+	f := newSuiteFixture(t, forky, []string{"foo_1.0_13.raw"}, "foo_1.0_13.raw")
+	f.server.publish("2.0_14")
+	root := filepath.Dir(f.defDir)
+	// The suite-switch feature lives in component sw.
+	swDir := filepath.Join(root, "sysupdate.sw.d")
+	if err := os.Mkdir(swDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"grp.feature", "foo.transfer"} {
+		if err := os.Rename(filepath.Join(f.defDir, name), filepath.Join(swDir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// An unrelated pending update in the default directory.
+	f.addBar(t, []string{"bar_1.0.raw", "bar_2.0.raw"}, "bar_2.0.raw", "bar_1.0.raw")
+	// A malformed definition in another component.
+	brokenDir := filepath.Join(root, "sysupdate.broken.d")
+	if err := os.Mkdir(brokenDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(brokenDir, "x.transfer"), []byte("[Transfer\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{SuiteSwitchOnly: true, Component: "sw"})
+	if err != nil {
+		t.Fatalf("UpdateFeatures(SuiteSwitchOnly, Component sw) error = %v\n%s", err, f.out)
+	}
+	if len(results) != 1 || results[0].Feature != "grp" {
+		t.Fatalf("results = %+v, want only feature grp", results)
+	}
+	if got := f.link(t); got != "foo_2.0_14.raw" {
+		t.Errorf("link = %q, want foo_2.0_14.raw", got)
+	}
+	if f.runner.refreshes != 0 {
+		t.Errorf("refreshes = %d, want 0\n%s", f.runner.refreshes, f.out)
+	}
+	want := "refresh skipped: the host's sysext definitions cannot be read, so what a refresh changes is unknown; the suite switch takes effect at the next boot"
+	if results[0].RefreshSkipped != want {
+		t.Errorf("RefreshSkipped = %q, want %q", results[0].RefreshSkipped, want)
+	}
+	if rec, data := readLastRun(t, f.lastRun); rec.Refresh != "skipped" || rec.Outcome != "completed" {
+		t.Errorf("last-run record = %s, want completed with refresh skipped", data)
 	}
 }

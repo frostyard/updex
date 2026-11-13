@@ -429,8 +429,10 @@ binary needs it on the host. The unit tests do not run it.
   a named run, then refreshes; with none it takes no lock and writes nothing.
   It selects again under the lock before any download, records a domain load
   failure like any update, and skips its refresh (`RefreshSkipped`, not an
-  error) when another activation is pending, so it never activates an update
-  the timer linked for the next boot (ADR-0016).
+  error) when another activation or deactivation is pending, a state cannot be
+  read or the host's definitions do not load (`pendingActivationLinksHost`
+  returns that failure), so it never changes what ADR-0016 leaves for the
+  next boot.
   It refuses names and `--no-refresh`, and under systemd a busy lock is an
   error for it, not a skip
 - `components` — list discovered systemd-sysext components (refuses

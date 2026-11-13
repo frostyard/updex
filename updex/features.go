@@ -866,23 +866,36 @@ func (c *Client) suiteSwitchSelection(features []*config.Feature, transfers []*c
 }
 
 // suiteSwitchWaiting returns why a suite-switch run must not refresh, or ""
-// when it may. The refresh merges every pending link of the host, and a
-// suite-switch run must activate only its own: an activation outside the
-// run (a link whose merged version is not known to equal it, or whose state
-// cannot be read, as activationLinks lists them) waits for the next boot,
-// for example a newer image that the timer linked with --no-refresh earlier
-// on this boot (ADR-0016). A pending deactivation does not count: updex
-// cannot tell it from an image that another systemd-sysext directory
-// provides.
-func suiteSwitchWaiting(pending []pendingActivationLink) string {
-	links := activationLinks(pending)
-	if len(links) == 0 {
-		return ""
+// when it may. The refresh changes every pending state of the host, and a
+// suite-switch run must change only its own, so it fails closed:
+//
+//   - hostErr: the host's definitions could not be listed, so what else the
+//     refresh changes is unknown;
+//   - a transfer whose state cannot be read;
+//   - a pending deactivation (merged, no usable link): the refresh unmerges
+//     it unless another systemd-sysext directory provides the image, which
+//     updex cannot prove;
+//   - a pending activation (a link whose merged version is not known to
+//     equal it), for example a newer image that the timer linked with
+//     --no-refresh earlier on this boot (ADR-0016).
+//
+// Every such change waits for the next boot, and so does the run's own.
+func suiteSwitchWaiting(pending []pendingActivationLink, hostErr error) string {
+	const next = "; the suite switch takes effect at the next boot"
+	if hostErr != nil {
+		return "refresh skipped: the host's sysext definitions cannot be read, so what a refresh changes is unknown" + next
 	}
-	if links[0].stateErr != nil {
-		return fmt.Sprintf("refresh skipped: cannot read the state of %s; the suite switch takes effect at the next boot", links[0].component)
+	for _, p := range pending {
+		switch {
+		case p.stateErr != nil:
+			return fmt.Sprintf("refresh skipped: cannot read the state of %s%s", p.Component, next)
+		case p.Deactivate:
+			return fmt.Sprintf("refresh skipped: %s is merged but not linked%s", p.Component, next)
+		default:
+			return fmt.Sprintf("refresh skipped: %s has an update that waits for the next boot%s", p.Component, next)
+		}
 	}
-	return fmt.Sprintf("refresh skipped: %s has an update that waits for the next boot; the suite switch takes effect at the next boot", links[0].component)
+	return ""
 }
 
 // updateFeatures is UpdateFeatures. It fills run, the last-run record, when
@@ -1153,13 +1166,14 @@ func (c *Client) updateFeatures(ctx context.Context, opts UpdateFeaturesOptions,
 	// activated now, so the refresh is skipped and the links stay.
 	refreshSkipped := ""
 	if !opts.NoRefresh {
-		pendingLinks := c.pendingActivationLinks(transfers, ownTransfers)
+		pendingLinks, hostErr := c.pendingActivationLinksHost(transfers, ownTransfers)
 		pending := activationsOf(pendingLinks)
 		if opts.SuiteSwitchOnly {
-			// A suite-switch run activates only its own links: another
-			// pending activation waits for the next boot, and so does this
+			// A suite-switch run changes only its own links: another
+			// pending activation or deactivation, or a host whose pending
+			// state is unknown, waits for the next boot, and so does this
 			// run's (ADR-0016, ADR-0021).
-			refreshSkipped = suiteSwitchWaiting(pendingLinks)
+			refreshSkipped = suiteSwitchWaiting(pendingLinks, hostErr)
 		}
 		if refreshSkipped == "" {
 			c.warnPendingActivations(pending, opts.DryRun)

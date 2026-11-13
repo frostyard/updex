@@ -121,12 +121,17 @@ missing until the timer links the forky image and the host reboots.
   through the usual checks) and then the refresh, so the running suite's image
   is merged on this boot. The last-run record records a run that names those
   features. It selects again under the lock before it downloads anything.
-- It activates only its own links. When another sysext has a linked update
+- It changes only its own links. When another sysext has a linked update
   that waits for the next boot (the timer linked it with `--no-refresh`
   earlier on this boot), it keeps the new links, skips the refresh and prints
   `refresh skipped: <component> has an update that waits for the next boot;
-  the suite switch takes effect at the next boot`. That is a warning, not an
-  error.
+  the suite switch takes effect at the next boot`. It does the same when
+  another sysext is merged but not linked (`<component> is merged but not
+  linked`), when a state cannot be read (`cannot read the state of
+  <component>`) and when the host's sysext definitions cannot be read (`the
+  host's sysext definitions cannot be read, so what a refresh changes is
+  unknown`), also for a run limited with `--component`. That is a warning,
+  not an error.
 - When no link points to another suite, it prints
   `No sysext link points to an image of another suite; nothing to do.` and
   exits 0: no lock, no download, no refresh, no last-run record. Definitions

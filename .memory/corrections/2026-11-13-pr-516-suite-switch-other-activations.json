@@ -1,7 +1,7 @@
 {
   "date": "2026-11-13",
   "scope": "updex/features.go UpdateFeatures SuiteSwitchOnly refresh",
-  "correction": "A suite-switch run must activate only its own links: the systemd-sysext refresh merges every pending link of the host, so before it refreshes it checks the host's other pending activations (pendingActivationLinks/activationLinks, deactivations excluded) and, when one exists, keeps its links, skips the refresh and reports RefreshSkipped instead of activating an update that ADR-0016 holds for the next boot. Guard: TestUpdateFeatures_SuiteSwitchKeepsOtherActivationsForNextBoot.",
-  "evidence": "frostyard/updex#516 cross-review (openai/gpt-6.1-sol) of head 3f46e43, finding 1 (updex/features.go:802, 1112-1135)",
+  "correction": "A suite-switch run must change only its own links: the systemd-sysext refresh changes every pending state of the host, so before it refreshes it checks the host's other pending changes (pendingActivationLinks: activations, deactivations and unreadable states) and, when one exists, keeps its links, skips the refresh and reports RefreshSkipped instead of activating an update that ADR-0016 holds for the next boot or unmerging a sysext that is merged but not linked. Guard: TestUpdateFeatures_SuiteSwitchKeepsOtherActivationsForNextBoot.",
+  "evidence": "frostyard/updex#516 cross-review (openai/gpt-6.1-sol) of head 3f46e43, finding 1 (updex/features.go:802, 1112-1135); re-review 1 of head 8baafd6 (pending deactivations, updex/features.go:877-880)",
   "promoted_to": ""
 }
