@@ -18,6 +18,8 @@ import (
 var packagedUnitDestinations = map[string]string{
 	"updex-update.timer":   "/usr/lib/systemd/system/updex-update.timer",
 	"updex-update.service": "/usr/lib/systemd/system/updex-update.service",
+	// ADR-0021: the boot-time suite-switch unit.
+	"updex-suite-switch.service": "/usr/lib/systemd/system/updex-suite-switch.service",
 }
 
 // TestUnitsHookMatchesGenerator pins the release unit hook: GoReleaser's
@@ -46,8 +48,9 @@ func TestUnitsHookMatchesGenerator(t *testing.T) {
 
 	timer, service := DaemonUnits()
 	want := map[string]string{
-		"updex-update.timer":   systemd.GenerateTimer(timer),
-		"updex-update.service": systemd.GenerateService(service),
+		"updex-update.timer":         systemd.GenerateTimer(timer),
+		"updex-update.service":       systemd.GenerateService(service),
+		"updex-suite-switch.service": systemd.GenerateService(SuiteSwitchUnit()),
 	}
 
 	entries, err := os.ReadDir(out)
@@ -58,7 +61,7 @@ func TestUnitsHookMatchesGenerator(t *testing.T) {
 	for _, entry := range entries {
 		names = append(names, entry.Name())
 	}
-	if wantNames := []string{"updex-update.service", "updex-update.timer"}; !slices.Equal(names, wantNames) {
+	if wantNames := []string{"updex-suite-switch.service", "updex-update.service", "updex-update.timer"}; !slices.Equal(names, wantNames) {
 		t.Fatalf("generated files = %v, want exactly %v", names, wantNames)
 	}
 
@@ -100,6 +103,20 @@ func TestUnitsHookMatchesGenerator(t *testing.T) {
 			"ExecStart=/usr/bin/updex features update --no-refresh",
 			"TimeoutStartSec=2h",
 		}, systemd.SandboxDirectives...),
+		// ADR-0021: once per boot, before the timer's service, after the
+		// network; it refreshes, so only the namespace-free sandbox lines.
+		"updex-suite-switch.service": append([]string{
+			"Wants=network-online.target",
+			"After=sysinit.target basic.target network-online.target",
+			"Before=updex-update.service shutdown.target",
+			"DefaultDependencies=no",
+			"Conflicts=shutdown.target",
+			"Type=oneshot",
+			"ExecStart=/usr/bin/updex features update --suite-switch",
+			"TimeoutStartSec=2h",
+			"[Install]",
+			"WantedBy=multi-user.target",
+		}, systemd.RefreshSandboxDirectives...),
 	}
 	for name, lines := range wantLines {
 		have := strings.Split(got[name], "\n")
@@ -111,6 +128,13 @@ func TestUnitsHookMatchesGenerator(t *testing.T) {
 	}
 	if strings.Contains(got["updex-update.service"], "[Install]") {
 		t.Error("the service has an [Install] section; only the timer is enabled")
+	}
+	// A private mount namespace would hide the merged images from the host,
+	// and the refresh must write /etc, attach loop devices and load modules.
+	for _, forbidden := range []string{"ProtectSystem=", "ProtectHome=", "PrivateTmp=", "RestrictNamespaces=", "ProtectKernelModules=", "ProtectClock=", "RestrictAddressFamilies=", "ConditionACPower="} {
+		if strings.Contains(got["updex-suite-switch.service"], forbidden) {
+			t.Errorf("updex-suite-switch.service sets %s, which the refresh cannot run under", forbidden)
+		}
 	}
 }
 
@@ -224,9 +248,10 @@ func TestUnitsWorkflowChecks(t *testing.T) {
 			install = i
 		case strings.Contains(step.Run, "systemd-analyze verify") &&
 			strings.Contains(step.Run, "units/updex-update.service") &&
-			strings.Contains(step.Run, "units/updex-update.timer"):
+			strings.Contains(step.Run, "units/updex-update.timer") &&
+			strings.Contains(step.Run, "units/updex-suite-switch.service"):
 			verify = i
-			if !strings.Contains(step.Run, "grep -q 'updex-update'") {
+			if !strings.Contains(step.Run, "grep -q 'updex-'") {
 				t.Error("the verify step must fail on warnings that name an updex unit: systemd-analyze exits 0 for an unknown directive")
 			}
 		}
@@ -257,19 +282,21 @@ func TestCheckDebUnitsScript(t *testing.T) {
 	const dir = "drwxr-xr-x root/root         0 2026-10-23 10:56 ./usr/lib/systemd/system/\n"
 	timer := "-rw-r--r-- root/root       156 2026-10-23 10:56 ./usr/lib/systemd/system/updex-update.timer\n"
 	service := "-rw-r--r-- root/root       637 2026-10-23 10:56 ./usr/lib/systemd/system/updex-update.service\n"
+	suite := "-rw-r--r-- root/root       700 2026-10-23 10:56 ./usr/lib/systemd/system/updex-suite-switch.service\n"
 
 	tests := []struct {
 		name    string
 		listing string
 		wantErr string // empty: the script must succeed
 	}{
-		{name: "both units", listing: dir + timer + service},
-		{name: "missing service", listing: dir + timer, wantErr: "updex-update.service"},
-		{name: "missing timer", listing: dir + service, wantErr: "updex-update.timer"},
-		{name: "wrong directory", listing: strings.ReplaceAll(timer+service, "/usr/lib/systemd/system/", "/etc/systemd/system/"), wantErr: "updex-update.timer"},
-		{name: "wrong mode", listing: strings.Replace(timer, "-rw-r--r--", "-rwxr-xr-x", 1) + service, wantErr: "updex-update.timer"},
-		{name: "a directory is not a file", listing: strings.Replace(timer, "-rw-r--r--", "drwxr-xr-x", 1) + service, wantErr: "updex-update.timer"},
-		{name: "similar name", listing: strings.ReplaceAll(timer+service, "updex-update", "updex-update-x"), wantErr: "updex-update.timer"},
+		{name: "all units", listing: dir + timer + service + suite},
+		{name: "missing service", listing: dir + timer + suite, wantErr: "updex-update.service"},
+		{name: "missing timer", listing: dir + service + suite, wantErr: "updex-update.timer"},
+		{name: "missing suite-switch unit", listing: dir + timer + service, wantErr: "updex-suite-switch.service"},
+		{name: "wrong directory", listing: strings.ReplaceAll(timer+service+suite, "/usr/lib/systemd/system/", "/etc/systemd/system/"), wantErr: "updex-update.timer"},
+		{name: "wrong mode", listing: strings.Replace(timer, "-rw-r--r--", "-rwxr-xr-x", 1) + service + suite, wantErr: "updex-update.timer"},
+		{name: "a directory is not a file", listing: strings.Replace(timer, "-rw-r--r--", "drwxr-xr-x", 1) + service + suite, wantErr: "updex-update.timer"},
+		{name: "similar name", listing: strings.ReplaceAll(timer+service+suite, "updex-update", "updex-update-x"), wantErr: "updex-update.timer"},
 	}
 	script, err := filepath.Abs("../scripts/check-deb-units.sh")
 	if err != nil {

@@ -1,5 +1,6 @@
 #!/bin/sh
-# Fails unless the given .deb lists both update units under
+# Fails unless the given .deb lists the 3 updex units (the auto-update timer
+# and service, and updex-suite-switch.service) under
 # /usr/lib/systemd/system as regular files with mode 0644. The snapshot
 # workflow runs it on the amd64 package that GoReleaser builds.
 #   usage: scripts/check-deb-units.sh PACKAGE.deb
@@ -12,7 +13,7 @@ fi
 
 listing="$(dpkg-deb -c "$1")"
 status=0
-for unit in updex-update.timer updex-update.service; do
+for unit in updex-update.timer updex-update.service updex-suite-switch.service; do
   if printf '%s\n' "$listing" | grep -Eq "^-rw-r--r--[[:space:]].*[[:space:]]\./usr/lib/systemd/system/$unit\$"; then
     echo "ok: $unit is in $1"
   else

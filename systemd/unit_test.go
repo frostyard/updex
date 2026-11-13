@@ -1,6 +1,7 @@
 package systemd
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -366,5 +367,60 @@ func TestGenerateServiceNoTimeoutByDefault(t *testing.T) {
 	result := GenerateService(&ServiceConfig{Name: "x", Description: "x", ExecStart: "/bin/true", Type: "oneshot"})
 	if strings.Contains(result, "TimeoutStartSec") {
 		t.Errorf("GenerateService() wrote TimeoutStartSec without one configured:\n%s", result)
+	}
+}
+
+// TestGenerateServiceInstallAndDirectives pins the fields that a service with
+// its own [Install] section uses (updex-suite-switch.service, ADR-0021):
+// Before= after After=, UnitDirectives after Conditions, Directives after
+// TimeoutStartSec=, and WantedBy= in an [Install] section at the end.
+func TestGenerateServiceInstallAndDirectives(t *testing.T) {
+	config := &ServiceConfig{
+		Name:            "svc",
+		Description:     "Service",
+		After:           []string{"basic.target"},
+		Before:          []string{"other.service", "shutdown.target"},
+		Conditions:      []string{"ConditionPathExists=/etc/x"},
+		UnitDirectives:  []string{"DefaultDependencies=no"},
+		ExecStart:       "/usr/bin/test",
+		Type:            "oneshot",
+		TimeoutStartSec: "2h",
+		Directives:      []string{"NoNewPrivileges=yes"},
+		WantedBy:        []string{"multi-user.target"},
+	}
+	want := "[Unit]\n" +
+		"Description=Service\n" +
+		"After=basic.target\n" +
+		"Before=other.service shutdown.target\n" +
+		"ConditionPathExists=/etc/x\n" +
+		"DefaultDependencies=no\n" +
+		"\n" +
+		"[Service]\n" +
+		"Type=oneshot\n" +
+		"ExecStart=/usr/bin/test\n" +
+		"TimeoutStartSec=2h\n" +
+		"NoNewPrivileges=yes\n" +
+		"\n" +
+		"[Install]\n" +
+		"WantedBy=multi-user.target\n"
+	if got := GenerateService(config); got != want {
+		t.Errorf("GenerateService() =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// TestRefreshSandboxDirectivesHaveNoNamespace pins that the sandbox of a
+// service that refreshes takes nothing that gives it its own mount namespace
+// or blocks what systemd-sysext refresh does (ADR-0021), and is a subset of
+// SandboxDirectives.
+func TestRefreshSandboxDirectivesHaveNoNamespace(t *testing.T) {
+	for _, directive := range RefreshSandboxDirectives {
+		if !slices.Contains(SandboxDirectives, directive) {
+			t.Errorf("%s is not one of SandboxDirectives", directive)
+		}
+		for _, forbidden := range []string{"ProtectSystem=", "ProtectHome=", "PrivateTmp=", "RestrictNamespaces=", "ProtectKernelModules=", "ProtectKernelTunables=", "ProtectControlGroups=", "ProtectClock=", "ProtectHostname=", "RestrictAddressFamilies=", "RestrictSUIDSGID=", "SystemCallFilter="} {
+			if strings.HasPrefix(directive, forbidden) {
+				t.Errorf("RefreshSandboxDirectives has %s", directive)
+			}
+		}
 	}
 }

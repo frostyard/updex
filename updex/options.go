@@ -39,6 +39,18 @@ type UpdateFeaturesOptions struct {
 	// not masked. Otherwise the operation returns an error and changes
 	// nothing.
 	Features []string
+
+	// SuiteSwitchOnly limits the run to the enabled features that have an
+	// active transfer whose sysext link points to an image of another suite
+	// (sysext.LinkedOtherSuiteAt): the state on the first boot after a
+	// suite switch (bootc switch), when systemd-sysext refuses that image
+	// and the feature is missing. Those features are updated as a run that
+	// names them (download when needed, link through the normal gates) and
+	// the run refreshes, so the right image is merged on this boot. When no
+	// link points to another suite, the run takes no lock, downloads,
+	// links and refreshes nothing, and writes no last-run record. It cannot
+	// be combined with Features or NoRefresh (ADR-0021).
+	SuiteSwitchOnly bool
 }
 
 // CheckFeaturesOptions configures the CheckFeatures operation.

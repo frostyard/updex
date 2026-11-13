@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/frostyard/std/reporter"
 	"github.com/frostyard/updex/v2/catalog"
 	"github.com/frostyard/updex/v2/config"
 	"github.com/frostyard/updex/v2/internal/fault"
@@ -786,6 +787,20 @@ func (c *Client) disableFeature(ctx context.Context, name string, opts DisableFe
 // nothing. A failure to write the record is a warning: the results and the
 // returned error stay the same.
 func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions) ([]UpdateFeaturesResult, error) {
+	if opts.SuiteSwitchOnly {
+		names, err := c.suiteSwitchFeatures(opts)
+		if err != nil {
+			return nil, err
+		}
+		if len(names) == 0 {
+			// Nothing to do: no lock, no download, no refresh, and no
+			// last-run record, so the timer's record stays (ADR-0021).
+			return make([]UpdateFeaturesResult, 0), nil
+		}
+		// A run that names those features: the normal update, gates and
+		// refresh, recorded as a named run.
+		opts.Features = names
+	}
 	if opts.DryRun {
 		return c.updateFeatures(ctx, opts, nil)
 	}
@@ -796,6 +811,48 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 	// (busy, or a lock error).
 	c.writeLastRun(run, time.Now(), err)
 	return results, err
+}
+
+// suiteSwitchFeatures returns, in domain order, the enabled and unmasked
+// features that have an active transfer whose sysext link points to an image
+// of another suite (sysext.LinkedOtherSuiteAt). It reads the domain and the
+// links only; it takes no lock. A link that cannot be inspected is a warning,
+// and that transfer does not count.
+func (c *Client) suiteSwitchFeatures(opts UpdateFeaturesOptions) ([]string, error) {
+	if len(opts.Features) > 0 {
+		return nil, fault.Mark(fault.Config, errors.New("a suite-switch run takes no feature names"))
+	}
+	if opts.NoRefresh {
+		return nil, fault.Mark(fault.Config, errors.New("a suite-switch run must refresh: it cannot be combined with NoRefresh"))
+	}
+	// The run that follows loads the domain again and reports its warnings.
+	quiet := *c
+	quiet.reporter = reporter.NoopReporter{}
+	features, transfers, err := quiet.loadDomain(opts.Component)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, f := range features {
+		if !f.Enabled || f.Masked {
+			continue
+		}
+		split := splitFeatureTransfers(features, transfers, f.Name, true)
+		for _, t := range split.active {
+			image, suite, err := sysext.LinkedOtherSuiteAt(t, c.paths.sysextLinkDir)
+			if err != nil {
+				c.warn("%s/%s: %v", f.Name, t.Component, err)
+				continue
+			}
+			if image == "" {
+				continue
+			}
+			c.msg("%s/%s: the sysext link points to %s, an image of suite %s", f.Name, t.Component, image, suite)
+			names = append(names, f.Name)
+			break
+		}
+	}
+	return names, nil
 }
 
 // updateFeatures is UpdateFeatures. It fills run, the last-run record, when

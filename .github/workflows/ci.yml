@@ -253,13 +253,13 @@ jobs:
         run: |
           set -o pipefail
           status=0
-          output="$(systemd-analyze verify units/updex-update.service units/updex-update.timer 2>&1)" || status=$?
+          output="$(systemd-analyze verify units/updex-update.service units/updex-update.timer units/updex-suite-switch.service 2>&1)" || status=$?
           printf '%s\n' "$output"
           if [ "$status" -ne 0 ]; then
             echo "::error::systemd-analyze verify failed with exit code $status"
             exit 1
           fi
-          if printf '%s\n' "$output" | grep -q 'updex-update'; then
+          if printf '%s\n' "$output" | grep -q 'updex-'; then
             echo "::error::systemd-analyze verify reported a problem with an updex unit"
             exit 1
           fi

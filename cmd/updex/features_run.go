@@ -285,6 +285,16 @@ func runFeaturesDisable(cmd *cobra.Command, args []string) error {
 }
 
 func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
+	if featureUpdateSuiteSwitch {
+		// ADR-0021: the run selects its features itself and exists to
+		// refresh; the SDK refuses both too.
+		if len(args) > 0 {
+			return fmt.Errorf("--suite-switch takes no feature names")
+		}
+		if noRefresh {
+			return fmt.Errorf("--suite-switch cannot be combined with --no-refresh: the run exists to refresh")
+		}
+	}
 	if err := requireRoot(); err != nil {
 		return err
 	}
@@ -292,11 +302,12 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 	client := newClient()
 
 	opts := updex.UpdateFeaturesOptions{
-		DryRun:    clix.DryRun,
-		NoRefresh: noRefresh,
-		NoVacuum:  featureUpdateNoVac,
-		Component: featureComponent,
-		Features:  args,
+		DryRun:          clix.DryRun,
+		NoRefresh:       noRefresh,
+		NoVacuum:        featureUpdateNoVac,
+		Component:       featureComponent,
+		Features:        args,
+		SuiteSwitchOnly: featureUpdateSuiteSwitch,
 	}
 
 	results, err := client.UpdateFeatures(cmd.Context(), opts)
@@ -311,8 +322,10 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 	// ADR-0016: a scheduled run that finds another updex operation running
 	// is not a failure. systemd would otherwise mark updex-update.service
 	// failed for a run that only had to wait for the next one. An operator
-	// at a shell still gets the error.
-	if errors.Is(err, updex.ErrBusy) && runningUnderSystemd() {
+	// at a shell still gets the error. A suite-switch run (ADR-0021) has no
+	// next run on this boot: the feature stays missing, so a busy lock fails
+	// updex-suite-switch.service where the operator sees it.
+	if errors.Is(err, updex.ErrBusy) && runningUnderSystemd() && !featureUpdateSuiteSwitch {
 		if _, werr := fmt.Fprintf(cmd.ErrOrStderr(), "updex: %v; skipping this run\n", err); werr != nil {
 			return werr
 		}
@@ -354,6 +367,9 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 			// a domain load error) reports only its error: "no enabled
 			// features" would be wrong. See runFeaturesCheck.
 			return err
+		}
+		if featureUpdateSuiteSwitch {
+			return errors.Join(err, writeLine(out, "No sysext link points to an image of another suite; nothing to do."))
 		}
 		outErr := writeLine(out, "No enabled features with transfers found.")
 		if skipUnreachable {

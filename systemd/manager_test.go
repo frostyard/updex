@@ -957,3 +957,67 @@ func TestManagerShowUnsupportedRunner(t *testing.T) {
 		t.Errorf("Show() error = %v, want ErrShowUnsupported", err)
 	}
 }
+
+// TestInstallService writes 1 service file with mode 0644, reloads systemd,
+// and refuses an existing file or a symlink at the path (ADR-0005).
+func TestInstallService(t *testing.T) {
+	service := &ServiceConfig{Name: "updex-suite-switch", Description: "S", ExecStart: "/usr/bin/updex", Type: "oneshot", WantedBy: []string{"multi-user.target"}}
+
+	t.Run("writes", func(t *testing.T) {
+		unitDir := t.TempDir()
+		runner := &MockSystemctlRunner{}
+		if err := NewTestManager(unitDir, runner).InstallService(t.Context(), service); err != nil {
+			t.Fatalf("InstallService: %v", err)
+		}
+		path := filepath.Join(unitDir, "updex-suite-switch.service")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(data) != GenerateService(service) {
+			t.Errorf("content = %q", data)
+		}
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o644 {
+			t.Errorf("file = %v, %v; want a regular 0644 file", info, err)
+		}
+		if !runner.DaemonReloadCalled {
+			t.Error("no daemon-reload")
+		}
+	})
+
+	t.Run("exists", func(t *testing.T) {
+		unitDir := t.TempDir()
+		path := filepath.Join(unitDir, "updex-suite-switch.service")
+		if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := NewTestManager(unitDir, &MockSystemctlRunner{}).InstallService(t.Context(), service); err == nil || !strings.Contains(err.Error(), "already exists") {
+			t.Errorf("InstallService over a file: %v", err)
+		}
+	})
+
+	t.Run("symlink", func(t *testing.T) {
+		unitDir := t.TempDir()
+		path := filepath.Join(unitDir, "updex-suite-switch.service")
+		if err := os.Symlink(filepath.Join(t.TempDir(), "elsewhere"), path); err != nil {
+			t.Fatal(err)
+		}
+		runner := &MockSystemctlRunner{}
+		if err := NewTestManager(unitDir, runner).InstallService(t.Context(), service); err == nil {
+			t.Error("InstallService wrote through a symlink")
+		}
+		if runner.DaemonReloadCalled {
+			t.Error("daemon-reload after a refused install")
+		}
+	})
+
+	t.Run("canceled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		unitDir := t.TempDir()
+		if err := NewTestManager(unitDir, &MockSystemctlRunner{}).InstallService(ctx, service); !errors.Is(err, context.Canceled) {
+			t.Errorf("InstallService with a canceled context: %v", err)
+		}
+	})
+}

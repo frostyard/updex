@@ -16,6 +16,10 @@ import (
 const (
 	daemonUnitName = "updex-update"
 
+	// suiteSwitchUnitName is the boot-time service that links and merges the
+	// running suite's images after a suite switch (ADR-0021).
+	suiteSwitchUnitName = "updex-suite-switch"
+
 	// daemonMarker is the comment written as the first line of the unit files
 	// that `updex daemon enable` writes to /etc/systemd/system. It is the
 	// ownership signal: `updex daemon disable` removes only a unit file that
@@ -80,6 +84,51 @@ func DaemonUnits() (*systemd.TimerConfig, *systemd.ServiceConfig) {
 	return timer, service
 }
 
+// SuiteSwitchUnit returns the configuration of updex-suite-switch.service
+// (ADR-0021), the sibling of DaemonUnits: `updex daemon enable` writes and
+// enables it beside the timer when no package ships the units, and the
+// release build writes it to the file that the frostyard-updex package
+// installs under /usr/lib/systemd/system. Every call returns a new value.
+//
+// It is a oneshot that runs `/usr/bin/updex features update --suite-switch`
+// once per boot, after the network is online and before
+// updex-update.service: on the first boot after a suite switch it links the
+// running suite's image of every feature whose link still names the other
+// suite's image, and refreshes, so the feature is merged on that boot; on
+// every other boot it reads the links and does nothing. WantedBy=
+// multi-user.target enables it. DefaultDependencies=no keeps
+// multi-user.target from waiting for it (and so for network-online.target);
+// the unit names the usual basic dependencies itself. It refreshes, so it
+// takes only the RefreshSandboxDirectives, not the timer service's sandbox,
+// whose private mount namespace would hide the merged images from the host.
+// It has no ConditionACPower=: a feature that is missing matters on battery
+// too.
+func SuiteSwitchUnit() *systemd.ServiceConfig {
+	return &systemd.ServiceConfig{
+		Name:        suiteSwitchUnitName,
+		Description: "Link the running suite's sysext images after a suite switch",
+		Wants:       []string{"network-online.target"},
+		After:       []string{"sysinit.target", "basic.target", "network-online.target"},
+		Before:      []string{daemonUnitName + ".service", "shutdown.target"},
+		UnitDirectives: []string{
+			"DefaultDependencies=no",
+			"Conflicts=shutdown.target",
+		},
+		ExecStart:       "/usr/bin/updex features update --suite-switch",
+		Type:            "oneshot",
+		TimeoutStartSec: "2h",
+		Directives:      slices.Clone(systemd.RefreshSandboxDirectives),
+		WantedBy:        []string{"multi-user.target"},
+	}
+}
+
+// suiteSwitchUnitPath returns the path of updex-suite-switch.service in the
+// client's systemd manager unit directory (/etc/systemd/system in
+// production).
+func (c *Client) suiteSwitchUnitPath() string {
+	return filepath.Join(c.systemd.UnitPath, suiteSwitchUnitName+".service")
+}
+
 // daemonUnitPaths returns the absolute paths of the daemon's timer and
 // service unit files in the client's systemd manager unit directory
 // (/etc/systemd/system in production), in that order.
@@ -125,30 +174,44 @@ func (c *Client) EnableDaemon(ctx context.Context, opts EnableDaemonOptions) (*D
 	if c.systemd.Exists(daemonUnitName) {
 		return nil, fmt.Errorf("timer already installed; run 'updex daemon disable' first to reinstall")
 	}
+	suitePath := c.suiteSwitchUnitPath()
+	if _, err := os.Lstat(suitePath); err == nil || !os.IsNotExist(err) {
+		return nil, fmt.Errorf("unit file %s already exists; run 'updex daemon disable' first to reinstall", suitePath)
+	}
 
-	unitFiles := c.daemonUnitPaths()
+	suiteUnit := suiteSwitchUnitName + ".service"
+	unitFiles := append(c.daemonUnitPaths(), suitePath)
 	if opts.DryRun {
 		return &DaemonActionResult{
 			Success:   true,
 			DryRun:    true,
 			UnitFiles: unitFiles,
-			Message: fmt.Sprintf("Would install %s and %s, then enable and start %s",
-				unitFiles[0], unitFiles[1], timerUnit),
+			Message: fmt.Sprintf("Would install %s, %s and %s, then enable and start %s and enable %s",
+				unitFiles[0], unitFiles[1], unitFiles[2], timerUnit, suiteUnit),
 		}, nil
 	}
 
 	timer, service := DaemonUnits()
 	timer.Comment = daemonMarker
 	service.Comment = daemonMarker
+	suite := SuiteSwitchUnit()
+	suite.Comment = daemonMarker
 
 	if err := c.systemd.Install(ctx, timer, service); err != nil {
 		return nil, fmt.Errorf("failed to install timer: %w", err)
+	}
+	if err := c.systemd.InstallService(ctx, suite); err != nil {
+		return nil, fmt.Errorf("failed to install %s: %w", suiteUnit, err)
 	}
 	if err := c.systemd.Enable(ctx, timerUnit); err != nil {
 		return nil, fmt.Errorf("failed to enable timer: %w", err)
 	}
 	if err := c.systemd.Start(ctx, timerUnit); err != nil {
 		return nil, fmt.Errorf("failed to start timer: %w", err)
+	}
+	// The boot-time unit is enabled, not started: it acts at the next boot.
+	if err := c.systemd.Enable(ctx, suiteUnit); err != nil {
+		return nil, fmt.Errorf("failed to enable %s: %w", suiteUnit, err)
 	}
 
 	return &DaemonActionResult{
@@ -167,15 +230,33 @@ func (c *Client) enablePackagedDaemon(ctx context.Context, opts EnableDaemonOpti
 	if c.systemd.Exists(daemonUnitName) {
 		override = fmt.Sprintf("; note: unit files in %s override the packaged units (run 'updex daemon disable' to remove the ones updex wrote)", c.systemd.UnitPath)
 	}
+	suiteUnit := suiteSwitchUnitName + ".service"
+	suitePath, _, suiteFound := c.unitFileInUse(suiteUnit)
+	enableSuite := suiteFound && !isMaskLink(suitePath)
+	suiteNote := ""
+	switch {
+	case enableSuite:
+		if packaged := filepath.Join(c.systemd.PackagedUnitPath, suiteUnit); suitePath == packaged {
+			unitFiles = append(unitFiles, packaged)
+		}
+	case suiteFound:
+		suiteNote = fmt.Sprintf("; %s is masked and stays disabled", suiteUnit)
+	}
+	// An older package ships only the timer and the service: then there is
+	// nothing to enable and nothing to say.
 
 	if opts.DryRun {
+		action := fmt.Sprintf("Would enable and start %s", timerUnit)
+		if enableSuite {
+			action = fmt.Sprintf("Would enable and start %s and enable %s", timerUnit, suiteUnit)
+		}
 		return &DaemonActionResult{
 			Success:   true,
 			DryRun:    true,
 			Packaged:  true,
 			UnitFiles: unitFiles,
-			Message: fmt.Sprintf("Would enable and start %s (units shipped by the package: %s); nothing is written%s",
-				timerUnit, c.systemd.PackagedUnitPath, override),
+			Message: fmt.Sprintf("%s (units shipped by the package: %s); nothing is written%s%s",
+				action, c.systemd.PackagedUnitPath, suiteNote, override),
 		}, nil
 	}
 
@@ -185,11 +266,16 @@ func (c *Client) enablePackagedDaemon(ctx context.Context, opts EnableDaemonOpti
 	if err := c.systemd.Start(ctx, timerUnit); err != nil {
 		return nil, fmt.Errorf("failed to start timer: %w", err)
 	}
+	if enableSuite {
+		if err := c.systemd.Enable(ctx, suiteUnit); err != nil {
+			return nil, fmt.Errorf("failed to enable %s: %w", suiteUnit, err)
+		}
+	}
 	return &DaemonActionResult{
 		Success:   true,
 		Packaged:  true,
 		UnitFiles: unitFiles,
-		Message:   "Auto-update daemon enabled" + override,
+		Message:   "Auto-update daemon enabled" + suiteNote + override,
 	}, nil
 }
 
@@ -280,8 +366,10 @@ type daemonRemovalPlan struct {
 // directory.
 func (c *Client) planDaemonRemoval() daemonRemovalPlan {
 	var plan daemonRemovalPlan
-	paths := c.daemonUnitPaths()
-	for i, legacy := range [][]string{legacyTimerUnits, legacyServiceUnits} {
+	// updex-suite-switch.service has no legacy text: every updex that writes
+	// it writes the marker.
+	paths := append(c.daemonUnitPaths(), c.suiteSwitchUnitPath())
+	for i, legacy := range [][]string{legacyTimerUnits, legacyServiceUnits, nil} {
 		state, err := classifyUnitFile(paths[i], legacy)
 		switch {
 		case err != nil:
@@ -333,15 +421,24 @@ func (c *Client) DisableDaemon(ctx context.Context, opts DisableDaemonOptions) (
 	timerUnit := daemonUnitName + ".timer"
 	plan := c.planDaemonRemoval()
 	notes := keptNote(plan.keep) + maskedNote(plan.masked)
+	// The boot-time unit is disabled with the timer when a file of it exists
+	// and is not a mask (ADR-0021).
+	suiteUnit := suiteSwitchUnitName + ".service"
+	suitePath, _, suiteFound := c.unitFileInUse(suiteUnit)
+	disableSuite := suiteFound && !isMaskLink(suitePath)
 
 	if opts.DryRun {
 		if err := errors.Join(plan.errs...); err != nil {
 			return nil, fmt.Errorf("failed to remove timer: %w", err)
 		}
-		message := fmt.Sprintf("Would stop and disable %s and reload systemd", timerUnit)
+		disabled := timerUnit
+		if disableSuite {
+			disabled = timerUnit + " (and disable " + suiteUnit + ")"
+		}
+		message := fmt.Sprintf("Would stop and disable %s and reload systemd", disabled)
 		if len(plan.remove) > 0 {
 			message = fmt.Sprintf("Would stop and disable %s, remove %s, and reload systemd",
-				timerUnit, strings.Join(plan.remove, " and "))
+				disabled, strings.Join(plan.remove, " and "))
 		}
 		return &DaemonActionResult{
 			Success:     true,
@@ -363,6 +460,11 @@ func (c *Client) DisableDaemon(ctx context.Context, opts DisableDaemonOptions) (
 	}
 	if err := c.systemd.Disable(ctx, timerUnit); err != nil {
 		errs = append(errs, fmt.Errorf("disable timer: %w", err))
+	}
+	if disableSuite {
+		if err := c.systemd.Disable(ctx, suiteUnit); err != nil {
+			errs = append(errs, fmt.Errorf("disable %s: %w", suiteUnit, err))
+		}
 	}
 	var removed []string
 	for _, path := range plan.remove {
@@ -423,6 +525,14 @@ func maskedNote(masked []string) string {
 // directory when one exists (it overrides), else the packaged file when one
 // exists. ok is false when neither exists.
 func (c *Client) daemonUnitFileInUse(suffix string) (path, source string, ok bool) {
+	return c.unitFileInUse(daemonUnitName + suffix)
+}
+
+// unitFileInUse returns the path of the unit file named file (for example
+// "updex-suite-switch.service") that systemd uses: the one in the /etc unit
+// directory when it exists, else the packaged one. ok is false when neither
+// exists.
+func (c *Client) unitFileInUse(file string) (path, source string, ok bool) {
 	candidates := []struct{ dir, source string }{
 		{c.systemd.UnitPath, DaemonSourceEtc},
 		{c.systemd.PackagedUnitPath, DaemonSourcePackaged},
@@ -431,7 +541,7 @@ func (c *Client) daemonUnitFileInUse(suffix string) (path, source string, ok boo
 		if candidate.dir == "" {
 			continue
 		}
-		p := filepath.Join(candidate.dir, daemonUnitName+suffix)
+		p := filepath.Join(candidate.dir, file)
 		if _, err := os.Lstat(p); err == nil || !os.IsNotExist(err) {
 			return p, candidate.source, true
 		}
@@ -487,6 +597,18 @@ func (c *Client) DaemonStatus(ctx context.Context, _ DaemonStatusOptions) (*Daem
 	status.Masked = isMaskLink(timerPath)
 	if !status.Masked {
 		status.Schedule = c.daemonSchedule(ctx, timerUnit, timerPath)
+	}
+
+	// The boot-time unit (ADR-0021), when a file of it exists.
+	suiteUnit := suiteSwitchUnitName + ".service"
+	if path, _, ok := c.unitFileInUse(suiteUnit); ok {
+		status.UnitFiles = append(status.UnitFiles, path)
+		status.SuiteSwitchInstalled = true
+		enabled, err := c.systemd.IsEnabled(ctx, suiteUnit)
+		if err != nil {
+			return nil, fmt.Errorf("get daemon status: query enabled state of %s: %w", suiteUnit, err)
+		}
+		status.SuiteSwitchEnabled = enabled
 	}
 
 	enabled, err := c.systemd.IsEnabled(ctx, timerUnit)

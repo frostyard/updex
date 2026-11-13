@@ -105,6 +105,12 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
   errors get their class at their origin through `internal/fault`; a busy run
   never replaces a newer record, a named run carries the other features'
   entries, and a failed write is only a warning
+- [ADR-0021](adr/0021-link-the-running-suites-images-at-boot-after-a-suite-switch.md) —
+  after a suite switch (`%w`, trixie 13 to forky 14), the packaged
+  `updex-suite-switch.service` runs `features update --suite-switch` at
+  boot: it updates only the features whose link names another suite's image,
+  then refreshes, so the feature is back on that boot; it does nothing on
+  other boots; the timer still never refreshes (ADR-0016)
 
 ### Design
 

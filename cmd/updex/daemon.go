@@ -242,6 +242,10 @@ func runDaemonStatus(cmd *cobra.Command, args []string) error {
 	for _, path := range status.UnitFiles {
 		fmt.Printf("  Unit file: %s\n", path)
 	}
+	if status.SuiteSwitchInstalled {
+		// ADR-0021: the boot-time unit that links the running suite's images.
+		fmt.Printf("  Suite switch at boot: %v\n", status.SuiteSwitchEnabled)
+	}
 	fmt.Printf("  Schedule: %s\n", dashIfEmpty(status.Schedule))
 	if status.NextRun != "" {
 		fmt.Printf("  Next run: %s\n", status.NextRun)

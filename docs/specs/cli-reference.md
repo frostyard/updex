@@ -78,6 +78,7 @@ sudo updex features rollback --clear docker        # Delete the rollback record
 sudo updex --dry-run features update      # Preview without modifying state
 updex features check                      # Check for updates (read-only)
 sudo updex features update docker         # Update only the docker feature
+sudo updex features update --suite-switch # After a suite switch: link and merge the running suite's images
 updex features check docker               # Check only the docker feature
 updex components                          # List discovered named components
 updex features list --component=docker    # Inspect one named component
@@ -102,6 +103,34 @@ an error names each problem: `feature 'x' not found`,
 exits non-zero. The refresh after the update still activates every pending link
 on the host, so the warning lists pending links of enabled features that the
 run does not name (use `--no-refresh` to leave them alone).
+
+### After a suite switch: `--suite-switch`
+
+A transfer whose target pattern has `%w` (os-release `VERSION_ID`, 13 on
+trixie, 14 on forky) links the image of the running suite. After a suite
+switch (`bootc switch` from trixie to forky), the link still names the trixie
+image on the first forky boot, and systemd-sysext refuses it: the feature is
+missing until the timer links the forky image and the host reboots.
+`updex features update --suite-switch` closes that window
+([ADR-0021](../adr/0021-link-the-running-suites-images-at-boot-after-a-suite-switch.md)):
+
+- It selects every enabled feature with an active transfer whose link points
+  to an image of another suite (the link target matches the `%w` pattern
+  with any suite, and not the running suite's pattern).
+- For those features it runs the normal update (download when needed, link
+  through the usual checks) and then the refresh, so the running suite's image
+  is merged on this boot. The last-run record records a run that names those
+  features.
+- When no link points to another suite, it prints
+  `No sysext link points to an image of another suite; nothing to do.` and
+  exits 0: no lock, no download, no refresh, no last-run record.
+- It takes no feature name and cannot be combined with `--no-refresh`.
+  Under systemd, a busy lock fails the run (no skip): there is no later run on
+  this boot.
+- A transfer without `%w` is never selected.
+
+The packaged `updex-suite-switch.service` runs it at every boot (see
+[Automatic updates](#automatic-updates)).
 
 ### `Features=` and `RequisiteFeatures=`
 
@@ -380,7 +409,8 @@ Every command that changes state
 - `updex features update` run by systemd (the environment variable
   `INVOCATION_ID` is set, as for the timer's service) logs one line to stderr
   (`skipping this run`) and exits 0, because the next scheduled run tries
-  again. Every other command still fails.
+  again. Every other command still fails, and so does
+  `updex features update --suite-switch` (it has no next run on this boot).
 
 ### An offline host is a skip, not a failure
 
@@ -451,14 +481,31 @@ sudo updex --dry-run daemon enable   # Preview what enable would do
 sudo updex daemon disable            # Stop and disable it
 ```
 
-The `frostyard-updex` package ships `updex-update.timer` and
-`updex-update.service` in `/usr/lib/systemd/system`, **disabled**. An OS image
-can enable the timer with a preset; otherwise `updex daemon enable` runs
-`systemctl enable` and `start` on it and writes nothing. When the package's
+The `frostyard-updex` package ships `updex-update.timer`,
+`updex-update.service` and `updex-suite-switch.service` in
+`/usr/lib/systemd/system`, **disabled**. An OS image
+can enable the timer and the suite-switch unit with a preset; otherwise
+`updex daemon enable` runs `systemctl enable` and `start` on the timer, and
+`systemctl enable` on `updex-suite-switch.service` when the package ships it
+and it is not masked, and writes nothing. When the package's
 units are absent (updex installed without the package), `daemon enable`
-writes the units to `/etc/systemd/system` instead, with a marker comment
+writes the 3 units to `/etc/systemd/system` instead, with a marker comment
 on the first line, and `daemon disable` removes only files that carry it (and
-the identical units that older updex releases wrote).
+the identical units that older updex releases wrote). `daemon disable` also
+disables `updex-suite-switch.service`.
+
+- **Suite switch at boot:** `updex-suite-switch.service` runs
+  `updex features update --suite-switch` once per boot, after
+  `network-online.target` and before `updex-update.service`
+  ([ADR-0021](../adr/0021-link-the-running-suites-images-at-boot-after-a-suite-switch.md)).
+  On a boot without a suite switch it does nothing. On the first boot after
+  one, it links and merges the running suite's images, so the feature is back
+  on that boot. It does not delay `multi-user.target`
+  (`DefaultDependencies=no`), has no AC-power condition, and has only the
+  sandbox lines that a `systemd-sysext refresh` can run under (no private
+  mount namespace). `updex daemon status` shows `Suite switch at boot:` when
+  a file of the unit exists; the log is
+  `journalctl -u updex-suite-switch.service`.
 
 - **Schedule:** every 6 hours (`OnCalendar=*-*-* 00/6:00:00`) with up to one
   hour of random delay; a run missed while the host was off happens at the next
