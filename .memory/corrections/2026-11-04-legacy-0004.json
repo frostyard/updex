@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-04",
+  "scope": "risk-paths",
+  "correction": "Two pull-request label-setting jobs race: actions/labeler can remove risk:high after the risk-paths workflow adds it; label-setting jobs run before risk-paths in one workflow",
+  "evidence": "updex#483 events: risk:high labeled 19:36:25Z, unlabeled 19:36:26Z by the labeler",
+  "promoted_to": "updex/risk_paths_contract_test.go"
+}

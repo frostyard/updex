@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-13",
+  "scope": "release",
+  "correction": "A branch guard must fetch with an explicit destination refspec (git fetch origin +refs/heads/main:refs/remotes/origin/main): a remote without a fetch refspec leaves refs/remotes/origin/main stale, so a guard that trusts it passes wrongly; and a test's git environment must drop every inherited GIT_* variable (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_CONFIG_PARAMETERS, GIT_CONFIG_COUNT or similar), so a test git command cannot write the caller's index.",
+  "evidence": "frostyard/updex#510 cross-review (openai/gpt-6.1-sol) of head 92227fb, findings 1 and 2",
+  "promoted_to": "updex/makefile_bump_svu_contract_test.go"
+}

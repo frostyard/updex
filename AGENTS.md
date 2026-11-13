@@ -1175,7 +1175,7 @@ their canonical targets, never the aliases. `docs/review-rubric.md`,
 [docs/specs/pr-acceptance-metric.md](docs/specs/pr-acceptance-metric.md), and
 [docs/design/quality-loop.md](docs/design/quality-loop.md).
 
-**session handoffs** Use `.claude/session-summary.md` for concise context needed to continue unfinished work in a later session. Fold durable architecture decisions and non-obvious lessons into the right `docs/` page, or drop them in the `.memory/` inbox (the single learnings inbox, append-only `corrections.jsonl`, drained into `docs/`).
+**session handoffs** Use `.claude/session-summary.md` for concise context needed to continue unfinished work in a later session. Fold durable architecture decisions and non-obvious lessons into the right `docs/` page, or drop them in the `.memory/` inbox (the single learnings inbox, 1 record file each under `.memory/corrections/`, drained into `docs/`).
 
 ## Pull requests
 

@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-04",
+  "scope": "risk-paths",
+  "correction": "The first risk-path list left out config/transfer.go, which sets the Verify= default, the target path and mode and the activation rule; signature and install behaviour live in config parsing too, not only in download/, manifest/ and sysext/",
+  "evidence": "updex#482 cross-review (openai/gpt-6.1-sol), finding 1",
+  "promoted_to": ".github/risk-paths.json"
+}

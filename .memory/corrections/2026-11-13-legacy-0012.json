@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-13",
+  "scope": "docs",
+  "correction": "When text moves out of the README, every true fact keeps a home (the CLI reference, the configuration reference, the packaging guide or SECURITY.md), and a README summary must not be stronger or weaker than the reference it links: the CLI reference still names checksums.txt beside the package and archive matrix and keeps the attestation fact, and a summary must not say a revision waits for a boot when the gate checks the next-boot image.",
+  "evidence": "frostyard/updex#510 cross-review (openai/gpt-6.1-sol) of head 92227fb, findings 3 and 4",
+  "promoted_to": "AGENTS.md"
+}

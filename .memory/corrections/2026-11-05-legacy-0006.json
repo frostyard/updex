@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-05",
+  "scope": "last-run-record",
+  "correction": "A run that holds the operation lock must write its last-run record before it releases the lock; a write after a deferred release lets a later run write first and lose its newer record",
+  "evidence": "updex#488 cross-review, blocking finding 2",
+  "promoted_to": "updex/lastrun_test.go TestLastRun_WrittenUnderOperationLock"
+}

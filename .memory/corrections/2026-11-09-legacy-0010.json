@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-09",
+  "scope": "risk-paths",
+  "correction": "An exact-text check of a YAML file must reject every line break other than LF (CR, and NEL, LS, PS) before it splits lines: YAML reads a bare CR as a new line, so a key hidden after CR in a comment passes a check that splits only on LF",
+  "evidence": "frostyard/updex#500 cross-review (openai/gpt-6.1-sol) re-review 1 of head 4ed739a, finding E3",
+  "promoted_to": "updex/risk_paths_contract_test.go"
+}

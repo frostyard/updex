@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-09",
+  "scope": "risk-paths",
+  "correction": "A risk-paths gate reads the caller as exact canonical text, not with a hand-written YAML parse: 1 line for each name, on, types, permissions, concurrency, label job, jobs and the pr-triage job, with only the SHA and its trailing comment free, so a commented-out scope, a scalar job header, a types list inside a comment and an extra line all fail; and its segment matcher recognizes \"*\" and \"?\" before literal equality, so \"*a\" matches \"*ba\" and \"*\" matches \"**\", as core's segmentPattern does.",
+  "evidence": "frostyard/updex#500 cross-review (openai/gpt-6.1-sol) of head 8a06d07, findings E1 and E2",
+  "promoted_to": "updex/risk_paths_contract_test.go"
+}

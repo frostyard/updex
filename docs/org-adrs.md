@@ -34,6 +34,7 @@ The ones that bind updex:
 - [ADR-0075 — Group Dependabot updates and sync skills once a day](https://github.com/frostyard/core/blob/main/docs/adr/0075-batch-routine-pull-requests.md) — each entry of [`.github/dependabot.yml`](../.github/dependabot.yml) has 1 `patterns: ["*"]` group, so Dependabot opens at most 1 version-update PR for each ecosystem and run; security updates stay 1 PR each
 - [ADR-0077 — Bind ready-for-human to the head commit](https://github.com/frostyard/core/blob/main/docs/adr/0077-bind-ready-for-human-to-the-head-commit.md) — `pr-triage` removes `ready-for-human` when the head moves after the label or CI is not green at the label; pinned by `updex/risk_paths_contract_test.go`
 - [ADR-0078 — Sort pull requests by levels L1 to L4](https://github.com/frostyard/core/blob/main/docs/adr/0078-sort-pull-requests-by-levels-l1-to-l4.md) — `.github/risk-paths.json` is version 2 with a `level` on each glob, and `pr-triage` adds the level label (L1 and L2 also add `risk:high`); pinned by `updex/risk_paths_contract_test.go`
+- [ADR-0081 — Store each correction in a file of its own](https://github.com/frostyard/core/blob/main/docs/adr/0081-store-each-correction-in-a-file-of-its-own.md) — each correction record is 1 file in `.memory/corrections/` (amends ADR-0018 and ADR-0071 in part)
 
 When changing behavior covered by one of these, update or supersede the ADR
 in frostyard/core first, then change this repo in the same effort.
