@@ -3,5 +3,5 @@
   "scope": "updex/features.go DisableFeature Now guard, sysext ActiveOtherSuiteWith",
   "correction": "A guard before a removal must recognize everything that removal can match: RemoveAllVersionsAt removes the images of every suite, so the merged-image guard of DisableFeature{Now} also checks sysext.ActiveOtherSuiteWith (any-suite patterns over the CurrentSymlink, the origin path, a versioned extensions-list name and /run/extensions) and refuses without --force before any write, unmerge or delete. Guard: TestDisableFeatureNow_RefusesMergedOtherSuiteImage.",
   "evidence": "frostyard/updex#515 cross-review (openai/gpt-6.1-sol) of head cb746f6, finding 1 (sysext/manager.go:1223, updex/features.go:575)",
-  "promoted_to": ""
+  "promoted_to": "updex/other_suite_test.go TestDisableFeatureNow_RefusesMergedOtherSuiteImage"
 }

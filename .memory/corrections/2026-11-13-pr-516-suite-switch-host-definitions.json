@@ -3,5 +3,5 @@
   "scope": "updex/status.go pendingActivationLinksHost, updex/features.go SuiteSwitchOnly refresh",
   "correction": "A caller that must know every pending change of the host must not accept a silent fallback: pendingActivationLinks warns and uses the scoped transfers when the host's definitions do not load, so pendingActivationLinksHost also returns that error, and a suite-switch run (scoped with Component or not, its refresh is host-wide) keeps its links and skips the refresh when the host's pending state is unknown. Guard: TestUpdateFeatures_SuiteSwitchHostDefinitionsUnreadable.",
   "evidence": "frostyard/updex#516 cross-review re-review 1 (openai/gpt-6.1-sol) of head 8baafd6, finding 2 (updex/features.go about 1156-1162, updex/status.go about 241-245)",
-  "promoted_to": ""
+  "promoted_to": "updex/suite_switch_test.go TestUpdateFeatures_SuiteSwitchHostDefinitionsUnreadable"
 }

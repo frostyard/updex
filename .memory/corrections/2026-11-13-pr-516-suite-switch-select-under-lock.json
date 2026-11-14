@@ -3,5 +3,5 @@
   "scope": "updex/features.go UpdateFeatures SuiteSwitchOnly selection",
   "correction": "A selection made without the operation lock is only a fast path: a suite-switch run loads the domain and selects its features again after it takes the lock and before any download, and an empty selection then ends the run with no download, no refresh and no last-run record. Guard: TestUpdateFeatures_SuiteSwitchSelectsAgainUnderLock.",
   "evidence": "frostyard/updex#516 cross-review (openai/gpt-6.1-sol) of head 3f46e43, finding 2 (updex/features.go:790-802)",
-  "promoted_to": ""
+  "promoted_to": "updex/suite_switch_test.go TestUpdateFeatures_SuiteSwitchSelectsAgainUnderLock"
 }
