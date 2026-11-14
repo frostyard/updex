@@ -253,7 +253,14 @@ generator, pins the contract lines (`ExecStart=/usr/bin/updex features update
 line; for the suite-switch unit `ExecStart=… --suite-switch`,
 `Before=updex-update.service`, `DefaultDependencies=no`,
 `WantedBy=multi-user.target`, every `RefreshSandboxDirectives` line and no
-namespace directive), pins the
+namespace directive, the bounded retry of
+[ADR-0022](docs/adr/0022-retry-a-failed-suite-switch-run-at-boot.md)
+(`StartLimitIntervalSec=12h`, `StartLimitBurst=4` in `[Unit]`;
+`Restart=on-failure`, `RestartSec=5min` in `[Service]`, and the window longer
+than `StartLimitBurst` × (`TimeoutStartSec` + `RestartSec`), so hung runs stop
+too), and that boot does
+not wait for it: no `Before=` on a boot target, no `Requires=`-type
+dependency, only `WantedBy=`, and the timer units do not name it), pins the
 `.goreleaser.yaml` hook order, the 3 `nfpms.contents` destinations and the
 absence of maintainer scripts, pins the CI steps below, and runs
 `scripts/check-deb-units.sh` against a fake `dpkg-deb`. The `units` job in
@@ -433,14 +440,17 @@ binary needs it on the host. The unit tests do not run it.
   read or the host's definitions do not load (`pendingActivationLinksHost`
   returns that failure), so it never changes what ADR-0016 leaves for the
   next boot.
-  It refuses names and `--no-refresh`, and under systemd a busy lock is an
-  error for it, not a skip
+  It refuses names and `--no-refresh`, and under systemd a busy lock and
+  unreachable sources (ADR-0018) are errors for it, not skips:
+  `updex-suite-switch.service` then restarts after
+  5 minutes, at most 3 times in 12 hours (ADR-0022), and boot never waits for it
 - `components` — list discovered systemd-sysext components (refuses
   `-C`/`--definitions`: a definitions override is 1 flat directory with no
   components)
 - `daemon enable|disable|status` — enable/disable/inspect the auto-update
   timer and the boot-time `updex-suite-switch.service` (ADR-0021; enabled,
-  never started, and disabled with the timer; a masked one is left alone).
+  never started, and disabled with the timer; a masked one is left alone; a
+  failed run restarts with a bounded retry, ADR-0022).
   The package ships the units in `/usr/lib/systemd/system`; `enable`
   writes marked units to `/etc/systemd/system` only when the package does not,
   and `disable` removes only marked (or exactly legacy) files there. `status`
@@ -788,7 +798,12 @@ in the `config/` structs and parse functions. Always finish with
   adds `updex: no update source is reachable; skipping this run` on stderr
   and exits 0, only under systemd; an interactive shell and `--json` behaviour
   are unchanged, and so are the units. The negative consequence is recorded
-  in the ADR: a source name that is wrong for ever also looks offline.
+  in the ADR: a source name that is wrong for ever also looks offline. The
+  skip never applies to `features update --suite-switch` (ADR-0022): exit 0
+  would stop `Restart=on-failure` of `updex-suite-switch.service`, so that run
+  returns the error, in text and `--json` (`skipUnreachable` in
+  `cmd/updex/features_run.go` checks `!featureUpdateSuiteSwitch`, as the
+  `ErrBusy` skip does).
 
 ### Using the SDK programmatically
 

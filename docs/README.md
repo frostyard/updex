@@ -111,6 +111,13 @@ frostyard/core, see [org-adrs.md](org-adrs.md).
   boot: it updates only the features whose link names another suite's image,
   then refreshes, so the feature is back on that boot; it does nothing on
   other boots; the timer still never refreshes (ADR-0016)
+- [ADR-0022](adr/0022-retry-a-failed-suite-switch-run-at-boot.md) —
+  `updex-suite-switch.service` restarts a failed run after 5 minutes
+  (`Restart=on-failure`, `RestartSec=5min`), at most 3 times in 12 hours
+  (`StartLimitIntervalSec=12h`, `StartLimitBurst=4`; longer than 4 runs that
+  hang until `TimeoutStartSec=2h`); boot still does not wait
+  for it, and a retry that finds the timer's run holding the lock fails and
+  counts against the limit
 
 ### Design
 

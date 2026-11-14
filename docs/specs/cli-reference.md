@@ -138,8 +138,10 @@ missing until the timer links the forky image and the host reboots.
   that cannot be loaded are an error, and the last-run record says so (class
   `config`).
 - It takes no feature name and cannot be combined with `--no-refresh`.
-  Under systemd, a busy lock fails the run (no skip): there is no later run on
-  this boot.
+  Under systemd, a busy lock and unreachable sources fail the run (no skip,
+  also with `--json`): no timer run on this boot refreshes, so
+  `updex-suite-switch.service` fails and retries
+  ([ADR-0022](../adr/0022-retry-a-failed-suite-switch-run-at-boot.md)).
 - A transfer without `%w` is never selected.
 
 The packaged `updex-suite-switch.service` runs it at every boot (see
@@ -463,6 +465,10 @@ successful run ([ADR-0018](../adr/0018-skip-an-update-run-when-every-source-is-u
 A partial failure, a source that answered with an error status, a
 verification failure and a failed refresh still exit non-zero, and a run in
 an interactive shell still reports the error. `--json` output is unchanged.
+`updex features update --suite-switch` never takes this skip: it exits
+non-zero, in text and with `--json`, so `updex-suite-switch.service` retries
+when the network comes up
+([ADR-0022](../adr/0022-retry-a-failed-suite-switch-run-at-boot.md)).
 
 ### Catalogs
 
@@ -543,7 +549,15 @@ disables `updex-suite-switch.service`.
   on that boot. It does not delay `multi-user.target`
   (`DefaultDependencies=no`), has no AC-power condition, and has only the
   sandbox lines that a `systemd-sysext refresh` can run under (no private
-  mount namespace). `updex daemon status` shows `Suite switch at boot:` when
+  mount namespace). A failed run (no image of the new suite yet, no usable
+  network, a busy lock) runs again 5 minutes later (`Restart=on-failure`,
+  `RestartSec=5min`), at most 3 times in 12 hours (`StartLimitIntervalSec=12h`,
+  `StartLimitBurst=4`; this holds also when each run hangs until its 2-hour
+  timeout); after that the unit stays failed until the next boot
+  or `systemctl reset-failed updex-suite-switch.service`. Boot does not wait
+  for these retries, and nothing depends on the unit's success
+  ([ADR-0022](../adr/0022-retry-a-failed-suite-switch-run-at-boot.md)).
+  `updex daemon status` shows `Suite switch at boot:` when
   a file of the unit exists; the log is
   `journalctl -u updex-suite-switch.service`.
 

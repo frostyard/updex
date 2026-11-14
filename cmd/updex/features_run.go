@@ -316,15 +316,20 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 	// failure. An offline host must not leave updex-update.service failed (and
 	// the system degraded) until a source answers. The normal output is printed
 	// first, then one log line, and the run exits 0. An operator at a shell
-	// still gets the error.
-	skipUnreachable := errors.Is(err, updex.ErrSourcesUnreachable) && runningUnderSystemd()
+	// still gets the error. The skip does not apply to a suite-switch run
+	// (ADR-0022): exit 0 would stop Restart=on-failure of
+	// updex-suite-switch.service, and a network that is not up yet is one of
+	// the failures that its bounded retry exists for. Every output path below
+	// (text, an empty result, --json) reads this one flag.
+	skipUnreachable := errors.Is(err, updex.ErrSourcesUnreachable) && runningUnderSystemd() && !featureUpdateSuiteSwitch
 
 	// ADR-0016: a scheduled run that finds another updex operation running
 	// is not a failure. systemd would otherwise mark updex-update.service
 	// failed for a run that only had to wait for the next one. An operator
 	// at a shell still gets the error. A suite-switch run (ADR-0021) has no
-	// next run on this boot: the feature stays missing, so a busy lock fails
-	// updex-suite-switch.service where the operator sees it.
+	// timer run to wait for on this boot: the feature stays missing, so a
+	// busy lock fails updex-suite-switch.service, which systemd then restarts
+	// a bounded number of times (ADR-0022), and the operator sees it.
 	if errors.Is(err, updex.ErrBusy) && runningUnderSystemd() && !featureUpdateSuiteSwitch {
 		if _, werr := fmt.Fprintf(cmd.ErrOrStderr(), "updex: %v; skipping this run\n", err); werr != nil {
 			return werr

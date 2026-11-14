@@ -103,6 +103,15 @@ func DaemonUnits() (*systemd.TimerConfig, *systemd.ServiceConfig) {
 // whose private mount namespace would hide the merged images from the host.
 // It has no ConditionACPower=: a feature that is missing matters on battery
 // too.
+//
+// A failed run (no image of the new suite yet, no network, a busy lock)
+// restarts after RestartSec= (Restart=on-failure, ADR-0022). The start limit
+// (StartLimitIntervalSec=, StartLimitBurst=: 1 start and at most 3 retries
+// in the window) bounds the retries; after that the unit stays failed until
+// the next boot or `systemctl reset-failed`. The window is longer than
+// StartLimitBurst × (TimeoutStartSec + RestartSec), so the bound holds also
+// when every run hangs until its timeout. A retry waits in the unit's own
+// auto-restart state with no job queued, so no other unit waits for it.
 func SuiteSwitchUnit() *systemd.ServiceConfig {
 	return &systemd.ServiceConfig{
 		Name:        suiteSwitchUnitName,
@@ -113,12 +122,17 @@ func SuiteSwitchUnit() *systemd.ServiceConfig {
 		UnitDirectives: []string{
 			"DefaultDependencies=no",
 			"Conflicts=shutdown.target",
+			"StartLimitIntervalSec=12h",
+			"StartLimitBurst=4",
 		},
 		ExecStart:       "/usr/bin/updex features update --suite-switch",
 		Type:            "oneshot",
 		TimeoutStartSec: "2h",
-		Directives:      slices.Clone(systemd.RefreshSandboxDirectives),
-		WantedBy:        []string{"multi-user.target"},
+		Directives: append([]string{
+			"Restart=on-failure",
+			"RestartSec=5min",
+		}, systemd.RefreshSandboxDirectives...),
+		WantedBy: []string{"multi-user.target"},
 	}
 }
 

@@ -2,12 +2,16 @@ package updex
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/frostyard/updex/v2/systemd"
 	"go.yaml.in/yaml/v3"
@@ -111,9 +115,14 @@ func TestUnitsHookMatchesGenerator(t *testing.T) {
 			"Before=updex-update.service shutdown.target",
 			"DefaultDependencies=no",
 			"Conflicts=shutdown.target",
+			// ADR-0022: a bounded retry of a failed run.
+			"StartLimitIntervalSec=12h",
+			"StartLimitBurst=4",
 			"Type=oneshot",
 			"ExecStart=/usr/bin/updex features update --suite-switch",
 			"TimeoutStartSec=2h",
+			"Restart=on-failure",
+			"RestartSec=5min",
 			"[Install]",
 			"WantedBy=multi-user.target",
 		}, systemd.RefreshSandboxDirectives...),
@@ -134,6 +143,147 @@ func TestUnitsHookMatchesGenerator(t *testing.T) {
 	for _, forbidden := range []string{"ProtectSystem=", "ProtectHome=", "PrivateTmp=", "RestrictNamespaces=", "ProtectKernelModules=", "ProtectClock=", "RestrictAddressFamilies=", "ConditionACPower="} {
 		if strings.Contains(got["updex-suite-switch.service"], forbidden) {
 			t.Errorf("updex-suite-switch.service sets %s, which the refresh cannot run under", forbidden)
+		}
+	}
+	assertSuiteSwitchRetry(t, got["updex-suite-switch.service"])
+	assertBootDoesNotWaitForSuiteSwitch(t, got)
+}
+
+// unitSections returns the directive lines of a unit file by section name
+// ("Unit", "Service", "Install"), without comments and empty lines.
+func unitSections(text string) map[string][]string {
+	sections := map[string][]string{}
+	section := ""
+	for line := range strings.SplitSeq(text, "\n") {
+		switch {
+		case line == "" || strings.HasPrefix(line, "#"):
+		case strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]"):
+			section = strings.Trim(line, "[]")
+		default:
+			sections[section] = append(sections[section], line)
+		}
+	}
+	return sections
+}
+
+// assertSuiteSwitchRetry pins the bounded retry of updex-suite-switch.service
+// (ADR-0022): the start limit in [Unit], where systemd reads it, the restart
+// in [Service], once each, and the bound that ties their values together
+// (suiteSwitchRetryBound).
+func assertSuiteSwitchRetry(t *testing.T, text string) {
+	t.Helper()
+	if err := suiteSwitchRetryBound(text); err != nil {
+		t.Errorf("updex-suite-switch.service: %v:\n%s", err, text)
+	}
+	sections := unitSections(text)
+	for section, lines := range map[string][]string{
+		"Unit":    {"StartLimitIntervalSec=12h", "StartLimitBurst=4"},
+		"Service": {"Type=oneshot", "Restart=on-failure", "RestartSec=5min"},
+	} {
+		for _, line := range lines {
+			if !slices.Contains(sections[section], line) {
+				t.Errorf("updex-suite-switch.service [%s] has no line %q:\n%s", section, line, text)
+			}
+		}
+	}
+	for _, key := range []string{"StartLimitIntervalSec=", "StartLimitBurst=", "Restart=", "RestartSec="} {
+		if n := strings.Count(text, "\n"+key); n != 1 {
+			t.Errorf("updex-suite-switch.service has %d %s lines, want 1:\n%s", n, key, text)
+		}
+	}
+}
+
+// suiteSwitchRetryBound returns an error unless the start limit of a unit's
+// text bounds its retries also when every run hangs until TimeoutStartSec=
+// (ADR-0022). systemd counts starts in a fixed window that begins at the first
+// start. StartLimitBurst hung runs, each followed by RestartSec, end at
+// StartLimitBurst × (TimeoutStartSec + RestartSec); the next start must still
+// fall inside the window, where systemd refuses it, so the window must be
+// longer than that. With a shorter window a new window begins and the retries
+// never end.
+func suiteSwitchRetryBound(text string) error {
+	values := map[string]string{}
+	for _, lines := range unitSections(text) {
+		for _, line := range lines {
+			if key, value, ok := strings.Cut(line, "="); ok {
+				values[key] = value
+			}
+		}
+	}
+	spans := map[string]time.Duration{}
+	for _, key := range []string{"StartLimitIntervalSec", "TimeoutStartSec", "RestartSec"} {
+		span, err := parseSystemdTimeSpan(values[key])
+		if err != nil {
+			return fmt.Errorf("%s=%q: %w", key, values[key], err)
+		}
+		spans[key] = span
+	}
+	burst, err := strconv.Atoi(values["StartLimitBurst"])
+	if err != nil || burst < 1 {
+		return fmt.Errorf("StartLimitBurst=%q is not a positive number", values["StartLimitBurst"])
+	}
+	hung := time.Duration(burst) * (spans["TimeoutStartSec"] + spans["RestartSec"])
+	if spans["StartLimitIntervalSec"] <= hung {
+		return fmt.Errorf("StartLimitIntervalSec=%s is not longer than StartLimitBurst × (TimeoutStartSec + RestartSec) = %v, so runs that hang until the timeout restart for ever",
+			values["StartLimitIntervalSec"], hung)
+	}
+	return nil
+}
+
+// parseSystemdTimeSpan parses the systemd time spans the updex units use: 1
+// or more space-separated parts of a whole number and a unit (h, min, m, s),
+// such as "12h", "5min" or "2h 30min".
+func parseSystemdTimeSpan(value string) (time.Duration, error) {
+	units := map[string]time.Duration{"h": time.Hour, "min": time.Minute, "m": time.Minute, "s": time.Second}
+	parts := strings.Fields(value)
+	if len(parts) == 0 {
+		return 0, errors.New("no time span")
+	}
+	var total time.Duration
+	for _, part := range parts {
+		digits := strings.TrimRight(part, "abcdefghijklmnopqrstuvwxyz")
+		unit, ok := units[part[len(digits):]]
+		number, err := strconv.Atoi(digits)
+		if !ok || err != nil || number < 0 {
+			return 0, fmt.Errorf("%q is not a whole number with the unit h, min, m or s", part)
+		}
+		total += time.Duration(number) * unit
+	}
+	return total, nil
+}
+
+// assertBootDoesNotWaitForSuiteSwitch pins that no boot target and no other
+// unit waits for updex-suite-switch.service or needs it to succeed: it keeps
+// DefaultDependencies=no (so multi-user.target gets no implicit After= on it),
+// orders itself before no boot target, has only a WantedBy= install line, and
+// the timer units do not name it. Its retries (ADR-0022) then delay nothing.
+func assertBootDoesNotWaitForSuiteSwitch(t *testing.T, units map[string]string) {
+	t.Helper()
+	suite := units["updex-suite-switch.service"]
+	sections := unitSections(suite)
+	if !slices.Contains(sections["Unit"], "DefaultDependencies=no") {
+		t.Errorf("updex-suite-switch.service lost DefaultDependencies=no, so multi-user.target waits for it:\n%s", suite)
+	}
+	for _, line := range sections["Unit"] {
+		if value, ok := strings.CutPrefix(line, "Before="); ok {
+			for target := range strings.FieldsSeq(value) {
+				if target != "updex-update.service" && target != "shutdown.target" {
+					t.Errorf("updex-suite-switch.service is ordered before %s, which then waits for it", target)
+				}
+			}
+		}
+		for _, key := range []string{"Requires=", "Requisite=", "BindsTo=", "PartOf=", "Upholds=", "OnSuccess=", "OnFailure="} {
+			if strings.HasPrefix(line, key) {
+				t.Errorf("updex-suite-switch.service sets %q", line)
+			}
+		}
+	}
+	if install := sections["Install"]; !slices.Equal(install, []string{"WantedBy=multi-user.target"}) {
+		t.Errorf("updex-suite-switch.service [Install] = %q, want only WantedBy=multi-user.target (no RequiredBy=)", install)
+	}
+	for _, name := range []string{"updex-update.service", "updex-update.timer"} {
+		if strings.Contains(units[name], "updex-suite-switch") {
+			t.Errorf("%s names updex-suite-switch.service; nothing may depend on it:\n%s", name, units[name])
 		}
 	}
 }

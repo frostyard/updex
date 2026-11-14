@@ -1182,7 +1182,10 @@ which supersedes [ADR-0007](../adr/0007-daemon-stages-never-activates.md).
   `EACCES`), and the CLI, under systemd only, prints the normal output and
   warnings, adds one skip line and exits 0, so the unit does not stay `failed`. A partial failure,
   a source that answered with an error status, a verification failure, a
-  failed refresh and a cancelled run still exit non-zero. Timer:
+  failed refresh and a cancelled run still exit non-zero, and so does
+  `features update --suite-switch` (text and `--json`): its exit 0 would stop
+  the bounded retry of `updex-suite-switch.service`
+  ([ADR-0022](../adr/0022-retry-a-failed-suite-switch-run-at-boot.md)). Timer:
   `OnCalendar=*-*-* 00/6:00:00`, `RandomizedDelaySec=3600s`, `Persistent=true`,
   `[Install] WantedBy=timers.target`. `systemd.ServiceConfig` gained `Wants`,
   `After` and `Conditions` (`[]string`; `Conditions` are whole directive lines),
@@ -1217,6 +1220,32 @@ which supersedes [ADR-0007](../adr/0007-daemon-stages-never-activates.md).
   make the run keep its links and report `RefreshSkipped` instead. `systemd.ServiceConfig` gained `Before`, `UnitDirectives`,
   `Directives` and `WantedBy`, and `systemd.Manager` gained `InstallService`
   for a unit that no timer activates.
+- **Bounded retry of the suite-switch run** ([ADR-0022](../adr/0022-retry-a-failed-suite-switch-run-at-boot.md)).
+  A failed run (no image of the new suite yet, no usable network, a busy
+  lock, a timeout) restarts. The CLI's skips under systemd (exit 0) for a
+  busy lock (ADR-0016) and for unreachable sources (ADR-0018) do not apply to
+  `--suite-switch`, so those runs fail and restart too: `Restart=on-failure` and `RestartSec=5min` in
+  `[Service]` (in `Directives`, before `RefreshSandboxDirectives`), and
+  `StartLimitIntervalSec=12h` with `StartLimitBurst=4` in `[Unit]` (in
+  `UnitDirectives`): 1 start and at most 3 retries in the window, then the
+  unit is failed with `start-limit-hit` until the next boot or
+  `systemctl reset-failed`. The generator did not change, and the timer units
+  are byte for byte the same. Boot does not wait: `DefaultDependencies=no`
+  stays, the unit is ordered before no boot target, only `WantedBy=` installs
+  it, and nothing `Requires=` it; between tries the unit is
+  `activating (auto-restart)` with no queued job. `Before=updex-update.service`
+  orders only jobs that are queued together, so a retry and a timer run can
+  overlap; the lock decides (the timer skips a busy lock under systemd, the
+  suite-switch run fails and counts 1 more start, so busy retries end at the
+  limit within about 15 minutes). A timer run that links the running suite's
+  image between tries makes the next try a no-op (exit 0, no refresh); the
+  feature then merges at the next boot. The limit is a fixed window from the
+  first start, so it bounds hung runs only when the window is longer than
+  `StartLimitBurst` × (`TimeoutStartSec` + `RestartSec`) = 4 × 2h05m = 8h20m:
+  with 12h the 5th start falls inside the window and is refused (with 6h a new
+  window would begin and the retries would never end).
+  `TestSuiteSwitchUnitRetryIsBounded` and the units contract test check that
+  inequality.
 - `updex daemon enable`: when the manager's `PackagedUnitPath` has
   `updex-update.timer`, it runs `systemctl enable` then `start` (the same as
   `enable --now`) and writes nothing; unit files already in `/etc/systemd/system`

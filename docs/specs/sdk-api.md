@@ -250,7 +250,10 @@ and each response. A request outside `UpdateFeatures` carries no tracker. The wr
 CLI maps the sentinel to exit status 0 only for `updex features update` under
 systemd: after the normal output and the run's usual progress and warning
 lines, it adds the one skip line; an interactive run returns the error, and
-`--json` output is unchanged.
+`--json` output is unchanged. `updex features update --suite-switch` never
+maps it to 0, under systemd or not, in text and `--json`
+([ADR-0022](../adr/0022-retry-a-failed-suite-switch-run-at-boot.md)): `updex-suite-switch.service` must fail so
+that `Restart=on-failure` retries it.
 
 ### Last-run record and `DefaultLastRunPath`
 
@@ -327,7 +330,12 @@ disable, removal and reload failures are contextualized and joined;
 a `oneshot` that runs `/usr/bin/updex features update --suite-switch`, with
 `Wants=`/`After=network-online.target`, `Before=updex-update.service`,
 `DefaultDependencies=no` (the basic dependencies written out),
-`TimeoutStartSec=2h`, `systemd.RefreshSandboxDirectives` (no mount namespace,
+`StartLimitIntervalSec=12h` and `StartLimitBurst=4` in `[Unit]`,
+`TimeoutStartSec=2h`, `Restart=on-failure` and `RestartSec=5min`
+([ADR-0022](../adr/0022-retry-a-failed-suite-switch-run-at-boot.md): a failed
+run restarts at most 3 times in 12 hours, also when each run hangs until
+its timeout, and boot does not wait),
+`systemd.RefreshSandboxDirectives` (no mount namespace,
 because it refreshes) and `[Install] WantedBy=multi-user.target`
 (`systemd.ServiceConfig` fields `Before`, `UnitDirectives`, `Directives`,
 `WantedBy`). The release build writes it beside the other units.
