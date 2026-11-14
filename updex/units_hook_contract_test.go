@@ -2,12 +2,16 @@ package updex
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/frostyard/updex/v2/systemd"
 	"go.yaml.in/yaml/v3"
@@ -112,7 +116,7 @@ func TestUnitsHookMatchesGenerator(t *testing.T) {
 			"DefaultDependencies=no",
 			"Conflicts=shutdown.target",
 			// ADR-0022: a bounded retry of a failed run.
-			"StartLimitIntervalSec=6h",
+			"StartLimitIntervalSec=12h",
 			"StartLimitBurst=4",
 			"Type=oneshot",
 			"ExecStart=/usr/bin/updex features update --suite-switch",
@@ -163,13 +167,17 @@ func unitSections(text string) map[string][]string {
 }
 
 // assertSuiteSwitchRetry pins the bounded retry of updex-suite-switch.service
-// (ADR-0022): the start limit in [Unit], where systemd reads it, and the
-// restart in [Service], once each.
+// (ADR-0022): the start limit in [Unit], where systemd reads it, the restart
+// in [Service], once each, and the bound that ties their values together
+// (suiteSwitchRetryBound).
 func assertSuiteSwitchRetry(t *testing.T, text string) {
 	t.Helper()
+	if err := suiteSwitchRetryBound(text); err != nil {
+		t.Errorf("updex-suite-switch.service: %v:\n%s", err, text)
+	}
 	sections := unitSections(text)
 	for section, lines := range map[string][]string{
-		"Unit":    {"StartLimitIntervalSec=6h", "StartLimitBurst=4"},
+		"Unit":    {"StartLimitIntervalSec=12h", "StartLimitBurst=4"},
 		"Service": {"Type=oneshot", "Restart=on-failure", "RestartSec=5min"},
 	} {
 		for _, line := range lines {
@@ -183,6 +191,65 @@ func assertSuiteSwitchRetry(t *testing.T, text string) {
 			t.Errorf("updex-suite-switch.service has %d %s lines, want 1:\n%s", n, key, text)
 		}
 	}
+}
+
+// suiteSwitchRetryBound returns an error unless the start limit of a unit's
+// text bounds its retries also when every run hangs until TimeoutStartSec=
+// (ADR-0022). systemd counts starts in a fixed window that begins at the first
+// start. StartLimitBurst hung runs, each followed by RestartSec, end at
+// StartLimitBurst × (TimeoutStartSec + RestartSec); the next start must still
+// fall inside the window, where systemd refuses it, so the window must be
+// longer than that. With a shorter window a new window begins and the retries
+// never end.
+func suiteSwitchRetryBound(text string) error {
+	values := map[string]string{}
+	for _, lines := range unitSections(text) {
+		for _, line := range lines {
+			if key, value, ok := strings.Cut(line, "="); ok {
+				values[key] = value
+			}
+		}
+	}
+	spans := map[string]time.Duration{}
+	for _, key := range []string{"StartLimitIntervalSec", "TimeoutStartSec", "RestartSec"} {
+		span, err := parseSystemdTimeSpan(values[key])
+		if err != nil {
+			return fmt.Errorf("%s=%q: %w", key, values[key], err)
+		}
+		spans[key] = span
+	}
+	burst, err := strconv.Atoi(values["StartLimitBurst"])
+	if err != nil || burst < 1 {
+		return fmt.Errorf("StartLimitBurst=%q is not a positive number", values["StartLimitBurst"])
+	}
+	hung := time.Duration(burst) * (spans["TimeoutStartSec"] + spans["RestartSec"])
+	if spans["StartLimitIntervalSec"] <= hung {
+		return fmt.Errorf("StartLimitIntervalSec=%s is not longer than StartLimitBurst × (TimeoutStartSec + RestartSec) = %v, so runs that hang until the timeout restart for ever",
+			values["StartLimitIntervalSec"], hung)
+	}
+	return nil
+}
+
+// parseSystemdTimeSpan parses the systemd time spans the updex units use: 1
+// or more space-separated parts of a whole number and a unit (h, min, m, s),
+// such as "12h", "5min" or "2h 30min".
+func parseSystemdTimeSpan(value string) (time.Duration, error) {
+	units := map[string]time.Duration{"h": time.Hour, "min": time.Minute, "m": time.Minute, "s": time.Second}
+	parts := strings.Fields(value)
+	if len(parts) == 0 {
+		return 0, errors.New("no time span")
+	}
+	var total time.Duration
+	for _, part := range parts {
+		digits := strings.TrimRight(part, "abcdefghijklmnopqrstuvwxyz")
+		unit, ok := units[part[len(digits):]]
+		number, err := strconv.Atoi(digits)
+		if !ok || err != nil || number < 0 {
+			return 0, fmt.Errorf("%q is not a whole number with the unit h, min, m or s", part)
+		}
+		total += time.Duration(number) * unit
+	}
+	return total, nil
 }
 
 // assertBootDoesNotWaitForSuiteSwitch pins that no boot target and no other

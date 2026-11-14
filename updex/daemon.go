@@ -108,7 +108,9 @@ func DaemonUnits() (*systemd.TimerConfig, *systemd.ServiceConfig) {
 // restarts after RestartSec= (Restart=on-failure, ADR-0022). The start limit
 // (StartLimitIntervalSec=, StartLimitBurst=: 1 start and at most 3 retries
 // in the window) bounds the retries; after that the unit stays failed until
-// the next boot or `systemctl reset-failed`. A retry waits in the unit's own
+// the next boot or `systemctl reset-failed`. The window is longer than
+// StartLimitBurst × (TimeoutStartSec + RestartSec), so the bound holds also
+// when every run hangs until its timeout. A retry waits in the unit's own
 // auto-restart state with no job queued, so no other unit waits for it.
 func SuiteSwitchUnit() *systemd.ServiceConfig {
 	return &systemd.ServiceConfig{
@@ -120,7 +122,7 @@ func SuiteSwitchUnit() *systemd.ServiceConfig {
 		UnitDirectives: []string{
 			"DefaultDependencies=no",
 			"Conflicts=shutdown.target",
-			"StartLimitIntervalSec=6h",
+			"StartLimitIntervalSec=12h",
 			"StartLimitBurst=4",
 		},
 		ExecStart:       "/usr/bin/updex features update --suite-switch",

@@ -532,8 +532,9 @@ disables `updex-suite-switch.service`.
   sandbox lines that a `systemd-sysext refresh` can run under (no private
   mount namespace). A failed run (no image of the new suite yet, no usable
   network, a busy lock) runs again 5 minutes later (`Restart=on-failure`,
-  `RestartSec=5min`), at most 3 times in 6 hours (`StartLimitIntervalSec=6h`,
-  `StartLimitBurst=4`); after that the unit stays failed until the next boot
+  `RestartSec=5min`), at most 3 times in 12 hours (`StartLimitIntervalSec=12h`,
+  `StartLimitBurst=4`; this holds also when each run hangs until its 2-hour
+  timeout); after that the unit stays failed until the next boot
   or `systemctl reset-failed updex-suite-switch.service`. Boot does not wait
   for these retries, and nothing depends on the unit's success
   ([ADR-0022](../adr/0022-retry-a-failed-suite-switch-run-at-boot.md)).

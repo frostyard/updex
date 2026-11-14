@@ -227,7 +227,7 @@ suite's image is merged on this boot. When no link points to another suite,
 it does nothing: no lock, no download, no refresh and no last-run record.
 It takes no FEATURE argument and cannot be combined with --no-refresh. The
 packaged updex-suite-switch.service runs it at every boot and, when the run
-fails, runs it again 5 minutes later, at most 3 times in 6 hours.
+fails, runs it again 5 minutes later, at most 3 times in 12 hours.
 
 Unless --no-refresh is set, a warning first lists the other sysexts (those
 outside the features this run updates, such as a disabled feature or an

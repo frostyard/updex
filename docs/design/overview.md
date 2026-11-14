@@ -1204,7 +1204,7 @@ which supersedes [ADR-0007](../adr/0007-daemon-stages-never-activates.md).
   A failed run (no image of the new suite yet, no usable network, a busy
   lock, a timeout) restarts: `Restart=on-failure` and `RestartSec=5min` in
   `[Service]` (in `Directives`, before `RefreshSandboxDirectives`), and
-  `StartLimitIntervalSec=6h` with `StartLimitBurst=4` in `[Unit]` (in
+  `StartLimitIntervalSec=12h` with `StartLimitBurst=4` in `[Unit]` (in
   `UnitDirectives`): 1 start and at most 3 retries in the window, then the
   unit is failed with `start-limit-hit` until the next boot or
   `systemctl reset-failed`. The generator did not change, and the timer units
@@ -1218,9 +1218,12 @@ which supersedes [ADR-0007](../adr/0007-daemon-stages-never-activates.md).
   limit within about 15 minutes). A timer run that links the running suite's
   image between tries makes the next try a no-op (exit 0, no refresh); the
   feature then merges at the next boot. The limit is a fixed window from the
-  first start: runs that each hang to `TimeoutStartSec=2h` fit only 3 starts
-  in it, so systemd keeps retrying about every 2h05m until a run succeeds or
-  the host shuts down (ADR-0022 consequences).
+  first start, so it bounds hung runs only when the window is longer than
+  `StartLimitBurst` × (`TimeoutStartSec` + `RestartSec`) = 4 × 2h05m = 8h20m:
+  with 12h the 5th start falls inside the window and is refused (with 6h a new
+  window would begin and the retries would never end).
+  `TestSuiteSwitchUnitRetryIsBounded` and the units contract test check that
+  inequality.
 - `updex daemon enable`: when the manager's `PackagedUnitPath` has
   `updex-update.timer`, it runs `systemctl enable` then `start` (the same as
   `enable --now`) and writes nothing; unit files already in `/etc/systemd/system`

@@ -45,6 +45,34 @@ func TestSuiteSwitchUnitText(t *testing.T) {
 	}
 }
 
+// TestSuiteSwitchUnitRetryIsBounded checks that the start limit of
+// updex-suite-switch.service bounds its retries also when every run hangs
+// until TimeoutStartSec= (ADR-0022): StartLimitIntervalSec must be longer than
+// StartLimitBurst × (TimeoutStartSec + RestartSec). It also checks the checker:
+// the 6h window, which lets hung runs restart for ever, and a burst or timeout
+// that a later change could raise past the window must fail it.
+func TestSuiteSwitchUnitRetryIsBounded(t *testing.T) {
+	text := systemd.GenerateService(SuiteSwitchUnit())
+	if err := suiteSwitchRetryBound(text); err != nil {
+		t.Fatalf("suiteSwitchRetryBound() = %v:\n%s", err, text)
+	}
+	for name, change := range map[string][2]string{
+		"window of 6h":       {"StartLimitIntervalSec=12h\n", "StartLimitIntervalSec=6h\n"},
+		"window of 8h 20min": {"StartLimitIntervalSec=12h\n", "StartLimitIntervalSec=8h 20min\n"},
+		"burst of 6":         {"StartLimitBurst=4\n", "StartLimitBurst=6\n"},
+		"timeout of 3h":      {"TimeoutStartSec=2h\n", "TimeoutStartSec=3h\n"},
+		"no window":          {"StartLimitIntervalSec=12h\n", ""},
+	} {
+		changed := strings.Replace(text, change[0], change[1], 1)
+		if changed == text {
+			t.Fatalf("%s: the unit has no %q", name, change[0])
+		}
+		if err := suiteSwitchRetryBound(changed); err == nil {
+			t.Errorf("%s: suiteSwitchRetryBound() = nil, want an error", name)
+		}
+	}
+}
+
 // TestSuiteSwitchUnitRetryText pins the exact generated text of the lines that
 // ADR-0022 adds to updex-suite-switch.service, in their place: the start
 // limit after the [Unit] directives of ADR-0021, and the restart after
@@ -52,7 +80,7 @@ func TestSuiteSwitchUnitText(t *testing.T) {
 func TestSuiteSwitchUnitRetryText(t *testing.T) {
 	text := systemd.GenerateService(SuiteSwitchUnit())
 	for _, want := range []string{
-		"DefaultDependencies=no\nConflicts=shutdown.target\nStartLimitIntervalSec=6h\nStartLimitBurst=4\n\n[Service]\n",
+		"DefaultDependencies=no\nConflicts=shutdown.target\nStartLimitIntervalSec=12h\nStartLimitBurst=4\n\n[Service]\n",
 		"TimeoutStartSec=2h\nRestart=on-failure\nRestartSec=5min\n" + systemd.RefreshSandboxDirectives[0] + "\n",
 	} {
 		if !strings.Contains(text, want) {

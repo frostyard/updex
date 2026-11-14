@@ -255,8 +255,10 @@ line; for the suite-switch unit `ExecStart=… --suite-switch`,
 `WantedBy=multi-user.target`, every `RefreshSandboxDirectives` line and no
 namespace directive, the bounded retry of
 [ADR-0022](docs/adr/0022-retry-a-failed-suite-switch-run-at-boot.md)
-(`StartLimitIntervalSec=6h`, `StartLimitBurst=4` in `[Unit]`;
-`Restart=on-failure`, `RestartSec=5min` in `[Service]`), and that boot does
+(`StartLimitIntervalSec=12h`, `StartLimitBurst=4` in `[Unit]`;
+`Restart=on-failure`, `RestartSec=5min` in `[Service]`, and the window longer
+than `StartLimitBurst` × (`TimeoutStartSec` + `RestartSec`), so hung runs stop
+too), and that boot does
 not wait for it: no `Before=` on a boot target, no `Requires=`-type
 dependency, only `WantedBy=`, and the timer units do not name it), pins the
 `.goreleaser.yaml` hook order, the 3 `nfpms.contents` destinations and the
@@ -440,7 +442,7 @@ binary needs it on the host. The unit tests do not run it.
   next boot.
   It refuses names and `--no-refresh`, and under systemd a busy lock is an
   error for it, not a skip: `updex-suite-switch.service` then restarts after
-  5 minutes, at most 3 times in 6 hours (ADR-0022), and boot never waits for it
+  5 minutes, at most 3 times in 12 hours (ADR-0022), and boot never waits for it
 - `components` — list discovered systemd-sysext components (refuses
   `-C`/`--definitions`: a definitions override is 1 flat directory with no
   components)

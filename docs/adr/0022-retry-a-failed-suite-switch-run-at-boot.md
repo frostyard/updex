@@ -31,7 +31,7 @@ feature comes back only at the next boot. Boot must never wait for the unit
 `updex.SuiteSwitchUnit()` adds 4 lines, and the unit keeps every other line of
 ADR-0021:
 
-- `[Unit]` `StartLimitIntervalSec=6h` and `StartLimitBurst=4`: 1 start and at
+- `[Unit]` `StartLimitIntervalSec=12h` and `StartLimitBurst=4`: 1 start and at
   most 3 retries in the window. Then systemd marks the unit failed with the
   result `start-limit-hit` and starts it no more until the next boot (or
   `systemctl reset-failed`).
@@ -65,14 +65,19 @@ sandbox. `updex-update.timer` and `updex-update.service` do not change.
   try finds no link to another suite and exits 0 without a refresh; the
   feature then merges at the next boot, as ADR-0021 states for a timer run
   that comes first.
-- The start limit counts starts in a fixed window that begins at the first
-  start. A failed run that takes almost as long as `TimeoutStartSec=2h` (a
-  hang) lets at most 3 starts into a window (0, about 2h05m, about 4h10m),
-  so a new window begins and systemd keeps a retry about every 2h05m until a
-  run succeeds or the host shuts down. The start limit does not bound that
-  case; `TimeoutStartSec=2h` bounds each run, so at most 1 run is active and
-  the runs come about as often as the timer's. A shorter timeout or a longer
-  window would bound it too.
+- The bound holds also when every run hangs until `TimeoutStartSec=2h`. The
+  start limit counts starts in a fixed window that begins at the first start.
+  Hung runs start at 0, 2h05m, 4h10m and 6h15m; the 4th run ends at 8h15m,
+  and the 5th start comes at 8h20m = 4 × (2h + 5min). That is inside the 12h
+  window, so systemd refuses it and the unit is failed with
+  `start-limit-hit`. The rule is: `StartLimitIntervalSec` must be longer than
+  `StartLimitBurst` × (`TimeoutStartSec` + `RestartSec`). A 6h window breaks
+  it: only 3 hung starts fit in it, a new window begins at 6h15m, and the
+  retries never end. 12h leaves 3h40m of margin.
+  `TestSuiteSwitchUnitRetryIsBounded` and the units contract test check the
+  rule, so a later change to 1 of the 4 values cannot break it unnoticed.
+- In the worst case (every run hangs) the unit tries for about 8h20m after
+  boot, 1 run at a time; the timer runs as usual in that time.
 - `journalctl -u updex-suite-switch.service` shows each try; `systemctl
   status` shows `activating (auto-restart)` between tries and `failed` with
   `start-limit-hit` after the last one.
