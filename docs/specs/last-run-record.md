@@ -127,7 +127,8 @@ Path: `RuntimePaths.LastRunPath`, default `updex.DefaultLastRunPath`
 - A run that is not a dry run writes the record when it ends, with a temp
   file in the same directory plus rename, mode `0644`. The parent directory is
   created with mode `0755` when missing; both modes are set explicitly, so
-  neither depends on the process umask. Each run writes the record at most
+  neither depends on the process umask (a directory created in a parent that
+  another user can write, without the sticky bit, keeps the umask's mode). Each run writes the record at most
   once.
 - A run that got the operation lock writes its record **before** it releases
   the lock. So a later run, which can start only after the release, always

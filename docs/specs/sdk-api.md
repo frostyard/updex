@@ -211,7 +211,9 @@ once, changes nothing, and returns an error that wraps `ErrBusy`
 `EnableFeature` and `DisableFeature` return a `FeatureActionResult` whose
 `Error` is set. The lock file is created with mode 0600 and its parent
 directory with mode 0755 when missing, both set explicitly, so neither mode
-depends on the process umask. The path is checked with `os.Lstat`
+depends on the process umask (a directory created in a parent that another
+user can write, without the sticky bit, keeps the umask's mode instead: the
+chmod there could reach a directory swapped in by that user). The path is checked with `os.Lstat`
 and opened with `O_NOFOLLOW`: a symlink, a directory or any other non-regular
 file is refused with an error that is not `ErrBusy`. The kernel releases the
 lock when the process exits. The CLI maps `ErrBusy` to exit status 0 with one

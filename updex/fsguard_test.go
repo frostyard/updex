@@ -3,6 +3,7 @@ package updex
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/frostyard/updex/v2/internal/testutil"
@@ -113,6 +114,71 @@ func TestMkdirAllModeIgnoresTheProcessUmask(t *testing.T) {
 			t.Errorf("directory inside the moved ancestor %s = %v, %v; want a 0755 directory", filepath.Join(moved, "private"), info, err)
 		}
 	})
+
+	// Unix has no atomic mkdir-and-open: in a parent other users can write,
+	// the entry can be swapped between mkdirat and openat, so the chmod is
+	// skipped and the directory keeps the umask-applied mode.
+	t.Run("a swapped directory in a parent other users can write is not chmodded", func(t *testing.T) {
+		testutil.Umask(t, 0o077)
+		base := t.TempDir()
+		shared := filepath.Join(base, "shared")
+		if err := os.Mkdir(shared, 0o777); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(shared, 0o777); err != nil {
+			t.Fatal(err)
+		}
+		private := filepath.Join(base, "private")
+		if err := os.Mkdir(private, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(private, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		gone := filepath.Join(base, "gone")
+		swapped := filepath.Join(shared, "new")
+
+		mkdirAllModeBeforeOpen = func(path string) {
+			if path != swapped {
+				return
+			}
+			if err := os.Rename(swapped, gone); err != nil {
+				t.Fatalf("rename %s: %v", swapped, err)
+			}
+			if err := os.Rename(private, swapped); err != nil {
+				t.Fatalf("rename %s: %v", private, err)
+			}
+		}
+		t.Cleanup(func() { mkdirAllModeBeforeOpen = nil })
+
+		if err := mkdirAllMode(swapped, 0o755); err != nil {
+			t.Fatalf("mkdirAllMode: %v", err)
+		}
+		if info, err := os.Lstat(swapped); err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+			t.Errorf("swapped-in directory %s = %v, %v; want its own mode 0700 unchanged", swapped, info, err)
+		}
+	})
+
+	// The sticky bit makes the parent trusted again: other users cannot
+	// rename an entry they do not own there.
+	t.Run("a parent with the sticky bit is trusted", func(t *testing.T) {
+		testutil.Umask(t, 0o077)
+		base := t.TempDir()
+		shared := filepath.Join(base, "shared")
+		if err := os.Mkdir(shared, 0o777); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(shared, os.ModeSticky|0o777); err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Join(shared, "new")
+		if err := mkdirAllMode(dir, 0o755); err != nil {
+			t.Fatalf("mkdirAllMode: %v", err)
+		}
+		if info, err := os.Lstat(dir); err != nil || !info.IsDir() || info.Mode().Perm() != 0o755 {
+			t.Errorf("%s = %v, %v; want a 0755 directory", dir, info, err)
+		}
+	})
 }
 
 func TestWriteManagedFileReplacesSymlinkAtManagedPath(t *testing.T) {
@@ -198,5 +264,44 @@ func assertRegularFile(t *testing.T, path, content string, mode os.FileMode) {
 	}
 	if string(data) != content {
 		t.Errorf("%s contents = %q, want %q", path, data, content)
+	}
+}
+
+// trustedParent trusts a directory owned by the test's user only when group
+// and others cannot write it, or when the sticky bit keeps them from renaming
+// an entry they do not own.
+func TestTrustedParent(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mode os.FileMode
+		want bool
+	}{
+		{name: "0755", mode: 0o755, want: true},
+		{name: "0700", mode: 0o700, want: true},
+		{name: "0777", mode: 0o777, want: false},
+		{name: "1777 sticky", mode: os.ModeSticky | 0o777, want: true},
+		{name: "0775", mode: 0o775, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "parent")
+			if err := os.Mkdir(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(dir, tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			fd, err := syscall.Open(dir, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_CLOEXEC, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = syscall.Close(fd) }()
+			got, err := trustedParent(fd)
+			if err != nil {
+				t.Fatalf("trustedParent: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("trustedParent(%v) = %t, want %t", tc.mode, got, tc.want)
+			}
+		})
 	}
 }

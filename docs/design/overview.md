@@ -1007,7 +1007,9 @@ from its start until it returns (`acquireLock` in `updex/lock.go`, through
 When the lock is taken, the operation changes nothing and returns an error
 wrapping `updex.ErrBusy` (`another updex operation is running`); updex never
 waits. `acquireLock` creates the parent directory (0755) and the file (0600),
-both set explicitly so they do not depend on the process umask. It
+both set explicitly so they do not depend on the process umask
+(`mkdirAllMode` in `updex/fsguard.go`: `mkdirat`/`openat`/`fchmod` through
+directory descriptors, and no chmod in a parent another user can write). It
 `Lstat`s both first, refuses a symlink or non-regular file, and opens with
 `O_NOFOLLOW` (ADR-0005). The kernel drops the lock when the process exits, so
 there is no stale lock, and `/run` is cleared at boot. The CLI turns
