@@ -3,5 +3,5 @@
   "scope": "cmd/updex/features_run.go runFeaturesUpdate unreachable skip",
   "correction": "The ADR-0018 unreachable-source skip (exit 0 under systemd) does not apply to a --suite-switch run: exit 0 stops Restart=on-failure of updex-suite-switch.service, and a network that is not up yet is a retry case of ADR-0022, so the run returns the error in text and --json. Guard: TestRunFeaturesUpdate_SuiteSwitchUnreachableUnderSystemdFails, TestRunFeaturesUpdate_SuiteSwitchUnreachableUnderSystemdJSONFails.",
   "evidence": "frostyard/updex#519 cross-review (openai/gpt-6.1-sol) of head 3f82f77, finding 1 (cmd/updex/features_run.go:320)",
-  "promoted_to": ""
+  "promoted_to": "cmd/updex/features_suite_switch_test.go TestRunFeaturesUpdate_SuiteSwitchUnreachableUnderSystemdFails, TestRunFeaturesUpdate_SuiteSwitchUnreachableUnderSystemdJSONFails"
 }
