@@ -13,7 +13,7 @@ tool. Use the CLI to manage extensions, or import
 
 **Status:** stable. The tested host is Debian Trixie, and the v2 series gets the fixes that `SECURITY.md` names.
 
-**Documentation:** [docs/README.md](docs/README.md), with the [CLI reference](docs/specs/cli-reference.md) for every command, flag and message.
+**Documentation:** the [user guide on frostyard.org](https://frostyard.org/docs/tools/updex/); for maintainers, [docs/README.md](docs/README.md), with the [CLI reference](docs/specs/cli-reference.md) for every command, flag and message.
 
 ## What it does
 
