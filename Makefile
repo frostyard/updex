@@ -22,11 +22,15 @@ GOLANGCI_LINT_VERSION := $(strip $(shell sed -n 's/^golangci-lint = "\(.*\)"/\1/
 # line; override SVU to point the check at another binary.
 SVU_VERSION := $(strip $(shell sed -n 's/^svu = "\(.*\)"/\1/p' mise.toml))
 SVU ?= svu
-# The Go release this module is built with, from go.mod's toolchain line —
-# the only Go pin (mise reads the same line). golangci-lint must be built
-# with a Go at least this new, or its embedded gofmt and typechecker disagree
-# with the toolchain.
-GO_TOOLCHAIN := $(strip $(shell sed -n 's/^toolchain go\(.*\)/\1/p' go.mod))
+# The Go release this module is built with, from go.mod's `go` line — the
+# only Go pin (core ADR-0043; actions/setup-go, mise and Snowcat workers read
+# the same line, and go.mod has no toolchain line). golangci-lint must be
+# built with a Go of at least this language version (MAJOR.MINOR), or its
+# embedded gofmt and typechecker disagree with the toolchain; a patch release
+# changes neither, so the patch is not compared. An empty GO_LANGUAGE (no
+# readable `go` line) fails lint-version-check.
+GO_VERSION := $(strip $(shell sed -n 's/^go \([0-9][0-9.]*\)[[:space:]]*$$/\1/p' go.mod))
+GO_LANGUAGE := $(strip $(shell printf '%s\n' "$(GO_VERSION)" | grep -Ex '[0-9]+\.[0-9]+(\.[0-9]+)?' | cut -d. -f1,2))
 GOFILES := $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 
 all: fmt build
@@ -59,9 +63,10 @@ lint:
 		exit 1; \
 	fi
 
-## lint-version-check: Fail unless the installed golangci-lint is the mise.toml pin and was built with a Go no older than go.mod's toolchain
+## lint-version-check: Fail unless the installed golangci-lint is the mise.toml pin and was built with a Go minor no older than go.mod's go line
 lint-version-check:
 	@test -n "$(GOLANGCI_LINT_VERSION)" || { echo "mise.toml pins no golangci-lint"; exit 1; }
+	@test -n "$(GO_LANGUAGE)" || { echo "go.mod has no readable go line (go 1.MINOR.PATCH, the only Go pin; core ADR-0043)"; exit 1; }
 	@installed="$$(golangci-lint version --short 2>/dev/null)" || { \
 		echo "golangci-lint $(GOLANGCI_LINT_VERSION) is required (not installed; run: mise install)"; exit 1; }; \
 	if [ "$$installed" != "$(GOLANGCI_LINT_VERSION)" ]; then \
@@ -69,8 +74,9 @@ lint-version-check:
 		exit 1; \
 	fi; \
 	built="$$(golangci-lint version 2>/dev/null | sed -n 's/.*built with go\([0-9.]*\).*/\1/p')"; \
-	if [ -n "$$built" ] && [ "$$(printf '%s\n%s\n' "$(GO_TOOLCHAIN)" "$$built" | sort -V | head -1)" != "$(GO_TOOLCHAIN)" ]; then \
-		echo "golangci-lint $(GOLANGCI_LINT_VERSION) was built with go$$built, older than go.mod's toolchain go$(GO_TOOLCHAIN): bump golangci-lint first (core ADR-0043)"; \
+	builtlang="$$(printf '%s\n' "$$built" | cut -d. -f1,2)"; \
+	if [ -n "$$built" ] && [ "$$(printf '%s\n%s\n' "$(GO_LANGUAGE)" "$$builtlang" | sort -V | head -1)" != "$(GO_LANGUAGE)" ]; then \
+		echo "golangci-lint $(GOLANGCI_LINT_VERSION) was built with go$$built, older than go.mod's go$(GO_LANGUAGE): bump golangci-lint first (core ADR-0043)"; \
 		exit 1; \
 	fi
 

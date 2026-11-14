@@ -23,7 +23,7 @@ Apply the machine-readable controls in
    - **Error style** — lowercase, no trailing punctuation, wrapped with
      `fmt.Errorf("context: %w", err)`; no credentials or credential-bearing
      URLs in messages.
-   - **Go 1.26 idioms** — `any`, `slices`/`maps`/`cmp`, `t.Context()`,
+   - **Go 1.27 idioms** — `any`, `slices`/`maps`/`cmp`, `t.Context()`,
      `strings.SplitSeq`, `wg.Go()`, `omitzero`.
    - **Security** — SHA256 and GPG verification never bypassed; names and
      paths validated; managed paths checked with `os.Lstat`; multi-file

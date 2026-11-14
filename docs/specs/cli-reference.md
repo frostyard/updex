@@ -47,7 +47,7 @@ A host with a compressed EROFS sysext also needs `erofs-utils >= 1.8.5`; see
 
 ### Build from source
 
-With [Go 1.26.11](https://go.dev/doc/install) and `make`, run `make build` to
+With [Go 1.27.4](https://go.dev/doc/install) and `make`, run `make build` to
 create `build/updex`, or `make install` to put the binary in `GOPATH/bin`.
 Building and unit testing do not require systemd. See
 [CONTRIBUTING.md](../../CONTRIBUTING.md) for the development workflow and the

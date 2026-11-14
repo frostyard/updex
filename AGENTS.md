@@ -40,9 +40,9 @@ repo-specific guidance belongs in this file or `docs/`:
 
 ### Prerequisites
 
-- **Go 1.26.11** (`go.mod`'s `toolchain go1.26.11` line is the only Go build
-  pin; CI, `mise`, and Snowcat workers all read it — the module's minimum is
-  `go 1.26.6`)
+- **Go 1.27.4** (`go.mod`'s `go 1.27.4` line is the only Go pin; CI's
+  `actions/setup-go`, `mise`, and Snowcat workers all read it, and `go.mod`
+  has no `toolchain` line — baseline row B11, core ADR-0043)
 - `make`
 - Optional for the end-to-end compressed-image test:
   [`erofs-utils`](https://git.kernel.org/pub/scm/linux/kernel/git/xiang/erofs-utils.git)
@@ -99,8 +99,10 @@ the `docs-gate` CI job runs, so it needs Node.js too), non-E2E unit tests with
 coverage, the separate black-box E2E suite, the race tests, and Linux
 amd64/arm64 builds. It requires `golangci-lint` and node. The lint
 step first runs `make lint-version-check`, which fails unless the installed
-`golangci-lint` matches the pin in `mise.toml` (currently 2.13.1) and was
-built with a Go no older than `go.mod`'s toolchain — the CI Lint job installs
+`golangci-lint` matches the pin in `mise.toml` (currently 2.15.0) and was
+built with a Go minor no older than `go.mod`'s `go` line (MAJOR.MINOR only: a
+patch release changes neither gofmt nor the typechecker; a `go.mod` without a
+readable `go` line fails the check) — the CI Lint job installs
 the same `mise.lock`-verified release through `jdx/mise-action`, so `mise.toml`
 is the single place to bump it and local and CI lint results cannot drift
 (`make lint` now fails, rather than warns, on any mismatch or missing pin).
@@ -396,7 +398,7 @@ updex/
 
 ### Tech stack and dependencies
 
-Go 1.26.6; Cobra with [clix](https://github.com/frostyard/clix) for unified
+Go 1.27.4; Cobra with [clix](https://github.com/frostyard/clix) for unified
 CLI functionality; INI configuration; xz/gzip/zstd decompression; GPG
 verification; semantic-version comparison. Prefer the standard library — only
 add a dependency when it is genuinely necessary, and run `make tidy`
@@ -1057,7 +1059,7 @@ Key design points:
 
 ## Go Version
 
-Go 1.26. Use modern idioms: `any`, `slices`/`maps`/`cmp` packages, `t.Context()`, `slices.SortFunc`, `strings.SplitSeq`, `omitzero` for slice/map/struct JSON tags, `wg.Go()`.
+Go 1.27. Use modern idioms: `any`, `slices`/`maps`/`cmp` packages, `t.Context()`, `slices.SortFunc`, `strings.SplitSeq`, `omitzero` for slice/map/struct JSON tags, `wg.Go()`.
 
 ## Testing
 
@@ -1178,7 +1180,7 @@ maintainer at [bketelsen@gmail.com](mailto:bketelsen@gmail.com) as a fallback.
   verification for a transfer that enables it. See the
   [transfer configuration reference](docs/specs/config-reference.md#transfer-section) for the
   operator-facing reference.
-- **Build issues:** `make build` failing → check `go version` is 1.26.6+;
+- **Build issues:** `make build` failing → check `go version` is 1.27.4+;
   dependency download failures → `make tidy`; a missing `golangci-lint`
   fails `make lint`, `make verify`, and `make ci`; `make lint`/`make ci` also
   fail with `expected golangci-lint <pinned>, found <installed>` when the
