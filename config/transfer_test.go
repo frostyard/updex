@@ -1091,7 +1091,7 @@ func TestSpecifierErrorEmptyValue(t *testing.T) {
 			target:    "foo_@v.raw",
 		},
 		{
-			name:      "ProtectVersion is only a warning",
+			name:      "ProtectVersion with an empty specifier is recorded and the load succeeds",
 			osRelease: "ID=debian\n",
 			source:    "foo_@v.raw",
 			target:    "foo_@v.raw",

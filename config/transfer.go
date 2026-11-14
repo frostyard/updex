@@ -36,10 +36,12 @@ type Transfer struct {
 	SpecifierError error
 
 	// ProtectVersionError is set when a specifier in ProtectVersion= expanded
-	// to an empty string. The expanded value stays in effect
-	// (TransferSection.ProtectVersion: "1%w" with %w empty protects "1");
-	// only an empty expanded value protects nothing. It is not an error of
-	// the transfer: the SDK reports it as a warning.
+	// to an empty string (TransferSection.ProtectVersion keeps the literal
+	// part: "1%w" with %w empty is "1"). The load does not fail, but every
+	// vacuum of the transfer (sysext.VacuumWith, PlanVacuumWith and their
+	// wrappers) returns an error that wraps it and removes nothing, because
+	// the version it was meant to protect is unknown. The update itself is
+	// not affected.
 	ProtectVersionError error
 }
 

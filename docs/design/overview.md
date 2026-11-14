@@ -86,7 +86,8 @@ version/                        Pattern matching (@v placeholder) + version comp
 sysext/                         systemd-sysext runner, extension symlinks,
                                 installed/active version discovery, vacuum planning
                                 (VacuumWith / PlanVacuumWith: keeps linked, merged,
-                                ProtectVersion, newest InstancesMax);
+                                ProtectVersion, newest InstancesMax; refuses a
+                                ProtectVersion= with an empty specifier);
                                 `DefaultRunner.Refresh` applies merged sysusers.d
                                 and tmpfiles.d in the sequence chosen by systemd
                                 version (ADR-0019)
@@ -334,7 +335,7 @@ cleartext.
 
 ### Systemd specifiers
 
-Transfer file values support systemd-style `%` specifiers. See [Configuration Reference](../specs/config-reference.md#systemd-specifiers) for the full list. A specifier that expands to an empty string in a `MatchPattern` (for example `%w` without `VERSION_ID`) is recorded as `config.Transfer.SpecifierError` (class `config`): the load succeeds, every version lookup and the transfer status report it, and teardown and the vacuum go on (#511).
+Transfer file values support systemd-style `%` specifiers. See [Configuration Reference](../specs/config-reference.md#systemd-specifiers) for the full list. A specifier that expands to an empty string in a `MatchPattern` (for example `%w` without `VERSION_ID`) is recorded as `config.Transfer.SpecifierError` (class `config`): the load succeeds, every version lookup and the transfer status report it, and teardown and the vacuum go on (#511). The same in `ProtectVersion=` is `config.Transfer.ProtectVersionError`: the load succeeds, but the vacuum of that transfer deletes nothing and fails with `…; nothing was removed` (see "Retention (vacuum)").
 
 ## Catalogs (`catalog/`, `updex/catalog.go`)
 
@@ -825,7 +826,18 @@ keeps up to 3 images per transfer. A dangling link protects nothing. The
 protected set is read before anything is deleted; a failure to read the link
 or the merged state fails the vacuum with every image still on disk, and
 `installTransfers` warns (`vacuum failed for <component>: …`) instead of
-guessing. The package-level `Vacuum`, `VacuumAt`, `VacuumWithDetails`,
+guessing. A transfer whose `ProtectVersion=` has an empty specifier
+(`config.Transfer.ProtectVersionError`, for example `%w` without
+`VERSION_ID`) is not vacuumed at all: `planVacuum`, which every vacuum and
+plan entry point (also the compatibility wrappers) passes, returns an error
+that wraps it and `sysext.ErrProtectVersionEmptySpecifier` (class `config`,
+text `…; nothing was removed`) before it reads the staging directory. The
+literal part of the value (`1%w` is `1`) is not trusted, because the version
+it was meant to protect is unknown. The update is unchanged: the error goes
+through the same `vacuum failed for <component>: …` warning, and `Features`
+warns that the vacuum of that transfer does not run. `RemoveAllVersionsAt`
+(`features disable --now`) removes every version on purpose and never reads
+`ProtectVersion=`, so it is not affected. The package-level `Vacuum`, `VacuumAt`, `VacuumWithDetails`,
 `PlanVacuumAfterInstall` and `PlanVacuumAfterInstallAt` remain compatibility
 wrappers that do not know the link or the hierarchies.
 
@@ -853,7 +865,12 @@ is an image of the transfer, the merged image could be any of them. Another
 entry never resolves it, even one that matches the pattern
 (`foo_bar_9.0_14_x86-64` matches `foo_@v_14_x86-64.raw`). Then the vacuum keeps every other-suite image and sets
 `VacuumReport.OtherSuiteMergedUnknown`, and `installTransfers` prints
-`Kept every other-suite image of <component>: …`. The running suite's rule
+`Kept every other-suite image of <component>: …`. This is the accepted design
+(#515): on systemd older than 258 the metadata names only the extension, so
+while a feature is merged its other-suite images stay (fail closed), and
+`features disable --now --force` still removes them. A Debian forky host
+(systemd 262) gets the full cleanup; a Debian trixie host (systemd 257) keeps
+the other-suite images while the feature is merged. The running suite's rule
 does not change. `VacuumWithReport`/`PlanVacuumWithReport` return the
 other-suite lists (`VacuumReport`); `installTransfers` prints each removal and
 the dry run fills `UpdateResult.RemovedOtherSuiteImages`.

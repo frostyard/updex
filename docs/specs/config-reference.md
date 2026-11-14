@@ -254,13 +254,26 @@ Target MatchPattern "foo_@v_%w_%a.raw": specifier %w is empty: os-release has no
 The load itself does not fail, so a host can still list, disable and vacuum.
 `features update`, `check` and `enable --now` fail for that transfer with the
 message (the last-run record gets the error class `config`), and
-`features list` shows it as the transfer's error. An empty specifier in
-`ProtectVersion=` is only a warning, printed by `features list` and before
-the vacuum. It names the empty specifier and the value it expands to: the
-literal part stays, so `ProtectVersion=1%w` protects version `1`
-(`… ; it expands to "1" and protects that version`), and only a value that
-expands to nothing protects no version (`… ; it expands to an empty value and
-protects no version`). Fix the host's os-release (or the transfer), not updex.
+`features list` shows it as the transfer's error.
+
+**An empty specifier in `ProtectVersion=` stops the vacuum of that
+transfer.** The load records it (`config.Transfer.ProtectVersionError`, class
+`config`) and does not fail; the expanded value keeps its literal part
+(`ProtectVersion=1%w` expands to `1`), but updex does not trust it: the
+version the value was meant to protect is unknown. Every vacuum of the
+transfer (and every vacuum plan, such as a dry run) returns an error and
+deletes nothing, also beyond `InstancesMax`. The update itself (download and
+link) is not changed and does not fail because of it: like any vacuum
+failure it is a warning:
+
+```text
+vacuum failed for foo: ProtectVersion "1%w": specifier %w is empty: os-release has no VERSION_ID; nothing was removed
+```
+
+`features list` warns too, and says that the vacuum of that transfer does not
+run. `features disable --now` is not affected: it removes every version of
+the transfer on purpose, and `ProtectVersion=` never applies to it. Fix the
+host's os-release (or the transfer), not updex.
 
 ### `%w` and images of other suites
 
@@ -455,7 +468,7 @@ Version candidates extracted from the manifest are deduplicated in a set and ret
 
 ## Retention and Active Versions
 
-`InstancesMax` controls how many installed versions are normally retained. The vacuum that `updex features update` (and `features enable --now`) runs after a feature's links succeeded always keeps, besides the newest `InstancesMax` versions: the version that the sysext link `/var/lib/extensions/<component>.<ext>` names (linked), the version merged now (read from the `.systemd-sysext` metadata of the merged hierarchies, ADR-0015), `ProtectVersion`, the version a rollback record rejected for the transfer while the record exists (`/var/lib/updex/rollback/<feature>`, see `updex features rollback`), and a legacy active version pointed to by `CurrentSymlink`. They are kept in addition to the newest `InstancesMax` versions (one that is among the newest counts as one of them), so a host that has linked a new revision but still runs an older one keeps up to `InstancesMax` + 1 images per transfer until its next reboot. If updex cannot read the link or the merged state, it deletes nothing and warns. If `InstancesMax <= 0`, vacuum falls back to the default of `2`.
+`InstancesMax` controls how many installed versions are normally retained. The vacuum that `updex features update` (and `features enable --now`) runs after a feature's links succeeded always keeps, besides the newest `InstancesMax` versions: the version that the sysext link `/var/lib/extensions/<component>.<ext>` names (linked), the version merged now (read from the `.systemd-sysext` metadata of the merged hierarchies, ADR-0015), `ProtectVersion`, the version a rollback record rejected for the transfer while the record exists (`/var/lib/updex/rollback/<feature>`, see `updex features rollback`), and a legacy active version pointed to by `CurrentSymlink`. They are kept in addition to the newest `InstancesMax` versions (one that is among the newest counts as one of them), so a host that has linked a new revision but still runs an older one keeps up to `InstancesMax` + 1 images per transfer until its next reboot. If updex cannot read the link or the merged state, it deletes nothing and warns. If `ProtectVersion=` has an empty specifier (see [Systemd Specifiers](#systemd-specifiers)), the vacuum of that transfer deletes nothing and warns (`…; nothing was removed`). `ProtectVersion=` does not apply to `features disable --now`, which removes every version on purpose. If `InstancesMax <= 0`, vacuum falls back to the default of `2`.
 
 Other-suite images (a target pattern with `%w`, see
 [`%w` and images of other suites](#w-and-images-of-other-suites)) do not count
@@ -473,6 +486,14 @@ file of the transfer (systemd older than 258 writes only the extension name to
 extension whose name happens to match the pattern does not change that. `features disable --now` removes the images of every
 suite (a match only by the suite wildcard is removed only when it is a regular
 file), and requires `--force` when an image of any suite is active.
+
+This rule for systemd older than 258 is the accepted design, not a gap: the
+merged-state metadata there names only the extension, so while the feature is
+merged the vacuum cannot tell which image is in use and keeps every image of
+the other suites (`VacuumReport.OtherSuiteMergedUnknown`; it fails closed).
+`features disable --now --force` still removes them. A Debian forky host
+(systemd 262) gets the full cleanup; a Debian trixie host (systemd 257) keeps
+the other-suite images while the feature is merged.
 
 Dry-run updates call `sysext.PlanVacuumWithReport` (`PlanVacuumWith` plus the other-suite images) with the would-install version as the active-version override, which lets the SDK report `RemovedVersions` and `RemovedOtherSuiteImages` without touching disk. Real installs call `sysext.VacuumWith`, so the update result currently does not include removed-version details for non-dry-run runs.
 
