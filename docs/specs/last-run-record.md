@@ -174,7 +174,10 @@ Path: `RuntimePaths.LastRunPath`, default `updex.DefaultLastRunPath`
   refused. A run whose domain cannot be loaded is a failed run of class
   `config` with `selected` `true` and no feature, as for any update. A run
   that skips its refresh because something else is pending (or the host's
-  pending state is unknown) has `refresh` `skipped`.
+  pending state is unknown) has `refresh` `skipped`. Each retry of
+  `updex-suite-switch.service`
+  ([ADR-0022](../adr/0022-retry-a-failed-suite-switch-run-at-boot.md)) is a
+  new run under these same rules.
 - Every write holds an exclusive `flock` on the parent directory while it
   reads the previous record and renames the new one. It takes the lock with
   `LOCK_NB` and retries every 10 ms for up to 2 s, then skips the write.

@@ -138,8 +138,9 @@ missing until the timer links the forky image and the host reboots.
   that cannot be loaded are an error, and the last-run record says so (class
   `config`).
 - It takes no feature name and cannot be combined with `--no-refresh`.
-  Under systemd, a busy lock fails the run (no skip): there is no later run on
-  this boot.
+  Under systemd, a busy lock fails the run (no skip): no timer run on this
+  boot refreshes, so `updex-suite-switch.service` fails and retries
+  ([ADR-0022](../adr/0022-retry-a-failed-suite-switch-run-at-boot.md)).
 - A transfer without `%w` is never selected.
 
 The packaged `updex-suite-switch.service` runs it at every boot (see
@@ -529,7 +530,14 @@ disables `updex-suite-switch.service`.
   on that boot. It does not delay `multi-user.target`
   (`DefaultDependencies=no`), has no AC-power condition, and has only the
   sandbox lines that a `systemd-sysext refresh` can run under (no private
-  mount namespace). `updex daemon status` shows `Suite switch at boot:` when
+  mount namespace). A failed run (no image of the new suite yet, no usable
+  network, a busy lock) runs again 5 minutes later (`Restart=on-failure`,
+  `RestartSec=5min`), at most 3 times in 6 hours (`StartLimitIntervalSec=6h`,
+  `StartLimitBurst=4`); after that the unit stays failed until the next boot
+  or `systemctl reset-failed updex-suite-switch.service`. Boot does not wait
+  for these retries, and nothing depends on the unit's success
+  ([ADR-0022](../adr/0022-retry-a-failed-suite-switch-run-at-boot.md)).
+  `updex daemon status` shows `Suite switch at boot:` when
   a file of the unit exists; the log is
   `journalctl -u updex-suite-switch.service`.
 

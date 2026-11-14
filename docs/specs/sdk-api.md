@@ -327,7 +327,11 @@ disable, removal and reload failures are contextualized and joined;
 a `oneshot` that runs `/usr/bin/updex features update --suite-switch`, with
 `Wants=`/`After=network-online.target`, `Before=updex-update.service`,
 `DefaultDependencies=no` (the basic dependencies written out),
-`TimeoutStartSec=2h`, `systemd.RefreshSandboxDirectives` (no mount namespace,
+`StartLimitIntervalSec=6h` and `StartLimitBurst=4` in `[Unit]`,
+`TimeoutStartSec=2h`, `Restart=on-failure` and `RestartSec=5min`
+([ADR-0022](../adr/0022-retry-a-failed-suite-switch-run-at-boot.md): a failed
+run restarts at most 3 times in 6 hours, and boot does not wait),
+`systemd.RefreshSandboxDirectives` (no mount namespace,
 because it refreshes) and `[Install] WantedBy=multi-user.target`
 (`systemd.ServiceConfig` fields `Before`, `UnitDirectives`, `Directives`,
 `WantedBy`). The release build writes it beside the other units.

@@ -1200,6 +1200,27 @@ which supersedes [ADR-0007](../adr/0007-daemon-stages-never-activates.md).
   make the run keep its links and report `RefreshSkipped` instead. `systemd.ServiceConfig` gained `Before`, `UnitDirectives`,
   `Directives` and `WantedBy`, and `systemd.Manager` gained `InstallService`
   for a unit that no timer activates.
+- **Bounded retry of the suite-switch run** ([ADR-0022](../adr/0022-retry-a-failed-suite-switch-run-at-boot.md)).
+  A failed run (no image of the new suite yet, no usable network, a busy
+  lock, a timeout) restarts: `Restart=on-failure` and `RestartSec=5min` in
+  `[Service]` (in `Directives`, before `RefreshSandboxDirectives`), and
+  `StartLimitIntervalSec=6h` with `StartLimitBurst=4` in `[Unit]` (in
+  `UnitDirectives`): 1 start and at most 3 retries in the window, then the
+  unit is failed with `start-limit-hit` until the next boot or
+  `systemctl reset-failed`. The generator did not change, and the timer units
+  are byte for byte the same. Boot does not wait: `DefaultDependencies=no`
+  stays, the unit is ordered before no boot target, only `WantedBy=` installs
+  it, and nothing `Requires=` it; between tries the unit is
+  `activating (auto-restart)` with no queued job. `Before=updex-update.service`
+  orders only jobs that are queued together, so a retry and a timer run can
+  overlap; the lock decides (the timer skips a busy lock under systemd, the
+  suite-switch run fails and counts 1 more start, so busy retries end at the
+  limit within about 15 minutes). A timer run that links the running suite's
+  image between tries makes the next try a no-op (exit 0, no refresh); the
+  feature then merges at the next boot. The limit is a fixed window from the
+  first start: runs that each hang to `TimeoutStartSec=2h` fit only 3 starts
+  in it, so systemd keeps retrying about every 2h05m until a run succeeds or
+  the host shuts down (ADR-0022 consequences).
 - `updex daemon enable`: when the manager's `PackagedUnitPath` has
   `updex-update.timer`, it runs `systemctl enable` then `start` (the same as
   `enable --now`) and writes nothing; unit files already in `/etc/systemd/system`

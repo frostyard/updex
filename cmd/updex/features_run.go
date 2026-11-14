@@ -323,8 +323,9 @@ func runFeaturesUpdate(cmd *cobra.Command, args []string) error {
 	// is not a failure. systemd would otherwise mark updex-update.service
 	// failed for a run that only had to wait for the next one. An operator
 	// at a shell still gets the error. A suite-switch run (ADR-0021) has no
-	// next run on this boot: the feature stays missing, so a busy lock fails
-	// updex-suite-switch.service where the operator sees it.
+	// timer run to wait for on this boot: the feature stays missing, so a
+	// busy lock fails updex-suite-switch.service, which systemd then restarts
+	// a bounded number of times (ADR-0022), and the operator sees it.
 	if errors.Is(err, updex.ErrBusy) && runningUnderSystemd() && !featureUpdateSuiteSwitch {
 		if _, werr := fmt.Fprintf(cmd.ErrOrStderr(), "updex: %v; skipping this run\n", err); werr != nil {
 			return werr

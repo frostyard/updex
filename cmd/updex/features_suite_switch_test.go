@@ -78,8 +78,9 @@ func TestRunFeaturesUpdate_SuiteSwitchNothingToDo(t *testing.T) {
 	}
 }
 
-// Under systemd, a suite-switch run that finds the lock taken fails: there is
-// no later run on this boot, so updex-suite-switch.service must show it.
+// Under systemd, a suite-switch run that finds the lock taken fails: the
+// failure makes updex-suite-switch.service restart (bounded, ADR-0022) and
+// shows it to the operator.
 func TestRunFeaturesUpdate_SuiteSwitchLockHeldUnderSystemdFails(t *testing.T) {
 	suiteSwitchFixture(t, "foo_1.0_13.raw")
 	t.Setenv("INVOCATION_ID", "0123456789abcdef0123456789abcdef")
