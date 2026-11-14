@@ -262,6 +262,27 @@ literal part stays, so `ProtectVersion=1%w` protects version `1`
 expands to nothing protects no version (`… ; it expands to an empty value and
 protects no version`). Fix the host's os-release (or the transfer), not updex.
 
+### `%w` and images of other suites
+
+A target `MatchPattern` that contains `%w` selects the images of the running
+suite: snosi names a sysext `<name>_<ver>_<VERSION_ID>_<arch>.raw.zst`, so
+`docker_@v_%w_%a.raw` matches only the trixie (`13`) images on trixie and the
+forky (`14`) images on forky. A host that switched suite with `bootc switch`
+keeps both in 1 staging directory. For each target pattern with `%w`, config
+also keeps an any-suite variant (`TargetSection.AnySuitePatterns`): every other
+specifier expanded the same way, `%w` a wildcard that matches 1 or more of
+`0-9`, `a-z`, `.`, `~` and `-` (never `_`, so the images of a component
+`docker_cli` never match `docker`). In that variant `@v` does not match `_`
+either; a Debian version never holds one. An image that an any-suite pattern
+matches and no current pattern matches is an **other-suite image**. Only the
+vacuum, `features disable --now` (see
+[Retention and active versions](#retention-and-active-versions)) and
+`features update --suite-switch` (a link to an other-suite image,
+[ADR-0021](../adr/0021-link-the-running-suites-images-at-boot-after-a-suite-switch.md))
+use them. `%%w` is a
+literal `%w`, not a suite. A transfer without `%w` in its target pattern has no
+any-suite variant and never sees an image of another suite.
+
 Expansion happens at config load time only: catalog-generated `.transfer`
 files keep `%w`/`%a` unexpanded on disk so definitions track the running OS
 release (see [ADR-0006](../adr/0006-byte-preserving-render-transfer.md)).
@@ -436,7 +457,24 @@ Version candidates extracted from the manifest are deduplicated in a set and ret
 
 `InstancesMax` controls how many installed versions are normally retained. The vacuum that `updex features update` (and `features enable --now`) runs after a feature's links succeeded always keeps, besides the newest `InstancesMax` versions: the version that the sysext link `/var/lib/extensions/<component>.<ext>` names (linked), the version merged now (read from the `.systemd-sysext` metadata of the merged hierarchies, ADR-0015), `ProtectVersion`, the version a rollback record rejected for the transfer while the record exists (`/var/lib/updex/rollback/<feature>`, see `updex features rollback`), and a legacy active version pointed to by `CurrentSymlink`. They are kept in addition to the newest `InstancesMax` versions (one that is among the newest counts as one of them), so a host that has linked a new revision but still runs an older one keeps up to `InstancesMax` + 1 images per transfer until its next reboot. If updex cannot read the link or the merged state, it deletes nothing and warns. If `InstancesMax <= 0`, vacuum falls back to the default of `2`.
 
-Dry-run updates call `sysext.PlanVacuumWith` with the would-install version as the active-version override, which lets the SDK report `RemovedVersions` without touching disk. Real installs call `sysext.VacuumWith`, so the update result currently does not include removed-version details for non-dry-run runs.
+Other-suite images (a target pattern with `%w`, see
+[`%w` and images of other suites](#w-and-images-of-other-suites)) do not count
+toward `InstancesMax`. For each other suite the vacuum keeps the newest version
+and removes the older ones, so a switch back to that suite can link that image
+without a download while the disk use stays bounded. It always keeps the
+other-suite image that the sysext link points to (compared by file name: right
+after a suite switch the link still points to the old suite's image), an image
+that the merged state records, and a legacy `CurrentSymlink` target. Only
+regular files count. It reads the link, the `CurrentSymlink` and the merged
+state before it deletes anything, and deletes nothing when it cannot read them.
+When the merged state names the extension `<component>` but gives it no image
+file of the transfer (systemd older than 258 writes only the extension name to
+`extensions`), it keeps every image of the other suites; another merged
+extension whose name happens to match the pattern does not change that. `features disable --now` removes the images of every
+suite (a match only by the suite wildcard is removed only when it is a regular
+file), and requires `--force` when an image of any suite is active.
+
+Dry-run updates call `sysext.PlanVacuumWithReport` (`PlanVacuumWith` plus the other-suite images) with the would-install version as the active-version override, which lets the SDK report `RemovedVersions` and `RemovedOtherSuiteImages` without touching disk. Real installs call `sysext.VacuumWith`, so the update result currently does not include removed-version details for non-dry-run runs.
 
 ## Remote Manifest Format
 

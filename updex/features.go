@@ -576,11 +576,12 @@ func (c *Client) disableFeature(ctx context.Context, name string, opts DisableFe
 	if willRemoveFiles && len(featureTransfers) > 0 {
 		var mergedExtensions []string
 		for _, t := range featureTransfers {
-			activeVersion, err := sysext.GetActiveVersionWith(t, sysext.ActiveStatePaths{
+			activePaths := sysext.ActiveStatePaths{
 				DefaultDir:       c.paths.sysextLinkDir,
 				RunExtensionsDir: c.paths.runExtensionsDir,
 				Hierarchies:      c.paths.sysextHierarchies,
-			})
+			}
+			activeVersion, err := sysext.GetActiveVersionWith(t, activePaths)
 			if err != nil {
 				c.warn("could not check merge state for %s: %v", t.Component, err)
 				// Fail closed: an unknown merge state still requires --force.
@@ -589,6 +590,18 @@ func (c *Client) disableFeature(ctx context.Context, name string, opts DisableFe
 			}
 			if activeVersion != "" {
 				mergedExtensions = append(mergedExtensions, fmt.Sprintf("%s (version %s)", t.Component, activeVersion))
+				continue
+			}
+			// The removal below deletes the images of every suite, so an
+			// active image of another suite needs --force too.
+			otherImage, err := sysext.ActiveOtherSuiteWith(t, activePaths)
+			if err != nil {
+				c.warn("could not check merge state for %s: %v", t.Component, err)
+				mergedExtensions = append(mergedExtensions, fmt.Sprintf("%s (merge state unknown)", t.Component))
+				continue
+			}
+			if otherImage != "" {
+				mergedExtensions = append(mergedExtensions, fmt.Sprintf("%s (image %s of another suite)", t.Component, otherImage))
 			}
 		}
 
@@ -1114,13 +1127,18 @@ func (c *Client) updateFeatures(ctx context.Context, opts UpdateFeaturesOptions,
 						// protect the version it names now.
 						paths := c.vacuumPaths(in.rejected)
 						paths.LinkDir = ""
-						removed, _, err := sysext.PlanVacuumWith(transfer, v, paths)
+						plan, err := sysext.PlanVacuumWithReport(transfer, v, paths)
 						if err != nil {
 							c.warn("failed to plan vacuum for %s: %v", transfer.Component, err)
 						}
+						removed := plan.Removed
 						result.RemovedVersions = removed
 						if len(removed) > 0 {
 							result.NextActionMessage += fmt.Sprintf("; would remove old versions: %v", removed)
+						}
+						result.RemovedOtherSuiteImages = plan.OtherSuiteRemoved
+						if len(plan.OtherSuiteRemoved) > 0 {
+							result.NextActionMessage += fmt.Sprintf("; would remove other-suite images: %v", plan.OtherSuiteRemoved)
 						}
 					}
 					c.msg("Would install version %s", v)

@@ -405,7 +405,20 @@ After the links succeeded, `features update`
 removes old images but keeps, per transfer, the linked version, the merged
 version and `ProtectVersion=` as well as the newest `InstancesMax` versions; a
 host that linked a new revision but has not rebooted keeps up to 3 images per
-transfer. See
+transfer. For a transfer that selects its suite with `%w` (os-release
+`VERSION_ID`), the images of other suites (for example the trixie images on a
+host that switched to forky) keep only the newest version of each other suite,
+so a switch back can link it without a download; the image the link points to
+and a merged image are always kept. A real run prints
+`Removed other-suite image <file> of <component>` for each one it removes; a
+dry run adds `; would remove other-suite images: [...]` to the message (JSON
+`removed_other_suite_images`). When the merged state names the sysext without
+its image file (systemd older than 258 records only the extension name), the
+merged image could be any of them, so every other-suite image stays and a real
+run prints `Kept every other-suite image of <component>: the merged state names
+it without its image file`. `features disable --now` removes the images of
+every suite, so it also needs `--force` when an image of another suite is
+active (`Extension <component> (image <file> of another suite) is active`). See
 [Retention and active versions](config-reference.md#retention-and-active-versions) for the full rule.
 
 ### One updex operation at a time

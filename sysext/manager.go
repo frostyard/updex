@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -31,6 +32,148 @@ func parseTargetPatterns(t *config.Transfer) ([]*version.Pattern, error) {
 	}
 
 	return patterns, nil
+}
+
+// parseAnySuitePatterns parses the transfer's any-suite target patterns
+// (config.TargetSection.AnySuitePatterns). It returns nil for a transfer
+// whose target patterns do not contain %w, so such a transfer never sees an
+// image of another suite. A pattern that does not parse is skipped: it
+// derives from a target pattern, which parseTargetPatterns checks.
+func parseAnySuitePatterns(t *config.Transfer) []*version.Pattern {
+	if len(t.Target.AnySuitePatterns) == 0 {
+		return nil
+	}
+	patterns, _ := version.ParseAnySuitePatterns(t.Target.AnySuitePatterns)
+	return patterns
+}
+
+// otherSuiteImage reports whether entry is a staged image of another suite:
+// a regular file that an any-suite pattern matches and no current target
+// pattern matches. It returns the version and the suite the name matched.
+func otherSuiteImage(entry fs.DirEntry, current, anySuite []*version.Pattern) (ver, suite string, ok bool) {
+	if !entry.Type().IsRegular() {
+		return "", "", false
+	}
+	return otherSuiteName(entry.Name(), current, anySuite)
+}
+
+// otherSuiteName reports whether name is the file name of an image of
+// another suite: an any-suite pattern matches it and no current target
+// pattern matches it. It returns the version and the suite the name matched.
+func otherSuiteName(name string, current, anySuite []*version.Pattern) (ver, suite string, ok bool) {
+	if len(anySuite) == 0 {
+		return "", "", false
+	}
+	if _, _, matched := version.ExtractVersionParsed(name, current); matched {
+		return "", "", false
+	}
+	return version.ExtractSuiteParsed(name, anySuite)
+}
+
+// ActiveOtherSuiteWith reports an image of another suite of the transfer that
+// is active in systemd-sysext, as GetActiveVersionWith does for the running
+// suite: the target of a legacy CurrentSymlink, an image that the merged-state
+// metadata under each hierarchy records (an origin path, or a name in the
+// older extensions list), or an image in the runtime image search directory.
+// It returns the image's file name, or "" when none is active or the
+// transfer's target pattern has no %w. RemoveAllVersionsAt removes the images
+// of every suite, so a caller that guards that removal checks both.
+//
+// It fails closed: a CurrentSymlink that cannot be inspected, metadata that
+// cannot be read and a runtime directory that cannot be listed are errors.
+func ActiveOtherSuiteWith(t *config.Transfer, p ActiveStatePaths) (string, error) {
+	anySuite := parseAnySuitePatterns(t)
+	if len(anySuite) == 0 {
+		return "", nil
+	}
+	current, err := parseTargetPatterns(t)
+	if err != nil {
+		return "", err
+	}
+	isOther := func(name string) bool {
+		_, _, ok := otherSuiteName(name, current, anySuite)
+		return ok
+	}
+
+	target, err := currentSymlinkTarget(t, p.DefaultDir)
+	if err != nil {
+		return "", err
+	}
+	if target != "" && isOther(target) {
+		return target, nil
+	}
+
+	for _, hierarchy := range p.Hierarchies {
+		stateDir := filepath.Join(hierarchy, MergedStateDirName)
+		data, err := readLimitedFile(filepath.Join(stateDir, "origin"), 1<<20)
+		switch {
+		case err == nil:
+			var origin mergedExtensionOrigin
+			if json.Unmarshal(data, &origin) == nil {
+				for _, key := range slices.Sorted(maps.Keys(origin.Extensions)) {
+					if name := filepath.Base(origin.Extensions[key].Path); origin.Extensions[key].Path != "" && isOther(name) {
+						return name, nil
+					}
+				}
+			}
+		case !errors.Is(err, fs.ErrNotExist):
+			return "", fmt.Errorf("read merged state: %w", err)
+		}
+
+		data, err = readLimitedFile(filepath.Join(stateDir, "extensions"), 64<<10)
+		switch {
+		case err == nil:
+			for line := range strings.SplitSeq(string(data), "\n") {
+				if name := strings.TrimSpace(line); name != "" && isOther(name+targetExtension(t)) {
+					return name + targetExtension(t), nil
+				}
+			}
+		case !errors.Is(err, fs.ErrNotExist):
+			return "", fmt.Errorf("read merged state: %w", err)
+		}
+	}
+
+	if p.RunExtensionsDir == "" {
+		return "", nil
+	}
+	entries, err := os.ReadDir(p.RunExtensionsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	for _, entry := range entries {
+		if isOther(entry.Name()) {
+			return entry.Name(), nil
+		}
+	}
+	return "", nil
+}
+
+// currentSymlinkTarget returns the base name of the target of the transfer's
+// legacy CurrentSymlink, or "" when the transfer has none, or the path is
+// absent or not a symlink. A path that cannot be inspected is an error, so a
+// caller that protects the target never guesses.
+func currentSymlinkTarget(t *config.Transfer, defaultDir string) (string, error) {
+	if t.Target.CurrentSymlink == "" {
+		return "", nil
+	}
+	symlinkPath := filepath.Join(targetDirAt(t, defaultDir), t.Target.CurrentSymlink)
+	info, err := os.Lstat(symlinkPath)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return "", nil
+	case err != nil:
+		return "", fmt.Errorf("inspect current symlink: %w", err)
+	case info.Mode()&os.ModeSymlink == 0:
+		return "", nil
+	}
+	target, err := os.Readlink(symlinkPath)
+	if err != nil {
+		return "", fmt.Errorf("read current symlink: %w", err)
+	}
+	return filepath.Base(target), nil
 }
 
 func targetDirAt(t *config.Transfer, defaultDir string) string {
@@ -328,6 +471,36 @@ type versionFile struct {
 	filename string
 }
 
+// otherSuiteFile is a staged image of another suite (see otherSuiteImage).
+type otherSuiteFile struct {
+	version  string
+	suite    string
+	filename string
+}
+
+// VacuumReport is what a vacuum removed and kept. Removed and Kept are the
+// versions of the running suite, as VacuumWith returns them. The OtherSuite
+// lists name the images of other suites (file names in the target
+// directory) of a transfer whose target pattern contains %w; they are empty
+// for every other transfer.
+type VacuumReport struct {
+	Removed []string
+	Kept    []string
+
+	// OtherSuiteRemoved lists the images of other suites that the vacuum
+	// removed (or, in a plan, would remove).
+	OtherSuiteRemoved []string
+	// OtherSuiteKept lists the images of other suites that the vacuum kept:
+	// the newest version of each other suite, the image that the sysext
+	// link points to, and an image that the merged state records.
+	OtherSuiteKept []string
+	// OtherSuiteMergedUnknown reports that the merged-state metadata names
+	// the component but no image file of it (older metadata with only the
+	// extension name), so the vacuum kept every image of another suite: the
+	// merged image could be any of them.
+	OtherSuiteMergedUnknown bool
+}
+
 // VacuumPaths names the places the vacuum reads to decide which staged
 // images it must keep, besides the newest InstancesMax versions and
 // ProtectVersion=. See VacuumWith.
@@ -374,6 +547,13 @@ func PlanVacuumAfterInstallAt(t *config.Transfer, activeVersion, defaultDir stri
 // dry run can plan for a download. An empty activeVersion reads the legacy
 // CurrentSymlink instead.
 func PlanVacuumWith(t *config.Transfer, activeVersion string, p VacuumPaths) (removed []string, kept []string, err error) {
+	r, err := planVacuum(t, activeVersion, false, p)
+	return r.Removed, r.Kept, err
+}
+
+// PlanVacuumWithReport is PlanVacuumWith that also reports the images of
+// other suites that VacuumWith would remove and keep.
+func PlanVacuumWithReport(t *config.Transfer, activeVersion string, p VacuumPaths) (VacuumReport, error) {
 	return planVacuum(t, activeVersion, false, p)
 }
 
@@ -413,10 +593,26 @@ func vacuumWithDetailsAt(t *config.Transfer, defaultDir string) (removed []strin
 // them. A host that has linked a new revision but still runs an older one
 // therefore keeps up to InstancesMax+1 images.
 //
+// For a transfer whose target pattern contains %w, the images of other
+// suites (config.TargetSection.AnySuitePatterns: an any-suite pattern
+// matches them, no current pattern does) follow their own rule: for each
+// other suite the newest version is kept, so a switch back to that suite can
+// link it without a download, and older ones are removed. The image that the
+// sysext link points to (compared by file name) and an image that the merged
+// state records are always kept. Only regular files count. A transfer
+// without %w has no such images.
+//
 // The vacuum never guesses: when it cannot read the link or the merged-state
 // metadata, it returns an error and deletes nothing. A dangling link protects
 // nothing, because it names no image.
 func VacuumWith(t *config.Transfer, p VacuumPaths) (removed []string, kept []string, err error) {
+	r, err := planVacuum(t, "", true, p)
+	return r.Removed, r.Kept, err
+}
+
+// VacuumWithReport is VacuumWith that also reports the images of other suites
+// that it removed and kept.
+func VacuumWithReport(t *config.Transfer, p VacuumPaths) (VacuumReport, error) {
 	return planVacuum(t, "", true, p)
 }
 
@@ -459,23 +655,153 @@ func protectedVersions(t *config.Transfer, patterns []*version.Pattern, p Vacuum
 	return protected, nil
 }
 
-func planVacuum(t *config.Transfer, activeVersionOverride string, remove bool, p VacuumPaths) (removed []string, kept []string, err error) {
+// otherSuiteProtected returns the file names of images that the vacuum must
+// keep whatever their suite: the base name the sysext link points to, the
+// target of a legacy CurrentSymlink, and the base names the merged-state
+// metadata records. Like protectedVersions it reads everything before the
+// vacuum deletes anything, and fails on a read error instead of guessing.
+//
+// keepAll reports that a hierarchy's metadata names the extension
+// t.Component (an origin key, or the bare name in the older extensions list)
+// and origin gives that key no path whose base name is an image of the
+// transfer: the merged image could be any of them, so the vacuum keeps every
+// image of another suite. Another entry never resolves it, even one that
+// matches the transfer's pattern.
+func otherSuiteProtected(t *config.Transfer, current, anySuite []*version.Pattern, p VacuumPaths) (protected map[string]bool, keepAll bool, err error) {
+	protected = make(map[string]bool)
+	isImage := func(name string) bool {
+		if _, _, ok := version.ExtractVersionParsed(name, current); ok {
+			return true
+		}
+		_, _, ok := otherSuiteName(name, current, anySuite)
+		return ok
+	}
+
+	// A legacy CurrentSymlink target is kept too, as for the running suite.
+	target, err := currentSymlinkTarget(t, p.DefaultDir)
+	if err != nil {
+		return nil, false, err
+	}
+	if target != "" {
+		protected[target] = true
+	}
+
+	if linkName := SysextLinkName(t); p.LinkDir != "" && linkName != "" {
+		linkPath := filepath.Join(p.LinkDir, linkName)
+		info, err := os.Lstat(linkPath)
+		switch {
+		case err == nil && info.Mode()&os.ModeSymlink != 0:
+			target, err := os.Readlink(linkPath)
+			if err != nil {
+				return nil, false, fmt.Errorf("read linked version: failed to read sysext link: %w", err)
+			}
+			protected[filepath.Base(target)] = true
+		case err != nil && !os.IsNotExist(err):
+			return nil, false, fmt.Errorf("read linked version: failed to stat sysext link: %w", err)
+		}
+	}
+
+	for _, hierarchy := range p.Hierarchies {
+		// named: the metadata names the extension t.Component (origin key or
+		// bare extensions entry); resolved: origin gives that same key a path
+		// whose base name is an image of the transfer. Only the entry of that
+		// extension resolves it: another entry that matches the pattern (such
+		// as foo_bar_9.0_14_x86-64 for foo_@v_14_x86-64.raw) is another
+		// extension and says nothing about which image foo merged.
+		var named, resolved bool
+		stateDir := filepath.Join(hierarchy, MergedStateDirName)
+		data, err := readLimitedFile(filepath.Join(stateDir, "origin"), 1<<20)
+		switch {
+		case err == nil:
+			var origin mergedExtensionOrigin
+			if json.Unmarshal(data, &origin) == nil {
+				for key, entry := range origin.Extensions {
+					own := t.Component != "" && key == t.Component
+					if own {
+						named = true
+					}
+					if entry.Path == "" {
+						continue
+					}
+					name := filepath.Base(entry.Path)
+					protected[name] = true
+					if own && isImage(name) {
+						resolved = true
+					}
+				}
+			}
+		case !errors.Is(err, fs.ErrNotExist):
+			return nil, false, fmt.Errorf("read merged version: read merged state: %w", err)
+		}
+
+		data, err = readLimitedFile(filepath.Join(stateDir, "extensions"), 64<<10)
+		switch {
+		case err == nil:
+			for line := range strings.SplitSeq(string(data), "\n") {
+				name := strings.TrimSpace(line)
+				if name == "" {
+					continue
+				}
+				if t.Component != "" && name == t.Component {
+					named = true
+				}
+				protected[name+targetExtension(t)] = true
+			}
+		case !errors.Is(err, fs.ErrNotExist):
+			return nil, false, fmt.Errorf("read merged version: read merged state: %w", err)
+		}
+
+		if named && !resolved {
+			keepAll = true
+		}
+	}
+
+	return protected, keepAll, nil
+}
+
+// planOtherSuites decides which images of other suites the vacuum keeps: for
+// each suite the newest version (every file of that version), and every
+// image named in protected. It returns the files to remove and to keep, each
+// in the order of files.
+func planOtherSuites(files []otherSuiteFile, protected map[string]bool, keepAll bool) (remove, keep []otherSuiteFile) {
+	if keepAll {
+		return nil, files
+	}
+	newest := make(map[string]string)
+	for _, f := range files {
+		if cur, ok := newest[f.suite]; !ok || version.Compare(f.version, cur) > 0 {
+			newest[f.suite] = f.version
+		}
+	}
+	for _, f := range files {
+		if protected[f.filename] || version.Compare(f.version, newest[f.suite]) == 0 {
+			keep = append(keep, f)
+			continue
+		}
+		remove = append(remove, f)
+	}
+	return remove, keep
+}
+
+func planVacuum(t *config.Transfer, activeVersionOverride string, remove bool, p VacuumPaths) (report VacuumReport, err error) {
 	patterns, err := parseTargetPatterns(t)
 	if err != nil {
-		return nil, nil, err
+		return VacuumReport{}, err
 	}
+	anySuite := parseAnySuitePatterns(t)
 
 	targetDir := targetDirAt(t, p.DefaultDir)
 
 	entries, err := os.ReadDir(targetDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil, nil
+			return VacuumReport{}, nil
 		}
-		return nil, nil, fmt.Errorf("failed to read directory: %w", err)
+		return VacuumReport{}, fmt.Errorf("failed to read directory: %w", err)
 	}
 
 	var installed []versionFile
+	var others []otherSuiteFile
 	seenVersions := make(map[string]bool)
 
 	for _, entry := range entries {
@@ -489,6 +815,10 @@ func planVacuum(t *config.Transfer, activeVersionOverride string, remove bool, p
 		if v, _, ok := version.ExtractVersionParsed(name, patterns); ok {
 			installed = append(installed, versionFile{v, name})
 			seenVersions[v] = true
+			continue
+		}
+		if v, suite, ok := otherSuiteImage(entry, patterns, anySuite); ok {
+			others = append(others, otherSuiteFile{version: v, suite: suite, filename: name})
 		}
 	}
 
@@ -496,15 +826,55 @@ func planVacuum(t *config.Transfer, activeVersionOverride string, remove bool, p
 		installed = append(installed, versionFile{version: activeVersionOverride})
 	}
 
-	if len(installed) == 0 {
-		return nil, nil, nil
+	if len(installed) == 0 && len(others) == 0 {
+		return VacuumReport{}, nil
 	}
 
 	// Decide what is protected before anything is removed, so an unreadable
 	// link or merged state fails the vacuum with every image still on disk.
-	protected, err := protectedVersions(t, patterns, p)
+	var protected map[string]bool
+	if len(installed) > 0 {
+		protected, err = protectedVersions(t, patterns, p)
+		if err != nil {
+			return VacuumReport{}, err
+		}
+	}
+	var removeOthers, keepOthers []otherSuiteFile
+	if len(others) > 0 {
+		keepNames, keepAll, err := otherSuiteProtected(t, patterns, anySuite, p)
+		if err != nil {
+			return VacuumReport{}, err
+		}
+		removeOthers, keepOthers = planOtherSuites(others, keepNames, keepAll)
+		report.OtherSuiteMergedUnknown = keepAll
+	}
+	for _, f := range keepOthers {
+		report.OtherSuiteKept = append(report.OtherSuiteKept, f.filename)
+	}
+
+	removed, kept, err := vacuumCurrentSuite(t, installed, activeVersionOverride, protected, remove, targetDir, patterns)
+	report.Removed, report.Kept = removed, kept
 	if err != nil {
-		return nil, nil, err
+		return report, err
+	}
+
+	for _, f := range removeOthers {
+		if remove {
+			if err := os.Remove(filepath.Join(targetDir, f.filename)); err != nil {
+				return report, fmt.Errorf("failed to remove %s: %w", f.filename, err)
+			}
+		}
+		report.OtherSuiteRemoved = append(report.OtherSuiteRemoved, f.filename)
+	}
+
+	return report, nil
+}
+
+// vacuumCurrentSuite applies the retention rule to the images of the running
+// suite (installed) and removes the ones it does not keep when remove is set.
+func vacuumCurrentSuite(t *config.Transfer, installed []versionFile, activeVersionOverride string, protected map[string]bool, remove bool, targetDir string, patterns []*version.Pattern) (removed []string, kept []string, err error) {
+	if len(installed) == 0 {
+		return nil, nil, nil
 	}
 
 	// Sort by version (newest first)
@@ -968,12 +1338,17 @@ func RemoveAllVersions(t *config.Transfer) ([]string, error) {
 }
 
 // RemoveAllVersionsAt is RemoveAllVersions with an explicit fallback
-// directory for transfers that omit Target.Path.
+// directory for transfers that omit Target.Path. For a transfer whose target
+// pattern contains %w it also removes the images of every other suite
+// (config.TargetSection.AnySuitePatterns), so a disabled feature leaves no
+// image of any suite; such an image is removed only when it is a regular
+// file.
 func RemoveAllVersionsAt(t *config.Transfer, defaultDir string) ([]string, error) {
 	patterns, err := parseTargetPatterns(t)
 	if err != nil {
 		return nil, err
 	}
+	anySuite := parseAnySuitePatterns(t)
 
 	targetDir := targetDirAt(t, defaultDir)
 
@@ -1007,8 +1382,13 @@ func RemoveAllVersionsAt(t *config.Transfer, defaultDir string) ([]string, error
 			continue
 		}
 
-		// Check if this file matches any of the patterns
-		if _, _, ok := version.ExtractVersionParsed(name, patterns); ok {
+		// Check if this file matches any of the patterns, or is an image of
+		// another suite.
+		_, _, ok := version.ExtractVersionParsed(name, patterns)
+		if !ok {
+			_, _, ok = otherSuiteImage(entry, patterns, anySuite)
+		}
+		if ok {
 			filePath := filepath.Join(targetDir, name)
 			if err := os.Remove(filePath); err != nil {
 				return removed, fmt.Errorf("failed to remove %s: %w", filePath, err)

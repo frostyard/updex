@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-13",
+  "scope": "sysext/manager.go otherSuiteProtected, currentSymlinkTarget",
+  "correction": "A protection read must tell absent from unreadable: the CurrentSymlink read of the other-suite vacuum skips only an absent path or a non-symlink, and returns any other Lstat or Readlink error before the vacuum deletes anything. Guard: TestVacuumWithOtherSuiteFailsClosedOnCurrentSymlink.",
+  "evidence": "frostyard/updex#515 cross-review (openai/gpt-6.1-sol) of head cb746f6, finding 3 (sysext/manager.go:547)",
+  "promoted_to": ""
+}

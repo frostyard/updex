@@ -432,7 +432,14 @@ func (c *Client) installTransfers(ctx context.Context, feature string, transfers
 			if transfer.ProtectVersionError != nil {
 				c.warn("%s", protectVersionWarning(transfer))
 			}
-			if _, _, err := sysext.VacuumWith(transfer, c.vacuumPaths(holds.rejected[transfer.Component])); err != nil {
+			report, err := sysext.VacuumWithReport(transfer, c.vacuumPaths(holds.rejected[transfer.Component]))
+			for _, name := range report.OtherSuiteRemoved {
+				c.msg("Removed other-suite image %s of %s", name, transfer.Component)
+			}
+			if report.OtherSuiteMergedUnknown {
+				c.msg("Kept every other-suite image of %s: the merged state names it without its image file", transfer.Component)
+			}
+			if err != nil {
 				c.warn("vacuum failed for %s: %v", transfer.Component, err)
 			}
 		}

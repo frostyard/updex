@@ -130,6 +130,13 @@ type UpdateResult struct {
 	Error             string   `json:"error,omitempty"`
 	NextActionMessage string   `json:"next_action_message,omitempty"`
 	RemovedVersions   []string `json:"removed_versions,omitzero"`
+	// RemovedOtherSuiteImages lists, in a dry run, the staged images of
+	// other suites (file names) that the vacuum would remove: for a transfer
+	// whose target pattern contains %w, it keeps only the newest version of
+	// each other suite, the image the sysext link points to and a merged
+	// image. Empty for every other transfer and for a run that is not a dry
+	// run (as RemovedVersions).
+	RemovedOtherSuiteImages []string `json:"removed_other_suite_images,omitzero"`
 	// Held is true when a rollback record holds the feature, so nothing was
 	// downloaded or linked and every old link stays. It is not an error. A
 	// record of any feature that shares a transfer counts, not only the

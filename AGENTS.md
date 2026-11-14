@@ -531,7 +531,23 @@ in the `config/` structs and parse functions. Always finish with
   reads all of them before it deletes anything and fails without deleting when
   the link or merged state is unreadable. Never call the compatibility
   wrappers (`Vacuum`, `VacuumAt`, `PlanVacuumAfterInstallAt`) from SDK code:
-  they know neither the link nor the merged state.
+  they know neither the link nor the merged state. **Other suites (#512):**
+  for a target pattern with `%w`, `config` keeps an any-suite variant
+  (`TargetSection.AnySuitePatterns`, `%w` as `version.SuiteWildcard`, a NUL
+  byte parsed only by `version.ParseAnySuitePattern`: suite `[0-9a-z.~-]+`,
+  `@v` without `_`). An image it matches and no current pattern matches is an
+  other-suite image (regular files only). The vacuum keeps the newest version
+  of each other suite (a switch back relinks without a download), the image
+  the link points to (by base name) and a merged image, reads them before it
+  deletes and fails closed (also on a `CurrentSymlink` it cannot inspect); when
+  the merged state names the extension `<component>` and `origin` gives that
+  same key no image path of the transfer (systemd < 258), it keeps every
+  other-suite image (`VacuumReport.OtherSuiteMergedUnknown`); decide per
+  extension, never from another entry that matches the pattern.
+  `RemoveAllVersionsAt` (`features disable --now`) removes every suite, so the
+  disable guard checks `sysext.ActiveOtherSuiteWith` after
+  `GetActiveVersionWith`: a guard must recognize every suite its removal can
+  match. A transfer without `%w` gets no new behavior.
 - **Activation rule (ADR-0017, #455).** A transfer is active when `Features=`
   is empty or one listed feature is enabled (OR) and every `RequisiteFeatures=`
   entry is enabled (AND); `config.CheckTransferActivation` is the single
