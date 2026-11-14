@@ -131,6 +131,12 @@ nfpms:
         dst: /usr/lib/systemd/system/updex-update.service
         file_info:
           mode: 0644
+      # Boot-time suite-switch unit (ADR-0021), from the same generator; not
+      # enabled by the package either.
+      - src: ./units/updex-suite-switch.service
+        dst: /usr/lib/systemd/system/updex-suite-switch.service
+        file_info:
+          mode: 0644
       # Backward compatibility symlink for instex
       - dst: /usr/bin/instex
         type: "symlink"

@@ -49,14 +49,14 @@ func TestEnableDaemon(t *testing.T) {
 	if !result.Success || result.Message != "Auto-update daemon enabled" || result.DryRun {
 		t.Fatalf("EnableDaemon() result = %+v", result)
 	}
-	if want := daemonTestUnitFiles(unitPath); !slices.Equal(result.UnitFiles, want) {
+	if want := daemonTestWrittenUnitFiles(unitPath); !slices.Equal(result.UnitFiles, want) {
 		t.Errorf("EnableDaemon() UnitFiles = %v, want %v", result.UnitFiles, want)
 	}
 	if !runner.DaemonReloadCalled {
 		t.Error("EnableDaemon() did not reload systemd after installing units")
 	}
-	if !runner.EnableCalled || runner.EnableUnit != daemonUnitName+".timer" {
-		t.Errorf("EnableDaemon() enable = (%v, %q)", runner.EnableCalled, runner.EnableUnit)
+	if want := []string{daemonUnitName + ".timer", suiteSwitchUnitName + ".service"}; !slices.Equal(runner.EnableUnits, want) {
+		t.Errorf("EnableDaemon() enabled %v, want %v", runner.EnableUnits, want)
 	}
 	if !runner.StartCalled || runner.StartUnit != daemonUnitName+".timer" {
 		t.Errorf("EnableDaemon() start = (%v, %q)", runner.StartCalled, runner.StartUnit)
@@ -483,6 +483,13 @@ func daemonTestUnitFiles(unitPath string) []string {
 	}
 }
 
+// daemonTestWrittenUnitFiles returns the paths of the 3 unit files that
+// `daemon enable` writes when no package ships the units: the timer, its
+// service and updex-suite-switch.service (ADR-0021).
+func daemonTestWrittenUnitFiles(unitPath string) []string {
+	return append(daemonTestUnitFiles(unitPath), filepath.Join(unitPath, suiteSwitchUnitName+".service"))
+}
+
 func TestEnableDaemonDryRun(t *testing.T) {
 	t.Run("fresh install", func(t *testing.T) {
 		runner := &systemd.MockSystemctlRunner{}
@@ -495,7 +502,7 @@ func TestEnableDaemonDryRun(t *testing.T) {
 		if !result.Success || !result.DryRun {
 			t.Fatalf("EnableDaemon() result = %+v", result)
 		}
-		if want := daemonTestUnitFiles(unitPath); !slices.Equal(result.UnitFiles, want) {
+		if want := daemonTestWrittenUnitFiles(unitPath); !slices.Equal(result.UnitFiles, want) {
 			t.Errorf("EnableDaemon() UnitFiles = %v, want %v", result.UnitFiles, want)
 		}
 		if result.Message == "" {

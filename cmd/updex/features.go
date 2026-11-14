@@ -9,7 +9,10 @@ var (
 	featureDisableForce bool
 	featureEnableNow    bool
 	featureUpdateNoVac  bool
-	featureComponent    string
+	// featureUpdateSuiteSwitch is `features update --suite-switch`
+	// (ADR-0021).
+	featureUpdateSuiteSwitch bool
+	featureComponent         string
 
 	featureRollbackTo    string
 	featureRollbackNow   bool
@@ -209,8 +212,21 @@ a masked feature, and a feature that is not enabled are errors: the whole run
 fails and nothing is downloaded, linked, vacuumed or refreshed.
 
 OPTIONS:
-  --no-refresh  Skip running systemd-sysext refresh after update
-  --no-vacuum   Skip removing old versions after update
+  --no-refresh    Skip running systemd-sysext refresh after update
+  --no-vacuum     Skip removing old versions after update
+  --suite-switch  Update only the features whose sysext link points to an
+                  image of another suite, then refresh (see below)
+
+--suite-switch is for the first boot after a suite switch (for example a
+bootc switch from Debian trixie, VERSION_ID 13, to forky, 14). A transfer
+whose target pattern has %w then still links the old suite's image, which
+systemd-sysext refuses, so the feature is missing. The run selects every
+enabled feature with such a link, updates exactly those features (download
+when needed, link through the usual checks) and refreshes, so the running
+suite's image is merged on this boot. When no link points to another suite,
+it does nothing: no lock, no download, no refresh and no last-run record.
+It takes no FEATURE argument and cannot be combined with --no-refresh. The
+packaged updex-suite-switch.service runs it at every boot.
 
 Unless --no-refresh is set, a warning first lists the other sysexts (those
 outside the features this run updates, such as a disabled feature or an
@@ -230,6 +246,9 @@ Requires root privileges.`,
   # Update without refreshing sysext
   sudo updex features update --no-refresh
 
+  # After a suite switch: link and merge the running suite's images
+  sudo updex features update --suite-switch
+
   # Preview what would be updated
   sudo updex --dry-run features update
 
@@ -240,6 +259,7 @@ Requires root privileges.`,
 	}
 
 	cmd.Flags().BoolVar(&featureUpdateNoVac, "no-vacuum", false, "Skip removing old versions after update")
+	cmd.Flags().BoolVar(&featureUpdateSuiteSwitch, "suite-switch", false, "Update only the features whose sysext link points to an image of another suite, then refresh")
 
 	return cmd
 }

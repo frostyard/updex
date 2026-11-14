@@ -429,6 +429,9 @@ func (c *Client) installTransfers(ctx context.Context, feature string, transfers
 	// exists it keeps the rejected version.
 	if !opts.NoVacuum {
 		for _, transfer := range transfers {
+			if transfer.ProtectVersionError != nil {
+				c.warn("%s", protectVersionWarning(transfer))
+			}
 			report, err := sysext.VacuumWithReport(transfer, c.vacuumPaths(holds.rejected[transfer.Component]))
 			for _, name := range report.OtherSuiteRemoved {
 				c.msg("Removed other-suite image %s of %s", name, transfer.Component)
@@ -834,4 +837,15 @@ func validateTargetFilename(name string) error {
 		return fault.Mark(fault.Config, fmt.Errorf("invalid target filename %q: must not contain path separators or traverse directories", name))
 	}
 	return nil
+}
+
+// protectVersionWarning renders the warning for a ProtectVersion= value with
+// an empty specifier (Transfer.ProtectVersionError): the empty specifier and
+// what the value expanded to. Only an empty value protects no version; a
+// value such as "1%w" with %w empty protects version "1".
+func protectVersionWarning(t *config.Transfer) string {
+	if t.Transfer.ProtectVersion == "" {
+		return fmt.Sprintf("%s: %v; it expands to an empty value and protects no version", t.Component, t.ProtectVersionError)
+	}
+	return fmt.Sprintf("%s: %v; it expands to %q and protects that version", t.Component, t.ProtectVersionError, t.Transfer.ProtectVersion)
 }

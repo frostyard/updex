@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/frostyard/updex/v2/internal/fault"
 	"github.com/frostyard/updex/v2/version"
 	"gopkg.in/ini.v1"
 )
@@ -21,6 +22,25 @@ type Transfer struct {
 	Transfer  TransferSection // [Transfer] section
 	Source    SourceSection   // [Source] section
 	Target    TargetSection   // [Target] section
+
+	// SpecifierError is set when a specifier in a Source or Target
+	// MatchPattern expanded to an empty string, for example %w on a host
+	// whose os-release has no VERSION_ID. Such a pattern matches no
+	// published image, so a run would end with "no versions available".
+	// The message names the section, the pattern, the specifier and its
+	// source: `Target MatchPattern "foo_@v_%w_%a.raw": specifier %w is
+	// empty: os-release has no VERSION_ID`. It is marked fault.Config. The
+	// load does not fail: a transfer that updex filters out
+	// (FilterSysextTransfers) can carry it without breaking anything; the
+	// SDK reports it where it selects a version or reads the status.
+	SpecifierError error
+
+	// ProtectVersionError is set when a specifier in ProtectVersion= expanded
+	// to an empty string. The expanded value stays in effect
+	// (TransferSection.ProtectVersion: "1%w" with %w empty protects "1");
+	// only an empty expanded value protects nothing. It is not an error of
+	// the transfer: the SDK reports it as a warning.
+	ProtectVersionError error
 }
 
 // TransferSection represents the [Transfer] section of a .transfer file
@@ -294,7 +314,11 @@ func parseTransferFile(filePath, component string, specCtx *specifierContext) (*
 			t.Transfer.MinVersion = key.String()
 		}
 		if key, err := sec.GetKey("ProtectVersion"); err == nil {
-			t.Transfer.ProtectVersion = expandSpecifiers(key.String(), specCtx)
+			var err error
+			t.Transfer.ProtectVersion, err = expandChecked(key.String(), specCtx)
+			if err != nil {
+				t.ProtectVersionError = fault.Mark(fault.Config, fmt.Errorf("ProtectVersion %q: %w", key.String(), err))
+			}
 		}
 		if key, err := sec.GetKey("Verify"); err == nil {
 			t.Transfer.Verify = key.MustBool(true)
@@ -323,7 +347,9 @@ func parseTransferFile(filePath, component string, specCtx *specifierContext) (*
 			// Specifiers (%a, %v, %w, …) are expanded before the patterns are used.
 			patterns := parsePatterns(key.String())
 			for i, p := range patterns {
-				patterns[i] = expandSpecifiers(p, specCtx)
+				var err error
+				patterns[i], err = expandChecked(p, specCtx)
+				t.noteSpecifierError("Source", p, err)
 			}
 			t.Source.MatchPatterns = patterns
 			if len(patterns) > 0 {
@@ -350,7 +376,9 @@ func parseTransferFile(filePath, component string, specCtx *specifierContext) (*
 			// Specifiers are expanded here for the same reason as Source.MatchPattern.
 			patterns := parsePatterns(key.String())
 			for i, p := range patterns {
-				patterns[i] = expandSpecifiers(p, specCtx)
+				var err error
+				patterns[i], err = expandChecked(p, specCtx)
+				t.noteSpecifierError("Target", p, err)
 				if anySuite, ok := expandAnySuite(p, patterns[i], specCtx); ok {
 					t.Target.AnySuitePatterns = append(t.Target.AnySuitePatterns, anySuite)
 				}
@@ -393,6 +421,16 @@ func parseTransferFile(filePath, component string, specCtx *specifierContext) (*
 	return t, nil
 }
 
+// noteSpecifierError records the first empty specifier of a MatchPattern in
+// SpecifierError. section is "Source" or "Target"; raw is the pattern as the
+// file writes it.
+func (t *Transfer) noteSpecifierError(section, raw string, err error) {
+	if err == nil || t.SpecifierError != nil {
+		return
+	}
+	t.SpecifierError = fault.Mark(fault.Config, fmt.Errorf("%s MatchPattern %q: %w", section, raw, err))
+}
+
 // specifierContext caches values that are constant for the lifetime of a
 // LoadTransfers call, avoiding repeated syscalls and file reads.
 type specifierContext struct {
@@ -429,8 +467,16 @@ func newSpecifierContextFrom(osReleasePaths []string) *specifierContext {
 // It performs a single left-to-right scan so that %% → % cannot trigger
 // a second round of expansion.
 func expandSpecifiers(s string, ctx *specifierContext) string {
-	out, _ := expand(s, ctx, false)
+	out, _, _ := expand(s, ctx, false)
 	return out
+}
+
+// expandChecked is expandSpecifiers that also returns an error when a
+// specifier expanded to an empty string: "specifier %w is empty: os-release
+// has no VERSION_ID". The expansion is returned either way.
+func expandChecked(s string, ctx *specifierContext) (string, error) {
+	out, _, err := expand(s, ctx, false)
+	return out, err
 }
 
 // expandAnySuite returns the any-suite variant of raw (see
@@ -444,7 +490,7 @@ func expandAnySuite(raw, expanded string, ctx *specifierContext) (string, bool) 
 	if strings.Contains(expanded, version.SuiteWildcard) || strings.Contains(raw, version.SuiteWildcard) {
 		return "", false
 	}
-	out, sawSuite := expand(raw, ctx, true)
+	out, sawSuite, _ := expand(raw, ctx, true)
 	if !sawSuite {
 		return "", false
 	}
@@ -453,10 +499,11 @@ func expandAnySuite(raw, expanded string, ctx *specifierContext) (string, bool) 
 
 // expand is the single-pass specifier scan. With anySuite, %w becomes
 // version.SuiteWildcard instead of VERSION_ID. sawSuite reports whether a %w
-// specifier (not "%%w") was found.
-func expand(s string, ctx *specifierContext, anySuite bool) (out string, sawSuite bool) {
+// specifier (not "%%w") was found. empty names the first specifier that
+// expanded to an empty string, and its source.
+func expand(s string, ctx *specifierContext, anySuite bool) (out string, sawSuite bool, empty error) {
 	if !strings.ContainsRune(s, '%') {
-		return s, false
+		return s, false, nil
 	}
 
 	var b strings.Builder
@@ -511,10 +558,42 @@ func expand(s string, ctx *specifierContext, anySuite bool) (out string, sawSuit
 			i++
 			continue
 		}
+		if repl == "" && empty == nil {
+			empty = fmt.Errorf("specifier %%%c is empty: %s", s[i+1], specifierSource(s[i+1]))
+		}
 		b.WriteString(repl)
 		i += 2
 	}
-	return b.String(), sawSuite
+	return b.String(), sawSuite, empty
+}
+
+// specifierSource says where the value of a specifier comes from, for the
+// message of an empty specifier.
+func specifierSource(c byte) string {
+	switch c {
+	case 'A':
+		return "os-release has no IMAGE_VERSION"
+	case 'B':
+		return "os-release has no BUILD_ID"
+	case 'M':
+		return "os-release has no IMAGE_ID"
+	case 'o':
+		return "os-release has no ID"
+	case 'w':
+		return "os-release has no VERSION_ID"
+	case 'W':
+		return "os-release has no VARIANT_ID"
+	case 'b':
+		return "/proc/sys/kernel/random/boot_id is empty or unreadable"
+	case 'H', 'l':
+		return "the hostname is empty"
+	case 'm':
+		return "/etc/machine-id is empty or unreadable"
+	case 'v':
+		return "/proc/sys/kernel/osrelease is empty or unreadable"
+	default:
+		return "no value"
+	}
 }
 
 // goarchToSystemd maps Go architecture identifiers to systemd's naming convention.

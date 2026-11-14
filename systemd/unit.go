@@ -39,9 +39,15 @@ type ServiceConfig struct {
 	// After lists units written as one "After=" line in [Unit]. Empty writes
 	// no line.
 	After []string
+	// Before lists units written as one "Before=" line in [Unit], after
+	// After=. Empty writes no line.
+	Before []string
 	// Conditions are complete [Unit] directive lines such as
-	// "ConditionACPower=true", written one per line after After=.
+	// "ConditionACPower=true", written one per line after Before=.
 	Conditions []string
+	// UnitDirectives are further complete [Unit] directive lines, such as
+	// "DefaultDependencies=no", written one per line after Conditions.
+	UnitDirectives []string
 	// ExecStart is the full command to execute (e.g., "/usr/bin/updex update --quiet")
 	ExecStart string
 	// Type is the service type (e.g., "oneshot", "simple")
@@ -50,10 +56,40 @@ type ServiceConfig struct {
 	// run), written as "TimeoutStartSec=<value>" after ExecStart. Empty
 	// writes no line and keeps systemd's default.
 	TimeoutStartSec string
+	// Directives are complete [Service] directive lines, written one per
+	// line after TimeoutStartSec= and before the Sandbox directives.
+	Directives []string
 	// Sandbox emits the systemd hardening directives in SandboxDirectives
 	// into the [Service] section. The auto-update daemon unit sets it; other
 	// callers keep the minimal unit unless they opt in.
 	Sandbox bool
+	// WantedBy lists the targets written as one "WantedBy=" line in an
+	// [Install] section. Empty writes no [Install] section: a timer
+	// activates the service.
+	WantedBy []string
+}
+
+// RefreshSandboxDirectives are the hardening directives of a service that
+// runs a systemd-sysext refresh (updex-suite-switch.service, ADR-0021). They
+// are the SandboxDirectives that neither give the service its own mount
+// namespace nor block what the refresh does. systemd-sysext mounts its
+// overlays where the service runs, so a private mount namespace
+// (ProtectSystem=, ProtectHome=, PrivateTmp=, ProtectKernelTunables=,
+// ProtectControlGroups=, ProtectHostname=) would hide the merged images from
+// the host; it unshares a mount namespace itself (RestrictNamespaces=); it
+// attaches loop devices, which the device policy of ProtectClock= forbids, and
+// waits for them over netlink (RestrictAddressFamilies=); it can load the
+// overlay or loop module (ProtectKernelModules=); and the refresh sequence runs
+// systemd-sysusers and systemd-tmpfiles, which write /etc and can create
+// setgid directories (RestrictSUIDSGID=). The syscall allow-list of
+// SystemCallFilter= is not proven for that sequence, so it is not set either.
+// What stays restricts the process without a namespace.
+var RefreshSandboxDirectives = []string{
+	"NoNewPrivileges=yes",
+	"RestrictRealtime=yes",
+	"LockPersonality=yes",
+	"MemoryDenyWriteExecute=yes",
+	"SystemCallArchitectures=native",
 }
 
 // SandboxDirectives are the systemd hardening directives emitted, in this
@@ -138,11 +174,13 @@ func GenerateTimer(cfg *TimerConfig) string {
 
 // GenerateService generates a systemd service unit file content from the config.
 // The returned string contains valid systemd unit file syntax with [Unit] and
-// [Service] sections. No [Install] section is generated since the timer
-// handles activation. When cfg.Sandbox is set, SandboxDirectives are appended
-// to the [Service] section after ExecStart. Wants, After, and Conditions, when
-// set, follow Description in [Unit]; a config that sets none of them (and no
-// Comment) produces the same text as before they existed.
+// [Service] sections. An [Install] section is generated only when WantedBy is
+// set; without it a timer handles activation. When cfg.Sandbox is set,
+// SandboxDirectives are appended to the [Service] section after ExecStart,
+// TimeoutStartSec and Directives. Wants, After, Before, Conditions and
+// UnitDirectives, when set, follow Description in [Unit]; a config that sets
+// none of the newer fields (Before, UnitDirectives, Directives, WantedBy) and no
+// Comment produces the same text as before they existed.
 func GenerateService(cfg *ServiceConfig) string {
 	var b strings.Builder
 	writeComment(&b, cfg.Comment)
@@ -156,8 +194,15 @@ func GenerateService(cfg *ServiceConfig) string {
 	if len(cfg.After) > 0 {
 		fmt.Fprintf(&b, "After=%s\n", strings.Join(cfg.After, " "))
 	}
+	if len(cfg.Before) > 0 {
+		fmt.Fprintf(&b, "Before=%s\n", strings.Join(cfg.Before, " "))
+	}
 	for _, condition := range cfg.Conditions {
 		b.WriteString(condition)
+		b.WriteString("\n")
+	}
+	for _, directive := range cfg.UnitDirectives {
+		b.WriteString(directive)
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")
@@ -169,11 +214,20 @@ func GenerateService(cfg *ServiceConfig) string {
 	if cfg.TimeoutStartSec != "" {
 		fmt.Fprintf(&b, "TimeoutStartSec=%s\n", cfg.TimeoutStartSec)
 	}
+	for _, directive := range cfg.Directives {
+		b.WriteString(directive)
+		b.WriteString("\n")
+	}
 	if cfg.Sandbox {
 		for _, directive := range SandboxDirectives {
 			b.WriteString(directive)
 			b.WriteString("\n")
 		}
+	}
+
+	if len(cfg.WantedBy) > 0 {
+		b.WriteString("\n[Install]\n")
+		fmt.Fprintf(&b, "WantedBy=%s\n", strings.Join(cfg.WantedBy, " "))
 	}
 
 	return b.String()

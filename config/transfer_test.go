@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/frostyard/updex/v2/internal/fault"
 	"github.com/frostyard/updex/v2/version"
 )
 
@@ -1039,5 +1040,122 @@ func TestExpandAnySuiteRefusesNUL(t *testing.T) {
 	raw = "foo_@v_%w_%o.raw"
 	if got, ok := expandAnySuite(raw, expandSpecifiers(raw, ctx), ctx); ok {
 		t.Errorf("expandAnySuite() = %q, true; want no any-suite pattern for a NUL in a specifier value", got)
+	}
+}
+
+// TestSpecifierErrorEmptyValue pins #511: a specifier that expands to an
+// empty string is recorded on the transfer, with the section, the pattern,
+// the specifier and its source, marked fault.Config; the load still succeeds.
+func TestSpecifierErrorEmptyValue(t *testing.T) {
+	tests := []struct {
+		name      string
+		osRelease string
+		source    string
+		target    string
+		protect   string
+		wantErr   string // empty: no SpecifierError
+		wantProt  string // empty: no ProtectVersionError
+		wantValue string // the expanded ProtectVersion
+	}{
+		{
+			name:      "target %w without VERSION_ID",
+			osRelease: "ID=debian\n",
+			source:    "foo_@v.raw",
+			target:    "foo_@v_%w_%a.raw",
+			wantErr:   `Target MatchPattern "foo_@v_%w_%a.raw": specifier %w is empty: os-release has no VERSION_ID`,
+		},
+		{
+			name:      "source is read first",
+			osRelease: "ID=debian\n",
+			source:    "foo_@v_%w.raw",
+			target:    "foo_@v_%w.raw",
+			wantErr:   `Source MatchPattern "foo_@v_%w.raw": specifier %w is empty: os-release has no VERSION_ID`,
+		},
+		{
+			name:      "%o without ID",
+			osRelease: "VERSION_ID=13\n",
+			source:    "foo_@v_%o.raw",
+			target:    "foo_@v.raw",
+			wantErr:   `Source MatchPattern "foo_@v_%o.raw": specifier %o is empty: os-release has no ID`,
+		},
+		{
+			name:      "VERSION_ID present",
+			osRelease: "ID=debian\nVERSION_ID=13\n",
+			source:    "foo_@v_%w.raw",
+			target:    "foo_@v_%w.raw",
+		},
+		{
+			name:      "escaped percent is no specifier",
+			osRelease: "ID=debian\n",
+			source:    "foo_@v_%%w.raw",
+			target:    "foo_@v.raw",
+		},
+		{
+			name:      "ProtectVersion is only a warning",
+			osRelease: "ID=debian\n",
+			source:    "foo_@v.raw",
+			target:    "foo_@v.raw",
+			protect:   "%w",
+			wantProt:  `ProtectVersion "%w": specifier %w is empty: os-release has no VERSION_ID`,
+		},
+		{
+			name:      "ProtectVersion keeps its literal part",
+			osRelease: "ID=debian\n",
+			source:    "foo_@v.raw",
+			target:    "foo_@v.raw",
+			protect:   "1%w",
+			wantProt:  `ProtectVersion "1%w": specifier %w is empty: os-release has no VERSION_ID`,
+			wantValue: "1",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			osRelease := filepath.Join(dir, "os-release")
+			if err := os.WriteFile(osRelease, []byte(tt.osRelease), 0644); err != nil {
+				t.Fatal(err)
+			}
+			defs := filepath.Join(dir, "defs")
+			if err := os.Mkdir(defs, 0755); err != nil {
+				t.Fatal(err)
+			}
+			content := "[Transfer]\n"
+			if tt.protect != "" {
+				content += "ProtectVersion=" + tt.protect + "\n"
+			}
+			content += "\n[Source]\nType=url-file\nPath=https://example.com\nMatchPattern=" + tt.source +
+				"\n\n[Target]\nMatchPattern=" + tt.target + "\n"
+			if err := os.WriteFile(filepath.Join(defs, "foo.transfer"), []byte(content), 0644); err != nil {
+				t.Fatal(err)
+			}
+			transfers, err := LoadTransfersIn(defs, nil, []string{osRelease})
+			if err != nil {
+				t.Fatalf("LoadTransfersIn() error = %v, want the load to succeed", err)
+			}
+			if len(transfers) != 1 {
+				t.Fatalf("got %d transfers, want 1", len(transfers))
+			}
+			tr := transfers[0]
+			checkErr := func(field string, err error, want string) {
+				t.Helper()
+				if want == "" {
+					if err != nil {
+						t.Errorf("%s = %v, want nil", field, err)
+					}
+					return
+				}
+				if err == nil || err.Error() != want {
+					t.Fatalf("%s = %v, want %q", field, err, want)
+				}
+				if class, ok := fault.ClassOf(err); !ok || class != fault.Config {
+					t.Errorf("%s class = %v, %v; want config", field, class, ok)
+				}
+			}
+			checkErr("SpecifierError", tr.SpecifierError, tt.wantErr)
+			checkErr("ProtectVersionError", tr.ProtectVersionError, tt.wantProt)
+			if tr.Transfer.ProtectVersion != tt.wantValue {
+				t.Errorf("ProtectVersion = %q, want %q", tr.Transfer.ProtectVersion, tt.wantValue)
+			}
+		})
 	}
 }

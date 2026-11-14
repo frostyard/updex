@@ -167,6 +167,14 @@ Path: `RuntimePaths.LastRunPath`, default `updex.DefaultLastRunPath`
   previous format 1 record for a feature that is enabled and unmasked in the
   current domain and was not in this run, with its own `at`. A run that names no
   feature carries nothing.
+- Suite-switch run (`features update --suite-switch`, ADR-0021): a run that
+  finds a link to another suite's image is a run that names the features it
+  selected (`selected` is `true`, Merge applies). A run that finds none, before
+  the lock or again under it, writes nothing; so does a run whose options are
+  refused. A run whose domain cannot be loaded is a failed run of class
+  `config` with `selected` `true` and no feature, as for any update. A run
+  that skips its refresh because something else is pending (or the host's
+  pending state is unknown) has `refresh` `skipped`.
 - Every write holds an exclusive `flock` on the parent directory while it
   reads the previous record and renames the new one. It takes the lock with
   `LOCK_NB` and retries every 10 ms for up to 2 s, then skips the write.
