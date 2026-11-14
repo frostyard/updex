@@ -35,7 +35,7 @@ jobs:
       # (core ADR-0043): this installs exactly the locked golangci-lint,
       # checksum-verified, the same way a developer's `mise install` and a
       # Snowcat worker's target preparation do, so the three cannot drift.
-      # Go still comes from actions/setup-go above (go.mod's toolchain line).
+      # Go still comes from actions/setup-go above (go.mod's `go` line).
       - name: Install pinned tools
         uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:

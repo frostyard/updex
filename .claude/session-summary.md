@@ -25,5 +25,5 @@ commits instead of copying logs.
 
 - Follow-up PR: the docs site (baseline row B9, core ADR-0070,
   `frostyard-docs-site` skill).
-- Follow-up PR: the toolchain bump (baseline row B11: Go 1.27,
-  golangci-lint 2.15.0).
+- This PR: the toolchain bump (baseline row B11: `go 1.27.4` as the only
+  Go pin, golangci-lint 2.15.0, `lint-version-check` reads the `go` line).
