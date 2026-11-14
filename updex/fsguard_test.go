@@ -4,7 +4,70 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/frostyard/updex/v2/internal/testutil"
 )
+
+// mkdirAllMode creates every missing directory with the mode it was given,
+// whatever the process umask is (issue #524: the documented 0755 of the
+// lock, rollback and last-run directories must not depend on it).
+func TestMkdirAllModeIgnoresTheProcessUmask(t *testing.T) {
+	t.Run("new nested directories under umask 0077", func(t *testing.T) {
+		testutil.Umask(t, 0o077)
+		base := t.TempDir()
+		dir := filepath.Join(base, "run", "updex", "nested")
+		if err := mkdirAllMode(dir, 0o755); err != nil {
+			t.Fatalf("mkdirAllMode: %v", err)
+		}
+		for _, p := range []string{
+			filepath.Join(base, "run"),
+			filepath.Join(base, "run", "updex"),
+			dir,
+		} {
+			info, err := os.Lstat(p)
+			if err != nil || !info.IsDir() || info.Mode().Perm() != 0o755 {
+				t.Errorf("%s = %v, %v; want a 0755 directory", p, info, err)
+			}
+		}
+	})
+
+	t.Run("an existing directory keeps its mode", func(t *testing.T) {
+		testutil.Umask(t, 0o077)
+		base := t.TempDir()
+		existing := filepath.Join(base, "rollback")
+		if err := os.Mkdir(existing, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := mkdirAllMode(filepath.Join(existing, "nested"), 0o755); err != nil {
+			t.Fatalf("mkdirAllMode: %v", err)
+		}
+		if info, err := os.Lstat(existing); err != nil || info.Mode().Perm() != 0o700 {
+			t.Errorf("existing directory = %v, %v; want its own mode 0700 unchanged", info, err)
+		}
+		if info, err := os.Lstat(filepath.Join(existing, "nested")); err != nil || info.Mode().Perm() != 0o755 {
+			t.Errorf("created directory = %v, %v; want a 0755 directory", info, err)
+		}
+	})
+
+	t.Run("a symlink at the target path is not chmodded through", func(t *testing.T) {
+		testutil.Umask(t, 0o077)
+		base := t.TempDir()
+		target := filepath.Join(base, "elsewhere")
+		if err := os.Mkdir(target, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(base, "rollback")
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+		if err := mkdirAllMode(link, 0o755); err != nil {
+			t.Fatalf("mkdirAllMode: %v", err)
+		}
+		if info, err := os.Lstat(target); err != nil || info.Mode().Perm() != 0o700 {
+			t.Errorf("symlink target = %v, %v; want its own mode 0700 unchanged", info, err)
+		}
+	})
+}
 
 func TestWriteManagedFileReplacesSymlinkAtManagedPath(t *testing.T) {
 	dir := t.TempDir()

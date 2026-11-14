@@ -419,7 +419,7 @@ func (c *Client) storeLastRun(r *lastRun, rec LastRunRecord) error {
 	case err == nil:
 		return fmt.Errorf("last-run directory %s is not a directory (mode %s)", dir, info.Mode().Type())
 	case os.IsNotExist(err):
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := mkdirAllMode(dir, 0o755); err != nil {
 			return fmt.Errorf("create last-run directory: %w", err)
 		}
 	default:

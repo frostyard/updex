@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/frostyard/updex/v2/config"
+	"github.com/frostyard/updex/v2/internal/testutil"
 	"github.com/frostyard/updex/v2/sysext"
 )
 
@@ -632,21 +633,35 @@ func TestRollbackFeature_RecordPathSafety(t *testing.T) {
 	})
 
 	t.Run("directory and file modes", func(t *testing.T) {
-		f := newRollbackFixture(t, "alpha")
-		f.setup("alpha", "3.0.0", "1.0.0", "2.0.0", "3.0.0")
-		if _, err := f.rollback(RollbackFeatureOptions{}); err != nil {
-			t.Fatal(err)
-		}
-		if info, err := os.Stat(f.rollbackDir); err != nil || info.Mode().Perm() != 0o755 {
-			t.Errorf("rollback dir = %v, %v", info, err)
-		}
-		if info, err := os.Stat(f.recordPath()); err != nil || !info.Mode().IsRegular() {
-			t.Errorf("record = %v, %v", info, err)
-		}
-		// No temp file is left beside the record.
-		entries, _ := os.ReadDir(f.rollbackDir)
-		if len(entries) != 1 {
-			t.Errorf("rollback dir holds %d entries, want only the record", len(entries))
+		// The rollback directory is documented as 0755 and the record as
+		// 0644 so that a read-only command can read it; neither may depend on
+		// the process umask (docs/specs/sdk-api.md, issue #524).
+		for _, tc := range []struct {
+			name string
+			mask int
+		}{
+			{name: "umask 0022", mask: 0o022},
+			{name: "umask 0077", mask: 0o077},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				testutil.Umask(t, tc.mask)
+				f := newRollbackFixture(t, "alpha")
+				f.setup("alpha", "3.0.0", "1.0.0", "2.0.0", "3.0.0")
+				if _, err := f.rollback(RollbackFeatureOptions{}); err != nil {
+					t.Fatal(err)
+				}
+				if info, err := os.Stat(f.rollbackDir); err != nil || !info.IsDir() || info.Mode().Perm() != 0o755 {
+					t.Errorf("rollback dir = %v, %v; want a 0755 directory", info, err)
+				}
+				if info, err := os.Stat(f.recordPath()); err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o644 {
+					t.Errorf("record = %v, %v; want a 0644 regular file", info, err)
+				}
+				// No temp file is left beside the record.
+				entries, _ := os.ReadDir(f.rollbackDir)
+				if len(entries) != 1 {
+					t.Errorf("rollback dir holds %d entries, want only the record", len(entries))
+				}
+			})
 		}
 	})
 }

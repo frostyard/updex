@@ -210,7 +210,8 @@ once, changes nothing, and returns an error that wraps `ErrBusy`
 `CatalogAdd`/`CatalogRemove`/the daemon methods return a nil result;
 `EnableFeature` and `DisableFeature` return a `FeatureActionResult` whose
 `Error` is set. The lock file is created with mode 0600 and its parent
-directory with mode 0755 when missing. The path is checked with `os.Lstat`
+directory with mode 0755 when missing, both set explicitly, so neither mode
+depends on the process umask. The path is checked with `os.Lstat`
 and opened with `O_NOFOLLOW`: a symlink, a directory or any other non-regular
 file is refused with an error that is not `ErrBusy`. The kernel releases the
 lock when the process exits. The CLI maps `ErrBusy` to exit status 0 with one

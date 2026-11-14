@@ -76,7 +76,7 @@ make lint         # Run golangci-lint (.golangci.yml; fails if not installed)
 make svu-version-check  # Fail unless svu is the mise.toml pin (make bump runs it first)
 make bump-main-check   # Fail unless HEAD is main and equals origin/main (make bump runs it after svu-version-check and again before tagging)
 make check        # fmt + lint + test (mutating: fmt rewrites files)
-make verify       # Non-mutating, credential-free gate for read-only reviewers: tidy diff, vet, gofmt -l, exact-pin lint, non-E2E tests
+make verify       # Non-mutating, credential-free gate for read-only reviewers: tidy diff, vet, gofmt -l, exact-pin lint, non-E2E tests (run under umask 0077)
 make ci           # Credential-free gate matching CI's fail-fast order: make verify first, then docs integrity, coverage, E2E, race, cross-build
 make test-cover   # Tests with HTML coverage report
 make coverage-check        # Enforce the absolute floor and committed coverage ratchet
@@ -92,11 +92,13 @@ Build workflow: make code changes → `make fmt` → `make build` → smoke-test
 with `./build/updex --help`. Use `make check` for the quick development loop.
 Run `make ci` before opening a pull request. It runs `make verify` first — so
 module tidiness, vet, formatting, the lint pin check, and lint run once, and the
-non-E2E tests run there and again with coverage below, as core ADR-0044
-prescribes ("`ci` calls `verify` and adds what CI alone runs") — then docs
-integrity (the same `make test-docs-check` and `node scripts/check-docs.mjs`
-the `docs-gate` CI job runs, so it needs Node.js too), non-E2E unit tests with
-coverage, the separate black-box E2E suite, the race tests, and Linux
+non-E2E tests run there under umask 0077 and again with coverage below under the
+caller's umask (0022 in GitHub CI), so CI exercises both umasks (updex#524), as
+core ADR-0044 prescribes ("`ci` calls `verify` and adds what CI alone runs") —
+then docs integrity (the same `make test-docs-check` and
+`node scripts/check-docs.mjs` the `docs-gate` CI job runs, so it needs Node.js
+too), non-E2E unit tests with coverage, the separate black-box E2E suite, the
+race tests, and Linux
 amd64/arm64 builds. It requires `golangci-lint` and node. The lint
 step first runs `make lint-version-check`, which fails unless the installed
 `golangci-lint` matches the pin in `mise.toml` (currently 2.15.0) and was
@@ -595,7 +597,8 @@ in the `config/` structs and parse functions. Always finish with
   `/run/updex/lock`, `updex.DefaultLockPath`). A taken lock returns an error
   wrapping `updex.ErrBusy`; updex never waits. The lock path is `Lstat`ed,
   opened with `O_NOFOLLOW`, and refused when it is a symlink or not a regular
-  file (parent dir 0755, file 0600). Read-only operations never take it, and
+  file (parent dir 0755, file 0600, both set explicitly so neither depends
+  on the process umask). Read-only operations never take it, and
   neither does an `UpdateFeatures` with `SuiteSwitchOnly` that finds no link
   to another suite's image (it selects its features read-only before the
   lock, and again under the lock before it downloads, ADR-0021). A method that calls another mutating method must call its unexported,
@@ -1130,6 +1133,13 @@ Go 1.27. Use modern idioms: `any`, `slices`/`maps`/`cmp` packages, `t.Context()`
   lock with a plain `flock` on `runtimePaths.LockPath`. No test may read the
   host's definitions or images, and a test that points a compatibility variable
   at a temp tree must also point the `runtimePaths` seam at it.
+- A test that asserts a file or directory mode runs under both umask 0o022
+  and 0o077 (`testutil.Umask`, and never in a parallel test: the umask is
+  process-wide). Code whose mode is a contract sets it explicitly instead of
+  relying on the init mode — `mkdirAllMode` for a directory tree, `Chmod` for
+  a file — because a documented 0755 or 0644 must not depend on the process
+  umask (updex#524). `make verify` runs the unit tests under umask 0077,
+  with `-count=1` because the Go test cache does not key on the umask.
 - Run `make fmt` before running tests; for verbose output use `go test -v ./...`.
 
 ## Security

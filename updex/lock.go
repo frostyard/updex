@@ -27,8 +27,9 @@ var ErrBusy = errors.New("another updex operation is running")
 
 // acquireLock takes the exclusive, non-blocking flock on path, creating the
 // file (mode 0600) and its parent directory (mode 0755) when they are
-// missing. It returns a release function that drops the lock; release is
-// safe to call more than once. The lock is also dropped when the process
+// missing. Both modes are set explicitly, so they do not depend on the
+// process umask. It returns a release function that drops the lock; release
+// is safe to call more than once. The lock is also dropped when the process
 // exits, so a crash never leaves a stale lock.
 //
 // When another open file description holds the lock, it returns an error
@@ -43,7 +44,7 @@ func acquireLock(path string) (release func(), err error) {
 	case err == nil:
 		return nil, fmt.Errorf("lock directory %s exists and is not a directory (mode %s); remove it manually", dir, info.Mode().Type())
 	case os.IsNotExist(err):
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := mkdirAllMode(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("create lock directory: %w", err)
 		}
 	default:

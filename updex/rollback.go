@@ -151,7 +151,7 @@ func (c *Client) writeRollbackRecordBytes(path string, data []byte) error {
 		return err
 	}
 	if !exists {
-		if err := os.MkdirAll(c.paths.rollbackDir, 0o755); err != nil {
+		if err := mkdirAllMode(c.paths.rollbackDir, 0o755); err != nil {
 			return fmt.Errorf("create rollback directory: %w", err)
 		}
 	}

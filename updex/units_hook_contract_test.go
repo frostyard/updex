@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/frostyard/updex/v2/internal/testutil"
 	"github.com/frostyard/updex/v2/systemd"
 	"go.yaml.in/yaml/v3"
 )
@@ -42,6 +43,10 @@ func TestUnitsHookMatchesGenerator(t *testing.T) {
 	}
 
 	out := filepath.Join(t.TempDir(), "units")
+	// The packaged units are 0644 (a package input, not a private file); the
+	// child process inherits this umask, so the hook must set the mode itself
+	// (issue #524).
+	testutil.Umask(t, 0o077)
 	cmd := exec.Command("sh", "scripts/units.sh", out)
 	cmd.Dir = ".." // the module root, where GoReleaser runs the hook
 	var stderr bytes.Buffer

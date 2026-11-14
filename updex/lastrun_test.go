@@ -776,6 +776,35 @@ func TestLastRun_FileMode(t *testing.T) {
 	}
 }
 
+// The record's directory is created with mode 0755 and the record with 0644
+// whatever the process umask is (docs/specs/last-run-record.md): a read-only
+// command must be able to read the record a root-privileged run wrote
+// (issue #524).
+func TestLastRun_DirectoryMode(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mask int
+	}{
+		{name: "umask 0022", mask: 0o022},
+		{name: "umask 0077", mask: 0o077},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testutil.Umask(t, tc.mask)
+			f := newLastRunFixture(t, map[string]string{"testext": goodServer(t, "testext")}, nil)
+			if _, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true}); err != nil {
+				t.Fatal(err)
+			}
+			dir := filepath.Dir(f.lastRun)
+			if info, err := os.Lstat(dir); err != nil || !info.IsDir() || info.Mode().Perm() != 0o755 {
+				t.Errorf("record directory %s = %v, %v; want a 0755 directory", dir, info, err)
+			}
+			if info, err := os.Lstat(f.lastRun); err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o644 {
+				t.Errorf("record = %v, %v; want a regular 0644 file", info, err)
+			}
+		})
+	}
+}
+
 func TestClassifyError(t *testing.T) {
 	tests := []struct {
 		name string

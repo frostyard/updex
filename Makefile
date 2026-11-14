@@ -152,9 +152,14 @@ verify-static:
 	golangci-lint run
 
 ## verify: Credential-free, non-mutating gate (what a read-only reviewer runs): verify-static plus the non-E2E tests
+# verify runs the unit tests under umask 0077 and the `ci` coverage run below
+# uses the caller's umask (0022 in GitHub CI), so CI exercises both umasks
+# (updex#524: a mode that only works under one umask is a bug). -count=1
+# because the test cache does not key on the umask: a result cached under
+# another umask must not pass this run.
 verify: verify-static
-	@echo "==> unit tests"
-	$(GO) test $$($(GO) list ./... | grep -v '/tests/e2e$$')
+	@echo "==> unit tests (umask 0077)"
+	umask 0077 && $(GO) test -count=1 $$($(GO) list ./... | grep -v '/tests/e2e$$')
 
 ## ci: Run the credential-free CI gate (verify first, then docs integrity, coverage, race, and cross-build; the non-E2E tests run again with coverage)
 ci: verify

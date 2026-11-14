@@ -43,7 +43,10 @@ func runUnits(cmd *cobra.Command, args []string) error {
 // updex-suite-switch.service to dir,
 // creating it when needed. The files carry no ownership marker: the package
 // owns them, and `updex daemon disable` never removes files under
-// /usr/lib/systemd/system.
+// /usr/lib/systemd/system. Each file is chmodded to 0644 after the write, so
+// the mode the package installs (a package input, not a private file) does
+// not depend on the process umask and a file that already existed with
+// another mode is corrected.
 func writeUnits(dir string) error {
 	if dir == "" {
 		return fmt.Errorf("output directory is empty")
@@ -59,8 +62,12 @@ func writeUnits(dir string) error {
 		{suite.Name + ".service", systemd.GenerateService(suite)},
 	}
 	for _, file := range files {
-		if err := os.WriteFile(filepath.Join(dir, file.name), []byte(file.content), 0o644); err != nil {
+		path := filepath.Join(dir, file.name)
+		if err := os.WriteFile(path, []byte(file.content), 0o644); err != nil {
 			return fmt.Errorf("write %s: %w", file.name, err)
+		}
+		if err := os.Chmod(path, 0o644); err != nil {
+			return fmt.Errorf("set mode of %s: %w", file.name, err)
 		}
 	}
 	return nil

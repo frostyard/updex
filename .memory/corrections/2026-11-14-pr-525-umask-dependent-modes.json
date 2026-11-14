@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-14",
+  "scope": "updex/fsguard.go mkdirAllMode, updex/lock.go acquireLock, updex/rollback.go writeRollbackRecordBytes, updex/lastrun.go storeLastRun, cmd/updex/units.go writeUnits",
+  "correction": "A mode that a doc makes a contract must be set explicitly, never left to the process umask: os.MkdirAll applies the umask, so a documented 0755 directory came out 0700 under umask 0077 and a documented 0644 unit file 0600. The new mkdirAllMode creates each missing directory with the given mode through O_NOFOLLOW descriptors (an existing directory keeps its mode), and writeUnits chmods each unit to 0644 after the write. Every mode test now runs under umask 0o022 and 0o077, and make verify runs the unit tests under umask 0077 while make ci's coverage run uses the caller's umask.",
+  "evidence": "frostyard/updex#524 (3 mode tests failed under umask 0077), fixed in frostyard/updex#525",
+  "promoted_to": "updex/makefile_verify_umask_contract_test.go, updex/fsguard_test.go TestMkdirAllModeIgnoresTheProcessUmask, updex/lock_test.go TestAcquireLockCreatesFileAndDirectory, updex/rollback_test.go directory and file modes, updex/lastrun_test.go TestLastRun_DirectoryMode, updex/units_hook_contract_test.go, cmd/updex/units_test.go TestUnitsCommandWritesGeneratorOutput"
+}
