@@ -10,10 +10,17 @@ type MockSystemctlRunner struct {
 	EnableCalled bool
 	EnableUnit   string
 	EnableErr    error
+	// EnableUnits records every unit Enable was called with, in order.
+	EnableUnits []string
 
 	DisableCalled bool
 	DisableUnit   string
 	DisableErr    error
+	// DisableUnits records every unit Disable was called with, in order.
+	DisableUnits []string
+
+	// IsEnabledUnits records every unit IsEnabled was called with, in order.
+	IsEnabledUnits []string
 
 	StartCalled bool
 	StartUnit   string
@@ -60,12 +67,14 @@ func (m *MockSystemctlRunner) DaemonReload() error {
 func (m *MockSystemctlRunner) Enable(unit string) error {
 	m.EnableCalled = true
 	m.EnableUnit = unit
+	m.EnableUnits = append(m.EnableUnits, unit)
 	return m.EnableErr
 }
 
 func (m *MockSystemctlRunner) Disable(unit string) error {
 	m.DisableCalled = true
 	m.DisableUnit = unit
+	m.DisableUnits = append(m.DisableUnits, unit)
 	return m.DisableErr
 }
 
@@ -90,6 +99,7 @@ func (m *MockSystemctlRunner) IsActive(unit string) (bool, error) {
 func (m *MockSystemctlRunner) IsEnabled(unit string) (bool, error) {
 	m.IsEnabledCalled = true
 	m.IsEnabledUnit = unit
+	m.IsEnabledUnits = append(m.IsEnabledUnits, unit)
 	return m.IsEnabledResult, m.IsEnabledErr
 }
 

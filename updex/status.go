@@ -82,6 +82,11 @@ type TransferStatus struct {
 func (c *Client) featureTransferStatus(t *config.Transfer, holds rollbackHolds, reason *rollbackHoldReason, owner string, holdErr error) TransferStatus {
 	status := c.transferStatus(t)
 	var problems []string
+	// An empty specifier in a MatchPattern: the link and the merged state are
+	// read with a pattern that matches no image of this host.
+	if t.SpecifierError != nil {
+		problems = append(problems, t.SpecifierError.Error())
+	}
 	if err := holds.errs[t.Component]; err != nil {
 		problems = append(problems, err.Error())
 	}
@@ -230,12 +235,22 @@ type pendingActivationLink struct {
 // whose state cannot be read is a candidate with stateErr so the gate fails
 // closed.
 func (c *Client) pendingActivationLinks(scoped, own []*config.Transfer) []pendingActivationLink {
+	pending, _ := c.pendingActivationLinksHost(scoped, own)
+	return pending
+}
+
+// pendingActivationLinksHost is pendingActivationLinks that also returns the
+// error of the host-wide read: when the host's definitions cannot be loaded,
+// it warns, uses scoped alone and returns that error, so a caller that must
+// know every pending change of the host (a suite-switch run) can fail
+// closed. The other callers keep the warning only.
+func (c *Client) pendingActivationLinksHost(scoped, own []*config.Transfer) ([]pendingActivationLink, error) {
 	domain := scoped
 	// Name-collision warnings of the full union are dropped: this is a read
 	// for the warning only, not the domain the caller operates on.
-	host, _, err := config.LoadAllTransfersIn("", c.paths.definitionRoots, c.paths.osReleasePaths)
-	if err != nil {
-		c.warn("could not list the sysexts outside the requested scope that a refresh would activate: %v", err)
+	host, _, hostErr := config.LoadAllTransfersIn("", c.paths.definitionRoots, c.paths.osReleasePaths)
+	if hostErr != nil {
+		c.warn("could not list the sysexts outside the requested scope that a refresh would activate: %v", hostErr)
 	} else {
 		domain = slices.Concat(scoped, host)
 	}
@@ -303,7 +318,7 @@ func (c *Client) pendingActivationLinks(scoped, own []*config.Transfer) []pendin
 			})
 		}
 	}
-	return pending
+	return pending, hostErr
 }
 
 // warnPendingActivations reports pending through the reporter as one warning,

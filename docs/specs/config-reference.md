@@ -239,6 +239,29 @@ Selected transfer values support systemd-style `%` specifiers, expanded at parse
 
 Expansion is a single left-to-right pass. Unknown specifiers are preserved literally, and `%%` becomes `%` without triggering a second expansion pass.
 
+**An empty specifier fails loud** (#511). A specifier whose value is empty
+(for example `%w` on a host whose os-release has no `VERSION_ID=`, as a
+Debian testing or unstable system before its release) leaves a pattern that
+matches no published image. updex does not report that as "no versions
+available". The load records the first such specifier of a `MatchPattern` on
+the transfer (`config.Transfer.SpecifierError`, class `config`) with the
+section, the pattern as written, the specifier and its source:
+
+```text
+Target MatchPattern "foo_@v_%w_%a.raw": specifier %w is empty: os-release has no VERSION_ID
+```
+
+The load itself does not fail, so a host can still list, disable and vacuum.
+`features update`, `check` and `enable --now` fail for that transfer with the
+message (the last-run record gets the error class `config`), and
+`features list` shows it as the transfer's error. An empty specifier in
+`ProtectVersion=` is only a warning, printed by `features list` and before
+the vacuum. It names the empty specifier and the value it expands to: the
+literal part stays, so `ProtectVersion=1%w` protects version `1`
+(`… ; it expands to "1" and protects that version`), and only a value that
+expands to nothing protects no version (`… ; it expands to an empty value and
+protects no version`). Fix the host's os-release (or the transfer), not updex.
+
 Expansion happens at config load time only: catalog-generated `.transfer`
 files keep `%w`/`%a` unexpanded on disk so definitions track the running OS
 release (see [ADR-0006](../adr/0006-byte-preserving-render-transfer.md)).

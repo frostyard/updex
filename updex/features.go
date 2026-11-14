@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/frostyard/std/reporter"
 	"github.com/frostyard/updex/v2/catalog"
 	"github.com/frostyard/updex/v2/config"
 	"github.com/frostyard/updex/v2/internal/fault"
@@ -101,6 +102,9 @@ func (c *Client) Features(ctx context.Context, opts ...FeaturesOptions) ([]Featu
 			status := c.featureTransferStatus(t, holds, reason, owner, holdErr)
 			if status.Error != "" {
 				c.warn("%s: %s", t.Component, status.Error)
+			}
+			if t.ProtectVersionError != nil {
+				c.warn("%s", protectVersionWarning(t))
 			}
 			if f.Enabled && !f.Masked && status.Error == "" {
 				// Why a staged image is not linked (ADR-0016). A failure
@@ -783,6 +787,30 @@ func (c *Client) disableFeature(ctx context.Context, name string, opts DisableFe
 // nothing. A failure to write the record is a warning: the results and the
 // returned error stay the same.
 func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions) ([]UpdateFeaturesResult, error) {
+	if opts.SuiteSwitchOnly {
+		if err := checkSuiteSwitchOptions(opts); err != nil {
+			return nil, err
+		}
+		// The fast path of every boot: an unlocked, read-only scan. When no
+		// link points to another suite, the run takes no lock, downloads,
+		// links and refreshes nothing, and writes no last-run record, so the
+		// timer's record stays (ADR-0021). The run that follows scans again
+		// under the lock before it changes anything, and it records a domain
+		// that cannot be loaded as a failed run (ADR-0020).
+		quiet := *c
+		quiet.reporter = reporter.NoopReporter{}
+		if features, transfers, err := quiet.loadDomain(opts.Component); err == nil {
+			names := quiet.suiteSwitchSelection(features, transfers)
+			if len(names) == 0 {
+				return make([]UpdateFeaturesResult, 0), nil
+			}
+			// A busy run records these features as skipped_busy.
+			opts.Features = names
+		}
+		if c.afterSuiteSwitchScan != nil {
+			c.afterSuiteSwitchScan()
+		}
+	}
 	if opts.DryRun {
 		return c.updateFeatures(ctx, opts, nil)
 	}
@@ -793,6 +821,81 @@ func (c *Client) UpdateFeatures(ctx context.Context, opts UpdateFeaturesOptions)
 	// (busy, or a lock error).
 	c.writeLastRun(run, time.Now(), err)
 	return results, err
+}
+
+// checkSuiteSwitchOptions refuses the options a suite-switch run cannot
+// take: it selects its own features, and it exists to refresh. A refused
+// run writes no last-run record.
+func checkSuiteSwitchOptions(opts UpdateFeaturesOptions) error {
+	if len(opts.Features) > 0 {
+		return fault.Mark(fault.Config, errors.New("a suite-switch run takes no feature names"))
+	}
+	if opts.NoRefresh {
+		return fault.Mark(fault.Config, errors.New("a suite-switch run must refresh: it cannot be combined with NoRefresh"))
+	}
+	return nil
+}
+
+// suiteSwitchSelection returns, in domain order, the enabled and unmasked
+// features of the loaded domain that have an active transfer whose sysext
+// link points to an image of another suite (sysext.LinkedOtherSuiteAt). It
+// reads the links only. A link that cannot be inspected is a warning, and
+// that transfer does not count.
+func (c *Client) suiteSwitchSelection(features []*config.Feature, transfers []*config.Transfer) []string {
+	var names []string
+	for _, f := range features {
+		if !f.Enabled || f.Masked {
+			continue
+		}
+		split := splitFeatureTransfers(features, transfers, f.Name, true)
+		for _, t := range split.active {
+			image, suite, err := sysext.LinkedOtherSuiteAt(t, c.paths.sysextLinkDir)
+			if err != nil {
+				c.warn("%s/%s: %v", f.Name, t.Component, err)
+				continue
+			}
+			if image == "" {
+				continue
+			}
+			c.msg("%s/%s: the sysext link points to %s, an image of suite %s", f.Name, t.Component, image, suite)
+			names = append(names, f.Name)
+			break
+		}
+	}
+	return names
+}
+
+// suiteSwitchWaiting returns why a suite-switch run must not refresh, or ""
+// when it may. The refresh changes every pending state of the host, and a
+// suite-switch run must change only its own, so it fails closed:
+//
+//   - hostErr: the host's definitions could not be listed, so what else the
+//     refresh changes is unknown;
+//   - a transfer whose state cannot be read;
+//   - a pending deactivation (merged, no usable link): the refresh unmerges
+//     it unless another systemd-sysext directory provides the image, which
+//     updex cannot prove;
+//   - a pending activation (a link whose merged version is not known to
+//     equal it), for example a newer image that the timer linked with
+//     --no-refresh earlier on this boot (ADR-0016).
+//
+// Every such change waits for the next boot, and so does the run's own.
+func suiteSwitchWaiting(pending []pendingActivationLink, hostErr error) string {
+	const next = "; the suite switch takes effect at the next boot"
+	if hostErr != nil {
+		return "refresh skipped: the host's sysext definitions cannot be read, so what a refresh changes is unknown" + next
+	}
+	for _, p := range pending {
+		switch {
+		case p.stateErr != nil:
+			return fmt.Sprintf("refresh skipped: cannot read the state of %s%s", p.Component, next)
+		case p.Deactivate:
+			return fmt.Sprintf("refresh skipped: %s is merged but not linked%s", p.Component, next)
+		default:
+			return fmt.Sprintf("refresh skipped: %s has an update that waits for the next boot%s", p.Component, next)
+		}
+	}
+	return ""
 }
 
 // updateFeatures is UpdateFeatures. It fills run, the last-run record, when
@@ -831,6 +934,20 @@ func (c *Client) updateFeatures(ctx context.Context, opts UpdateFeaturesOptions,
 			run.runClass = fault.Config
 		}
 		return nil, err
+	}
+
+	if opts.SuiteSwitchOnly {
+		// The scan before the lock is only a fast path: another updex
+		// operation can have moved the links since. Select again under the
+		// lock, before anything is downloaded (ADR-0021).
+		opts.Features = c.suiteSwitchSelection(features, transfers)
+		if len(opts.Features) == 0 {
+			if run != nil {
+				// Nothing ran, so there is nothing to record.
+				run.skip = true
+			}
+			return make([]UpdateFeaturesResult, 0), nil
+		}
 	}
 
 	// Resolve the feature filter before anything is downloaded, linked,
@@ -1049,11 +1166,22 @@ func (c *Client) updateFeatures(ctx context.Context, opts UpdateFeaturesOptions,
 	// activated now, so the refresh is skipped and the links stay.
 	refreshSkipped := ""
 	if !opts.NoRefresh {
-		pendingLinks := c.pendingActivationLinks(transfers, ownTransfers)
+		pendingLinks, hostErr := c.pendingActivationLinksHost(transfers, ownTransfers)
 		pending := activationsOf(pendingLinks)
-		c.warnPendingActivations(pending, opts.DryRun)
-		if blocker := c.refreshGateFor(ctx, ownTransfers, pendingLinks, &runningImage{}); blocker != nil {
-			refreshSkipped = blocker.skipped()
+		if opts.SuiteSwitchOnly {
+			// A suite-switch run changes only its own links: another
+			// pending activation or deactivation, or a host whose pending
+			// state is unknown, waits for the next boot, and so does this
+			// run's (ADR-0016, ADR-0021).
+			refreshSkipped = suiteSwitchWaiting(pendingLinks, hostErr)
+		}
+		if refreshSkipped == "" {
+			c.warnPendingActivations(pending, opts.DryRun)
+			if blocker := c.refreshGateFor(ctx, ownTransfers, pendingLinks, &runningImage{}); blocker != nil {
+				refreshSkipped = blocker.skipped()
+			}
+		}
+		if refreshSkipped != "" {
 			c.warn("%s", refreshSkipped)
 		}
 		for i := range allResults {

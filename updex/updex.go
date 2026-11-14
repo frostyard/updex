@@ -272,6 +272,11 @@ type Client struct {
 	reporter   reporter.Reporter
 	runner     sysext.SysextRunner
 	systemd    *systemd.Manager
+
+	// afterSuiteSwitchScan, when set, runs after the unlocked scan of a
+	// suite-switch run and before it takes the lock. Tests use it to change
+	// the links between both scans.
+	afterSuiteSwitchScan func()
 }
 
 // ClientConfig holds configuration for the Client.

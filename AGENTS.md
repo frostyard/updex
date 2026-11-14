@@ -237,9 +237,12 @@ the pull request instead of GoReleaser at tag time (skipped under `-short`).
 and `manpages/`), which writes `updex-update.timer` and `updex-update.service`
 from `systemd.GenerateTimer`/`GenerateService` applied to `updex.DaemonUnits()`,
 the same function `updex daemon enable` uses
-([ADR-0016](docs/adr/0016-automatic-sysext-updates-apply-at-next-boot.md)).
+([ADR-0016](docs/adr/0016-automatic-sysext-updates-apply-at-next-boot.md)),
+and `updex-suite-switch.service` from `updex.SuiteSwitchUnit()`
+([ADR-0021](docs/adr/0021-link-the-running-suites-images-at-boot-after-a-suite-switch.md)).
 `nfpms.contents` installs them (mode 0644) as
-`/usr/lib/systemd/system/updex-update.{timer,service}`; the package ships no
+`/usr/lib/systemd/system/updex-update.{timer,service}` and
+`/usr/lib/systemd/system/updex-suite-switch.service`; the package ships no
 maintainer scripts and enables nothing.
 `updex/units_hook_contract_test.go` runs `scripts/units.sh` into a temporary
 directory (skipped under `-short`), compares the files byte for byte with the
@@ -247,17 +250,20 @@ generator, pins the contract lines (`ExecStart=/usr/bin/updex features update
 --no-refresh`, the 6-hour `OnCalendar`, `RandomizedDelaySec=3600s`,
 `Persistent=true`, `WantedBy=timers.target`, `Wants=`/`After=network-online.target`,
 `ConditionACPower=true`, `TimeoutStartSec=2h`, every `SandboxDirectives`
-line), pins the
-`.goreleaser.yaml` hook order, both `nfpms.contents` destinations and the
+line; for the suite-switch unit `ExecStart=… --suite-switch`,
+`Before=updex-update.service`, `DefaultDependencies=no`,
+`WantedBy=multi-user.target`, every `RefreshSandboxDirectives` line and no
+namespace directive), pins the
+`.goreleaser.yaml` hook order, the 3 `nfpms.contents` destinations and the
 absence of maintainer scripts, pins the CI steps below, and runs
 `scripts/check-deb-units.sh` against a fake `dpkg-deb`. The `units` job in
 `.github/workflows/ci.yml` builds updex, runs `scripts/units.sh`, installs
 the binary at `/usr/bin/updex` with `sudo install` (the service's `ExecStart`,
 so the shipped text is verified as it is) and runs `systemd-analyze verify` on
-both files; because `systemd-analyze verify` exits 0 for an unknown directive,
+the 3 files; because `systemd-analyze verify` exits 0 for an unknown directive,
 the step also fails on any output that names an updex unit. After GoReleaser
 publishes, `snapshot.yml` runs `scripts/check-deb-units.sh` on the amd64
-`.deb` in `dist/` (`dpkg-deb -c`), failing the nightly unless both unit paths
+`.deb` in `dist/` (`dpkg-deb -c`), failing the nightly unless the 3 unit paths
 are listed as 0644 files.
 
 Releases are tagged with semantic versions (`vMAJOR.MINOR.PATCH`) and built by
@@ -316,7 +322,7 @@ updex is a Go SDK and CLI for managing systemd-sysext images. It replicates `sys
 **SDK-first design**: All logic lives in the `updex/` package as a public Go API. CLI commands in `cmd/` are thin Cobra wrappers that parse flags, call SDK functions, and format output. SDK code must never import CLI packages. The SDK can be imported by other Go applications for programmatic sysext management.
 
 Key packages:
-- `updex/` — Public SDK: `Client` struct with feature, component, catalog, and daemon lifecycle methods (`EnableDaemon()`, `DisableDaemon()`, `DaemonStatus()`); `DaemonUnits()` is the single source of the auto-update timer and service configuration
+- `updex/` — Public SDK: `Client` struct with feature, component, catalog, and daemon lifecycle methods (`EnableDaemon()`, `DisableDaemon()`, `DaemonStatus()`); `DaemonUnits()` is the single source of the auto-update timer and service configuration, `SuiteSwitchUnit()` of `updex-suite-switch.service`
 - `cmd/updex/` — Cobra command handlers calling SDK methods (flags, output formatting, progress bars)
 - `config/` — Parses `.transfer` and `.feature` INI files from systemd-style search paths, including systemd-sysupdate "component" discovery (see below)
 - `catalog/` — Sysext catalog primitives (see below): `*.catalog` repo config loading, sysext enumeration via a GitHub contents API endpoint, fetching the catalog's published `.conf`, and rendering it into updex `.transfer`/`.feature` files
@@ -417,12 +423,25 @@ binary needs it on the host. The unit tests do not run it.
   with no name, on every enabled feature; a name that is not in the loaded
   domain, is masked or is not enabled is an error, and nothing changes
   (`selectFeatures` in `updex/features.go`, validated after the lock and the
-  domain load)
+  domain load). `update --suite-switch` (`UpdateFeaturesOptions.SuiteSwitchOnly`,
+  ADR-0021) acts only on the features whose sysext link points to an image of
+  another suite (`sysext.LinkedOtherSuiteAt`, the `%w` any-suite pattern), as
+  a named run, then refreshes; with none it takes no lock and writes nothing.
+  It selects again under the lock before any download, records a domain load
+  failure like any update, and skips its refresh (`RefreshSkipped`, not an
+  error) when another activation or deactivation is pending, a state cannot be
+  read or the host's definitions do not load (`pendingActivationLinksHost`
+  returns that failure), so it never changes what ADR-0016 leaves for the
+  next boot.
+  It refuses names and `--no-refresh`, and under systemd a busy lock is an
+  error for it, not a skip
 - `components` — list discovered systemd-sysext components (refuses
   `-C`/`--definitions`: a definitions override is 1 flat directory with no
   components)
 - `daemon enable|disable|status` — enable/disable/inspect the auto-update
-  timer. The package ships the units in `/usr/lib/systemd/system`; `enable`
+  timer and the boot-time `updex-suite-switch.service` (ADR-0021; enabled,
+  never started, and disabled with the timer; a masked one is left alone).
+  The package ships the units in `/usr/lib/systemd/system`; `enable`
   writes marked units to `/etc/systemd/system` only when the package does not,
   and `disable` removes only marked (or exactly legacy) files there. `status`
   also reports the next run, the last service result, and the last update
@@ -537,8 +556,10 @@ in the `config/` structs and parse functions. Always finish with
   `/run/updex/lock`, `updex.DefaultLockPath`). A taken lock returns an error
   wrapping `updex.ErrBusy`; updex never waits. The lock path is `Lstat`ed,
   opened with `O_NOFOLLOW`, and refused when it is a symlink or not a regular
-  file (parent dir 0755, file 0600). Read-only operations never take it. A
-  method that calls another mutating method must call its unexported,
+  file (parent dir 0755, file 0600). Read-only operations never take it, and
+  neither does an `UpdateFeatures` with `SuiteSwitchOnly` that finds no link
+  to another suite's image (it selects its features read-only before the
+  lock, and again under the lock before it downloads, ADR-0021). A method that calls another mutating method must call its unexported,
   lock-free form (`CatalogAdd` → `enableFeature`, `CatalogRemove` →
   `disableFeature`): a second `flock` from the same process would block on
   itself. A new mutating operation takes the lock the same way.

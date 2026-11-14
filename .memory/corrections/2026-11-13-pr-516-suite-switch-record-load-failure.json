@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-13",
+  "scope": "updex/features.go UpdateFeatures SuiteSwitchOnly last-run record",
+  "correction": "A pre-scan before the lock must not return a failure before the last-run record exists: a domain that the suite-switch pre-scan cannot load goes on to the locked path, which records the failed run with class config (ADR-0020); only refused options and a confirmed empty selection write no record. Guard: TestUpdateFeatures_SuiteSwitchRecordsDomainFailure.",
+  "evidence": "frostyard/updex#516 cross-review (openai/gpt-6.1-sol) of head 3f46e43, finding 3 (updex/features.go:791-793, 831-833)",
+  "promoted_to": ""
+}

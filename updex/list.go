@@ -29,6 +29,12 @@ func (c *Client) getAvailableVersions(ctx context.Context, transfer *config.Tran
 	if transfer.Source.Type != "url-file" {
 		return nil, nil, nil, fault.Mark(fault.Config, fmt.Errorf("unsupported source type: %s", transfer.Source.Type))
 	}
+	// A specifier that expanded to an empty string (for example %w without
+	// VERSION_ID) leaves a pattern that matches no published image: say why
+	// instead of "no versions available". It is marked fault.Config.
+	if transfer.SpecifierError != nil {
+		return nil, nil, nil, transfer.SpecifierError
+	}
 
 	policy := c.verifyPolicy(transfer)
 	needVerify := policy.required

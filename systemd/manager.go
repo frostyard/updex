@@ -165,6 +165,31 @@ func (m *Manager) Install(ctx context.Context, timer *TimerConfig, service *Serv
 	return nil
 }
 
+// InstallService installs one service unit file that no timer activates (for
+// example a unit with an [Install] section), with the same checks as Install:
+// an existing regular file is an "already exists" error, and a symlink,
+// directory or other non-regular entry is refused (ADR-0005). It writes the
+// file with mode 0644 through a temporary file plus rename, then calls
+// daemon-reload. An already canceled or expired ctx prevents the install.
+func (m *Manager) InstallService(ctx context.Context, service *ServiceConfig) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	servicePath := filepath.Join(m.UnitPath, service.Name+".service")
+	if exists, err := unitFileState(servicePath); err != nil {
+		return err
+	} else if exists {
+		return fmt.Errorf("service file already exists: %s", servicePath)
+	}
+	if err := writeUnitFile(servicePath, GenerateService(service)); err != nil {
+		return fmt.Errorf("failed to write service: %w", err)
+	}
+	if err := m.daemonReload(ctx); err != nil {
+		return fmt.Errorf("daemon-reload failed: %w", err)
+	}
+	return nil
+}
+
 // Remove stops and disables the timer, removes both unit files, and calls
 // daemon-reload. Every step is attempted, and all failures are returned
 // together. An already canceled or expired ctx prevents the removal outright;

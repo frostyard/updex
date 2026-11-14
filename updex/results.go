@@ -64,6 +64,12 @@ type DaemonStatusResult struct {
 	// Masked reports that the timer file in use is a systemd mask: a symlink
 	// to /dev/null. A masked timer never fires, so Schedule is empty.
 	Masked bool `json:"masked,omitempty"`
+	// SuiteSwitchInstalled reports that a file of updex-suite-switch.service
+	// exists, packaged or in /etc (ADR-0021); its path is in UnitFiles.
+	SuiteSwitchInstalled bool `json:"suite_switch_installed,omitempty"`
+	// SuiteSwitchEnabled reports that systemd has updex-suite-switch.service
+	// enabled, so it runs at every boot.
+	SuiteSwitchEnabled bool `json:"suite_switch_enabled,omitempty"`
 }
 
 // CheckResult represents the result of a check operation for a single component.

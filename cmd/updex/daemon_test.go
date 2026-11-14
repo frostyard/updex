@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -144,8 +145,8 @@ func TestRunDaemonEnable_Success(t *testing.T) {
 			t.Errorf("written service unit missing %q\nGot:\n%s", expected, serviceContent)
 		}
 	}
-	if mock.EnableUnit != daemonTestUnitName+".timer" || !mock.EnableCalled {
-		t.Errorf("expected timer to be enabled, got called=%v unit=%q", mock.EnableCalled, mock.EnableUnit)
+	if !slices.Contains(mock.EnableUnits, daemonTestUnitName+".timer") || !slices.Contains(mock.EnableUnits, "updex-suite-switch.service") {
+		t.Errorf("expected the timer and updex-suite-switch.service to be enabled, got %v", mock.EnableUnits)
 	}
 	if mock.StartUnit != daemonTestUnitName+".timer" || !mock.StartCalled {
 		t.Errorf("expected timer to be started, got called=%v unit=%q", mock.StartCalled, mock.StartUnit)
@@ -375,6 +376,7 @@ func TestRunDaemonEnable_DryRun(t *testing.T) {
 			wantPaths := []string{
 				filepath.Join(dir, daemonTestUnitName+".timer"),
 				filepath.Join(dir, daemonTestUnitName+".service"),
+				filepath.Join(dir, "updex-suite-switch.service"),
 			}
 			for _, want := range wantPaths {
 				if !strings.Contains(out, want) {
@@ -386,7 +388,7 @@ func TestRunDaemonEnable_DryRun(t *testing.T) {
 				if jsonErr := json.Unmarshal([]byte(out), &result); jsonErr != nil {
 					t.Fatalf("dry-run enable JSON invalid: %v\n%s", jsonErr, out)
 				}
-				if !result.DryRun || len(result.UnitFiles) != 2 {
+				if !result.DryRun || len(result.UnitFiles) != 3 {
 					t.Errorf("dry-run enable result = %+v", result)
 				}
 			}
@@ -803,5 +805,32 @@ func TestRunDaemonStatus_CharacterizesEmptyScheduleAndLastRun(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("status output missing %q:\n%s", want, out)
 		}
+	}
+}
+
+// TestRunDaemonStatus_SuiteSwitchLine prints the state of
+// updex-suite-switch.service when a file of it exists (ADR-0021).
+func TestRunDaemonStatus_SuiteSwitchLine(t *testing.T) {
+	mock := &systemd.MockSystemctlRunner{IsEnabledResult: true}
+	dir := daemonTestEnv(t, mock)
+	seedUnits(t, dir)
+
+	out, err := captureStdout(t, func() error { return runDaemonStatus(daemonTestCommand(t), nil) })
+	if err != nil {
+		t.Fatalf("status failed: %v", err)
+	}
+	if strings.Contains(out, "Suite switch") {
+		t.Errorf("status names a suite-switch unit that does not exist:\n%s", out)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "updex-suite-switch.service"), []byte("[Unit]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err = captureStdout(t, func() error { return runDaemonStatus(daemonTestCommand(t), nil) })
+	if err != nil {
+		t.Fatalf("status failed: %v", err)
+	}
+	if !strings.Contains(out, "  Suite switch at boot: true\n") {
+		t.Errorf("status has no suite-switch line:\n%s", out)
 	}
 }

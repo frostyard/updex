@@ -322,6 +322,24 @@ error. Packaged units are never touched. It returns "timer not installed"
 when neither directory has the timer. Every step is attempted, and stop,
 disable, removal and reload failures are contextualized and joined;
 `DisableDaemon` returns that error with no success result.
+`SuiteSwitchUnit() *systemd.ServiceConfig` returns
+`updex-suite-switch.service` ([ADR-0021](../adr/0021-link-the-running-suites-images-at-boot-after-a-suite-switch.md)):
+a `oneshot` that runs `/usr/bin/updex features update --suite-switch`, with
+`Wants=`/`After=network-online.target`, `Before=updex-update.service`,
+`DefaultDependencies=no` (the basic dependencies written out),
+`TimeoutStartSec=2h`, `systemd.RefreshSandboxDirectives` (no mount namespace,
+because it refreshes) and `[Install] WantedBy=multi-user.target`
+(`systemd.ServiceConfig` fields `Before`, `UnitDirectives`, `Directives`,
+`WantedBy`). The release build writes it beside the other units.
+`EnableDaemon` also enables it (never starts it): the packaged file when it
+exists and is not masked (a mask adds `; updex-suite-switch.service is masked
+and stays disabled` to the message; an older package without it changes
+nothing), else it installs it with the marker through
+`systemd.Manager.InstallService` and refuses to enable when a file is already
+at its `/etc` path. `DisableDaemon` disables it when a file of it exists and
+is not masked, and removes it from `/etc` by the same marker rule (it has no
+legacy text). `DaemonStatus` adds its path to `UnitFiles` and sets
+`SuiteSwitchInstalled` and `SuiteSwitchEnabled`.
 `DaemonStatus` reads `RuntimePaths.LastRunPath` without a lock or writes,
 including when no timer is installed. `LastUpdate` is the persistent format 1
 record, with unknown enum values normalized to `other`; absent files and
@@ -410,6 +428,8 @@ type DaemonStatusResult struct {
     LastUpdate *LastRunRecord `json:"last_update,omitzero"` // normalized persistent record, nil if absent/unknown format
     LastUpdateError string `json:"last_update_error,omitempty"` // record read/validation error, not a status failure
     Masked     bool     `json:"masked,omitempty"` // the timer file in use is a symlink to /dev/null
+    SuiteSwitchInstalled bool `json:"suite_switch_installed,omitempty"` // a file of updex-suite-switch.service exists (ADR-0021)
+    SuiteSwitchEnabled   bool `json:"suite_switch_enabled,omitempty"`   // systemd has it enabled
 }
 ```
 
@@ -562,6 +582,8 @@ Downloads and installs the newest available version for each enabled feature's *
 
 **Lock.** Except with `DryRun`, `UpdateFeatures` holds the operation lock (see [Operation lock and `ErrBusy`](#operation-lock-and-errbusy)) and returns an error wrapping `ErrBusy` when another operation holds it. Manifests are cached by source URL — transfers sharing the same source avoid redundant HTTP requests. Parsed source patterns are returned from version listing and reused by the install pipeline to avoid redundant pattern compilation. Refresh is batched — a single `systemd-sysext refresh` runs after all components are processed. If that final refresh fails, the per-feature results are still returned as recorded (a component that was downloaded and linked keeps `Installed=true`; it is staged but not activated) and the method returns `sysext refresh failed: …` — joined with `one or more components failed to update` when a component also failed — so callers and the CLI (non-zero exit, `--json` still emits the array) never mistake an unactivated update for a completed one. With `NoRefresh: true` (the daemon path) no refresh is attempted. With `DryRun: true`, manifests are fetched and versions are selected, but download, legacy cleanup, sysext linking, refresh, and vacuum deletion are skipped. Returns per-feature results with per-component status.
 
+**Suite switch** ([ADR-0021](../adr/0021-link-the-running-suites-images-at-boot-after-a-suite-switch.md)). With `SuiteSwitchOnly`, `UpdateFeatures` first selects, without the lock, the enabled, unmasked features that have an active transfer whose sysext link points to an image of another suite (`sysext.LinkedOtherSuiteAt`: the link target matches `Target.AnySuitePatterns` and no current target pattern; a link that cannot be inspected is a warning and does not count). The reporter gets `<feature>/<component>: the sysext link points to <image>, an image of suite <suite>` for each. With none, it returns an empty, non-nil slice and no error: no lock, no download, no refresh, no last-run record. With some, it takes the lock, loads the domain again and selects again before it downloads anything (an empty selection then ends the run the same way), and runs as if `Features` named them: the normal update, then the refresh, recorded as a named run. A domain that the unlocked read cannot load is not a fast-path exit: the locked path loads it again and records the failure (class `config`). The run changes only its own links and fails closed: when `pendingActivationLinksHost` finds another pending change, or cannot load the host's definitions (a run with `Component` refreshes the whole host too), the run keeps its links, skips the refresh and sets `RefreshSkipped` to `refresh skipped: <reason>; the suite switch takes effect at the next boot`, where the reason is `the host's sysext definitions cannot be read, so what a refresh changes is unknown`, `cannot read the state of <component>`, `<component> is merged but not linked` (a pending deactivation) or `<component> has an update that waits for the next boot` (a pending activation); it is not an error, and the last-run record has `refresh` `skipped`. `SuiteSwitchOnly` with `Features` or with `NoRefresh` is a `fault.Config` error and writes no record.
+
 **Last-run record.** Except with `DryRun`, the run ends by writing `RuntimePaths.LastRunPath` (see [Last-run record and `DefaultLastRunPath`](#last-run-record-and-defaultlastrunpath)); a write failure is only a warning.
 
 The manifest cache key is `Transfer.Source.Path` only, but verification is a property of the transfer, not of load order: `manifest.Manifest.Verified` records whether a cached entry passed GPG verification, and `getAvailableVersions` (shared with `CheckFeatures`) never lets a transfer that requires verification (per `Client.verifyPolicy`: `ClientConfig.Verify`, `Verify=true`, or a catalog-generated transfer whose repo lacks `AllowUnsigned=yes`) consume an unverified cached manifest — it refetches with verification and the verified manifest replaces the cache entry. A verified manifest may serve unverified transfers, never the reverse. Two transfers sharing a source with the same verification requirement still make one HTTP request. Changes that require different auth behavior per transfer must still change the cache key or bypass caching.
@@ -605,6 +627,7 @@ Both gates report one line per compared image without `--verbose`: `<component>:
 | `NoVacuum` | `bool` | Skip removing old versions |
 | `Component` | `string` | Scope to one named component; `""` = default union |
 | `Features` | `[]string` | Act only on the named features; empty acts on every enabled feature (see "Feature-name filter" below) |
+| `SuiteSwitchOnly` | `bool` | Act only on the features whose sysext link points to an image of another suite, then refresh; nothing at all when there is none (see "Suite switch" above; ADR-0021). Refused with `Features` or `NoRefresh` |
 
 **Feature-name filter.** `UpdateFeatures` and `CheckFeatures` take an optional list of feature names in `Options.Features`; the CLI passes its `[FEATURE...]` arguments there. The list is validated by `selectFeatures` once, immediately after `loadDomain` (so against the domain that `Component` or `Definitions` scopes the call to) and, for `UpdateFeatures`, after the operation lock is taken, in both cases before anything is downloaded, linked, vacuumed, refreshed or read. Empty means no filter: every enabled, unmasked feature is acted on, as before. A name that the domain does not define (`feature '<name>' not found`), a masked feature (`feature '<name>' is masked`) and a feature that is not enabled (`feature '<name>' is not enabled; run 'updex features enable <name>' first`) are errors. Every problem is reported, joined in argument order and once per distinct name, so one run shows every name that would not be acted on; the call then returns `nil` results and changes nothing. A duplicate name is acted on once. Results keep domain order, not argument order, and a feature outside the list is absent from the results as if it were not enabled. The filter also narrows the run's *own* transfers, so the [Refresh warning](#refresh-warning) lists the pending links of the features the run does not name.
 
@@ -827,7 +850,7 @@ type PendingActivation struct {
 
 Defined in `updex/status.go` (ADR-0016, "Status and logs"). `RunningVersion` is read from the merged-state metadata under the client's `sysextHierarchies` ([ADR-0015](../adr/0015-detect-merged-sysexts-from-hierarchy-metadata.md)) with `sysext.MergedVersionIn`; `LinkedVersion` from `sysext.LinkedVersionAt` with the client's `SysextLinkDir`. The JSON keys `running_version` and `linked_version` are always present: an empty string means none, so a consumer can tell "not merged" from an absent key of an older updex.
 
-`PendingReboot` is true when the next boot changes what the host runs: `LinkedVersion` is non-empty and differs from `RunningVersion`. It is false when `RunningVersion` is `unknown` (the two cannot be compared; a false alarm on every host with old-style metadata would hide real ones) and when `Error` is set. `Error` carries `failed to read merged state: …` and/or `failed to inspect sysext link: …`; the value that could be read stays set. The CLI renders `RunningVersion` and `LinkedVersion` as the `RUNNING` and `LINKED` columns (`-` for empty, `error` when `Error` is set) and lists the pending transfers in a `PENDING REBOOT:` footer.
+`PendingReboot` is true when the next boot changes what the host runs: `LinkedVersion` is non-empty and differs from `RunningVersion`. It is false when `RunningVersion` is `unknown` (the two cannot be compared; a false alarm on every host with old-style metadata would hide real ones) and when `Error` is set. `Error` carries `failed to read merged state: …` and/or `failed to inspect sysext link: …`, and the transfer's `config.Transfer.SpecifierError` (an empty specifier in a `MatchPattern`, #511); the value that could be read stays set. The CLI renders `RunningVersion` and `LinkedVersion` as the `RUNNING` and `LINKED` columns (`-` for empty, `error` when `Error` is set) and lists the pending transfers in a `PENDING REBOOT:` footer.
 
 ### FeatureActionResult
 
@@ -942,6 +965,8 @@ type CheckResult struct {
 - `GetTransfersForFeature(transfers []*Transfer, featureName string) []*Transfer` — Get transfers associated with a specific feature by membership in `Features` or `RequisiteFeatures`; this is association lookup only, and must not decide what is downloaded, linked or removed (use `CheckTransferActivation`)
 - `GetEnabledFeatureNames(features []*Feature) []string`
 - `IsFeatureEnabled(features []*Feature, name string) bool`
+- `Transfer.SpecifierError error` — Set by the load when a specifier in a `Source` or `Target` `MatchPattern` expanded to an empty string (the first one only), marked `fault.Config`: `Target MatchPattern "foo_@v_%w_%a.raw": specifier %w is empty: os-release has no VERSION_ID`. The load still succeeds. `Client` returns it from every version lookup (`UpdateFeatures`, `CheckFeatures`, `EnableFeature{Now}`) and puts it in `TransferStatus.Error`; teardown (`DisableFeature`) and the vacuum ignore it (#511)
+- `Transfer.ProtectVersionError error` — The same for `ProtectVersion=`; not an error of the transfer: `Features` and the vacuum report it as a warning with the expanded value. `ProtectVersion` keeps the literal part (`1%w` with `%w` empty protects `1`); only an empty value protects nothing
 
 **Component discovery** (`config/component.go`; see `docs/design/overview.md` "Components" for the full design):
 
@@ -1019,6 +1044,7 @@ recorded in [ADR-0008](../adr/0008-bounded-retry-no-resume.md).
 - `LinkVersionAt(t *config.Transfer, sysextDir, version string) error` — Atomically (temp symlink plus rename) point `<sysextDir>/<SysextLinkName(t)>` at the staged image of exactly that version; errors with `version X of <component> is not on disk` and changes nothing otherwise. `LinkToSysextAt` links the newest image through the same helper
 - `VersionSysextRunner` interface — `PathSysextRunner` plus `LinkVersionAt(t *config.Transfer, sysextDir, version string) error`. `RollbackFeature` links only through it; a runner that does not implement it is refused with `updex.ErrLegacySysextRunner`. `DefaultRunner` and `MockRunner` implement it (`MockRunner.LinkVersionAtCalls`, `LinkVersionAtErr`); `MockRunner` creates no link
 - `StagedImageAt(t *config.Transfer, defaultDir, version string) (string, error)` — Path of the staged image of exactly `version` (the file `LinkVersionAt` would link); `""` with a nil error when no staged file has that version. The refresh gate reads the image it names
+- `LinkedOtherSuiteAt(t *config.Transfer, sysextDir string) (image, suite string, err error)` — The base name of the link target and its suite when `<sysextDir>/<SysextLinkName(t)>` is a symlink to an image of another suite: the name matches one of `Target.AnySuitePatterns` (all `%w` groups agree) and none of the current target patterns. `""` when the transfer has no `%w` target pattern, the link is absent or not a symlink, or the target is an image of the running suite or no image of the transfer. The target does not have to exist. Used by `UpdateFeaturesOptions.SuiteSwitchOnly` (ADR-0021)
 - `LinkedVersionAt(t *config.Transfer, sysextDir string) (string, error)` — Version of the image the systemd-sysext link `<sysextDir>/<SysextLinkName(t)>` points to; `""` with a nil error when the link is absent, not a symlink, dangling, or names an image the transfer's target patterns do not match. A relative link target is resolved against `sysextDir`. `CheckFeatures` uses it for `CurrentVersion`; `GetInstalledVersions` stays staging-based because `stageTransfer` relies on that to skip a re-download
 - `MergedVersionIn(t *config.Transfer, hierarchies []string) (string, error)` — Version of the transfer's image that the `.systemd-sysext` metadata under `hierarchies` records (`UnknownVersion` when the metadata records the image without a version, `""` when not merged; first hierarchy that records it wins; a read error returns `read merged state: …`). Unlike `GetActiveVersionWith` it ignores a legacy `CurrentSymlink` and `/run/extensions`, so it answers "merged now", not "active or about to be". `updex.Client` uses it for `RunningVersion`
 - `GetActiveVersion(t *config.Transfer) (string, error)` — Get the version considered active by updex: first a legacy `CurrentSymlink`, then an image name under each `MergedHierarchies` entry's `.systemd-sysext` metadata, then an image name in `RunExtensionsDir` (`/run/extensions`, the runtime image search directory)
