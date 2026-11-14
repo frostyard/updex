@@ -440,8 +440,9 @@ binary needs it on the host. The unit tests do not run it.
   read or the host's definitions do not load (`pendingActivationLinksHost`
   returns that failure), so it never changes what ADR-0016 leaves for the
   next boot.
-  It refuses names and `--no-refresh`, and under systemd a busy lock is an
-  error for it, not a skip: `updex-suite-switch.service` then restarts after
+  It refuses names and `--no-refresh`, and under systemd a busy lock and
+  unreachable sources (ADR-0018) are errors for it, not skips:
+  `updex-suite-switch.service` then restarts after
   5 minutes, at most 3 times in 12 hours (ADR-0022), and boot never waits for it
 - `components` — list discovered systemd-sysext components (refuses
   `-C`/`--definitions`: a definitions override is 1 flat directory with no
@@ -786,7 +787,12 @@ in the `config/` structs and parse functions. Always finish with
   adds `updex: no update source is reachable; skipping this run` on stderr
   and exits 0, only under systemd; an interactive shell and `--json` behaviour
   are unchanged, and so are the units. The negative consequence is recorded
-  in the ADR: a source name that is wrong for ever also looks offline.
+  in the ADR: a source name that is wrong for ever also looks offline. The
+  skip never applies to `features update --suite-switch` (ADR-0022): exit 0
+  would stop `Restart=on-failure` of `updex-suite-switch.service`, so that run
+  returns the error, in text and `--json` (`skipUnreachable` in
+  `cmd/updex/features_run.go` checks `!featureUpdateSuiteSwitch`, as the
+  `ErrBusy` skip does).
 
 ### Using the SDK programmatically
 

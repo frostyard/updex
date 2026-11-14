@@ -40,6 +40,13 @@ ADR-0021:
   supports `Restart=` with `Type=oneshot` from version 244 (trixie has 257,
   forky 262).
 
+A retry needs a non-zero exit, so a suite-switch run takes none of the CLI's
+skips under systemd that exit 0. Under systemd, `updex features update` exits
+0 for a busy lock (ADR-0016) and when no source is reachable
+([ADR-0018](0018-skip-an-update-run-when-every-source-is-unreachable.md)).
+With `--suite-switch` both are errors, in text and with `--json`; the timer's
+`updex-update.service` keeps both skips.
+
 The `systemd.ServiceConfig` generator needs no change: the start limit goes in
 `UnitDirectives`, the restart lines in `Directives` before the refresh
 sandbox. `updex-update.timer` and `updex-update.service` do not change.
@@ -48,6 +55,12 @@ sandbox. `updex-update.timer` and `updex-update.service` do not change.
 
 - A failure that goes away within about 15 minutes (3 waits of 5 minutes plus
   the run times) now brings the feature back on that boot.
+- The exception to ADR-0018 is narrow: only `--suite-switch` loses the
+  unreachable skip, so the timer's service still does not stay `failed` on an
+  offline host. An offline host now marks `updex-suite-switch.service`
+  failed after its last retry (on a boot whose links name another suite's
+  image only; on other boots the run reads the links and exits 0 before any
+  network access).
 - Boot still does not wait. `DefaultDependencies=no` stays, so
   `multi-user.target` gets no implicit `After=` on the unit. The unit is
   ordered before no boot target, no unit `Requires=`, `BindsTo=` or
@@ -98,4 +111,5 @@ sandbox. `updex-update.timer` and `updex-update.service` do not change.
   [specs/cli-reference.md](../specs/cli-reference.md),
   [specs/sdk-api.md](../specs/sdk-api.md)
 - Builds on: [ADR-0021](0021-link-the-running-suites-images-at-boot-after-a-suite-switch.md),
-  [ADR-0016](0016-automatic-sysext-updates-apply-at-next-boot.md)
+  [ADR-0016](0016-automatic-sysext-updates-apply-at-next-boot.md),
+  [ADR-0018](0018-skip-an-update-run-when-every-source-is-unreachable.md)

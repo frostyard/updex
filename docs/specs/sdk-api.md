@@ -250,7 +250,10 @@ and each response. A request outside `UpdateFeatures` carries no tracker. The wr
 CLI maps the sentinel to exit status 0 only for `updex features update` under
 systemd: after the normal output and the run's usual progress and warning
 lines, it adds the one skip line; an interactive run returns the error, and
-`--json` output is unchanged.
+`--json` output is unchanged. `updex features update --suite-switch` never
+maps it to 0, under systemd or not, in text and `--json`
+([ADR-0022](../adr/0022-retry-a-failed-suite-switch-run-at-boot.md)): `updex-suite-switch.service` must fail so
+that `Restart=on-failure` retries it.
 
 ### Last-run record and `DefaultLastRunPath`
 

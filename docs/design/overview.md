@@ -1165,7 +1165,10 @@ which supersedes [ADR-0007](../adr/0007-daemon-stages-never-activates.md).
   `EACCES`), and the CLI, under systemd only, prints the normal output and
   warnings, adds one skip line and exits 0, so the unit does not stay `failed`. A partial failure,
   a source that answered with an error status, a verification failure, a
-  failed refresh and a cancelled run still exit non-zero. Timer:
+  failed refresh and a cancelled run still exit non-zero, and so does
+  `features update --suite-switch` (text and `--json`): its exit 0 would stop
+  the bounded retry of `updex-suite-switch.service`
+  ([ADR-0022](../adr/0022-retry-a-failed-suite-switch-run-at-boot.md)). Timer:
   `OnCalendar=*-*-* 00/6:00:00`, `RandomizedDelaySec=3600s`, `Persistent=true`,
   `[Install] WantedBy=timers.target`. `systemd.ServiceConfig` gained `Wants`,
   `After` and `Conditions` (`[]string`; `Conditions` are whole directive lines),
@@ -1202,7 +1205,9 @@ which supersedes [ADR-0007](../adr/0007-daemon-stages-never-activates.md).
   for a unit that no timer activates.
 - **Bounded retry of the suite-switch run** ([ADR-0022](../adr/0022-retry-a-failed-suite-switch-run-at-boot.md)).
   A failed run (no image of the new suite yet, no usable network, a busy
-  lock, a timeout) restarts: `Restart=on-failure` and `RestartSec=5min` in
+  lock, a timeout) restarts. The CLI's skips under systemd (exit 0) for a
+  busy lock (ADR-0016) and for unreachable sources (ADR-0018) do not apply to
+  `--suite-switch`, so those runs fail and restart too: `Restart=on-failure` and `RestartSec=5min` in
   `[Service]` (in `Directives`, before `RefreshSandboxDirectives`), and
   `StartLimitIntervalSec=12h` with `StartLimitBurst=4` in `[Unit]` (in
   `UnitDirectives`): 1 start and at most 3 retries in the window, then the

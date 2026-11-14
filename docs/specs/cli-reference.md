@@ -138,8 +138,9 @@ missing until the timer links the forky image and the host reboots.
   that cannot be loaded are an error, and the last-run record says so (class
   `config`).
 - It takes no feature name and cannot be combined with `--no-refresh`.
-  Under systemd, a busy lock fails the run (no skip): no timer run on this
-  boot refreshes, so `updex-suite-switch.service` fails and retries
+  Under systemd, a busy lock and unreachable sources fail the run (no skip,
+  also with `--json`): no timer run on this boot refreshes, so
+  `updex-suite-switch.service` fails and retries
   ([ADR-0022](../adr/0022-retry-a-failed-suite-switch-run-at-boot.md)).
 - A transfer without `%w` is never selected.
 
@@ -450,6 +451,10 @@ successful run ([ADR-0018](../adr/0018-skip-an-update-run-when-every-source-is-u
 A partial failure, a source that answered with an error status, a
 verification failure and a failed refresh still exit non-zero, and a run in
 an interactive shell still reports the error. `--json` output is unchanged.
+`updex features update --suite-switch` never takes this skip: it exits
+non-zero, in text and with `--json`, so `updex-suite-switch.service` retries
+when the network comes up
+([ADR-0022](../adr/0022-retry-a-failed-suite-switch-run-at-boot.md)).
 
 ### Catalogs
 
