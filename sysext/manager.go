@@ -783,7 +783,28 @@ func planOtherSuites(files []otherSuiteFile, protected map[string]bool, keepAll 
 	return remove, keep
 }
 
+// ErrProtectVersionEmptySpecifier is wrapped by the error of a vacuum (and of
+// a vacuum plan) for a transfer whose ProtectVersion= has a specifier that
+// expanded to an empty string (config.Transfer.ProtectVersionError).
+var ErrProtectVersionEmptySpecifier = errors.New("nothing was removed")
+
+// protectVersionGuard refuses the vacuum of a transfer whose ProtectVersion=
+// has an empty specifier: the version it was meant to protect is unknown, so
+// any deletion could remove it. The error keeps the fault class of
+// t.ProtectVersionError (config) and says that nothing was removed.
+func protectVersionGuard(t *config.Transfer) error {
+	if t.ProtectVersionError == nil {
+		return nil
+	}
+	return fmt.Errorf("%w; %w", t.ProtectVersionError, ErrProtectVersionEmptySpecifier)
+}
+
 func planVacuum(t *config.Transfer, activeVersionOverride string, remove bool, p VacuumPaths) (report VacuumReport, err error) {
+	// Every vacuum and vacuum plan passes here: refuse before any directory
+	// is read for deletion.
+	if err := protectVersionGuard(t); err != nil {
+		return VacuumReport{}, err
+	}
 	patterns, err := parseTargetPatterns(t)
 	if err != nil {
 		return VacuumReport{}, err

@@ -33,6 +33,13 @@ type suiteFixture struct {
 
 func newSuiteFixture(t *testing.T, osRelease string, staged []string, linkTarget string) *suiteFixture {
 	t.Helper()
+	return newSuiteFixtureTransfer(t, osRelease, staged, linkTarget, "foo_@v_%w.raw", "")
+}
+
+// newSuiteFixtureTransfer is newSuiteFixture with the transfer's source and
+// target pattern and extra [Transfer] lines (each ending in a newline).
+func newSuiteFixtureTransfer(t *testing.T, osRelease string, staged []string, linkTarget, pattern, transferLines string) *suiteFixture {
+	t.Helper()
 	root := t.TempDir()
 	defDir := filepath.Join(root, "sysupdate.d")
 	if err := os.MkdirAll(defDir, 0o755); err != nil {
@@ -53,8 +60,8 @@ func newSuiteFixture(t *testing.T, osRelease string, staged []string, linkTarget
 		hierarchy: t.TempDir(),
 	}
 	createFeatureFile(t, defDir, "grp", true)
-	transfer := "[Transfer]\nFeatures=grp\nVerify=false\n\n[Source]\nType=url-file\nPath=" + f.server.URL +
-		"\nMatchPattern=foo_@v_%w.raw\n\n[Target]\nPath=" + f.targetDir + "\nMatchPattern=foo_@v_%w.raw\n"
+	transfer := "[Transfer]\nFeatures=grp\nVerify=false\n" + transferLines + "\n[Source]\nType=url-file\nPath=" + f.server.URL +
+		"\nMatchPattern=" + pattern + "\n\n[Target]\nPath=" + f.targetDir + "\nMatchPattern=" + pattern + "\n"
 	if err := os.WriteFile(filepath.Join(defDir, "foo.transfer"), []byte(transfer), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -215,25 +222,69 @@ func TestSpecifierPresentUpdatesAsBefore(t *testing.T) {
 	}
 }
 
-// A ProtectVersion= value with an empty specifier keeps its literal part:
-// the warning names the empty specifier and the expanded value, and says
-// that nothing is protected only when the value is empty.
-func TestProtectVersionWarningNamesExpandedValue(t *testing.T) {
+// The features list warning for a ProtectVersion= value with an empty
+// specifier names the empty specifier and says that the vacuum of the
+// transfer does not run.
+func TestProtectVersionWarningSaysVacuumDoesNotRun(t *testing.T) {
 	cause := fault.Mark(fault.Config, errors.New(`ProtectVersion "1%w": specifier %w is empty: os-release has no VERSION_ID`))
-	tests := []struct {
-		name  string
-		value string
-		want  string
-	}{
-		{name: "literal and specifier", value: "1", want: `foo: ProtectVersion "1%w": specifier %w is empty: os-release has no VERSION_ID; it expands to "1" and protects that version`},
-		{name: "specifier only", value: "", want: `foo: ProtectVersion "1%w": specifier %w is empty: os-release has no VERSION_ID; it expands to an empty value and protects no version`},
+	tr := &config.Transfer{Component: "foo", ProtectVersionError: cause}
+	tr.Transfer.ProtectVersion = "1"
+	want := `foo: ProtectVersion "1%w": specifier %w is empty: os-release has no VERSION_ID; the vacuum of this transfer does not run and removes no image until ProtectVersion= expands without an empty specifier`
+	if got := protectVersionWarning(tr); got != want {
+		t.Errorf("protectVersionWarning() = %q, want %q", got, want)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tr := &config.Transfer{Component: "foo", ProtectVersionError: cause}
-			tr.Transfer.ProtectVersion = tt.value
-			if got := protectVersionWarning(tr); got != tt.want {
-				t.Errorf("protectVersionWarning() = %q, want %q", got, tt.want)
+}
+
+// A ProtectVersion= value with an empty specifier stops the vacuum of the
+// transfer: UpdateFeatures downloads and links the new version as usual,
+// removes no staged image (also beyond InstancesMax), and warns that the
+// vacuum failed and nothing was removed. A dry run plans no removal.
+func TestProtectVersionEmptySpecifierStopsVacuum(t *testing.T) {
+	staged := []string{"foo_0.1.raw", "foo_0.2.raw", "foo_0.3.raw", "foo_1.0.raw"}
+	for _, protect := range []string{"%w", "1%w"} {
+		t.Run(protect, func(t *testing.T) {
+			f := newSuiteFixtureTransfer(t, noVersionID, staged, "foo_1.0.raw", "foo_@v.raw",
+				"InstancesMax=2\nProtectVersion="+protect+"\n")
+			f.server.publish("2.0")
+
+			dry, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true, DryRun: true})
+			if err != nil {
+				t.Fatalf("UpdateFeatures(DryRun) error = %v", err)
+			}
+			if r := resultsByComponent(t, dry)["foo"]; len(r.RemovedVersions) != 0 {
+				t.Errorf("dry run RemovedVersions = %v, want none", r.RemovedVersions)
+			}
+
+			results, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true})
+			if err != nil {
+				t.Fatalf("UpdateFeatures() error = %v", err)
+			}
+			r := resultsByComponent(t, results)["foo"]
+			if r.Error != "" || !r.Downloaded || !r.Installed || r.Version != "2.0" {
+				t.Errorf("result = %+v, want version 2.0 downloaded and installed without error", r)
+			}
+			if got := f.link(t); got != "foo_2.0.raw" {
+				t.Errorf("link = %q, want foo_2.0.raw", got)
+			}
+			want := append(slices.Clone(staged), "foo_2.0.raw")
+			slices.Sort(want)
+			if got := f.staged(t); !slices.Equal(got, want) {
+				t.Errorf("staged = %v, want %v (nothing removed)", got, want)
+			}
+			wantWarn := `vacuum failed for foo: ProtectVersion "` + protect + `": specifier %w is empty: os-release has no VERSION_ID; nothing was removed`
+			if !strings.Contains(f.out.String(), wantWarn) {
+				t.Errorf("output does not contain %q:\n%s", wantWarn, f.out.String())
+			}
+			if strings.Contains(f.out.String(), "protects that version") || strings.Contains(f.out.String(), "protects no version") {
+				t.Errorf("output still carries the old ProtectVersion warning:\n%s", f.out.String())
+			}
+
+			f.out.Reset()
+			if _, err := f.client.Features(t.Context()); err != nil {
+				t.Fatalf("Features() error = %v", err)
+			}
+			if !strings.Contains(f.out.String(), "the vacuum of this transfer does not run") {
+				t.Errorf("Features() output does not say that the vacuum does not run:\n%s", f.out.String())
 			}
 		})
 	}
