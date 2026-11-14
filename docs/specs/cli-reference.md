@@ -416,9 +416,23 @@ dry run adds `; would remove other-suite images: [...]` to the message (JSON
 its image file (systemd older than 258 records only the extension name), the
 merged image could be any of them, so every other-suite image stays and a real
 run prints `Kept every other-suite image of <component>: the merged state names
-it without its image file`. `features disable --now` removes the images of
+it without its image file`. That is the accepted design: a Debian trixie host
+(systemd 257) keeps the other-suite images while the feature is merged, and a
+Debian forky host (systemd 262) gets the full cleanup. `features disable --now`
+removes the images of
 every suite, so it also needs `--force` when an image of another suite is
-active (`Extension <component> (image <file> of another suite) is active`). See
+active (`Extension <component> (image <file> of another suite) is active`); with
+`--force` it removes them also on systemd older than 258.
+
+When `ProtectVersion=` has a specifier that expands to an empty value (for
+example `%w` on a host whose os-release has no `VERSION_ID`), the vacuum of
+that transfer removes nothing. The update still downloads and links, and
+prints the warning
+`vacuum failed for <component>: ProtectVersion "<value>": specifier %w is empty: os-release has no VERSION_ID; nothing was removed`;
+a dry run warns `failed to plan vacuum for <component>: …` and plans no
+removal. `features list` warns that the vacuum of that transfer does not run.
+`features disable --now` is not affected: it removes every version, and
+`ProtectVersion=` never applies to it. See
 [Retention and active versions](config-reference.md#retention-and-active-versions) for the full rule.
 
 ### One updex operation at a time

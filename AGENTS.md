@@ -529,7 +529,14 @@ in the `config/` structs and parse functions. Always finish with
   (rollback, Phase 4), the legacy `CurrentSymlink` target and the newest
   `InstancesMax` versions; protected versions are kept in addition to the newest `InstancesMax`. It
   reads all of them before it deletes anything and fails without deleting when
-  the link or merged state is unreadable. Never call the compatibility
+  the link or merged state is unreadable. A transfer whose `ProtectVersion=`
+  has an empty specifier (`config.Transfer.ProtectVersionError`) is never
+  vacuumed: `planVacuum` (every vacuum and plan entry point, the wrappers
+  too) returns an error wrapping it and `sysext.ErrProtectVersionEmptySpecifier`
+  (class `config`, `…; nothing was removed`) before it reads the staging
+  directory; `installTransfers` reports it as the usual `vacuum failed for`
+  warning and the update is unchanged. Keep that guard in `planVacuum`, not in
+  a caller. Never call the compatibility
   wrappers (`Vacuum`, `VacuumAt`, `PlanVacuumAfterInstallAt`) from SDK code:
   they know neither the link nor the merged state. **Other suites (#512):**
   for a target pattern with `%w`, `config` keeps an any-suite variant
@@ -543,8 +550,12 @@ in the `config/` structs and parse functions. Always finish with
   the merged state names the extension `<component>` and `origin` gives that
   same key no image path of the transfer (systemd < 258), it keeps every
   other-suite image (`VacuumReport.OtherSuiteMergedUnknown`); decide per
-  extension, never from another entry that matches the pattern.
-  `RemoveAllVersionsAt` (`features disable --now`) removes every suite, so the
+  extension, never from another entry that matches the pattern. That is the
+  accepted design, not a gap: a trixie host (systemd 257) keeps the
+  other-suite images while the feature is merged, forky (systemd 262) gets
+  the full cleanup, and `features disable --now --force` removes them.
+  `RemoveAllVersionsAt` (`features disable --now`) ignores `ProtectVersion=`
+  and removes every suite, so the
   disable guard checks `sysext.ActiveOtherSuiteWith` after
   `GetActiveVersionWith`: a guard must recognize every suite its removal can
   match. A transfer without `%w` gets no new behavior.
