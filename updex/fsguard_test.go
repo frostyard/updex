@@ -49,7 +49,7 @@ func TestMkdirAllModeIgnoresTheProcessUmask(t *testing.T) {
 		}
 	})
 
-	t.Run("a symlink at the target path is not chmodded through", func(t *testing.T) {
+	t.Run("an existing symlink at the target path is left alone (nothing is missing)", func(t *testing.T) {
 		testutil.Umask(t, 0o077)
 		base := t.TempDir()
 		target := filepath.Join(base, "elsewhere")
@@ -63,8 +63,54 @@ func TestMkdirAllModeIgnoresTheProcessUmask(t *testing.T) {
 		if err := mkdirAllMode(link, 0o755); err != nil {
 			t.Fatalf("mkdirAllMode: %v", err)
 		}
+		// Nothing is missing, so the walk creates and chmods nothing and the
+		// directory the link points at keeps its own mode.
 		if info, err := os.Lstat(target); err != nil || info.Mode().Perm() != 0o700 {
 			t.Errorf("symlink target = %v, %v; want its own mode 0700 unchanged", info, err)
+		}
+	})
+
+	// mkdirAllMode binds every step to the descriptor of the directory it
+	// created, so replacing the ancestor path after it was created cannot
+	// redirect the next mkdir or chmod at an unrelated directory (the
+	// O_NOFOLLOW in an open by path would protect only the last component).
+	t.Run("a replaced ancestor does not redirect the chmod", func(t *testing.T) {
+		testutil.Umask(t, 0o077)
+		base := t.TempDir()
+		other := filepath.Join(base, "other")
+		private := filepath.Join(other, "private")
+		if err := os.MkdirAll(private, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(private, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		state := filepath.Join(base, "state")
+		moved := filepath.Join(base, "moved")
+
+		// After base/state is created and chmodded, it is renamed away and a
+		// symlink to other/ takes its place.
+		mkdirAllModeStep = func(path string) {
+			if path != state {
+				return
+			}
+			if err := os.Rename(state, moved); err != nil {
+				t.Fatalf("rename %s: %v", state, err)
+			}
+			if err := os.Symlink(other, state); err != nil {
+				t.Fatalf("symlink %s: %v", state, err)
+			}
+		}
+		t.Cleanup(func() { mkdirAllModeStep = nil })
+
+		if err := mkdirAllMode(filepath.Join(state, "private"), 0o755); err != nil {
+			t.Fatalf("mkdirAllMode: %v", err)
+		}
+		if info, err := os.Lstat(private); err != nil || info.Mode().Perm() != 0o700 {
+			t.Errorf("unrelated directory %s = %v, %v; want its own mode 0700 unchanged", private, info, err)
+		}
+		if info, err := os.Lstat(filepath.Join(moved, "private")); err != nil || !info.IsDir() || info.Mode().Perm() != 0o755 {
+			t.Errorf("directory inside the moved ancestor %s = %v, %v; want a 0755 directory", filepath.Join(moved, "private"), info, err)
 		}
 	})
 }

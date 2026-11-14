@@ -1,6 +1,7 @@
 package updex
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -41,6 +42,13 @@ func managedFileExists(path string) (bool, error) {
 	return true, nil
 }
 
+// mkdirAllModeStep runs after mkdirAllMode created and chmodded one
+// directory, with that directory's full path. It is nil in production: a test
+// sets it to replace an ancestor path in the middle of the walk and check
+// that the next step is not redirected, which is what the descriptor-relative
+// walk in mkdirAllMode is for (issue #524 review, updex/fsguard_test.go).
+var mkdirAllModeStep func(path string)
+
 // mkdirAllMode creates dir and every missing parent, like os.MkdirAll, and
 // gives each directory it creates the mode mode.Perm(). The result therefore
 // does not depend on the process umask: the lock, rollback and last-run
@@ -48,54 +56,86 @@ func managedFileExists(path string) (bool, error) {
 // what a root-privileged run wrote under a stricter umask (issue #524). A
 // directory that already exists keeps its mode.
 //
-// The missing components are collected first and fixed afterwards, top-down
-// through an O_NOFOLLOW descriptor of each directory: os.MkdirAll applies the
-// process umask, and a chmod by path would follow a symlink planted in
-// between the mkdir and the chmod.
+// Every step is bound to the descriptor of the directory it created, not to a
+// path: each new directory is made with mkdirat inside the descriptor of its
+// parent and chmodded through an O_NOFOLLOW descriptor opened with openat, so
+// replacing an ancestor path after it was created — with a symlink, say —
+// cannot redirect a later mkdir or chmod at an unrelated directory. The
+// deepest existing ancestor is opened by path, as os.MkdirAll resolves it.
 func mkdirAllMode(dir string, mode os.FileMode) error {
 	clean := filepath.Clean(dir)
-	var missing []string
+	var missing []string // collected deepest first
+	base := clean
 	for p := clean; ; {
-		_, err := os.Lstat(p)
-		if err == nil {
+		if _, err := os.Lstat(p); err == nil {
+			base = p
 			break
-		}
-		if !os.IsNotExist(err) {
+		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("check directory %s: %w", p, err)
 		}
-		missing = append(missing, p)
+		missing = append(missing, filepath.Base(p))
 		parent := filepath.Dir(p)
 		if parent == p {
-			break
+			return fmt.Errorf("check directory %s: no existing ancestor", p)
 		}
 		p = parent
 	}
-	if err := os.MkdirAll(clean, mode); err != nil {
-		return err
+	if len(missing) == 0 {
+		return nil
 	}
+
+	parentFd, err := syscall.Open(base, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("open directory %s: %w", base, err)
+	}
+	path := base
 	for i := len(missing) - 1; i >= 0; i-- {
-		if err := chmodDirNoFollow(missing[i], mode.Perm()); err != nil {
+		path = filepath.Join(path, missing[i])
+		childFd, err := mkdirAtMode(parentFd, missing[i], mode.Perm(), path)
+		if err != nil {
+			_ = syscall.Close(parentFd)
 			return err
 		}
+		if err := syscall.Close(parentFd); err != nil {
+			_ = syscall.Close(childFd)
+			return fmt.Errorf("close directory %s: %w", filepath.Dir(path), err)
+		}
+		parentFd = childFd
+		if mkdirAllModeStep != nil {
+			mkdirAllModeStep(path)
+		}
+	}
+	if err := syscall.Close(parentFd); err != nil {
+		return fmt.Errorf("close directory %s: %w", path, err)
 	}
 	return nil
 }
 
-// chmodDirNoFollow gives the directory at path the permission bits mode. It
-// opens the directory with O_NOFOLLOW and O_DIRECTORY, so a symlink or a
-// non-directory at path is refused instead of chmodded through, and sets the
-// mode on the open descriptor.
-func chmodDirNoFollow(path string, mode os.FileMode) error {
-	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+// mkdirAtMode creates name inside the directory whose descriptor is parentFd,
+// sets the new directory to mode (mkdir applies the process umask, so the
+// chmod is what makes the mode explicit), and returns an O_NOFOLLOW
+// descriptor of it. A name another process created first (EEXIST) is used
+// without changing its mode: an existing directory keeps its mode, and a
+// symlink or non-directory there is refused rather than followed. path is the
+// full path of the new directory, for error messages only.
+func mkdirAtMode(parentFd int, name string, mode os.FileMode, path string) (int, error) {
+	err := syscall.Mkdirat(parentFd, name, uint32(mode))
+	created := err == nil
+	if err != nil && !errors.Is(err, syscall.EEXIST) {
+		return -1, fmt.Errorf("create directory %s: %w", path, err)
+	}
+	fd, err := syscall.Openat(parentFd, name, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
 	if err != nil {
-		return fmt.Errorf("open directory %s: %w", path, err)
+		return -1, fmt.Errorf("open directory %s: %w", path, err)
 	}
-	dir := os.NewFile(uintptr(fd), path)
-	defer func() { _ = dir.Close() }()
-	if err := dir.Chmod(mode); err != nil {
-		return fmt.Errorf("set mode of directory %s: %w", path, err)
+	if !created {
+		return fd, nil
 	}
-	return nil
+	if err := syscall.Fchmod(fd, uint32(mode)); err != nil {
+		_ = syscall.Close(fd)
+		return -1, fmt.Errorf("set mode of directory %s: %w", path, err)
+	}
+	return fd, nil
 }
 
 // writeManagedFile writes content to path as a fresh regular file, mode

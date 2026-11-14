@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-14",
+  "scope": "updex/fsguard.go mkdirAllMode",
+  "correction": "A chmod of a directory that updex created must go through descriptors, not paths: O_NOFOLLOW protects only the last component, so reopening each created directory by its full path follows an ancestor that another process replaced with a symlink, and chmods an unrelated existing directory. mkdirAllMode creates each missing directory with mkdirat in its parent's descriptor, opens it with openat O_NOFOLLOW and fchmods that descriptor; a directory that another process created first (EEXIST) keeps its mode.",
+  "evidence": "frostyard/updex#525 cross-review (openai/gpt-6.1-sol) of head ab4037b, finding 1 (updex/fsguard.go:76)",
+  "promoted_to": "updex/fsguard_test.go TestMkdirAllModeIgnoresTheProcessUmask/a_replaced_ancestor_does_not_redirect_the_chmod"
+}
