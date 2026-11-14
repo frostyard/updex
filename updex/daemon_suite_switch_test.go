@@ -31,10 +31,33 @@ func TestSuiteSwitchUnitText(t *testing.T) {
 			t.Errorf("unit has no %q:\n%s", want, text)
 		}
 	}
-	// Every call returns a new value: a caller cannot change the next one.
+	assertSuiteSwitchRetry(t, text)
+	assertBootDoesNotWaitForSuiteSwitch(t, map[string]string{"updex-suite-switch.service": text})
+	// Every call returns a new value: a caller cannot change the next one,
+	// nor the shared RefreshSandboxDirectives.
 	unit.Directives[0] = "changed"
+	unit.Directives[len(unit.Directives)-1] = "changed"
 	if SuiteSwitchUnit().Directives[0] == "changed" {
 		t.Error("SuiteSwitchUnit shares its Directives slice")
+	}
+	if slices.Contains(systemd.RefreshSandboxDirectives, "changed") {
+		t.Error("SuiteSwitchUnit shares systemd.RefreshSandboxDirectives")
+	}
+}
+
+// TestSuiteSwitchUnitRetryText pins the exact generated text of the lines that
+// ADR-0022 adds to updex-suite-switch.service, in their place: the start
+// limit after the [Unit] directives of ADR-0021, and the restart after
+// TimeoutStartSec= and before the refresh sandbox.
+func TestSuiteSwitchUnitRetryText(t *testing.T) {
+	text := systemd.GenerateService(SuiteSwitchUnit())
+	for _, want := range []string{
+		"DefaultDependencies=no\nConflicts=shutdown.target\nStartLimitIntervalSec=6h\nStartLimitBurst=4\n\n[Service]\n",
+		"TimeoutStartSec=2h\nRestart=on-failure\nRestartSec=5min\n" + systemd.RefreshSandboxDirectives[0] + "\n",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("unit has no %q:\n%s", want, text)
+		}
 	}
 }
 
