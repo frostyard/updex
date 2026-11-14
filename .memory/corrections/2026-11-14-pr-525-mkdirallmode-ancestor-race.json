@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-14",
+  "scope": "updex/fsguard.go mkdirAllMode",
+  "correction": "A chmod of a directory that updex created must go through descriptors, not paths: O_NOFOLLOW protects only the last component, so reopening each created directory by its full path follows an ancestor that another process replaced with a symlink, and chmods an unrelated existing directory. mkdirAllMode creates each missing directory with mkdirat in its parent's descriptor, opens it with openat O_NOFOLLOW and fchmods that descriptor; a directory that another process created first (EEXIST) keeps its mode. A new directory is chmodded only when its parent is trusted (owned by updex's user or root, and not writable by group or others unless sticky), because a rename between mkdirat and openat in a parent others can write could swap in another directory; in an untrusted parent the directory keeps the umask-applied mode, which is never more open than the requested one.",
+  "evidence": "frostyard/updex#525 cross-review (openai/gpt-6.1-sol) of head ab4037b, finding 1 (updex/fsguard.go:76)",
+  "promoted_to": "updex/fsguard_test.go TestMkdirAllModeIgnoresTheProcessUmask/a_replaced_ancestor_does_not_redirect_the_chmod, updex/fsguard_test.go TestMkdirAllModeIgnoresTheProcessUmask/a_swapped_directory_in_a_parent_other_users_can_write_is_not_chmodded, updex/fsguard_test.go TestTrustedParent"
+}

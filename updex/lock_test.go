@@ -7,6 +7,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/frostyard/updex/v2/internal/testutil"
 	"github.com/frostyard/updex/v2/sysext"
 	"github.com/frostyard/updex/v2/systemd"
 )
@@ -149,23 +150,41 @@ func TestMutatingOperationsReturnErrBusyWhileLockHeld(t *testing.T) {
 	again()
 }
 
-// The lock file and its parent directory are created with the documented
-// modes, and the default path is /run/updex/lock.
+// acquireLock creates the lock directory (0755), its missing parents (0755)
+// and the file (0600) whatever the process umask is: the modes are a
+// documented contract (docs/specs/sdk-api.md, issue #524). The default path
+// is /run/updex/lock.
 func TestAcquireLockCreatesFileAndDirectory(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "run", "updex", "lock")
-	release, err := acquireLock(path)
-	if err != nil {
-		t.Fatalf("acquireLock: %v", err)
-	}
-	defer release()
+	for _, tc := range []struct {
+		name string
+		mask int
+	}{
+		{name: "umask 0022", mask: 0o022},
+		{name: "umask 0077", mask: 0o077},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testutil.Umask(t, tc.mask)
+			path := filepath.Join(t.TempDir(), "run", "updex", "lock")
+			release, err := acquireLock(path)
+			if err != nil {
+				t.Fatalf("acquireLock: %v", err)
+			}
+			defer release()
 
-	dirInfo, err := os.Stat(filepath.Dir(path))
-	if err != nil || !dirInfo.IsDir() || dirInfo.Mode().Perm() != 0o755 {
-		t.Errorf("lock directory: %v, %v; want a 0755 directory", dirInfo, err)
-	}
-	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
-		t.Errorf("lock file: %v, %v; want a 0600 regular file", info, err)
+			for _, dir := range []string{
+				filepath.Dir(filepath.Dir(path)), // "run", the first parent acquireLock creates
+				filepath.Dir(path),               // "updex"
+			} {
+				dirInfo, err := os.Stat(dir)
+				if err != nil || !dirInfo.IsDir() || dirInfo.Mode().Perm() != 0o755 {
+					t.Errorf("lock directory %s: %v, %v; want a 0755 directory", dir, dirInfo, err)
+				}
+			}
+			info, err := os.Stat(path)
+			if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+				t.Errorf("lock file: %v, %v; want a 0600 regular file", info, err)
+			}
+		})
 	}
 
 	if DefaultLockPath != "/run/updex/lock" {
