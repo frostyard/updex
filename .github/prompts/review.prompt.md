@@ -37,8 +37,8 @@ Apply the machine-readable controls in
    [risk tier](../../docs/risk-tiers.md) and that the tier's required
    evidence is present.
 3. Run the gates the rubric names:
-   - `make ci` (tidy, vet, gofmt, lint, unit + race tests, linux
-     amd64/arm64 builds)
+   - `make ci` (tidy, vet, gofmt, lint, docs integrity, corrections, unit +
+     race tests, linux amd64/arm64 builds)
    - `go test -v ./cmd/updex ./tests/e2e/...` when CLI or e2e behavior
      changed
    - `node scripts/check-docs.mjs`

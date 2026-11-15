@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-15",
+  "scope": "updex/corrections_gate_contract_test.go",
+  "correction": "A guard test for a make target must check that the target's own recipe runs the command, not only that .PHONY or a calling target like ci names the target: an empty corrections-check recipe passes every check that stops at the target name, so a push or merge-group run validates nothing. Check the recipe with extractRecipe so a dropped line fails the guard.",
+  "evidence": "frostyard/updex#527 cross-review: removing the validator line from corrections-check left the guard green; TestMakefileCorrectionsCheckRecipeRunsValidator now fails without it",
+  "promoted_to": ""
+}

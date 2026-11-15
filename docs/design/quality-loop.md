@@ -71,6 +71,19 @@ PR template ──► review rubric ──► CI gates ──► corrections ─
     docs-index coverage, relative-link integrity, and symlink resolution
     against [.coverage-thresholds.json](../../.coverage-thresholds.json) —
     all 1.0, `never_relax: true` (the loop may tighten, never loosen).
+  - *Corrections*: `make corrections-check` runs
+    [scripts/check-corrections.mjs](../../scripts/check-corrections.mjs) —
+    this repository's unchanged copy of core's validator — to check the form
+    of every record in [.memory/corrections/](../../.memory/README.md), then
+    `make corrections-base` compares the records with the pull request's base
+    commit: no record is removed, renamed or changed, except that an empty
+    `promoted_to` may be filled once
+    ([frostyard/core ADR-0081](https://github.com/frostyard/core/blob/main/docs/adr/0081-store-each-correction-in-a-file-of-its-own.md)).
+    The *Verify* job gives the `make ci` step `BASE` and checks out the full
+    history (`fetch-depth: 0`) so the comparison can read the base tree; a
+    push or merge-group run has no base commit, so `BASE` is empty and the
+    comparison is skipped. A `BASE` that does not resolve to a commit fails
+    the gate instead of passing it.
   - *Release config* runs the same SHA-pinned GoReleaser Pro v2 action as the
     release and snapshot workflows with `args: check`, read-only contents
     permission, and no persisted checkout credentials. Same-repository non-Dependabot PR,
