@@ -1,4 +1,4 @@
-.PHONY: all build clean fmt lint lint-version-check svu-version-check bump-main-check test test-cover coverage-check test-coverage-check test-docs-check tidy check verify-static verify ci install help
+.PHONY: all build clean fmt lint lint-version-check svu-version-check bump-main-check test test-cover coverage-check test-coverage-check test-docs-check tidy check verify-static verify corrections-check corrections-base ci install help
 
 # Build variables
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -132,6 +132,31 @@ test-coverage-check:
 test-docs-check:
 	node scripts/test-check-docs.mjs
 
+## corrections-check: Check the form of every record in .memory/corrections/ (no comparison)
+corrections-check:
+	node scripts/check-corrections.mjs
+
+# The corrections check compares the record files in .memory/corrections/ with
+# BASE: no record is removed, renamed or changed, except that an empty
+# promoted_to may be filled in once. The old single file must not come back.
+# The contract starts with the gate: a BASE that does not hold
+# scripts/check-corrections.mjs had no such rule, so the comparison is skipped
+# with a notice. Every BASE after the adoption holds the script.
+#
+# A BASE that does not resolve to a commit is an error, never an old base: a
+# typo or an unfetched ref must not turn the comparison into a silent pass.
+corrections-base:
+	@if [ -z "$(BASE)" ]; then exit 0; fi; \
+	if ! git rev-parse --verify --quiet "$(BASE)^{commit}" >/dev/null; then \
+		echo "FAIL: BASE $(BASE) does not resolve to a commit (fetch it first)"; \
+		exit 1; \
+	fi; \
+	if git cat-file -e "$(BASE):scripts/check-corrections.mjs" 2>/dev/null; then \
+		node scripts/check-corrections.mjs --base "$(BASE)"; \
+	else \
+		echo "==> corrections: BASE $(BASE) predates the corrections gate; append-only comparison skipped"; \
+	fi
+
 ## tidy: Tidy go modules
 tidy:
 	$(GO) mod tidy
@@ -161,12 +186,16 @@ verify: verify-static
 	@echo "==> unit tests (umask 0077)"
 	umask 0077 && $(GO) test -count=1 $$($(GO) list ./... | grep -v '/tests/e2e$$')
 
-## ci: Run the credential-free CI gate (verify first, then docs integrity, coverage, race, and cross-build; the non-E2E tests run again with coverage)
+## ci: Run the credential-free CI gate (verify first, then docs integrity, corrections, coverage, race, and cross-build; the non-E2E tests run again with coverage)
 ci: verify
 	@echo "==> docs-integrity checker self-test"
 	$(MAKE) test-docs-check
 	@echo "==> docs integrity"
 	node scripts/check-docs.mjs
+	@echo "==> corrections: record form"
+	$(MAKE) --no-print-directory corrections-check
+	@echo "==> corrections: append-only against BASE"
+	$(MAKE) --no-print-directory corrections-base
 	@echo "==> unit tests with coverage"
 	$(GO) test -v $$($(GO) list ./... | grep -v '/tests/e2e$$') -coverprofile=coverage.out -covermode=atomic
 	@echo "==> coverage floor"

@@ -59,7 +59,8 @@ repo-specific guidance belongs in this file or `docs/`:
   provisions exactly 3.4.1 and `make svu-version-check` fails with that
   instruction when svu is missing or is not the pin (`make bump` runs it
   first) — Node 24 (pinned in `mise.toml`, the
-  same major the `docs-gate` CI job uses) for the docs-integrity gate
+  same major the `docs-gate` CI job uses) for the docs-integrity gate and
+  the corrections gate
 
 updex manages [systemd-sysext](https://www.freedesktop.org/software/systemd/man/latest/systemd-sysext.html)
 images, so end-to-end use requires a systemd-based Linux system and root
@@ -77,7 +78,9 @@ make svu-version-check  # Fail unless svu is the mise.toml pin (make bump runs i
 make bump-main-check   # Fail unless HEAD is main and equals origin/main (make bump runs it after svu-version-check and again before tagging)
 make check        # fmt + lint + test (mutating: fmt rewrites files)
 make verify       # Non-mutating, credential-free gate for read-only reviewers: tidy diff, vet, gofmt -l, exact-pin lint, non-E2E tests (run under umask 0077)
-make ci           # Credential-free gate matching CI's fail-fast order: make verify first, then docs integrity, coverage, E2E, race, cross-build
+make ci           # Credential-free gate matching CI's fail-fast order: make verify first, then docs integrity, corrections, coverage, E2E, race, cross-build
+make corrections-check     # Check the form of every record in .memory/corrections/ (no comparison)
+make corrections-base BASE=<ref>  # Also compare the records with BASE: append-only, no record removed, renamed or changed
 make test-cover   # Tests with HTML coverage report
 make coverage-check        # Enforce the absolute floor and committed coverage ratchet
 make test-coverage-check   # Self-test scripts/check-coverage.sh with fixture profiles
@@ -97,9 +100,17 @@ caller's umask (0022 in GitHub CI), so CI exercises both umasks (updex#524), as
 core ADR-0044 prescribes ("`ci` calls `verify` and adds what CI alone runs") —
 then docs integrity (the same `make test-docs-check` and
 `node scripts/check-docs.mjs` the `docs-gate` CI job runs, so it needs Node.js
-too), non-E2E unit tests with coverage, the separate black-box E2E suite, the
+too), the corrections gate (`make corrections-check`,
+the form of every record in `.memory/corrections/`, then
+`make corrections-base`, the append-only comparison with `BASE`; a `BASE` that
+does not resolve to a commit fails, and a `BASE` that predates the gate skips
+the comparison with a notice, which is what a push or merge-group run gets
+because its `BASE` is empty), non-E2E unit tests with coverage, the separate
+black-box E2E suite, the
 race tests, and Linux
-amd64/arm64 builds. It requires `golangci-lint` and node. The lint
+amd64/arm64 builds. It requires `golangci-lint` and node. `scripts/check-corrections.mjs`
+is a byte-identical copy of frostyard/core's script: change it in core, then
+copy it, never here. The lint
 step first runs `make lint-version-check`, which fails unless the installed
 `golangci-lint` matches the pin in `mise.toml` (currently 2.15.0) and was
 built with a Go minor no older than `go.mod`'s `go` line (MAJOR.MINOR only: a
@@ -1242,6 +1253,19 @@ which permits link-only repairs to immutable ADRs — or any
 broken/repo-escaping symlink; thresholds in `.coverage-thresholds.json` are
 all 1.0 with `never_relax: true`.
 
+**corrections gate** `node scripts/check-corrections.mjs` (run by `make
+corrections-check`) checks the form of every record in
+[.memory/corrections/](.memory/README.md), and `make corrections-base BASE=<ref>`
+(`node scripts/check-corrections.mjs --base <ref>`) compares the records with a
+base commit: no record is removed, renamed or changed, except that an empty
+`promoted_to` may be filled in once. `make ci` runs both
+([core ADR-0081](https://github.com/frostyard/core/blob/main/docs/adr/0081-store-each-correction-in-a-file-of-its-own.md));
+the `Verify` workflow job gives it `BASE` (the pull request's base commit) and
+checks out the full history. `BASE` is empty on a push or a merge-group run, so
+the comparison is skipped there. `scripts/check-corrections.mjs` is a
+byte-identical copy of frostyard/core's script: change it in core, then copy
+it, never here.
+
 **conformance aliases** Conformance alias symlinks are listed in
 [ADR-0012](docs/adr/0012-acmm-conformance-via-canonical-aliases.md) — edit
 their canonical targets, never the aliases. `docs/review-rubric.md`,
@@ -1259,8 +1283,8 @@ their canonical targets, never the aliases. `docs/review-rubric.md`,
 2. Keep changes focused; unrelated fixes belong in a separate PR.
 3. Use Conventional Commits for commit messages **and the pull request
    title** (see [Commits & Pull Requests](#commits--pull-requests)).
-4. Run `make fmt` and `make ci` (which now includes the docs-integrity
-   gate) and make sure they pass.
+4. Run `make fmt` and `make ci` (which now includes the docs-integrity gate
+   and the corrections gate) and make sure they pass.
 5. Update the documentation and add tests for your change.
 6. Classify the change using the [risk tier guide](docs/risk-tiers.md) and
    include the tier rationale in the pull request
@@ -1295,7 +1319,9 @@ CI runs on every pull request (`.github/workflows/ci.yml`) and must pass:
 lint (golangci-lint), security scan (`govulncheck`), unit tests with coverage,
 end-to-end tests, race-detector tests, the `Verify` job — which runs the whole
 credential-free gate with `make ci`, not only `go mod tidy` cleanliness,
-`go vet` and `gofmt` — docs integrity (`scripts/check-docs.mjs`), and
+`go vet` and `gofmt` — docs integrity (`scripts/check-docs.mjs`), the
+corrections gate (`scripts/check-corrections.mjs`, form and the append-only
+comparison with the pull request's base commit), and
 cross-compiled builds for linux/amd64 and linux/arm64. Each of those jobs keeps
 its own id and `name:` so every required check name stays as branch rules
 expect it (baseline row B12, core ADR-0071). The unit test job

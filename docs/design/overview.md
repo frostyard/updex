@@ -1425,13 +1425,19 @@ host-independent pull-request checks in fail-fast order: those static checks,
 the docs-integrity checker's fixture self-test
 (`make test-docs-check`) and the docs-integrity gate itself
 (`node scripts/check-docs.mjs`, the same two steps as the `docs-gate` job, so
-`make ci` needs Node.js), all non-E2E package tests (with `-coverprofile`),
+`make ci` needs Node.js), the corrections gate (`make corrections-check`, the
+form of every record in `.memory/corrections/`, then `make corrections-base`,
+the append-only comparison with `BASE`; `BASE` is empty on a push or
+merge-group run, so the comparison is skipped there, and a `BASE` that does not
+resolve to a commit fails; core ADR-0081), all non-E2E package tests (with `-coverprofile`),
 the `max(80.0, baseline - 0.5)` total statement-coverage gate
 (`make test-coverage-check` (`scripts/test-coverage-check.sh`) then
 `make coverage-check` (`scripts/check-coverage.sh`), with the committed
 `.coverage-baseline`), the black-box `tests/e2e/` suite as a separate
 non-coverage step, the same unit tests under the race detector, then Linux
-amd64 and arm64 builds. The unit and race stages do not filter by test name,
+amd64 and arm64 builds. `scripts/check-corrections.mjs` is a byte-identical
+copy of frostyard/core's script: change it in core, then copy it, never here.
+The unit and race stages do not filter by test name,
 so every hermetic package test runs; the E2E suite also retains its dedicated
 workflow job. `make verify` is the non-mutating subset for read-only
 reviewers (such as Snowcat `pr-review` workers): `verify-static` plus the
