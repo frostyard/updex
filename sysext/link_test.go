@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/frostyard/updex/v2/config"
+	"github.com/frostyard/updex/v2/internal/testutil"
 )
 
 // linkTransfer returns a transfer whose staging directory is stagingDir and
@@ -627,5 +628,43 @@ func TestRunnersLinkVersion(t *testing.T) {
 	}
 	if got, want := readLink(t, filepath.Join(linkDir, "myext.raw")), filepath.Join(staging, "myext_1.0.0.raw"); got != want {
 		t.Errorf("link = %s, want %s", got, want)
+	}
+}
+
+// TestLinkToSysextAtCreatesSysextDirectoryWithDocumentedMode pins the mode of
+// the sysext directory the link path creates (/var/lib/extensions in
+// production) at 0755, whatever the process umask is: a read-only command run
+// by another user must be able to list it after a root-privileged run under a
+// stricter umask (issue #524, follow-up of PR #525).
+func TestLinkToSysextAtCreatesSysextDirectoryWithDocumentedMode(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mask int
+	}{
+		{name: "umask 0022", mask: 0o022},
+		{name: "umask 0077", mask: 0o077},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testutil.Umask(t, tc.mask)
+			stagingDir := t.TempDir()
+			stageImages(t, stagingDir, "myext_1.0.0.raw")
+			// The sysext directory does not exist yet, as systemd-sysext's
+			// default directory may not on a fresh host.
+			sysextDir := filepath.Join(t.TempDir(), "extensions")
+
+			if err := LinkToSysextAt(linkTransfer(stagingDir), sysextDir); err != nil {
+				t.Fatalf("LinkToSysextAt() error = %v", err)
+			}
+			info, err := os.Lstat(sysextDir)
+			if err != nil {
+				t.Fatalf("Lstat(%s) error = %v", sysextDir, err)
+			}
+			if !info.IsDir() || info.Mode().Perm() != 0o755 {
+				t.Errorf("%s mode = %v, want a 0755 directory", sysextDir, info.Mode())
+			}
+			if got := readLink(t, filepath.Join(sysextDir, "myext.raw")); filepath.Base(got) != "myext_1.0.0.raw" {
+				t.Errorf("link target = %q, want myext_1.0.0.raw", got)
+			}
+		})
 	}
 }

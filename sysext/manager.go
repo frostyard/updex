@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/frostyard/updex/v2/config"
+	"github.com/frostyard/updex/v2/internal/dirmode"
 	"github.com/frostyard/updex/v2/internal/fault"
 	"github.com/frostyard/updex/v2/version"
 )
@@ -1178,7 +1179,7 @@ func linkImageAt(t *config.Transfer, sysextDir, filename string) error {
 	destSymlink := filepath.Join(sysextDir, linkName)
 
 	// Ensure the sysext directory exists
-	if err := os.MkdirAll(sysextDir, 0755); err != nil {
+	if err := dirmode.MkdirAll(sysextDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create sysext directory: %w", err)
 	}
 

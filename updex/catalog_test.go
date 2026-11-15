@@ -1765,3 +1765,191 @@ func TestCatalogList_CacheWriteFailureIsReportedNotFatal(t *testing.T) {
 		}
 	}
 }
+
+// umaskCases are the process umasks a test that pins a documented directory
+// mode runs under: the default 0022, and the strict 0077 that made root-
+// created directories unreadable for another user (issue #524).
+var umaskCases = []struct {
+	name string
+	mask int
+}{
+	{name: "umask 0022", mask: 0o022},
+	{name: "umask 0077", mask: 0o077},
+}
+
+// TestCatalogAddCreatesComponentDirectoryWithDocumentedMode pins the mode of
+// the component directory CatalogAdd creates (/etc/sysupdate.<component>.d in
+// production) at 0755, whatever the process umask is, so that a read-only
+// command run by another user can read the generated definitions (issue #524,
+// follow-up of PR #525).
+func TestCatalogAddCreatesComponentDirectoryWithDocumentedMode(t *testing.T) {
+	for _, tc := range umaskCases {
+		t.Run(tc.name, func(t *testing.T) {
+			testutil.Umask(t, tc.mask)
+			roots := withComponentSearchRoots(t)
+			catalogRoot := withCatalogConfigRoots(t)
+			targetDir := t.TempDir()
+			origSysextDir := sysext.SysextDir
+			sysext.SysextDir = t.TempDir()
+			t.Cleanup(func() { sysext.SysextDir = origSysextDir })
+
+			server := newCatalogServer(t, "zoxide", "1.0.0", targetDir)
+			writeCatalogRepo(t, catalogRoot, "fedora", server.URL, "")
+
+			client := NewClient(ClientConfig{SysextRunner: &sysext.MockRunner{}})
+			if _, err := client.CatalogAdd(t.Context(), "zoxide", CatalogAddOptions{}); err != nil {
+				t.Fatalf("CatalogAdd failed: %v", err)
+			}
+
+			componentDir := filepath.Join(roots[0], "sysupdate.catalog-fedora.d")
+			info, err := os.Lstat(componentDir)
+			if err != nil {
+				t.Fatalf("Lstat(%s) error = %v", componentDir, err)
+			}
+			if !info.IsDir() || info.Mode().Perm() != 0o755 {
+				t.Errorf("%s mode = %v, want a 0755 directory", componentDir, info.Mode())
+			}
+		})
+	}
+}
+
+// TestFileSnapshotRestoreRecreatesParentWithDocumentedMode pins the mode of
+// the parent directory fileSnapshot.restore recreates: rollback must not
+// leave a directory only root can read in place of a component directory
+// (issue #524).
+func TestFileSnapshotRestoreRecreatesParentWithDocumentedMode(t *testing.T) {
+	for _, tc := range umaskCases {
+		t.Run(tc.name, func(t *testing.T) {
+			base := t.TempDir()
+			dir := filepath.Join(base, "sysupdate.catalog-fedora.d")
+			if err := os.Mkdir(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, "zoxide.transfer")
+			const content = "captured definition\n"
+			if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			// Chmod explicitly: the file mode is a fixture, not an assertion
+			// about the umask this test process runs under.
+			if err := os.Chmod(path, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			snapshot := snapshotFile(path)
+			if !snapshot.existed || !snapshot.captured {
+				t.Fatalf("snapshot = %+v, want captured existing file", snapshot)
+			}
+
+			if err := os.RemoveAll(dir); err != nil {
+				t.Fatal(err)
+			}
+			// The umask is set after every fixture is created, so only the
+			// restore runs under it.
+			testutil.Umask(t, tc.mask)
+			if err := snapshot.restore(); err != nil {
+				t.Fatalf("restore() error = %v", err)
+			}
+
+			info, err := os.Lstat(dir)
+			if err != nil {
+				t.Fatalf("Lstat(%s) error = %v", dir, err)
+			}
+			if !info.IsDir() || info.Mode().Perm() != 0o755 {
+				t.Errorf("%s mode = %v, want a 0755 directory", dir, info.Mode())
+			}
+			assertRegularFile(t, path, content, 0o644)
+		})
+	}
+}
+
+// TestFilesystemEntrySnapshotRestoreRecreatesParentWithDocumentedMode pins the
+// same for the regular and the symlink entry kinds of
+// filesystemEntrySnapshot.restore, whose backups are restored into a parent
+// directory that a failed operation may have removed (issue #524).
+func TestFilesystemEntrySnapshotRestoreRecreatesParentWithDocumentedMode(t *testing.T) {
+	for _, tc := range umaskCases {
+		for _, kind := range []struct {
+			name    string
+			symlink bool
+		}{
+			{name: "regular file"},
+			{name: "symlink", symlink: true},
+		} {
+			t.Run(tc.name+", "+kind.name, func(t *testing.T) {
+				base := t.TempDir()
+				dir := filepath.Join(base, "sysupdate.d")
+				if err := os.Mkdir(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				path := filepath.Join(dir, "zoxide.feature")
+				backupPath := ""
+				snapshot := filesystemEntrySnapshot{path: path}
+				const content = "captured definition\n"
+				if kind.symlink {
+					if err := os.Symlink("/var/lib/extensions/zoxide.raw", path); err != nil {
+						t.Fatal(err)
+					}
+					var err error
+					snapshot, err = snapshotFilesystemEntry(path)
+					if err != nil {
+						t.Fatalf("snapshotFilesystemEntry() error = %v", err)
+					}
+				} else {
+					// A regular entry's backup is a copy beside the entry. The
+					// snapshot is built by hand here with a backup outside the
+					// removed directory, so that the restore reaches its
+					// mkdir of the parent instead of failing on a lost backup.
+					if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					backupPath = filepath.Join(t.TempDir(), "backup")
+					if err := os.WriteFile(backupPath, []byte(content), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					// Chmod explicitly: these modes are fixtures, not an
+					// assertion about the umask this test process runs under.
+					if err := os.Chmod(backupPath, 0o644); err != nil {
+						t.Fatal(err)
+					}
+					snapshot.kind = filesystemEntryRegular
+					snapshot.backupPath = backupPath
+				}
+
+				if err := os.RemoveAll(dir); err != nil {
+					t.Fatal(err)
+				}
+				// The umask is set after every fixture is created, so only the
+				// restore runs under it.
+				testutil.Umask(t, tc.mask)
+				if err := snapshot.restore(); err != nil {
+					t.Fatalf("restore() error = %v", err)
+				}
+
+				info, err := os.Lstat(dir)
+				if err != nil {
+					t.Fatalf("Lstat(%s) error = %v", dir, err)
+				}
+				if !info.IsDir() || info.Mode().Perm() != 0o755 {
+					t.Errorf("%s mode = %v, want a 0755 directory", dir, info.Mode())
+				}
+				if kind.symlink {
+					if got := readLinkTarget(t, path); got != "/var/lib/extensions/zoxide.raw" {
+						t.Errorf("restored link target = %q, want /var/lib/extensions/zoxide.raw", got)
+					}
+				} else {
+					assertRegularFile(t, path, content, 0o644)
+				}
+			})
+		}
+	}
+}
+
+// readLinkTarget returns the target of the symlink at path.
+func readLinkTarget(t *testing.T, path string) string {
+	t.Helper()
+	target, err := os.Readlink(path)
+	if err != nil {
+		t.Fatalf("Readlink(%s) error = %v", path, err)
+	}
+	return target
+}

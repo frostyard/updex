@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+
+	"github.com/frostyard/updex/v2/internal/dirmode"
 )
 
 // DefaultLockPath is the lock file every mutating operation holds while it
@@ -44,7 +46,7 @@ func acquireLock(path string) (release func(), err error) {
 	case err == nil:
 		return nil, fmt.Errorf("lock directory %s exists and is not a directory (mode %s); remove it manually", dir, info.Mode().Type())
 	case os.IsNotExist(err):
-		if err := mkdirAllMode(dir, 0o755); err != nil {
+		if err := dirmode.MkdirAll(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("create lock directory: %w", err)
 		}
 	default:

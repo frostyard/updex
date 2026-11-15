@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/frostyard/updex/v2/internal/dirmode"
 	"github.com/frostyard/updex/v2/internal/fault"
 	"github.com/frostyard/updex/v2/internal/httpclient"
 	"github.com/frostyard/updex/v2/internal/retry"
@@ -113,16 +114,22 @@ func resolveRetry(opts ...Option) retrySettings {
 // Download fetches a file from URL, verifies its hash, decompresses if needed,
 // and atomically writes it to the target path. On every path (direct,
 // decompressed, and cross-device copy) the file that ends up at targetPath is
-// fsynced before it is renamed into place. If httpClient is nil, a default
-// client with a 10-minute timeout is used; that default refuses a redirect
-// that downgrades the request from HTTPS to HTTP. A caller-supplied
-// httpClient keeps its own redirect policy. If onProgress is non-nil, it is
+// fsynced before it is renamed into place. A missing target directory, and its
+// missing parents, are created with mode 0755 whatever the process umask is,
+// so a read-only reader can list them; an existing directory keeps its mode.
+// The mode is set only in a trusted parent: one owned by the effective user
+// or root that group and others cannot write, or that has the sticky bit;
+// in any other parent a new directory keeps the mode the umask gives it. A
+// caller that wants a private directory creates it first and passes a path
+// inside it. If httpClient is nil, a default client with a 10-minute timeout
+// is used; that default refuses a redirect that downgrades the request from
+// HTTPS to HTTP. A caller-supplied httpClient keeps its own redirect policy. If onProgress is non-nil, it is
 // called with the content length after the HTTP response is received, and the
 // returned writer receives downloaded bytes for progress tracking.
 func Download(ctx context.Context, httpClient *http.Client, url, targetPath, expectedHash string, mode uint32, onProgress ProgressFunc, opts ...Option) error {
 	// Create target directory if needed
 	targetDir := filepath.Dir(targetPath)
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
+	if err := dirmode.MkdirAll(targetDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create target directory: %w", err)
 	}
 

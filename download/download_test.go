@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/frostyard/updex/v2/internal/testutil"
 )
 
 func TestDownloadRetriesServerErrorThenSucceeds(t *testing.T) {
@@ -726,4 +728,41 @@ func withDefaultTransport(t *testing.T, rt http.RoundTripper) {
 	original := http.DefaultTransport
 	http.DefaultTransport = rt
 	t.Cleanup(func() { http.DefaultTransport = original })
+}
+
+// TestDownloadCreatesTargetDirectoryWithDocumentedMode pins the mode of the
+// staging directory Download creates (/var/lib/extensions.d in production) at
+// 0755, whatever the process umask is: a read-only command run by another
+// user must be able to list it after a root-privileged run under a stricter
+// umask (issue #524, follow-up of PR #525).
+func TestDownloadCreatesTargetDirectoryWithDocumentedMode(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mask int
+	}{
+		{name: "umask 0022", mask: 0o022},
+		{name: "umask 0077", mask: 0o077},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testutil.Umask(t, tc.mask)
+			content := []byte("image content")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write(content)
+			}))
+			defer server.Close()
+
+			targetDir := filepath.Join(t.TempDir(), "extensions.d")
+			targetPath := filepath.Join(targetDir, "feature_1.raw")
+			if err := Download(t.Context(), server.Client(), server.URL+"/feature_1.raw", targetPath, hashString(content), 0o644, nil); err != nil {
+				t.Fatalf("Download() error = %v", err)
+			}
+			info, err := os.Lstat(targetDir)
+			if err != nil {
+				t.Fatalf("Lstat(%s) error = %v", targetDir, err)
+			}
+			if !info.IsDir() || info.Mode().Perm() != 0o755 {
+				t.Errorf("%s mode = %v, want a 0755 directory", targetDir, info.Mode())
+			}
+		})
+	}
 }

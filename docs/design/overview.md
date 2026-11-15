@@ -92,6 +92,12 @@ sysext/                         systemd-sysext runner, extension symlinks,
                                 and tmpfiles.d in the sequence chosen by systemd
                                 version (ADR-0019)
 systemd/                        systemd timer/service generation + systemctl management
+internal/dirmode/               dirmode.MkdirAll: creates a directory tree with
+                                an explicit mode that does not depend on the
+                                process umask (mkdirat/openat/fchmod through
+                                directory descriptors, chmod only in a trusted
+                                parent); every directory updex creates as root
+                                uses it (module-internal, updex#524)
 internal/retry/                 bounded retry policy shared by download/ and manifest/
                                 (module-internal, ADR-0008)
 internal/httpclient/            shared default *http.Client constructor (timeout +
@@ -169,7 +175,7 @@ CLI (cmd/daemon.go) ─┘                version, sysext, systemd, imagecompat
 
 ### Public API (Issue #13)
 
-All core packages (`config`, `version`, `download`, `manifest`, `sysext`, `systemd`) are exported as public API at `github.com/frostyard/updex/v2/<package>`. This was an intentional decision: the types in these packages (e.g., `Transfer`, `Feature`, `Pattern`, `Manifest`) were designed with exported fields and are suitable for external consumption. Four packages stay module-internal: `internal/fault`, the error classes that the last-run record reports ([ADR-0020](../adr/0020-write-a-machine-readable-last-run-record.md)); `internal/retry`, the bounded retry policy shared by `download` and `manifest` ([ADR-0008](../adr/0008-bounded-retry-no-resume.md)); `internal/httpclient`, the shared default `*http.Client` constructor (timeout plus HTTPS-to-HTTP downgrade refusal) that `updex.NewClient`, `manifest.Fetch`, and `download.Download` each fall back to when their caller supplies no client; and `internal/testutil`, the HTTP test server helpers.
+All core packages (`config`, `version`, `download`, `manifest`, `sysext`, `systemd`) are exported as public API at `github.com/frostyard/updex/v2/<package>`. This was an intentional decision: the types in these packages (e.g., `Transfer`, `Feature`, `Pattern`, `Manifest`) were designed with exported fields and are suitable for external consumption. Five packages stay module-internal: `internal/dirmode`, the umask-independent directory creation that every root-created directory uses (updex#524); `internal/fault`, the error classes that the last-run record reports ([ADR-0020](../adr/0020-write-a-machine-readable-last-run-record.md)); `internal/retry`, the bounded retry policy shared by `download` and `manifest` ([ADR-0008](../adr/0008-bounded-retry-no-resume.md)); `internal/httpclient`, the shared default `*http.Client` constructor (timeout plus HTTPS-to-HTTP downgrade refusal) that `updex.NewClient`, `manifest.Fetch`, and `download.Download` each fall back to when their caller supplies no client; and `internal/testutil`, the HTTP test server helpers.
 
 ### Version and pattern conventions
 
@@ -1008,7 +1014,7 @@ When the lock is taken, the operation changes nothing and returns an error
 wrapping `updex.ErrBusy` (`another updex operation is running`); updex never
 waits. `acquireLock` creates the parent directory (0755) and the file (0600),
 both set explicitly so they do not depend on the process umask
-(`mkdirAllMode` in `updex/fsguard.go`: `mkdirat`/`openat`/`fchmod` through
+(`dirmode.MkdirAll` in `internal/dirmode`: `mkdirat`/`openat`/`fchmod` through
 directory descriptors; the chmod runs only in a parent owned by the effective
 user or root that group and others cannot write, or that has the sticky bit). It
 `Lstat`s both first, refuses a symlink or non-regular file, and opens with
@@ -1020,6 +1026,25 @@ packaged timer runs exactly `updex features update --no-refresh`, so it cannot
 take a flag); in an interactive shell it is an error and the exit status is
 non-zero. The lock covers `systemd-sysext refresh` as well. The sandboxed
 service (`ProtectSystem=full`) can write `/run`.
+
+### Directory modes
+
+Every directory updex creates as root is mode 0755 whatever the process umask
+is: the lock, rollback and last-run directories, the component directory of
+`CatalogAdd` (`/etc/sysupdate.<component>.d`), the feature drop-in directory
+(`<name>.feature.d`), the sysext link directory (`/var/lib/extensions`) and the
+staging directory of a download (`/var/lib/extensions.d`). The per-user catalog
+list cache (`catalog/cache.go`) is private and keeps `os.MkdirAll`. A read-only command
+run by another user (`features list`, `features check`, `components`) loads the
+domain with `collectConfigFiles` (`config/config.go`) and
+`applyFeatureDropIns` (`config/feature.go`) and lists the staging directory
+(`sysext/manager.go`): a 0700 or 0750 directory from a root run under umask
+0077 or 0027 made every one of them fail with `permission denied` (updex#524,
+follow-up of PR #525). The modes come from `dirmode.MkdirAll` in
+`internal/dirmode`, which is `mkdirat`/`openat`/`fchmod` through directory
+descriptors, chmods only in a trusted parent (see "Operation lock"), leaves
+an existing directory's mode alone, and keeps a setgid bit inherited from the
+parent.
 
 ### Reading a sysext's extension-release without mounting (`imagecompat/`)
 

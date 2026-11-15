@@ -221,6 +221,23 @@ lock when the process exits. The CLI maps `ErrBusy` to exit status 0 with one
 stderr line only for `updex features update` under systemd (`INVOCATION_ID`
 set); everywhere else it is an error.
 
+### Directory modes
+
+Every directory updex creates as root is mode `0755` whatever the process
+umask is: the lock directory, the rollback directory, the last-run directory,
+the component directory of `CatalogAdd` (`/etc/sysupdate.<component>.d`), the
+feature drop-in directory (`<name>.feature.d`), the sysext link directory
+(`/var/lib/extensions`) and the staging directory of a download
+(`/var/lib/extensions.d`). The per-user catalog list cache is private and is
+not covered. A read-only command run by another user must be able
+to read what a root-privileged run wrote, also when that run had a stricter
+umask than the default `0022` (updex#524, follow-up of PR #525). The modes come
+from `dirmode.MkdirAll` in `internal/dirmode`; an existing directory keeps its
+mode, and the chmod runs only in a parent directory owned by the effective user
+or root that group and others cannot write, or that has the sticky bit (see the
+lock paragraph above). A setgid bit that a new directory inherits from its
+parent is kept, so a shared group goes on inheriting what is created there.
+
 ### Unreachable sources and `ErrSourcesUnreachable`
 
 ```go
@@ -1031,6 +1048,12 @@ The retry policy shared by `download` and `manifest` (`internal/retry`) is
 recorded in [ADR-0008](../adr/0008-bounded-retry-no-resume.md).
 
 - `Download(ctx context.Context, httpClient *http.Client, url, targetPath, expectedHash string, mode uint32, onProgress ProgressFunc, opts ...Option) error` — Download with hash verification (on compressed bytes) and auto-decompression. Uses atomic rename, and on every path fsyncs the file before renaming it into place: the verified temp file is synced before it is closed and renamed, a decompressed output file is synced before it is renamed, and on cross-device rename failure the copy through a temp file on the destination device is synced, chmodded, then renamed into place. A sync failure is returned wrapped and leaves the target path untouched. If `httpClient` is nil, a default client with a 10-minute timeout, the standard 10-redirect limit, and an HTTPS-to-HTTP downgrade refusal (`internal/httpclient`, shared with `updex.NewClient` and `manifest.Fetch`) is used; HTTP-to-HTTP and HTTPS-to-HTTPS redirects remain allowed. A caller-supplied `httpClient` keeps its own redirect policy. Default mode: `0644` if `mode == 0`. GETs and response-body reads retry transient network failures and HTTP 5xx/429 up to 3 total attempts with exponential backoff; each retry re-requests the file from scratch and uses a fresh temp file. 4xx other than 429 and checksum mismatches fail immediately. Decompressed output is capped at `DefaultMaxDecompressedSize` (8 GiB); `WithMaxDecompressedSize(bytes int64)` sets a positive per-call cap. Crossing it returns an error matching `ErrDecompressedTooLarge`, removes compressed and decompressed temp files, and leaves the target path untouched. The raw bytes read from the server (the compressed, or for an uncompressed image the raw, payload) are separately capped at `DefaultMaxDownloadSize` (twice `DefaultMaxDecompressedSize`); `WithMaxDownloadSize(bytes int64)` sets a positive per-call cap. An over-limit `Content-Length` is rejected before any bytes are streamed, and the read itself is bounded with `io.LimitReader` in case `Content-Length` is absent or understated; crossing the cap either way returns an error matching `ErrDownloadTooLarge`. `WithRetryConfig(maxAttempts int, baseDelay time.Duration)` overrides retry bounds for tests or SDK consumers; `WithRetryNotify(func(attempt, maxAttempts int, reason error))` reports retry attempts
+- A missing target directory, and its missing parents, are created with mode
+  `0755` whatever the process umask is; an existing directory keeps its mode.
+  The mode is set only in a trusted parent (owned by the effective user or
+  root, and not writable by group or others, or with the sticky bit); in any
+  other parent a new directory keeps the mode the umask gives it. A caller that
+  needs a private directory creates it first and passes a path inside it. See [Directory modes](#directory-modes).
 - `ProgressFunc` — `func(contentLength int64) io.Writer` callback type for download progress. It may be called once per retry attempt, and should return a fresh independent writer each time to avoid double-counting
 - `DecompressReader(r io.Reader, compressionType string) (io.ReadCloser, error)` — Returns a decompressing reader for `"xz"`, `"gz"`, `"zstd"`, or passthrough for `""`
 - `StripCompressionSuffix(filename string) string` — Removes a trailing `.xz`/`.gz`/`.zst`/`.zstd` suffix (case-insensitive, longest suffix first). `Download` always stores files decompressed, so installed filenames are derived with this to keep the name consistent with the content
