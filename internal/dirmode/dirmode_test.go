@@ -181,6 +181,54 @@ func TestMkdirAllIgnoresTheProcessUmask(t *testing.T) {
 	})
 }
 
+// TestMkdirAllKeepsInheritedSetgid pins that a directory MkdirAll creates
+// inside a setgid parent keeps the setgid bit the kernel gives it, as
+// os.MkdirAll does: the chmod that makes the mode explicit must not clear it,
+// or a shared group would stop inheriting the directories created below it
+// (cross-review of PR #528).
+func TestMkdirAllKeepsInheritedSetgid(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mask int
+	}{
+		{name: "umask 0022", mask: 0o022},
+		{name: "umask 0077", mask: 0o077},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testutil.Umask(t, tc.mask)
+			parent := t.TempDir()
+			if err := os.Chmod(parent, os.ModeSetgid|0o755); err != nil {
+				t.Fatalf("chmod %s: %v", parent, err)
+			}
+			info, err := os.Lstat(parent)
+			if err != nil {
+				t.Fatalf("Lstat %s: %v", parent, err)
+			}
+			if info.Mode()&os.ModeSetgid == 0 {
+				t.Skipf("the platform dropped the setgid bit: %s mode = %v", parent, info.Mode())
+			}
+
+			dirA := filepath.Join(parent, "a")
+			dirB := filepath.Join(dirA, "b")
+			if err := MkdirAll(dirB, 0o755); err != nil {
+				t.Fatalf("MkdirAll: %v", err)
+			}
+			for _, p := range []string{dirA, dirB} {
+				got, err := os.Lstat(p)
+				if err != nil {
+					t.Fatalf("Lstat %s: %v", p, err)
+				}
+				if got.Mode().Perm() != 0o755 {
+					t.Errorf("%s perm = %04o, want 0755", p, got.Mode().Perm())
+				}
+				if got.Mode()&os.ModeSetgid == 0 {
+					t.Errorf("%s mode = %v, want the inherited setgid bit kept", p, got.Mode())
+				}
+			}
+		})
+	}
+}
+
 // trustedParent trusts a directory owned by the test's user only when group
 // and others cannot write it, or when the sticky bit keeps them from renaming
 // an entry they do not own.

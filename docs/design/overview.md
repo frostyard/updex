@@ -1042,8 +1042,9 @@ domain with `collectConfigFiles` (`config/config.go`) and
 0077 or 0027 made every one of them fail with `permission denied` (updex#524,
 follow-up of PR #525). The modes come from `dirmode.MkdirAll` in
 `internal/dirmode`, which is `mkdirat`/`openat`/`fchmod` through directory
-descriptors, chmods only in a trusted parent (see "Operation lock"), and leaves
-an existing directory's mode alone.
+descriptors, chmods only in a trusted parent (see "Operation lock"), leaves
+an existing directory's mode alone, and keeps a setgid bit inherited from the
+parent.
 
 ### Reading a sysext's extension-release without mounting (`imagecompat/`)
 

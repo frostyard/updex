@@ -34,6 +34,9 @@ var beforeOpen func(path string)
 // not depend on the process umask: the directories updex documents as 0755
 // must stay readable by a non-root reader after a root-privileged run under a
 // stricter umask (issue #524). A directory that already exists keeps its mode.
+// A setgid bit that the new directory inherits from its parent is kept, as it
+// is with os.MkdirAll, so a shared group goes on inheriting what is created
+// there.
 //
 // Every step is bound to the descriptor of the directory it created, not to a
 // path: each new directory is made with mkdirat inside the descriptor of its
@@ -101,6 +104,11 @@ func MkdirAll(dir string, mode os.FileMode) error {
 // symlink or non-directory there is refused rather than followed. path is the
 // full path of the new directory, for error messages only.
 //
+// A new directory inside a setgid parent inherits the parent's setgid bit, and
+// the chmod keeps it: clearing it would quietly end group inheritance for
+// everything created there, which os.MkdirAll does not do. The bit is read
+// from the mode the kernel applied, never taken from the caller's mode.
+//
 // Unix has no atomic mkdir-and-open, so the chmod is a permission change of
 // whatever openat returns. It therefore happens only when the parent is
 // trusted (trustedParent): then no other user can rename the new entry away
@@ -128,7 +136,19 @@ func mkdirAtMode(parentFd int, name string, mode os.FileMode, path string) (int,
 	if !created || !trusted {
 		return fd, nil
 	}
-	if err := syscall.Fchmod(fd, uint32(mode)); err != nil {
+	// Keep a setgid bit the new directory inherited from its parent (a
+	// shared group's directories): os.MkdirAll leaves it in place, and
+	// clearing it would end group inheritance for what is created there.
+	var st syscall.Stat_t
+	if err := syscall.Fstat(fd, &st); err != nil {
+		_ = syscall.Close(fd)
+		return -1, fmt.Errorf("check the mode of directory %s: %w", path, err)
+	}
+	want := uint32(mode)
+	if st.Mode&syscall.S_ISGID != 0 {
+		want |= syscall.S_ISGID
+	}
+	if err := syscall.Fchmod(fd, want); err != nil {
 		_ = syscall.Close(fd)
 		return -1, fmt.Errorf("set mode of directory %s: %w", path, err)
 	}
