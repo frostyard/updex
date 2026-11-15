@@ -16,6 +16,7 @@ import (
 
 	"github.com/frostyard/updex/v2/catalog"
 	"github.com/frostyard/updex/v2/config"
+	"github.com/frostyard/updex/v2/internal/dirmode"
 	"github.com/frostyard/updex/v2/manifest"
 	"github.com/frostyard/updex/v2/sysext"
 	"github.com/frostyard/updex/v2/version"
@@ -151,7 +152,7 @@ func (c *Client) writeRollbackRecordBytes(path string, data []byte) error {
 		return err
 	}
 	if !exists {
-		if err := mkdirAllMode(c.paths.rollbackDir, 0o755); err != nil {
+		if err := dirmode.MkdirAll(c.paths.rollbackDir, 0o755); err != nil {
 			return fmt.Errorf("create rollback directory: %w", err)
 		}
 	}

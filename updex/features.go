@@ -12,6 +12,7 @@ import (
 	"github.com/frostyard/std/reporter"
 	"github.com/frostyard/updex/v2/catalog"
 	"github.com/frostyard/updex/v2/config"
+	"github.com/frostyard/updex/v2/internal/dirmode"
 	"github.com/frostyard/updex/v2/internal/fault"
 	"github.com/frostyard/updex/v2/manifest"
 	"github.com/frostyard/updex/v2/sysext"
@@ -283,7 +284,7 @@ func (c *Client) writeFeatureDropIn(f *config.Feature, enabled bool, dryRun bool
 	case err == nil:
 		return "", fmt.Errorf("drop-in directory %s exists and is not a directory (mode %s); remove it manually", dropInDir, info.Mode().Type())
 	case os.IsNotExist(err):
-		if err := os.MkdirAll(dropInDir, 0755); err != nil {
+		if err := dirmode.MkdirAll(dropInDir, 0o755); err != nil {
 			return "", fmt.Errorf("failed to create drop-in directory: %w", err)
 		}
 	default:

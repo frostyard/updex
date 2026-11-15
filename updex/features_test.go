@@ -2713,3 +2713,33 @@ func TestCheckFeatures_SharedSource_FetchesManifestOnce(t *testing.T) {
 		t.Fatalf("SHA256SUMS requested %d time(s) for two transfers sharing one source, want exactly 1", got)
 	}
 }
+
+// TestEnableFeatureCreatesDropInDirectoryWithDocumentedMode pins the mode of
+// the <name>.feature.d directory EnableFeature creates at 0755, whatever the
+// process umask is: the loader walks it for a read-only command run by another
+// user, and a 0700 directory there made `features list` fail with permission
+// denied (issue #524, follow-up of PR #525).
+func TestEnableFeatureCreatesDropInDirectoryWithDocumentedMode(t *testing.T) {
+	for _, tc := range umaskCases {
+		t.Run(tc.name, func(t *testing.T) {
+			testutil.Umask(t, tc.mask)
+			client, _, dropInDir, dropInFile := dropInGuardFixture(t, false)
+
+			if _, err := client.EnableFeature(t.Context(), "testfeature", EnableFeatureOptions{}); err != nil {
+				t.Fatalf("EnableFeature failed: %v", err)
+			}
+
+			info, err := os.Lstat(dropInDir)
+			if err != nil {
+				t.Fatalf("Lstat(%s) error = %v", dropInDir, err)
+			}
+			if !info.IsDir() || info.Mode().Perm() != 0o755 {
+				t.Errorf("%s mode = %v, want a 0755 directory", dropInDir, info.Mode())
+			}
+			data, err := os.ReadFile(dropInFile)
+			if err != nil || !strings.Contains(string(data), "Enabled=true") {
+				t.Errorf("drop-in file (%v):\n%s", err, data)
+			}
+		})
+	}
+}

@@ -1032,6 +1032,7 @@ func TestRiskPathsListCoversHighRiskFiles(t *testing.T) {
 		"manifest/gpg.go",
 		"manifest/manifest.go",
 		"internal/httpclient/httpclient.go",
+		"internal/dirmode/dirmode.go",
 		"updex/list.go",
 		"config/transfer.go",
 		"catalog/catalog.go",

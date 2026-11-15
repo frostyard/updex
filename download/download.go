@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/frostyard/updex/v2/internal/dirmode"
 	"github.com/frostyard/updex/v2/internal/fault"
 	"github.com/frostyard/updex/v2/internal/httpclient"
 	"github.com/frostyard/updex/v2/internal/retry"
@@ -122,7 +123,7 @@ func resolveRetry(opts ...Option) retrySettings {
 func Download(ctx context.Context, httpClient *http.Client, url, targetPath, expectedHash string, mode uint32, onProgress ProgressFunc, opts ...Option) error {
 	// Create target directory if needed
 	targetDir := filepath.Dir(targetPath)
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
+	if err := dirmode.MkdirAll(targetDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create target directory: %w", err)
 	}
 

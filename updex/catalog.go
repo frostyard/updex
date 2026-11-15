@@ -13,6 +13,7 @@ import (
 	"github.com/frostyard/updex/v2/catalog"
 	"github.com/frostyard/updex/v2/config"
 	"github.com/frostyard/updex/v2/download"
+	"github.com/frostyard/updex/v2/internal/dirmode"
 	"github.com/frostyard/updex/v2/sysext"
 	"github.com/frostyard/updex/v2/version"
 )
@@ -300,7 +301,7 @@ func (c *Client) CatalogAdd(ctx context.Context, name string, opts CatalogAddOpt
 		return result, errors.Join(operationErr, rollback())
 	}
 
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := dirmode.MkdirAll(dir, 0o755); err != nil {
 		return fail(fmt.Errorf("failed to create component directory: %w", err))
 	}
 	if err := writeManagedFile(result.TransferFile, string(transferData)); err != nil {
@@ -399,7 +400,7 @@ func (s fileSnapshot) restore() error {
 	case !s.captured:
 		// Nothing to rewrite and nothing safe to delete.
 	default:
-		if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
+		if err := dirmode.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 			return fmt.Errorf("recreate parent for %s: %w", s.path, err)
 		}
 		if err := writeManagedFileWithMode(s.path, s.data, s.mode); err != nil {
@@ -494,14 +495,14 @@ func (s filesystemEntrySnapshot) restore() error {
 			return fmt.Errorf("remove newly created %s: %w", s.path, err)
 		}
 	case filesystemEntryRegular:
-		if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
+		if err := dirmode.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 			return fmt.Errorf("recreate parent for %s: %w", s.path, err)
 		}
 		if err := os.Rename(s.backupPath, s.path); err != nil {
 			return fmt.Errorf("restore %s: %w", s.path, err)
 		}
 	case filesystemEntrySymlink:
-		if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
+		if err := dirmode.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 			return fmt.Errorf("recreate parent for %s: %w", s.path, err)
 		}
 		temp := fmt.Sprintf("%s.rollback-%d", s.path, time.Now().UnixNano())

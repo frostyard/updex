@@ -348,6 +348,12 @@ Key packages:
   error and keeps `Error()` byte for byte (with `Unwrap`), `fault.ClassOf`
   reads the outermost mark; errors are marked where they are made and the
   last-run record reports the class (ADR-0020)
+- `internal/dirmode/` — `dirmode.MkdirAll(dir, mode)`: creates a directory
+  tree with an explicit mode that does not depend on the process umask
+  (descriptor-bound `mkdirat`/`openat`/`fchmod`, chmod only in a trusted
+  parent); every system directory updex creates as root uses it, so a
+  non-root reader can list it (updex#524); the per-user catalog list cache
+  does not
 - `internal/retry/`, `internal/httpclient/`, `internal/testutil/` — HTTP retry policy, the shared default-HTTP-client constructor (`internal/httpclient.New`; enforces the HTTPS-to-HTTP redirect downgrade refusal used by `updex.NewClient`, `manifest.Fetch`, and `download.Download` when no caller-supplied client is given), and shared test helpers (HTTP test server)
 
 Entry point: `cmd/updex-cli/main.go` → `cmd/updex/root.go`
@@ -386,6 +392,7 @@ updex/
 ├── imagecompat/              # Minimum image version: extension-release reader, bootc version, check
 ├── version/                  # Pattern matching and version comparison
 ├── internal/
+│   ├── dirmode/              # Umask-independent directory creation (MkdirAll)
 │   ├── fault/                # Error classes (Mark, ClassOf) for the last-run record
 │   ├── retry/                # Internal HTTP retry policy
 │   ├── httpclient/           # Shared default HTTP client (redirect downgrade refusal)
@@ -1136,9 +1143,9 @@ Go 1.27. Use modern idioms: `any`, `slices`/`maps`/`cmp` packages, `t.Context()`
 - A test that asserts a file or directory mode runs under both umask 0o022
   and 0o077 (`testutil.Umask`, and never in a parallel test: the umask is
   process-wide). Code whose mode is a contract sets it explicitly instead of
-  relying on the init mode — `mkdirAllMode` for a directory tree, `Chmod` for
-  a file — because a documented 0755 or 0644 must not depend on the process
-  umask (updex#524). `make verify` runs the unit tests under umask 0077,
+  relying on the init mode — `dirmode.MkdirAll` in `internal/dirmode` for a
+  directory tree, `Chmod` for a file — because a documented 0755 or 0644 must
+  not depend on the process umask (updex#524). `make verify` runs the unit tests under umask 0077,
   with `-count=1` because the Go test cache does not key on the umask.
 - Run `make fmt` before running tests; for verbose output use `go test -v ./...`.
 
