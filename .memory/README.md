@@ -45,7 +45,8 @@ Contract:
   against that base. A record that is removed, renamed or changed then fails
   the gate; only an empty `promoted_to` may be filled in once. A `BASE` that
   does not resolve to a commit fails, and a `BASE` that predates this gate
-  skips the comparison with a notice.
+  skips the comparison with a notice; an empty `BASE` runs no comparison and
+  says nothing.
 - `promoted_to` starts empty; when a correction graduates into
   [AGENTS.md](../AGENTS.md), a doc under [docs/](../docs/README.md), or a
   skill, set it to that path. Promotion is the only sanctioned duplication —

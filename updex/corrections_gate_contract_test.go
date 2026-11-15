@@ -107,6 +107,38 @@ func TestMakefileCIRecipeRunsCorrectionsGate(t *testing.T) {
 	}
 }
 
+// TestMakefileCorrectionsCheckRecipeRunsValidator pins the corrections-check
+// recipe itself. A `ci` recipe that calls the target proves nothing when the
+// target's own recipe is empty: on a push or merge-group run `BASE` is empty,
+// so the append-only comparison never runs, and the form check is then the only
+// validation left. The recipe must run the validator, and it must not ignore
+// its exit status.
+func TestMakefileCorrectionsCheckRecipeRunsValidator(t *testing.T) {
+	data, err := os.ReadFile("../Makefile")
+	if err != nil {
+		t.Fatalf("read Makefile: %v", err)
+	}
+	recipe := extractRecipe(t, string(data), "corrections-check:")
+
+	pattern := regexp.MustCompile(`(?m)^\t@?node\s+scripts/check-corrections\.mjs(\s.*)?$`)
+	if !pattern.MatchString(recipe) {
+		t.Fatalf("Makefile corrections-check recipe must run `node scripts/check-corrections.mjs` (an empty recipe validates nothing on a push or merge-group run, where BASE is empty); got:\n%s", recipe)
+	}
+
+	for _, line := range strings.Split(recipe, "\n") {
+		trimmed := strings.TrimPrefix(line, "\t")
+		if !strings.Contains(trimmed, "check-corrections.mjs") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "-") || strings.HasPrefix(trimmed, "@-") {
+			t.Errorf("Makefile corrections-check recipe ignores the validator's exit status: %q", line)
+		}
+		if strings.Contains(trimmed, "||") {
+			t.Errorf("Makefile corrections-check recipe swallows a validator failure with a `||` fallback: %q", line)
+		}
+	}
+}
+
 // TestMakefileCorrectionsBaseRecipeIsAppendOnly pins the corrections-base
 // recipe: it compares the records with BASE when BASE holds the script, skips
 // the comparison with a notice when BASE predates the gate, and refuses a BASE

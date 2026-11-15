@@ -103,9 +103,10 @@ then docs integrity (the same `make test-docs-check` and
 too), the corrections gate (`make corrections-check`,
 the form of every record in `.memory/corrections/`, then
 `make corrections-base`, the append-only comparison with `BASE`; a `BASE` that
-does not resolve to a commit fails, and a `BASE` that predates the gate skips
-the comparison with a notice, which is what a push or merge-group run gets
-because its `BASE` is empty), non-E2E unit tests with coverage, the separate
+does not resolve to a commit fails; a `BASE` that resolves but holds no
+`scripts/check-corrections.mjs` (one that predates the gate) skips the
+comparison with a notice; and an empty `BASE` exits silently without a
+comparison, which is what a push or merge-group run gets), non-E2E unit tests with coverage, the separate
 black-box E2E suite, the
 race tests, and Linux
 amd64/arm64 builds. It requires `golangci-lint` and node. `scripts/check-corrections.mjs`
