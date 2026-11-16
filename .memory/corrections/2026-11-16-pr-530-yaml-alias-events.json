@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-16",
+  "scope": "updex/pull_request_target_contract_test.go workflowEvents",
+  "correction": "A guard that reads workflow events from a parsed YAML node must resolve aliases (*name) and merge keys (<<) at every level: the on key, its value, sequence items and mapping keys. AliasNode.Value is the anchor name, not the value, so an alias could hide pull_request_target from the guard (cross-review finding).",
+  "evidence": "frostyard/updex#530 cross-review: on: [*event] with name: &event pull_request_target passed the first version of the guard",
+  "promoted_to": "updex/pull_request_target_contract_test.go TestWorkflowEventsShapes (alias and merge-key cases)"
+}
