@@ -1,7 +1,12 @@
 name: Automated Copilot Code Review
 
+# pull_request, not pull_request_target: from 2026-12-02 GitHub blocks
+# pull_request_target in public repositories unless an Actions policy allows
+# it, and the frostyard policy allows it only for the PR triage caller
+# (frostyard/core docs/design/pull-request-target-policy.md). A fork pull
+# request gets a read-only token, so the job skips it.
 on:
-  pull_request_target:
+  pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions: {}
@@ -13,7 +18,9 @@ concurrency:
 jobs:
   request-review:
     name: Request Copilot review
-    if: github.event.pull_request.draft == false
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -22,8 +29,8 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
-      # pull_request_target permits review requests for fork PRs. Never check
-      # out or execute pull-request-controlled code in this workflow.
+      # Never check out or execute pull-request-controlled code in this
+      # workflow.
       - name: Request review
         shell: bash
         run: |
