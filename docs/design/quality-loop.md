@@ -38,7 +38,12 @@ PR template ──► review rubric ──► CI gates ──► corrections ─
   [review runbook](../../.github/prompts/review.prompt.md) is its
   task-shaped form for agents. `Automated Copilot Code Review`
   (`.github/workflows/claude-code-review.yml`) requests an advisory review
-  for each non-draft PR; maintainers audit its findings and CI history
+  for each non-draft PR from a branch of this repository; it runs on
+  `pull_request`, and a fork PR is skipped because its token is read-only.
+  Only the PR triage caller runs on `pull_request_target`
+  ([frostyard/core pull_request_target policy](https://github.com/frostyard/core/blob/main/docs/design/pull-request-target-policy.md));
+  `updex/pull_request_target_contract_test.go` fails for any other
+  workflow. Maintainers audit its findings and CI history
   before merge and remain accountable for the decision.
 - **Gate** — [.github/workflows/ci.yml](../../.github/workflows/ci.yml)
   runs on every PR, every push to `main`, and every `merge_group` event so the
