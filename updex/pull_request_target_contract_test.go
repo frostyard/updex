@@ -18,36 +18,97 @@ import (
 // workflow on that event makes a blocked run with no job and no check run.
 var pullRequestTargetAllowed = map[string]bool{"risk-paths.yml": true}
 
+// resolveAlias follows a YAML alias (`*name`) to the node its anchor names.
+func resolveAlias(node *yaml.Node) *yaml.Node {
+	for node != nil && node.Kind == yaml.AliasNode {
+		node = node.Alias
+	}
+	return node
+}
+
+// mappingKeys returns the resolved keys of a mapping, with the keys that a
+// merge key (`<<: *anchor` or `<<: [*a, *b]`) brings in.
+func mappingKeys(t *testing.T, mapping *yaml.Node) []*yaml.Node {
+	t.Helper()
+	var keys []*yaml.Node
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		key := resolveAlias(mapping.Content[i])
+		if key.Kind == yaml.ScalarNode && key.Tag == "!!merge" {
+			value := resolveAlias(mapping.Content[i+1])
+			sources := []*yaml.Node{value}
+			if value.Kind == yaml.SequenceNode {
+				sources = value.Content
+			}
+			for _, source := range sources {
+				source = resolveAlias(source)
+				if source.Kind != yaml.MappingNode {
+					t.Fatalf("merge key holds a YAML kind %d, not a mapping", source.Kind)
+				}
+				keys = append(keys, mappingKeys(t, source)...)
+			}
+			continue
+		}
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+// mappingValue returns the resolved value of the key name, or nil.
+func mappingValue(t *testing.T, mapping *yaml.Node, name string) []*yaml.Node {
+	t.Helper()
+	var values []*yaml.Node
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		key := resolveAlias(mapping.Content[i])
+		value := resolveAlias(mapping.Content[i+1])
+		if key.Kind == yaml.ScalarNode && key.Tag == "!!merge" {
+			sources := []*yaml.Node{value}
+			if value.Kind == yaml.SequenceNode {
+				sources = value.Content
+			}
+			for _, source := range sources {
+				if source = resolveAlias(source); source.Kind == yaml.MappingNode {
+					values = append(values, mappingValue(t, source, name)...)
+				}
+			}
+			continue
+		}
+		if key.Value == name {
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
 // workflowEvents returns the event names of a workflow's top-level `on:` key,
 // in the 3 shapes GitHub accepts: a scalar, a sequence and a mapping. It reads
 // the parsed document, so a comment or a block scalar that holds the word is
-// not an event.
+// not an event. It resolves aliases and merge keys at each level, so an
+// anchor cannot hide an event name.
 func workflowEvents(t *testing.T, data []byte) []string {
 	t.Helper()
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		t.Fatalf("parse workflow: %v", err)
 	}
-	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+	if len(doc.Content) == 0 {
 		return nil
 	}
-	root := doc.Content[0]
+	root := resolveAlias(doc.Content[0])
+	if root.Kind != yaml.MappingNode {
+		return nil
+	}
 	var events []string
-	for i := 0; i+1 < len(root.Content); i += 2 {
-		if root.Content[i].Value != "on" {
-			continue
-		}
-		on := root.Content[i+1]
+	for _, on := range mappingValue(t, root, "on") {
 		switch on.Kind {
 		case yaml.ScalarNode:
 			events = append(events, on.Value)
 		case yaml.SequenceNode:
 			for _, item := range on.Content {
-				events = append(events, item.Value)
+				events = append(events, resolveAlias(item).Value)
 			}
 		case yaml.MappingNode:
-			for j := 0; j < len(on.Content); j += 2 {
-				events = append(events, on.Content[j].Value)
+			for _, key := range mappingKeys(t, on) {
+				events = append(events, key.Value)
 			}
 		default:
 			t.Fatalf("workflow `on:` has an unexpected YAML kind %d", on.Kind)
@@ -70,9 +131,17 @@ func TestWorkflowEventsShapes(t *testing.T) {
 		{"block sequence", "on:\n  - push\n  - pull_request_target\n", true},
 		{"mapping", "on:\n  pull_request_target:\n    types: [labeled]\n", true},
 		{"quoted key", "\"on\":\n  'pull_request_target': {}\n", true},
+		{"alias in a sequence", "name: &event pull_request_target\non: [*event]\n", true},
+		{"alias as a mapping key", "name: &event pull_request_target\non:\n  *event : {}\n", true},
+		{"alias as the on value", "x: &events\n  pull_request_target: {}\non: *events\n", true},
+		{"alias as the on key", "name: &key on\n*key : pull_request_target\n", true},
+		{"merge key", "x: &base\n  pull_request_target: {}\non:\n  <<: *base\n  push: {}\n", true},
+		{"merge key list", "x: &base\n  pull_request_target: {}\ny: &other\n  push: {}\non:\n  <<: [*other, *base]\n", true},
+		{"hash in a quoted value", "on: {push: {branches: [\"release#1\"]}, pull_request_target: {}}\n", true},
 		{"comment only", "# pull_request_target is not used\non:\n  pull_request:\n", false},
 		{"run script", "on: push\njobs:\n  a:\n    steps:\n      - run: |\n          echo pull_request_target\n", false},
 		{"other event", "on:\n  pull_request:\n    types: [labeled]\n", false},
+		{"alias to another event", "name: &event pull_request\non: [*event]\n", false},
 		{"empty file", "", false},
 	}
 	for _, c := range cases {
