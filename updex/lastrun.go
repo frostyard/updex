@@ -1,6 +1,7 @@
 package updex
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -687,10 +688,10 @@ func readLastRunStatus(path string) (*LastRunRecord, error) {
 	if err := json.Unmarshal(data, &rec); err != nil {
 		return nil, fmt.Errorf("malformed last-run record: invalid field type")
 	}
-	// The raw feature objects tell a present last_ok ("", null) from an
-	// absent one, which the decoded string cannot.
+	// The raw feature objects tell a present last_ok ("", null, a duplicate
+	// key) from an absent one, which the decoded string cannot.
 	var raw struct {
-		Features []map[string]json.RawMessage `json:"features"`
+		Features []json.RawMessage `json:"features"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil || len(raw.Features) != len(rec.Features) {
 		return nil, fmt.Errorf("malformed last-run record: invalid field type")
@@ -725,30 +726,48 @@ func readLastRunStatus(path string) (*LastRunRecord, error) {
 	return &rec, nil
 }
 
-// validLastOK reports whether a feature's last_ok is absent or an RFC 3339
-// timestamp. It checks the decoded value and every raw value of a key that
-// encoding/json matches to last_ok (without regard to case): a raw value of ""
-// or null, also one that a duplicate key hides from the decoded string, is
-// invalid.
-func validLastOK(feature map[string]json.RawMessage, decoded string) bool {
-	if decoded != "" {
-		if _, err := time.Parse(time.RFC3339, decoded); err != nil {
+// validLastOK reports whether a raw feature object has no last_ok or exactly
+// one last_ok that is an RFC 3339 timestamp, and whether the decoded value
+// agrees. It reads the object token by token, so it sees every key that
+// encoding/json matches to last_ok (without regard to case), duplicates too: a
+// map would keep only the last of 2 identical keys. More than 1 such key, ""
+// and null are invalid.
+func validLastOK(feature json.RawMessage, decoded string) bool {
+	dec := json.NewDecoder(bytes.NewReader(feature))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return false
+	}
+	var values []json.RawMessage
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
 			return false
 		}
-	}
-	for key, value := range feature {
-		if !strings.EqualFold(key, "last_ok") {
-			continue
+		key, ok := tok.(string)
+		if !ok {
+			return false
 		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return false
+		}
+		if strings.EqualFold(key, "last_ok") {
+			values = append(values, value)
+		}
+	}
+	switch len(values) {
+	case 0:
+		return decoded == ""
+	case 1:
 		var text string
-		if err := json.Unmarshal(value, &text); err != nil {
+		if err := json.Unmarshal(values[0], &text); err != nil || text != decoded {
 			return false
 		}
-		if _, err := time.Parse(time.RFC3339, text); err != nil {
-			return false
-		}
+		_, err := time.Parse(time.RFC3339, text)
+		return err == nil
+	default:
+		return false
 	}
-	return true
 }
 
 func knownLastRunEnum(value string, known ...string) string {

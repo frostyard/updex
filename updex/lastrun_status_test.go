@@ -261,7 +261,11 @@ func TestReadLastRunStatusLastOK(t *testing.T) {
 	// earlier valid value is refused too (re-review of #532).
 	for _, value := range []string{`"last_ok":"",`, `"last_ok":null,`, `"LAST_OK":null,`,
 		`"last_ok":"2026-11-04T10:00:00Z","last_ok":null,`, `"last_ok":"2026-11-04T10:00:00Z","LAST_OK":null,`,
-		`"last_ok":"2026-11-04T10:00:00Z","Last_Ok":"",`} {
+		`"last_ok":"2026-11-04T10:00:00Z","Last_Ok":"",`,
+		// The reverse order: a map keeps only the later valid value of 2
+		// identical keys, so every duplicate is refused (re-review 2 of #532).
+		`"last_ok":null,"last_ok":"2026-11-04T10:00:00Z",`, `"last_ok":"","last_ok":"2026-11-04T10:00:00Z",`,
+		`"last_ok":"2026-11-04T10:00:00Z","last_ok":"2026-11-04T10:00:00Z",`, `"LAST_OK":null,"last_ok":"2026-11-04T10:00:00Z",`} {
 		data := strings.Replace(string(base), `"transfers":`, value+`"transfers":`, 1)
 		if !strings.Contains(data, value) {
 			t.Fatalf("fixture has no %s: %s", value, data)
