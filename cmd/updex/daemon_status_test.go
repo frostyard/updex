@@ -236,3 +236,53 @@ func TestRunDaemonStatusStaleFeatures(t *testing.T) {
 		t.Fatalf("got %s, want stale_features in JSON", jsonOut)
 	}
 }
+
+// TestRunDaemonStatusStaleWarningEscapes pins that both Warning variants quote
+// a record's feature name and time that hold terminal controls, also the name
+// repeated in the suggested command (cross-review of #532). The domain does
+// not load, so every record entry counts as enabled.
+func TestRunDaemonStatusStaleWarningEscapes(t *testing.T) {
+	daemonTestEnv(t, &systemd.MockSystemctlRunner{})
+	defs := t.TempDir()
+	legacy := filepath.Join(defs, "sysupdate.d")
+	if err := os.MkdirAll(legacy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// An unclosed INI section makes the domain load fail.
+	if err := os.WriteFile(filepath.Join(legacy, "broken.feature"), []byte("[Feature\nEnabled=true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "last-run.json")
+	setRuntimePaths(t, sdk.RuntimePaths{LastRunPath: path, DefinitionRoots: []string{defs}})
+
+	rec := sdk.LastRunRecord{
+		Format: 1, Started: "2026-11-05T10:00:00Z", Finished: "2026-11-05T10:00:42Z",
+		Outcome: "failed", Refresh: "not_requested",
+		Features: []sdk.LastRunFeature{
+			{Feature: "old\x1b[31m", Outcome: "failed", LastOK: "2000-01-01T00:00:00Z", Transfers: []sdk.LastRunTransfer{}},
+			{Feature: "never\r\u202e", Outcome: "failed", Transfers: []sdk.LastRunTransfer{}},
+		},
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return runDaemonStatus(daemonTestCommand(t), nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`  Warning: "old\x1b[31m": no successful update since 2000-01-01T00:00:00Z (more than 7 days); check its source with 'updex features check "old\x1b[31m"'` + "\n",
+		`  Warning: "never\r\u202e": no successful update recorded; check its source with 'updex features check "never\r\u202e"'` + "\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("got %q, want the line %q", out, want)
+		}
+	}
+	if strings.ContainsAny(out, "\x1b\r\u202e") {
+		t.Fatalf("got %q, want no raw terminal control", out)
+	}
+}

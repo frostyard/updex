@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -686,6 +687,14 @@ func readLastRunStatus(path string) (*LastRunRecord, error) {
 	if err := json.Unmarshal(data, &rec); err != nil {
 		return nil, fmt.Errorf("malformed last-run record: invalid field type")
 	}
+	// The raw feature objects tell a present last_ok ("", null) from an
+	// absent one, which the decoded string cannot.
+	var raw struct {
+		Features []map[string]json.RawMessage `json:"features"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil || len(raw.Features) != len(rec.Features) {
+		return nil, fmt.Errorf("malformed last-run record: invalid field type")
+	}
 	for _, value := range []string{rec.Started, rec.Finished} {
 		if _, err := time.Parse(time.RFC3339, value); err != nil {
 			return nil, fmt.Errorf("malformed last-run record: started and finished must be RFC 3339 timestamps")
@@ -704,7 +713,7 @@ func readLastRunStatus(path string) (*LastRunRecord, error) {
 		}
 		feature.Outcome = normalizeLastRunOutcome(feature.Outcome, false)
 		feature.ErrorClass = normalizeLastRunClass(feature.ErrorClass)
-		if feature.LastOK != "" {
+		if hasLastOKKey(raw.Features[i]) || feature.LastOK != "" {
 			if _, err := time.Parse(time.RFC3339, feature.LastOK); err != nil {
 				return nil, fmt.Errorf("malformed last-run record: last_ok must be an RFC 3339 timestamp")
 			}
@@ -716,6 +725,18 @@ func readLastRunStatus(path string) (*LastRunRecord, error) {
 		}
 	}
 	return &rec, nil
+}
+
+// hasLastOKKey reports whether a raw feature object has a last_ok key, with
+// any value. encoding/json matches keys without regard to case, so this does
+// too.
+func hasLastOKKey(feature map[string]json.RawMessage) bool {
+	for key := range feature {
+		if strings.EqualFold(key, "last_ok") {
+			return true
+		}
+	}
+	return false
 }
 
 func knownLastRunEnum(value string, known ...string) string {

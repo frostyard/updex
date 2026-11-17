@@ -1073,6 +1073,49 @@ func TestLastRun_LastOK(t *testing.T) {
 		}
 	})
 
+	// A source that fails for ever: each unsuccessful run carries the value
+	// that the previous unsuccessful run carried, with no reseeded record
+	// between the runs (cross-review of #532).
+	t.Run("carried across consecutive unsuccessful runs", func(t *testing.T) {
+		const lastOK = "2020-01-01T00:00:10Z"
+		check := func(t *testing.T, f *lastRunFixture, step, outcome string) {
+			t.Helper()
+			rec, _ := readLastRun(t, f.lastRun)
+			fe := featureEntry(t, rec, "feature-testext")
+			if fe.Outcome != outcome || fe.LastOK != lastOK {
+				t.Fatalf("%s: feature = %+v, want %s with last_ok %s", step, fe, outcome, lastOK)
+			}
+		}
+
+		f := newLastRunFixture(t, failing(t), nil)
+		previousOKRecord(t, f, lastOK, true)
+		// busy first: a busy record is written only after an older record.
+		release, err := f.client.lockMutation(false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true}); !errors.Is(err, ErrBusy) {
+			t.Fatalf("UpdateFeatures() error = %v, want ErrBusy", err)
+		}
+		release()
+		check(t, f, "busy", "skipped_busy")
+		for _, step := range []string{"failed after busy", "failed after failed"} {
+			if _, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true}); err == nil {
+				t.Fatalf("%s: UpdateFeatures() error = nil, want the failure", step)
+			}
+			check(t, f, step, "failed")
+		}
+
+		u := newLastRunFixture(t, map[string]string{"testext": closedPortURL(t)}, nil)
+		previousOKRecord(t, u, lastOK, true)
+		for _, step := range []string{"unreachable", "unreachable after unreachable"} {
+			if _, err := u.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true}); !errors.Is(err, ErrSourcesUnreachable) {
+				t.Fatalf("%s: UpdateFeatures() error = %v, want ErrSourcesUnreachable", step, err)
+			}
+			check(t, u, step, "skipped_unreachable")
+		}
+	})
+
 	t.Run("named run keeps each feature's own last_ok", func(t *testing.T) {
 		f := newLastRunFixture(t, map[string]string{"testext": goodServer(t, "testext"), "othertex": goodServer(t, "othertex")}, nil)
 		writeOldRecord(t, f.lastRun,

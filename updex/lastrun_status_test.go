@@ -249,6 +249,36 @@ func TestReadLastRunStatusLastOK(t *testing.T) {
 		t.Fatalf("read = %+v, %v, want the last_ok refusal", got, err)
 	}
 
+	// A present last_ok that decodes to "" (an empty string, null, or a key
+	// in another case) is not an RFC 3339 timestamp either: it must not read
+	// as an absent field (cross-review of #532).
+	rec.Features[0].LastOK = ""
+	base, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{`"last_ok":"",`, `"last_ok":null,`, `"LAST_OK":null,`} {
+		data := strings.Replace(string(base), `"transfers":`, value+`"transfers":`, 1)
+		if !strings.Contains(data, value) {
+			t.Fatalf("fixture has no %s: %s", value, data)
+		}
+		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := readLastRunStatus(path); err == nil || !strings.Contains(err.Error(), "last_ok must be an RFC 3339 timestamp") || got != nil {
+			t.Errorf("%s: read = %+v, %v, want the last_ok refusal", value, got, err)
+		}
+	}
+	// A record without the key still reads.
+	if err := os.WriteFile(path, base, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := readLastRunStatus(path); err != nil || got.Features[0].LastOK != "" {
+		t.Fatalf("read without last_ok = %+v, %v, want the record", got, err)
+	}
+
+	rec.Features[0].LastOK = "2026-11-04 10:00"
+	writeStatusRecord(t, path, rec)
 	client := NewClient(ClientConfig{SystemdManager: systemd.NewTestManager(t.TempDir(), &systemd.MockSystemctlRunner{}),
 		Paths: RuntimePaths{LastRunPath: path, LockPath: filepath.Join(t.TempDir(), "lock")}})
 	status, err := client.DaemonStatus(t.Context(), DaemonStatusOptions{})

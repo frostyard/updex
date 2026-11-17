@@ -374,7 +374,7 @@ including when no timer is installed. `LastUpdate` is the persistent format 1
 record, with unknown enum values normalized to `other`; absent files and
 unknown formats leave it nil. Invalid or unreadable records instead set
 `LastUpdateError` and never fail status, and so does a feature `last_ok` that
-is not an RFC 3339 timestamp. The bounded reader refuses symlinks
+is present but not an RFC 3339 timestamp (also `""` or `null`). The bounded reader refuses symlinks
 and non-regular files and validates required fields; see the
 [last-run record spec](last-run-record.md). The existing systemd fields and
 query error behavior are unchanged.
