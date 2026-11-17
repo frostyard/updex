@@ -713,10 +713,8 @@ func readLastRunStatus(path string) (*LastRunRecord, error) {
 		}
 		feature.Outcome = normalizeLastRunOutcome(feature.Outcome, false)
 		feature.ErrorClass = normalizeLastRunClass(feature.ErrorClass)
-		if hasLastOKKey(raw.Features[i]) || feature.LastOK != "" {
-			if _, err := time.Parse(time.RFC3339, feature.LastOK); err != nil {
-				return nil, fmt.Errorf("malformed last-run record: last_ok must be an RFC 3339 timestamp")
-			}
+		if !validLastOK(raw.Features[i], feature.LastOK) {
+			return nil, fmt.Errorf("malformed last-run record: last_ok must be an RFC 3339 timestamp")
 		}
 		for j := range feature.Transfers {
 			transfer := &feature.Transfers[j]
@@ -727,16 +725,30 @@ func readLastRunStatus(path string) (*LastRunRecord, error) {
 	return &rec, nil
 }
 
-// hasLastOKKey reports whether a raw feature object has a last_ok key, with
-// any value. encoding/json matches keys without regard to case, so this does
-// too.
-func hasLastOKKey(feature map[string]json.RawMessage) bool {
-	for key := range feature {
-		if strings.EqualFold(key, "last_ok") {
-			return true
+// validLastOK reports whether a feature's last_ok is absent or an RFC 3339
+// timestamp. It checks the decoded value and every raw value of a key that
+// encoding/json matches to last_ok (without regard to case): a raw value of ""
+// or null, also one that a duplicate key hides from the decoded string, is
+// invalid.
+func validLastOK(feature map[string]json.RawMessage, decoded string) bool {
+	if decoded != "" {
+		if _, err := time.Parse(time.RFC3339, decoded); err != nil {
+			return false
 		}
 	}
-	return false
+	for key, value := range feature {
+		if !strings.EqualFold(key, "last_ok") {
+			continue
+		}
+		var text string
+		if err := json.Unmarshal(value, &text); err != nil {
+			return false
+		}
+		if _, err := time.Parse(time.RFC3339, text); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func knownLastRunEnum(value string, known ...string) string {

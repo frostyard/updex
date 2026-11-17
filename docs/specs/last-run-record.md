@@ -219,8 +219,10 @@ Path: `RuntimePaths.LastRunPath`, default `updex.DefaultLastRunPath`
   `started` and `finished`, non-empty run `outcome` and `refresh`, non-null
   `features`, and each feature's non-empty name and outcome and non-null
   `transfers`. A `last_ok` that is present but not an RFC 3339 timestamp is
-  malformed, also an empty string or `null` (a key matched without regard to
-  case, as `encoding/json` matches it). A `format` that is not the integer 1 (absent, another number,
+  malformed, also an empty string or `null`. The reader checks every value of
+  every key that `encoding/json` matches to `last_ok` (without regard to case),
+  so a duplicate key whose later `null` would leave an earlier value in place
+  is malformed too. A `format` that is not the integer 1 (absent, another number,
   a string) is an unknown format. Unknown fields are accepted. Invalid or unreadable records set
   `LastUpdateError` (`last_update_error`); status still succeeds. The writer's
   previous-record reader keeps its existing permissive behavior.

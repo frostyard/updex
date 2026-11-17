@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-16",
+  "scope": "updex/lastrun.go readLastRunStatus validLastOK",
+  "correction": "Validating only the presence of a raw JSON key is not enough: encoding/json keeps an earlier value when a duplicate key (also one in another case) carries null, so validate the raw value of every matching key, not only the decoded field.",
+  "evidence": "frostyard/updex#532 re-review 1: \"last_ok\": \"<valid>\", \"last_ok\": null passed the status reader after the first fix",
+  "promoted_to": "updex/lastrun_status_test.go TestReadLastRunStatusLastOK (duplicate-key cases)"
+}

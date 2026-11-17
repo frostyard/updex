@@ -257,7 +257,11 @@ func TestReadLastRunStatusLastOK(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, value := range []string{`"last_ok":"",`, `"last_ok":null,`, `"LAST_OK":null,`} {
+	// A duplicate key whose later null leaves the decoded string at the
+	// earlier valid value is refused too (re-review of #532).
+	for _, value := range []string{`"last_ok":"",`, `"last_ok":null,`, `"LAST_OK":null,`,
+		`"last_ok":"2026-11-04T10:00:00Z","last_ok":null,`, `"last_ok":"2026-11-04T10:00:00Z","LAST_OK":null,`,
+		`"last_ok":"2026-11-04T10:00:00Z","Last_Ok":"",`} {
 		data := strings.Replace(string(base), `"transfers":`, value+`"transfers":`, 1)
 		if !strings.Contains(data, value) {
 			t.Fatalf("fixture has no %s: %s", value, data)
