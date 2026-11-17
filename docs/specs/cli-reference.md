@@ -589,12 +589,21 @@ disables `updex-suite-switch.service`.
   timer is masked (`Masked: yes`), the next run and the time and result of the
   last run since boot. It also reads the persistent last-update record, even
   without a timer: the finished time, run outcome, refresh state, and each
-  feature that did not succeed, with its error class and version when known.
-  This distinguishes a busy or unreachable run from systemd's successful exit
-  and keeps the update result visible after a reboot. `--json` includes
-  `last_update`, or `last_update_error` when the record cannot be read. A
-  missing or unknown-format record means no record; an invalid record does
-  not fail status. The run log is `journalctl -u updex-update.service`.
+  feature that did not succeed, with its error class and version when known,
+  and when it last succeeded (`last ok <time>`, or `never ok` for a feature
+  that never had a successful run). It then prints one
+  `Warning: <feature>: no successful update since <time> (more than 7 days)`
+  line for each enabled feature whose last successful run is older than 7 days
+  (`updex.LastOKWarnAge`), or `no successful update recorded` for one that
+  never had any; check such a source with
+  `updex features check <feature>`. A masked or disabled feature is not
+  reported. This distinguishes a busy or unreachable run from systemd's
+  successful exit and keeps the update result visible after a reboot, and it
+  makes a source that fails for ever visible, which ADR-0018's skip would
+  otherwise hide. `--json` includes `last_update` and `stale_features`, or
+  `last_update_error` when the record cannot be read. A missing or
+  unknown-format record means no record; an invalid record does not fail
+  status. The run log is `journalctl -u updex-update.service`.
 - **Last-run record:** every `updex features update` that is not a dry run
   writes `/var/lib/updex/last-run.json`: the run outcome (`completed`,
   `failed`, `skipped_busy`, `skipped_unreachable`), the refresh state, and per

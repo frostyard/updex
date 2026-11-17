@@ -49,7 +49,9 @@ updex/                          Public SDK (Client + methods)
                                 UpdateFeatures writes and DaemonStatus reads
                                 (LastRunRecord, LastRunFeature, LastRunTransfer,
                                 classifyError(), busy and
-                                merge rules; /var/lib/updex/last-run.json,
+                                merge rules; last_ok and its carry rule,
+                                LastOKWarnAge for the stale-feature report;
+                                /var/lib/updex/last-run.json,
                                 RuntimePaths.LastRunPath, DefaultLastRunPath;
                                 ADR-0020, specs/last-run-record.md)
   lock.go                       ErrBusy, acquireLock() — the exclusive,
@@ -1336,7 +1338,21 @@ which supersedes [ADR-0007](../adr/0007-daemon-stages-never-activates.md).
   mean no record; unknown enums become `other`. Invalid or unreadable records
   set `LastUpdateError` (`last_update_error`), without failing status. The CLI
   lists unsuccessful features with class and version and escapes non-printable
-  strings. The shared exported record types preserve the writer's JSON shape
+  strings.
+  Each record entry also carries `last_ok`: the feature's own `at` when its
+  outcome is `updated`, `current`, `held_by_rollback` or `needs_image`, else the
+  value carried from the previous record, so a format 1 record written before the
+  field existed still gives the `at` of its ok entry. From it `DaemonStatus`
+  computes `StaleFeatures` (`stale_features` in JSON): every entry of the record
+  that is enabled and unmasked now (a quiet read-only domain load; a load that
+  fails counts every entry) and whose `last_ok` is older than `LastOKWarnAge`
+  (7 days), or that has none and is `failed` or `skipped_unreachable`. The CLI
+  prints `last ok <time>` or `never ok` on an unsuccessful feature line, then one
+  `Warning:` line per stale feature. That is what makes a source that fails for
+  ever visible, which the skip of
+  [ADR-0018](../adr/0018-skip-an-update-run-when-every-source-is-unreachable.md)
+  would otherwise hide. The shared exported record types preserve the writer's
+  JSON shape
   and behavior; see [the record spec](../specs/last-run-record.md) and
   `updex/lastrun_status_test.go` / `cmd/updex/daemon_status_test.go`.
 - `--dry-run` on `daemon enable`/`daemon disable` passes `DryRun` into the SDK options: the context check and the installed/not-installed precondition still run, but no unit file is written or removed and no systemctl call is made. The `DaemonActionResult` carries `DryRun` and the absolute `UnitFiles` paths (timer then service), and the CLI prints the result's `Message` with a `[DRY RUN] ` prefix in text mode

@@ -373,10 +373,22 @@ legacy text). `DaemonStatus` adds its path to `UnitFiles` and sets
 including when no timer is installed. `LastUpdate` is the persistent format 1
 record, with unknown enum values normalized to `other`; absent files and
 unknown formats leave it nil. Invalid or unreadable records instead set
-`LastUpdateError` and never fail status. The bounded reader refuses symlinks
+`LastUpdateError` and never fail status, and so does a feature `last_ok` that
+is not an RFC 3339 timestamp. The bounded reader refuses symlinks
 and non-regular files and validates required fields; see the
 [last-run record spec](last-run-record.md). The existing systemd fields and
 query error behavior are unchanged.
+
+`StaleFeatures` lists, in record order, the record's features that are enabled
+and unmasked now and whose last successful run (`LastOK`, the effective
+`last_ok`: the entry's own when its outcome is ok, else the value carried from
+the previous record) is older than `LastOKWarnAge` (7 days), or that never had
+one and whose outcome is `failed` or `skipped_unreachable`. The domain is read
+without warnings and only to build that enabled set; a domain that cannot be
+loaded counts every entry as enabled. This computation never fails the status.
+It makes a feature whose source fails for ever visible, which
+[ADR-0018](../adr/0018-skip-an-update-run-when-every-source-is-unreachable.md)'s
+skip would otherwise hide.
 
 `DaemonStatus` reports a missing timer without querying systemctl. For an
 installed timer (a timer file in either directory) it reports enabled/active
@@ -456,9 +468,16 @@ type DaemonStatusResult struct {
     LastResult string   `json:"last_result,omitempty"`
     LastUpdate *LastRunRecord `json:"last_update,omitzero"` // normalized persistent record, nil if absent/unknown format
     LastUpdateError string `json:"last_update_error,omitempty"` // record read/validation error, not a status failure
+    StaleFeatures []StaleFeature `json:"stale_features,omitzero"` // enabled features whose last_ok is too old
     Masked     bool     `json:"masked,omitempty"` // the timer file in use is a symlink to /dev/null
     SuiteSwitchInstalled bool `json:"suite_switch_installed,omitempty"` // a file of updex-suite-switch.service exists (ADR-0021)
     SuiteSwitchEnabled   bool `json:"suite_switch_enabled,omitempty"`   // systemd has it enabled
+}
+
+type StaleFeature struct {
+    Feature string `json:"feature"`
+    LastOK  string `json:"last_ok,omitempty"` // effective last successful run; empty when the record has none
+    Outcome string `json:"outcome"`          // the feature's outcome in the record
 }
 ```
 
@@ -484,6 +503,7 @@ type LastRunFeature struct {
     ErrorClass string `json:"error_class,omitempty"`
     Version string `json:"version,omitempty"`
     At string `json:"at"`
+    LastOK string `json:"last_ok,omitempty"`
     Transfers []LastRunTransfer `json:"transfers"`
 }
 
@@ -497,9 +517,14 @@ type LastRunTransfer struct {
 
 `daemon status` text adds the finished timestamp, run outcome, optional run
 class, refresh state and named-feature selection. It lists each feature except
-`updated` and `current`, with its optional class and version, and with
+`updated` and `current`, with its optional class and version, with
 `at <time>` when its `at` differs from the run's `finished` (an entry that a
-named run carried from an earlier run). Non-printable
+named run carried from an earlier run), and with `last ok <time>` when the
+record carries a successful run or `never ok` for a failed or
+`skipped_unreachable` entry without one. After those lines it prints one
+`Warning: <feature>: no successful update since <time> (more than 7 days); ...`
+or `Warning: <feature>: no successful update recorded; ...` line per stale
+feature. Non-printable
 record strings are quoted and escaped for the terminal. An installed timer
 without a record shows `Last update: none recorded`; without a timer, an
 absent record adds no text. Unreadable records show `Last update: unreadable`.

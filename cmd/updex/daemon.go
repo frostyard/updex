@@ -201,7 +201,10 @@ OUTPUT:
   Schedule   - When updates run (the effective OnCalendar, drop-ins included)
   Next run   - When the timer fires next
   Last run   - When the service last finished, and its result
-  Last update - Persistent update outcome, refresh state and unsuccessful features
+  Last update - Persistent update outcome, refresh state and unsuccessful features,
+               with when each one last succeeded (last ok) or that it never did
+  Warning    - Each enabled feature that keeps failing: no successful update
+               since its last ok (more than 7 days), or none recorded
 
 The run log is in the journal: journalctl -u updex-update.service`,
 		Example: `  # Check daemon status
@@ -261,10 +264,12 @@ func runDaemonStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// printLastUpdate prints the last-run record. Under an installed timer the
+// printLastUpdate prints the last-run record, then one warning line for each
+// feature whose last successful run is too old. Under an installed timer the
 // lines are indented like the other status fields; without a timer they
 // follow the two unindented "not installed" lines. A feature entry that a
-// named run carried from an earlier run shows its own time.
+// named run carried from an earlier run shows its own time; a failed entry
+// shows when it last succeeded, or that it never did.
 func printLastUpdate(status *updex.DaemonStatusResult) {
 	indent := ""
 	if status.Installed {
@@ -296,10 +301,25 @@ func printLastUpdate(status *updex.DaemonStatusResult) {
 		if feature.At != "" && feature.At != rec.Finished {
 			details = append(details, "at "+lastUpdateText(feature.At))
 		}
+		if feature.LastOK != "" {
+			details = append(details, "last ok "+lastUpdateText(feature.LastOK))
+		} else if feature.Outcome == "failed" || feature.Outcome == "skipped_unreachable" {
+			details = append(details, "never ok")
+		}
 		if len(details) > 0 {
 			fmt.Printf(" (%s)", strings.Join(details, ", "))
 		}
 		fmt.Println()
+	}
+	for _, stale := range status.StaleFeatures {
+		feature := lastUpdateText(stale.Feature)
+		if stale.LastOK != "" {
+			fmt.Printf("%s  Warning: %s: no successful update since %s (more than %d days); check its source with 'updex features check %s'\n",
+				indent, feature, lastUpdateText(stale.LastOK), int(updex.LastOKWarnAge.Hours()/24), feature)
+			continue
+		}
+		fmt.Printf("%s  Warning: %s: no successful update recorded; check its source with 'updex features check %s'\n",
+			indent, feature, feature)
 	}
 }
 

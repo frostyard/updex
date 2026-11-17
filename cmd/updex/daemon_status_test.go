@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/frostyard/clix"
 	"github.com/frostyard/updex/v2/systemd"
@@ -96,12 +97,12 @@ func TestRunDaemonStatusLastUpdate(t *testing.T) {
 					ind = "  "
 				}
 				want := ind + "Last update: 2026-11-05T10:00:42Z failed (class config, refresh not_requested, named features)\n" +
-					ind + "  incus: failed (class network, version 1.2.3)\n" +
+					ind + "  incus: failed (class network, version 1.2.3, never ok)\n" +
 					ind + "  busy: skipped_busy\n" +
 					ind + "  held: held_by_rollback (version 2.0)\n" +
-					ind + "  \"unsafe\\x1b[31m\\n\": failed (version \"1\\r\\t\\u202e\")\n" +
+					ind + "  \"unsafe\\x1b[31m\\n\": failed (version \"1\\r\\t\\u202e\", never ok)\n" +
 					ind + "  same-run: needs_image\n" +
-					ind + "  carried: failed (class checksum, at 2026-11-01T08:00:00Z)\n"
+					ind + "  carried: failed (class checksum, at 2026-11-01T08:00:00Z, never ok)\n"
 				if !tt.installed && !strings.HasPrefix(out, "Auto-update daemon: not installed\nRun 'updex daemon enable' to enable automatic updates.\nLast update: ") {
 					t.Fatalf("unexpected output without a timer: %q", out)
 				}
@@ -147,5 +148,91 @@ func TestPrintLastUpdateWithoutOptionalDetails(t *testing.T) {
 		if out != want {
 			t.Fatalf("installed=%v: got %q, want %q", installed, out, want)
 		}
+	}
+}
+
+// A feature that keeps failing shows when it last succeeded, or that it never
+// did, and each stale feature gets one warning line; JSON carries last_ok and
+// stale_features (ADR-0018: a source that is wrong for ever looks offline, so
+// the record must show it).
+func TestRunDaemonStatusStaleFeatures(t *testing.T) {
+	daemonTestEnv(t, &systemd.MockSystemctlRunner{})
+	defs := t.TempDir()
+	legacy := filepath.Join(defs, "sysupdate.d")
+	if err := os.MkdirAll(legacy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// off is disabled in the domain, so it is never reported, old as it is.
+	for name, enabled := range map[string]string{"docker": "true", "incus": "true", "never": "true", "off": "false"} {
+		content := "[Feature]\nDescription=Test feature\nEnabled=" + enabled + "\n"
+		if err := os.WriteFile(filepath.Join(legacy, name+".feature"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "last-run.json")
+	setRuntimePaths(t, sdk.RuntimePaths{LastRunPath: path, DefinitionRoots: []string{defs}})
+
+	old := "2000-01-01T00:00:00Z"
+	fresh := time.Now().UTC().Truncate(time.Second).Format(time.RFC3339)
+	rec := sdk.LastRunRecord{
+		Format: 1, Started: "2026-11-05T10:00:00Z", Finished: "2026-11-05T10:00:42Z",
+		Outcome: "failed", Refresh: "not_requested",
+		Features: []sdk.LastRunFeature{
+			{Feature: "docker", Outcome: "failed", ErrorClass: "network", LastOK: old, Transfers: []sdk.LastRunTransfer{}},
+			{Feature: "incus", Outcome: "failed", ErrorClass: "network", LastOK: fresh, Transfers: []sdk.LastRunTransfer{}},
+			{Feature: "never", Outcome: "skipped_unreachable", ErrorClass: "network", Transfers: []sdk.LastRunTransfer{}},
+			{Feature: "off", Outcome: "failed", ErrorClass: "network", LastOK: old, Transfers: []sdk.LastRunTransfer{}},
+		},
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := captureStdout(t, func() error { return runDaemonStatus(daemonTestCommand(t), nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Last update: 2026-11-05T10:00:42Z failed (refresh not_requested)\n" +
+		"  docker: failed (class network, last ok " + old + ")\n" +
+		"  incus: failed (class network, last ok " + fresh + ")\n" +
+		"  never: skipped_unreachable (class network, never ok)\n" +
+		"  off: failed (class network, last ok " + old + ")\n" +
+		"  Warning: docker: no successful update since " + old + " (more than 7 days); check its source with 'updex features check docker'\n" +
+		"  Warning: never: no successful update recorded; check its source with 'updex features check never'\n"
+	if !strings.HasSuffix(out, want) {
+		t.Fatalf("got %q, want the tail %q", out, want)
+	}
+	for _, name := range []string{"incus", "off"} {
+		if strings.Contains(out, "Warning: "+name+":") {
+			t.Fatalf("got %q, want no warning for a fresh or a disabled feature", out)
+		}
+	}
+
+	clix.JSONOutput = true
+	t.Cleanup(func() { clix.JSONOutput = false })
+	jsonOut, err := captureStdout(t, func() error { return runDaemonStatus(daemonTestCommand(t), nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got sdk.DaemonStatusResult
+	if err := json.Unmarshal([]byte(jsonOut), &got); err != nil {
+		t.Fatal(err)
+	}
+	wantStale := []sdk.StaleFeature{
+		{Feature: "docker", LastOK: old, Outcome: "failed"},
+		{Feature: "never", Outcome: "skipped_unreachable"},
+	}
+	if !reflect.DeepEqual(got.StaleFeatures, wantStale) {
+		t.Fatalf("stale features = %+v, want %+v", got.StaleFeatures, wantStale)
+	}
+	if got.LastUpdate == nil || len(got.LastUpdate.Features) != 4 || got.LastUpdate.Features[0].LastOK != old || got.LastUpdate.Features[2].LastOK != "" {
+		t.Fatalf("last update = %+v, want last_ok per feature", got.LastUpdate)
+	}
+	if !strings.Contains(jsonOut, `"stale_features":`) {
+		t.Fatalf("got %s, want stale_features in JSON", jsonOut)
 	}
 }
