@@ -1,6 +1,7 @@
 package updex
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -10,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -36,6 +38,12 @@ var lastRunPathDefault = DefaultLastRunPath
 
 // lastRunFormat is the only record format this updex writes and reads.
 const lastRunFormat = 1
+
+// LastOKWarnAge is how old a feature's last successful run may be before
+// DaemonStatus reports the feature in StaleFeatures. A feature whose
+// last_ok is older than this keeps failing runs, so its source is worth
+// checking; ADR-0018 lets such a source look offline for ever.
+const LastOKWarnAge = 7 * 24 * time.Hour
 
 // maxLastRunRecordSize bounds the bytes read from a previous record.
 const maxLastRunRecordSize = 1 << 20
@@ -97,13 +105,91 @@ type LastRunRecord struct {
 
 // LastRunFeature records one feature, as defined in docs/specs/last-run-record.md.
 type LastRunFeature struct {
-	Feature    string            `json:"feature"`
-	Origin     string            `json:"origin"`
-	Outcome    string            `json:"outcome"`
-	ErrorClass string            `json:"error_class,omitempty"`
-	Version    string            `json:"version,omitempty"`
-	At         string            `json:"at"`
-	Transfers  []LastRunTransfer `json:"transfers"`
+	Feature    string `json:"feature"`
+	Origin     string `json:"origin"`
+	Outcome    string `json:"outcome"`
+	ErrorClass string `json:"error_class,omitempty"`
+	Version    string `json:"version,omitempty"`
+	At         string `json:"at"`
+	// LastOK is when the feature last had a successful run (updated,
+	// current, held_by_rollback or needs_image), RFC 3339 UTC whole
+	// seconds. It is the at of this entry when this entry is ok, else the
+	// time carried from the previous record; absent when the feature never
+	// succeeded.
+	LastOK    string            `json:"last_ok,omitempty"`
+	Transfers []LastRunTransfer `json:"transfers"`
+}
+
+// isLastRunOK reports whether a feature outcome counts as a successful run
+// for last_ok: updated, current, held_by_rollback or needs_image. A failure, an
+// unreachable source and a busy skip are not ok.
+func isLastRunOK(outcome string) bool {
+	switch outcome {
+	case outcomeUpdated, outcomeCurrent, outcomeHeldByRollback, outcomeNeedsImage:
+		return true
+	}
+	return false
+}
+
+// lastOKTime returns the latest valid last-successful-run time of a previous
+// entry: its last_ok, and its at when its outcome was ok, whichever is later.
+// An invalid timestamp counts for nothing, so a record whose last_ok is
+// malformed carries nothing. ok is false when the entry holds no valid
+// candidate.
+func lastOKTime(f LastRunFeature) (at time.Time, ok bool) {
+	candidates := []string{f.LastOK}
+	if isLastRunOK(f.Outcome) {
+		candidates = append(candidates, f.At)
+	}
+	for _, value := range candidates {
+		if value == "" {
+			continue
+		}
+		parsed, err := time.Parse(time.RFC3339, value)
+		if err != nil {
+			continue
+		}
+		if !ok || parsed.After(at) {
+			at, ok = parsed, true
+		}
+	}
+	return at, ok
+}
+
+// previousLastOK returns lastOKTime in record form, or "" when the entry holds
+// no valid last-successful-run time.
+func previousLastOK(f LastRunFeature) string {
+	at, ok := lastOKTime(f)
+	if !ok {
+		return ""
+	}
+	return recordTime(at)
+}
+
+// staleFeatures lists the features of rec that DaemonStatus reports as stale,
+// in record order: a feature that is enabled now whose last successful run is
+// older than LastOKWarnAge, or that has none and whose outcome is failed or
+// skipped_unreachable. A nil enabled set counts every entry as enabled, the
+// fallback for a domain that cannot be loaded.
+func staleFeatures(rec *LastRunRecord, enabled map[string]bool, now time.Time) []StaleFeature {
+	var stale []StaleFeature
+	for _, f := range rec.Features {
+		if enabled != nil && !enabled[f.Feature] {
+			continue
+		}
+		at, ok := lastOKTime(f)
+		if !ok {
+			if f.Outcome == outcomeFailed || f.Outcome == outcomeSkippedUnreachable {
+				stale = append(stale, StaleFeature{Feature: f.Feature, Outcome: f.Outcome})
+			}
+			continue
+		}
+		// A last successful run in the future is not stale.
+		if now.Sub(at) > LastOKWarnAge {
+			stale = append(stale, StaleFeature{Feature: f.Feature, LastOK: recordTime(at), Outcome: f.Outcome})
+		}
+	}
+	return stale
 }
 
 // LastRunTransfer records one active transfer of a feature, as defined in
@@ -410,8 +496,9 @@ func (c *Client) writeLastRun(r *lastRun, finished time.Time, runErr error) {
 
 // storeLastRun writes rec to the record path under the flock of its
 // directory: it reads the previous record, keeps a newer one for a busy run,
-// carries the previous entries a named run did not act on, and renames the
-// new record into place (ADR-0005: Lstat checks, temp file plus rename).
+// carries the previous entries a named run did not act on, sets each entry's
+// last_ok, and renames the new record into place (ADR-0005: Lstat checks, temp
+// file plus rename).
 func (c *Client) storeLastRun(r *lastRun, rec LastRunRecord) error {
 	path := c.paths.lastRunPath
 	dir := filepath.Dir(path)
@@ -447,6 +534,24 @@ func (c *Client) storeLastRun(r *lastRun, rec LastRunRecord) error {
 			return nil
 		}
 	}
+	// last_ok: an ok entry of this run is its own at; any other entry keeps
+	// the last successful time the previous record carried for the feature.
+	prevOK := map[string]string{}
+	if prev != nil {
+		for _, f := range prev.Features {
+			if _, seen := prevOK[f.Feature]; !seen && f.Feature != "" {
+				prevOK[f.Feature] = previousLastOK(f)
+			}
+		}
+	}
+	for i := range rec.Features {
+		entry := &rec.Features[i]
+		if isLastRunOK(entry.Outcome) {
+			entry.LastOK = entry.At
+			continue
+		}
+		entry.LastOK = prevOK[entry.Feature]
+	}
 	if r.carry != nil && prev != nil {
 		rec.Features = carryFeatures(rec.Features, prev.Features, r.carry)
 	}
@@ -467,8 +572,9 @@ func (c *Client) storeLastRun(r *lastRun, rec LastRunRecord) error {
 
 // carryFeatures merges the entries of a named run with the previous record:
 // a feature in carry (enabled and unmasked now) that this run did not act on
-// keeps its previous entry, with its own at. The result is in carry order,
-// with any entry of this run that is not in carry at the end.
+// keeps its previous entry, with its own at and its last successful time. The
+// result is in carry order, with any entry of this run that is not in carry at
+// the end.
 func carryFeatures(current, previous []LastRunFeature, carry []string) []LastRunFeature {
 	byName := make(map[string]LastRunFeature, len(current))
 	for _, f := range current {
@@ -492,6 +598,9 @@ func carryFeatures(current, previous []LastRunFeature, carry []string) []LastRun
 			if f.Transfers == nil {
 				f.Transfers = []LastRunTransfer{}
 			}
+			// An old record has no last_ok: the at of its ok entry is the
+			// last successful run it knows.
+			f.LastOK = previousLastOK(f)
 			out = append(out, f)
 		}
 	}
@@ -528,8 +637,10 @@ func readLastRunRecord(path string) *LastRunRecord {
 }
 
 // readLastRunStatus reads a record for status without a lock or a write.
-// Unknown formats mean no record; unknown enum values become other.
-// The writer's readLastRunRecord deliberately retains its permissive behavior.
+// Unknown formats mean no record; unknown enum values become other. A
+// feature's optional last_ok must be an RFC 3339 timestamp, else the record is
+// malformed. The writer's readLastRunRecord deliberately retains its permissive
+// behavior.
 func readLastRunStatus(path string) (*LastRunRecord, error) {
 	before, err := os.Lstat(path)
 	if os.IsNotExist(err) {
@@ -577,6 +688,14 @@ func readLastRunStatus(path string) (*LastRunRecord, error) {
 	if err := json.Unmarshal(data, &rec); err != nil {
 		return nil, fmt.Errorf("malformed last-run record: invalid field type")
 	}
+	// The raw feature objects tell a present last_ok ("", null, a duplicate
+	// key) from an absent one, which the decoded string cannot.
+	var raw struct {
+		Features []json.RawMessage `json:"features"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil || len(raw.Features) != len(rec.Features) {
+		return nil, fmt.Errorf("malformed last-run record: invalid field type")
+	}
 	for _, value := range []string{rec.Started, rec.Finished} {
 		if _, err := time.Parse(time.RFC3339, value); err != nil {
 			return nil, fmt.Errorf("malformed last-run record: started and finished must be RFC 3339 timestamps")
@@ -595,6 +714,9 @@ func readLastRunStatus(path string) (*LastRunRecord, error) {
 		}
 		feature.Outcome = normalizeLastRunOutcome(feature.Outcome, false)
 		feature.ErrorClass = normalizeLastRunClass(feature.ErrorClass)
+		if !validLastOK(raw.Features[i], feature.LastOK) {
+			return nil, fmt.Errorf("malformed last-run record: last_ok must be an RFC 3339 timestamp")
+		}
 		for j := range feature.Transfers {
 			transfer := &feature.Transfers[j]
 			transfer.Outcome = normalizeLastRunOutcome(transfer.Outcome, true)
@@ -602,6 +724,50 @@ func readLastRunStatus(path string) (*LastRunRecord, error) {
 		}
 	}
 	return &rec, nil
+}
+
+// validLastOK reports whether a raw feature object has no last_ok or exactly
+// one last_ok that is an RFC 3339 timestamp, and whether the decoded value
+// agrees. It reads the object token by token, so it sees every key that
+// encoding/json matches to last_ok (without regard to case), duplicates too: a
+// map would keep only the last of 2 identical keys. More than 1 such key, ""
+// and null are invalid.
+func validLastOK(feature json.RawMessage, decoded string) bool {
+	dec := json.NewDecoder(bytes.NewReader(feature))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return false
+	}
+	var values []json.RawMessage
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return false
+		}
+		key, ok := tok.(string)
+		if !ok {
+			return false
+		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return false
+		}
+		if strings.EqualFold(key, "last_ok") {
+			values = append(values, value)
+		}
+	}
+	switch len(values) {
+	case 0:
+		return decoded == ""
+	case 1:
+		var text string
+		if err := json.Unmarshal(values[0], &text); err != nil || text != decoded {
+			return false
+		}
+		_, err := time.Parse(time.RFC3339, text)
+		return err == nil
+	default:
+		return false
+	}
 }
 
 func knownLastRunEnum(value string, known ...string) string {

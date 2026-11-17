@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
+	"github.com/frostyard/std/reporter"
 	"github.com/frostyard/updex/v2/systemd"
 )
 
@@ -563,11 +565,23 @@ func (c *Client) unitFileInUse(file string) (path, source string, ok bool) {
 	return "", "", false
 }
 
+// daemonStatusNow is the clock DaemonStatus uses for its stale-feature check.
+// Production never changes it.
+var daemonStatusNow = time.Now
+
 // DaemonStatus reports whether the automatic update timer is installed,
 // enabled, and active, which unit files are in use, its schedule, the next
 // run, and the time and result of the last run. It also reads the persistent
 // last-update record, even without a timer. This takes no lock and writes
 // nothing; an unreadable or invalid record sets LastUpdateError, not an error.
+//
+// StaleFeatures reports the record's features that are enabled now and whose
+// last successful run (last_ok) is older than LastOKWarnAge, or that never had
+// one and failed or were skipped unreachable, in record order: a source that
+// fails for ever stays visible here, also when ADR-0018 makes every run a
+// skip. The enabled set comes from a quiet read-only load of the domain; when
+// that load fails, every entry of the record counts as enabled. Reading the
+// domain never fails the status.
 //
 // Installed means a timer unit file exists in /etc/systemd/system or in the
 // packaged directory. Source is "etc" when the timer file in use is in
@@ -595,6 +609,9 @@ func (c *Client) DaemonStatus(ctx context.Context, _ DaemonStatusOptions) (*Daem
 	status := &DaemonStatusResult{LastUpdate: lastUpdate}
 	if err != nil {
 		status.LastUpdateError = err.Error()
+	}
+	if lastUpdate != nil {
+		status.StaleFeatures = staleFeatures(lastUpdate, c.enabledFeatureSet(), daemonStatusNow())
 	}
 	timerPath, source, timerFound := c.daemonUnitFileInUse(".timer")
 	if !timerFound {
@@ -655,6 +672,25 @@ func (c *Client) DaemonStatus(ctx context.Context, _ DaemonStatusOptions) (*Daem
 		status.LastResult = result
 	}
 	return status, nil
+}
+
+// enabledFeatureSet returns the loaded domain's features by name: true when
+// the feature is enabled and not masked. It loads the domain read-only and
+// without warnings, as busyFeatures does; a domain that cannot be loaded gives
+// nil, which counts every feature of the last-run record as enabled (that
+// record lists only the features that were enabled when it was written).
+func (c *Client) enabledFeatureSet() map[string]bool {
+	quiet := *c
+	quiet.reporter = reporter.NoopReporter{}
+	features, _, err := quiet.loadDomain("")
+	if err != nil {
+		return nil
+	}
+	enabled := make(map[string]bool, len(features))
+	for _, f := range features {
+		enabled[f.Name] = f.Enabled && !f.Masked
+	}
+	return enabled
 }
 
 // showDaemonProperty reads one systemd property and maps "no value" (an empty

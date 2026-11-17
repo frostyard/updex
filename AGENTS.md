@@ -794,7 +794,17 @@ in the `config/` structs and parse functions. Always finish with
   `lastRun.written` keeps it to one write. A busy run lists its features as
   `skipped_busy` only when the existing record ended before it started; a
   named run, busy or not, carries the other enabled features' entries; a run
-  refused by `selectFeatures`, busy or not, and a dry run write nothing. The
+  refused by `selectFeatures`, busy or not, and a dry run write nothing. Each
+  feature entry also carries `last_ok`: the `at` of the latest entry whose
+  outcome is ok (`updated`, `current`, `held_by_rollback`, `needs_image`), else
+  the value carried from the previous record (`previousLastOK`, which also
+  takes the `at` of an old record's ok entry). `DaemonStatus.StaleFeatures`
+  lists the enabled features whose `last_ok` is older than `LastOKWarnAge`
+  (7 days), or that never had one and `failed`/were `skipped_unreachable`, and
+  `updex daemon status` prints one `Warning:` line for each: that is how a
+  source that fails for ever stays visible, which ADR-0018's skip would
+  otherwise hide. A new code path that writes or rewrites feature entries must
+  keep the `last_ok` rule. The
   write holds a `flock` on the record directory (2 s
   bounded, non-blocking retries), refuses a symlink or non-regular file and
   a non-directory parent, and a failure is one `c.warn`: it never changes

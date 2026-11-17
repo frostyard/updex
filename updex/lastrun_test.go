@@ -976,3 +976,207 @@ func TestLastRun_WrittenUnderOperationLock(t *testing.T) {
 		})
 	}
 }
+
+// last_ok records when each feature last had a successful run: this run's own
+// time for an ok outcome, else the time carried from the previous record. It
+// makes a source that fails for ever visible, which ADR-0018's skip would
+// otherwise hide (the timer exits 0 for every unreachable run).
+func TestLastRun_LastOK(t *testing.T) {
+	// failingServer answers 404 to everything, so its feature fails.
+	failing := func(t *testing.T) map[string]string {
+		t.Helper()
+		s := testutil.NewErrorServer(t, http.StatusNotFound)
+		t.Cleanup(s.Close)
+		return map[string]string{"testext": s.URL}
+	}
+	// previousOKRecord writes a previous record whose testext entry is current
+	// at lastOK, with last_ok set when withLastOK is true.
+	previousOKRecord := func(t *testing.T, f *lastRunFixture, lastOK string, withLastOK bool) {
+		t.Helper()
+		entry := LastRunFeature{Feature: "feature-testext", Origin: "unknown", Outcome: "current", At: lastOK, Transfers: []LastRunTransfer{}}
+		if withLastOK {
+			entry.LastOK = lastOK
+		}
+		writeOldRecord(t, f.lastRun, entry)
+	}
+
+	t.Run("first run ok", func(t *testing.T) {
+		f := newLastRunFixture(t, map[string]string{"testext": goodServer(t, "testext")}, nil)
+		if _, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true}); err != nil {
+			t.Fatalf("UpdateFeatures: %v", err)
+		}
+		rec, data := readLastRun(t, f.lastRun)
+		fe := featureEntry(t, rec, "feature-testext")
+		if fe.LastOK == "" || fe.LastOK != fe.At {
+			t.Errorf("last_ok = %q, want the entry's at %q", fe.LastOK, fe.At)
+		}
+		if !bytes.Contains(data, []byte(`"last_ok"`)) {
+			t.Errorf("record has no last_ok:\n%s", data)
+		}
+	})
+
+	t.Run("first run failed", func(t *testing.T) {
+		f := newLastRunFixture(t, failing(t), nil)
+		if _, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true}); err == nil {
+			t.Fatal("UpdateFeatures() error = nil, want the failure")
+		}
+		rec, data := readLastRun(t, f.lastRun)
+		if fe := featureEntry(t, rec, "feature-testext"); fe.Outcome != "failed" || fe.LastOK != "" {
+			t.Errorf("feature = %+v, want failed with no last_ok", fe)
+		}
+		if bytes.Contains(data, []byte(`"last_ok"`)) {
+			t.Errorf("record has a last_ok for a feature that never succeeded:\n%s", data)
+		}
+	})
+
+	t.Run("carried after a failed run", func(t *testing.T) {
+		f := newLastRunFixture(t, failing(t), nil)
+		previousOKRecord(t, f, "2020-01-01T00:00:10Z", true)
+		if _, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true}); err == nil {
+			t.Fatal("UpdateFeatures() error = nil, want the failure")
+		}
+		rec, _ := readLastRun(t, f.lastRun)
+		fe := featureEntry(t, rec, "feature-testext")
+		if fe.Outcome != "failed" || fe.LastOK != "2020-01-01T00:00:10Z" || fe.At != rec.Finished {
+			t.Errorf("feature = %+v, want failed at %s with last_ok carried", fe, rec.Finished)
+		}
+	})
+
+	t.Run("carried after an unreachable run", func(t *testing.T) {
+		f := newLastRunFixture(t, map[string]string{"testext": closedPortURL(t)}, nil)
+		previousOKRecord(t, f, "2020-01-01T00:00:10Z", true)
+		if _, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true}); !errors.Is(err, ErrSourcesUnreachable) {
+			t.Fatalf("UpdateFeatures() error = %v, want ErrSourcesUnreachable", err)
+		}
+		rec, _ := readLastRun(t, f.lastRun)
+		fe := featureEntry(t, rec, "feature-testext")
+		if fe.Outcome != "skipped_unreachable" || fe.LastOK != "2020-01-01T00:00:10Z" {
+			t.Errorf("feature = %+v, want skipped_unreachable with last_ok carried", fe)
+		}
+	})
+
+	t.Run("carried into a busy run", func(t *testing.T) {
+		f := newLastRunFixture(t, map[string]string{"testext": goodServer(t, "testext")}, nil)
+		previousOKRecord(t, f, "2020-01-01T00:00:10Z", true)
+		release, err := f.client.lockMutation(false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer release()
+		if _, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{}); !errors.Is(err, ErrBusy) {
+			t.Fatalf("UpdateFeatures() error = %v, want ErrBusy", err)
+		}
+		rec, _ := readLastRun(t, f.lastRun)
+		fe := featureEntry(t, rec, "feature-testext")
+		if fe.Outcome != "skipped_busy" || fe.LastOK != "2020-01-01T00:00:10Z" {
+			t.Errorf("feature = %+v, want skipped_busy with last_ok carried", fe)
+		}
+	})
+
+	// A source that fails for ever: each unsuccessful run carries the value
+	// that the previous unsuccessful run carried, with no reseeded record
+	// between the runs (cross-review of #532).
+	t.Run("carried across consecutive unsuccessful runs", func(t *testing.T) {
+		const lastOK = "2020-01-01T00:00:10Z"
+		check := func(t *testing.T, f *lastRunFixture, step, outcome string) {
+			t.Helper()
+			rec, _ := readLastRun(t, f.lastRun)
+			fe := featureEntry(t, rec, "feature-testext")
+			if fe.Outcome != outcome || fe.LastOK != lastOK {
+				t.Fatalf("%s: feature = %+v, want %s with last_ok %s", step, fe, outcome, lastOK)
+			}
+		}
+
+		f := newLastRunFixture(t, failing(t), nil)
+		previousOKRecord(t, f, lastOK, true)
+		// busy first: a busy record is written only after an older record.
+		release, err := f.client.lockMutation(false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true}); !errors.Is(err, ErrBusy) {
+			t.Fatalf("UpdateFeatures() error = %v, want ErrBusy", err)
+		}
+		release()
+		check(t, f, "busy", "skipped_busy")
+		for _, step := range []string{"failed after busy", "failed after failed"} {
+			if _, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true}); err == nil {
+				t.Fatalf("%s: UpdateFeatures() error = nil, want the failure", step)
+			}
+			check(t, f, step, "failed")
+		}
+
+		u := newLastRunFixture(t, map[string]string{"testext": closedPortURL(t)}, nil)
+		previousOKRecord(t, u, lastOK, true)
+		for _, step := range []string{"unreachable", "unreachable after unreachable"} {
+			if _, err := u.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true}); !errors.Is(err, ErrSourcesUnreachable) {
+				t.Fatalf("%s: UpdateFeatures() error = %v, want ErrSourcesUnreachable", step, err)
+			}
+			check(t, u, step, "skipped_unreachable")
+		}
+	})
+
+	t.Run("named run keeps each feature's own last_ok", func(t *testing.T) {
+		f := newLastRunFixture(t, map[string]string{"testext": goodServer(t, "testext"), "othertex": goodServer(t, "othertex")}, nil)
+		writeOldRecord(t, f.lastRun,
+			LastRunFeature{Feature: "feature-testext", Origin: "unknown", Outcome: "failed", ErrorClass: "network", At: "2020-01-01T00:00:10Z", LastOK: "2020-01-01T00:00:01Z", Transfers: []LastRunTransfer{}},
+			LastRunFeature{Feature: "feature-othertex", Origin: "unknown", Outcome: "failed", ErrorClass: "network", At: "2020-01-01T00:00:10Z", LastOK: "2020-01-01T00:00:02Z", Transfers: []LastRunTransfer{}},
+		)
+		if _, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true, Features: []string{"feature-testext"}}); err != nil {
+			t.Fatalf("UpdateFeatures: %v", err)
+		}
+		rec, _ := readLastRun(t, f.lastRun)
+		if len(rec.Features) != 2 {
+			t.Fatalf("features = %+v, want the acted-on feature and the carried one", rec.Features)
+		}
+		acted := featureEntry(t, rec, "feature-testext")
+		if acted.Outcome != "updated" || acted.LastOK != acted.At || acted.At != rec.Finished {
+			t.Errorf("feature-testext = %+v, want updated at %s with last_ok equal to it", acted, rec.Finished)
+		}
+		carried := featureEntry(t, rec, "feature-othertex")
+		if carried.LastOK != "2020-01-01T00:00:02Z" || carried.At != "2020-01-01T00:00:10Z" {
+			t.Errorf("feature-othertex = %+v, want its own at and last_ok", carried)
+		}
+	})
+
+	t.Run("old record without the field keeps its ok at", func(t *testing.T) {
+		f := newLastRunFixture(t, failing(t), nil)
+		previousOKRecord(t, f, "2020-01-01T00:00:10Z", false)
+		if _, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true}); err == nil {
+			t.Fatal("UpdateFeatures() error = nil, want the failure")
+		}
+		rec, _ := readLastRun(t, f.lastRun)
+		if fe := featureEntry(t, rec, "feature-testext"); fe.LastOK != "2020-01-01T00:00:10Z" {
+			t.Errorf("last_ok = %q, want the ok entry's at of the old record", fe.LastOK)
+		}
+	})
+
+	t.Run("old carried entry without the field keeps its ok at", func(t *testing.T) {
+		f := newLastRunFixture(t, map[string]string{"testext": goodServer(t, "testext"), "othertex": goodServer(t, "othertex")}, nil)
+		writeOldRecord(t, f.lastRun,
+			LastRunFeature{Feature: "feature-othertex", Origin: "unknown", Outcome: "current", At: "2020-01-01T00:00:05Z", Transfers: []LastRunTransfer{}},
+		)
+		if _, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true, Features: []string{"feature-testext"}}); err != nil {
+			t.Fatalf("UpdateFeatures: %v", err)
+		}
+		rec, _ := readLastRun(t, f.lastRun)
+		carried := featureEntry(t, rec, "feature-othertex")
+		if carried.At != "2020-01-01T00:00:05Z" || carried.LastOK != "2020-01-01T00:00:05Z" {
+			t.Errorf("feature-othertex = %+v, want its own at as last_ok", carried)
+		}
+	})
+
+	t.Run("invalid previous last_ok is dropped", func(t *testing.T) {
+		f := newLastRunFixture(t, failing(t), nil)
+		writeOldRecord(t, f.lastRun,
+			LastRunFeature{Feature: "feature-testext", Origin: "unknown", Outcome: "failed", ErrorClass: "network", At: "2020-01-01T00:00:10Z", LastOK: "not a timestamp", Transfers: []LastRunTransfer{}},
+		)
+		if _, err := f.client.UpdateFeatures(t.Context(), UpdateFeaturesOptions{NoRefresh: true}); err == nil {
+			t.Fatal("UpdateFeatures() error = nil, want the failure")
+		}
+		rec, _ := readLastRun(t, f.lastRun)
+		if fe := featureEntry(t, rec, "feature-testext"); fe.LastOK != "" {
+			t.Errorf("last_ok = %q, want none: the previous value is not RFC 3339", fe.LastOK)
+		}
+	})
+}

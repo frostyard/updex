@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-16",
+  "scope": "updex/lastrun.go storeLastRun last_ok carry",
+  "correction": "A value that a record carries across runs must be tested across 2 or more consecutive unsuccessful runs with no reseeded record between them, not only from a previous successful entry: a carry that reads only successful previous entries loses the value at the second failure.",
+  "evidence": "frostyard/updex#532 cross-review: the failed, unreachable and busy cases all started from a previous current entry",
+  "promoted_to": "updex/lastrun_test.go TestLastRun_LastOK/carried_across_consecutive_unsuccessful_runs"
+}

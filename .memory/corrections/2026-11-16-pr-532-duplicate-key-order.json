@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-16",
+  "scope": "updex/lastrun.go readLastRunStatus validLastOK",
+  "correction": "A map[string]json.RawMessage cannot see duplicate JSON keys: it keeps only the last of 2 identical keys, so an earlier invalid value hides in either order. To validate every occurrence of a key, read the object with json.Decoder tokens and refuse duplicates.",
+  "evidence": "frostyard/updex#532 re-review 2: \"last_ok\": null, \"last_ok\": \"<valid>\" passed the map-based check of the second fix",
+  "promoted_to": "updex/lastrun_status_test.go TestReadLastRunStatusLastOK (reverse-order duplicate cases)"
+}

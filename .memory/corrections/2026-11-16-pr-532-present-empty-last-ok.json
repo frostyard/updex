@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-16",
+  "scope": "updex/lastrun.go readLastRunStatus last_ok validation",
+  "correction": "To validate an optional JSON string field that must hold a value when present, check the raw object for the key (matched without regard to case, as encoding/json does): a decoded Go string cannot tell an absent field from \"\" or null.",
+  "evidence": "frostyard/updex#532 cross-review: \"last_ok\": \"\" and \"last_ok\": null passed the status reader as an absent field",
+  "promoted_to": "updex/lastrun_status_test.go TestReadLastRunStatusLastOK (empty, null and upper-case key cases)"
+}

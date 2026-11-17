@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-16",
+  "scope": "cmd/updex/daemon.go printLastUpdate stale warnings",
+  "correction": "Each new CLI line that prints a string from the last-run record needs its own test with terminal controls in that string, because an existing escaping test of another line does not cover it.",
+  "evidence": "frostyard/updex#532 cross-review: the Warning lines used only safe feature names, so removing lastUpdateText from them passed the tests",
+  "promoted_to": "cmd/updex/daemon_status_test.go TestRunDaemonStatusStaleWarningEscapes"
+}

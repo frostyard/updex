@@ -2,7 +2,8 @@
 
 This contract governs the machine-readable record that every
 `UpdateFeatures` run that is not a dry run writes: the outcome of the run, and
-per feature its origin, outcome, error class and version. snosi's health
+per feature its origin, outcome, error class, version, and when it last had a
+successful run (`last_ok`). snosi's health
 collector (`snosi-health`) and `updex daemon status` read this file; any other tool that wants to
 know how the last update went reads it the same way. The service result of
 `updex-update.service` does not carry this information: a busy run and a run
@@ -31,6 +32,7 @@ Path: `RuntimePaths.LastRunPath`, default `updex.DefaultLastRunPath`
       "outcome": "updated",
       "version": "29.0.1",
       "at": "2026-11-05T10:00:42Z",
+      "last_ok": "2026-11-05T10:00:42Z",
       "transfers": [
         {"component": "docker", "outcome": "updated", "version": "29.0.1"}
       ]
@@ -41,6 +43,7 @@ Path: `RuntimePaths.LastRunPath`, default `updex.DefaultLastRunPath`
       "outcome": "failed",
       "error_class": "network",
       "at": "2026-11-05T10:00:42Z",
+      "last_ok": "2026-11-04T22:00:00Z",
       "transfers": [
         {"component": "incus", "outcome": "failed", "error_class": "network"}
       ]
@@ -72,6 +75,7 @@ Path: `RuntimePaths.LastRunPath`, default `updex.DefaultLastRunPath`
 | `error_class` | string | no | only for `failed` and `skipped_unreachable` |
 | `version` | string | no | the single distinct non-empty transfer version; absent when there is none or more than one |
 | `at` | string | yes | RFC 3339, UTC, whole seconds: when this entry was produced |
+| `last_ok` | string | no | RFC 3339, UTC, whole seconds: the `at` of the latest entry for this feature whose outcome was `updated`, `current`, `held_by_rollback` or `needs_image`, carried across a failing run (see Rules); absent when the feature never had one |
 | `transfers` | array | yes | one entry per active transfer, never `null` |
 
 ### Transfer
@@ -171,6 +175,20 @@ Path: `RuntimePaths.LastRunPath`, default `updex.DefaultLastRunPath`
   previous format 1 record for a feature that is enabled and unmasked in the
   current domain and was not in this run, with its own `at`. A run that names no
   feature carries nothing.
+- `last_ok`: when an entry's outcome is `updated`, `current`, `held_by_rollback`
+  or `needs_image`, its `last_ok` is its own `at`. Any other outcome (`failed`,
+  `skipped_unreachable`, `skipped_busy`) takes the previous record's value for
+  that feature, and has no `last_ok` when the previous record holds none, or
+  holds one that is not an RFC 3339 timestamp. The previous value of a feature
+  is the latest valid one among its `last_ok` and the `at` of its previous
+  entry when that entry's outcome was ok, so a format 1 record written before
+  this field existed still gives its `at`. A carried entry of a named run is
+  recomputed the same way. A run that records no feature (a domain that cannot
+  be loaded, a lock error, or a busy run that cannot load the domain) carries
+  nothing, so `last_ok` is lost until the next run that lists the feature: the
+  record of such a run has no feature at all. ADR-0018 accepts that a source
+  that is wrong for ever looks offline, so the timer skips every run; `last_ok`
+  is what still shows such a feature in `updex daemon status`.
 - Suite-switch run (`features update --suite-switch`, ADR-0021): a run that
   finds a link to another suite's image is a run that names the features it
   selected (`selected` is `true`, Merge applies). A run that finds none, before
@@ -200,20 +218,35 @@ Path: `RuntimePaths.LastRunPath`, default `updex.DefaultLastRunPath`
   identity, and caps the read at 1 MiB. Format 1 requires valid RFC 3339
   `started` and `finished`, non-empty run `outcome` and `refresh`, non-null
   `features`, and each feature's non-empty name and outcome and non-null
-  `transfers`. A `format` that is not the integer 1 (absent, another number,
+  `transfers`. A `last_ok` that is present but not an RFC 3339 timestamp is
+  malformed, also an empty string or `null`. A feature object with more than 1
+  key that `encoding/json` matches to `last_ok` (without regard to case, in any
+  order) is malformed too: the reader reads each feature object token by token
+  and sees every such key. A `format` that is not the integer 1 (absent, another number,
   a string) is an unknown format. Unknown fields are accepted. Invalid or unreadable records set
   `LastUpdateError` (`last_update_error`); status still succeeds. The writer's
   previous-record reader keeps its existing permissive behavior.
+- `updex daemon status` reports the stale features of the record in
+  `DaemonStatusResult.StaleFeatures` (`stale_features` in JSON), in record
+  order: an entry whose effective `last_ok` (as the rule above computes it) is
+  more than `updex.LastOKWarnAge` (7 days) old, or whose effective `last_ok` is
+  absent and whose outcome is `failed` or `skipped_unreachable`. Exactly 7 days
+  is not stale, and a `last_ok` in the future is not stale. Only a feature that
+  is enabled and unmasked in the current domain counts: the status command
+  reads the domain without warnings, and a domain that cannot be loaded counts
+  every entry as enabled (the record lists only features that were enabled when
+  it was written). Status never fails because of this computation. The text
+  output prints one `Warning:` line per stale feature after the feature lines.
 
 ## Derived artifacts
 
 | Artifact | Derivation |
 | --- | --- |
 | snosi `snosi-health` collector | reads this file only |
-| `updex/lastrun.go` (`readLastRunStatus`) | read-only consumer for `DaemonStatus`, normalizes unknown enums |
-| `updex/lastrun_status_test.go` | pins the reader's bound, its `Lstat` refusal of a symlink, FIFO or directory, format and field validation, normalization and status integration |
-| `cmd/updex/daemon_status_test.go` | pins last-update text, JSON and terminal control escaping |
-| `updex/lastrun_test.go` | pins the classes, outcomes, busy and merge rules through `UpdateFeatures` |
+| `updex/lastrun.go` (`readLastRunStatus`, `staleFeatures`) | read-only consumer for `DaemonStatus`, normalizes unknown enums and validates `last_ok`; computes the stale features |
+| `updex/lastrun_status_test.go` | pins the reader's bound, its `Lstat` refusal of a symlink, FIFO or directory, format and field validation, `last_ok` validation and normalization, the stale-feature computation, and status integration |
+| `cmd/updex/daemon_status_test.go` | pins last-update text (including `last ok` and `never ok`), the stale `Warning:` lines, JSON (including `last_ok` and `stale_features`) and terminal control escaping |
+| `updex/lastrun_test.go` | pins the classes, outcomes, busy, merge and `last_ok` carry rules through `UpdateFeatures` |
 
 ## References
 

@@ -230,3 +230,202 @@ func TestDaemonStatusLastUpdate(t *testing.T) {
 		}
 	}
 }
+
+// The reader accepts a valid last_ok and refuses one that is not an RFC 3339
+// timestamp, which sets LastUpdateError and never fails status.
+func TestReadLastRunStatusLastOK(t *testing.T) {
+	rec := statusRecord()
+	rec.Features[0].LastOK = "2026-11-04T10:00:00Z"
+	path := filepath.Join(t.TempDir(), "record")
+	writeStatusRecord(t, path, rec)
+	got, err := readLastRunStatus(path)
+	if err != nil || got.Features[0].LastOK != "2026-11-04T10:00:00Z" {
+		t.Fatalf("read = %+v, %v, want last_ok unchanged", got, err)
+	}
+
+	rec.Features[0].LastOK = "2026-11-04 10:00"
+	writeStatusRecord(t, path, rec)
+	if got, err := readLastRunStatus(path); err == nil || !strings.Contains(err.Error(), "last_ok must be an RFC 3339 timestamp") || got != nil {
+		t.Fatalf("read = %+v, %v, want the last_ok refusal", got, err)
+	}
+
+	// A present last_ok that decodes to "" (an empty string, null, or a key
+	// in another case) is not an RFC 3339 timestamp either: it must not read
+	// as an absent field (cross-review of #532).
+	rec.Features[0].LastOK = ""
+	base, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A duplicate key whose later null leaves the decoded string at the
+	// earlier valid value is refused too (re-review of #532).
+	for _, value := range []string{`"last_ok":"",`, `"last_ok":null,`, `"LAST_OK":null,`,
+		`"last_ok":"2026-11-04T10:00:00Z","last_ok":null,`, `"last_ok":"2026-11-04T10:00:00Z","LAST_OK":null,`,
+		`"last_ok":"2026-11-04T10:00:00Z","Last_Ok":"",`,
+		// The reverse order: a map keeps only the later valid value of 2
+		// identical keys, so every duplicate is refused (re-review 2 of #532).
+		`"last_ok":null,"last_ok":"2026-11-04T10:00:00Z",`, `"last_ok":"","last_ok":"2026-11-04T10:00:00Z",`,
+		`"last_ok":"2026-11-04T10:00:00Z","last_ok":"2026-11-04T10:00:00Z",`, `"LAST_OK":null,"last_ok":"2026-11-04T10:00:00Z",`} {
+		data := strings.Replace(string(base), `"transfers":`, value+`"transfers":`, 1)
+		if !strings.Contains(data, value) {
+			t.Fatalf("fixture has no %s: %s", value, data)
+		}
+		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := readLastRunStatus(path); err == nil || !strings.Contains(err.Error(), "last_ok must be an RFC 3339 timestamp") || got != nil {
+			t.Errorf("%s: read = %+v, %v, want the last_ok refusal", value, got, err)
+		}
+	}
+	// A record without the key still reads.
+	if err := os.WriteFile(path, base, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := readLastRunStatus(path); err != nil || got.Features[0].LastOK != "" {
+		t.Fatalf("read without last_ok = %+v, %v, want the record", got, err)
+	}
+
+	rec.Features[0].LastOK = "2026-11-04 10:00"
+	writeStatusRecord(t, path, rec)
+	client := NewClient(ClientConfig{SystemdManager: systemd.NewTestManager(t.TempDir(), &systemd.MockSystemctlRunner{}),
+		Paths: RuntimePaths{LastRunPath: path, LockPath: filepath.Join(t.TempDir(), "lock")}})
+	status, err := client.DaemonStatus(t.Context(), DaemonStatusOptions{})
+	if err != nil {
+		t.Fatalf("DaemonStatus() error = %v, want status to succeed", err)
+	}
+	if status.LastUpdate != nil || !strings.Contains(status.LastUpdateError, "last_ok must be an RFC 3339 timestamp") {
+		t.Fatalf("status = %+v, want LastUpdateError only", status)
+	}
+	if status.StaleFeatures != nil {
+		t.Fatalf("stale features = %+v, want none for an unreadable record", status.StaleFeatures)
+	}
+}
+
+// TestDaemonStatusStaleFeatures pins the stale rule of
+// DaemonStatus.StaleFeatures: a feature whose last successful run is older
+// than LastOKWarnAge, or that never had one and failed or was skipped
+// unreachable, for a feature that is enabled now.
+func TestDaemonStatusStaleFeatures(t *testing.T) {
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	oldNow := daemonStatusNow
+	daemonStatusNow = func() time.Time { return now }
+	t.Cleanup(func() { daemonStatusNow = oldNow })
+
+	oldAt := "2020-01-01T00:00:10Z"
+	warnAge := recordTime(now.Add(-LastOKWarnAge))
+	older := recordTime(now.Add(-LastOKWarnAge - time.Second))
+	future := recordTime(now.Add(time.Hour))
+
+	tests := []struct {
+		name string
+		// enabled lists the domain's features: false is a disabled feature.
+		enabled map[string]bool
+		masked  []string
+		// brokenDomain writes an unparsable .feature file instead of a domain.
+		brokenDomain bool
+		features     []LastRunFeature
+		want         []StaleFeature
+	}{
+		{
+			name:    "exactly the warning age",
+			enabled: map[string]bool{"testext": true},
+			features: []LastRunFeature{{Feature: "testext", Outcome: outcomeFailed, ErrorClass: "network",
+				At: "2026-11-05T11:00:00Z", LastOK: warnAge, Transfers: []LastRunTransfer{}}},
+		},
+		{
+			name:    "one second past the warning age",
+			enabled: map[string]bool{"testext": true},
+			features: []LastRunFeature{{Feature: "testext", Outcome: outcomeFailed, ErrorClass: "network",
+				At: "2026-11-05T11:00:00Z", LastOK: older, Transfers: []LastRunTransfer{}}},
+			want: []StaleFeature{{Feature: "testext", LastOK: older, Outcome: outcomeFailed}},
+		},
+		{
+			name:    "never ok and failed",
+			enabled: map[string]bool{"testext": true},
+			features: []LastRunFeature{{Feature: "testext", Outcome: outcomeFailed, ErrorClass: "network",
+				At: "2026-11-05T11:00:00Z", Transfers: []LastRunTransfer{}}},
+			want: []StaleFeature{{Feature: "testext", Outcome: outcomeFailed}},
+		},
+		{
+			name:    "never ok and skipped unreachable",
+			enabled: map[string]bool{"testext": true},
+			features: []LastRunFeature{{Feature: "testext", Outcome: outcomeSkippedUnreachable, ErrorClass: "network",
+				At: "2026-11-05T11:00:00Z", Transfers: []LastRunTransfer{}}},
+			want: []StaleFeature{{Feature: "testext", Outcome: outcomeSkippedUnreachable}},
+		},
+		{
+			name:    "never ok and skipped busy",
+			enabled: map[string]bool{"testext": true},
+			features: []LastRunFeature{{Feature: "testext", Outcome: outcomeSkippedBusy,
+				At: "2026-11-05T11:00:00Z", Transfers: []LastRunTransfer{}}},
+		},
+		{
+			name:    "old record whose ok entry is old",
+			enabled: map[string]bool{"testext": true},
+			features: []LastRunFeature{{Feature: "testext", Outcome: outcomeCurrent,
+				At: oldAt, Transfers: []LastRunTransfer{}}},
+			want: []StaleFeature{{Feature: "testext", LastOK: oldAt, Outcome: outcomeCurrent}},
+		},
+		{
+			name:    "future last ok",
+			enabled: map[string]bool{"testext": true},
+			features: []LastRunFeature{{Feature: "testext", Outcome: outcomeFailed, ErrorClass: "network",
+				At: "2026-11-05T11:00:00Z", LastOK: future, Transfers: []LastRunTransfer{}}},
+		},
+		{
+			name:    "disabled feature",
+			enabled: map[string]bool{"testext": false},
+			features: []LastRunFeature{{Feature: "testext", Outcome: outcomeFailed, ErrorClass: "network",
+				At: "2026-11-05T11:00:00Z", Transfers: []LastRunTransfer{}}},
+		},
+		{
+			name:    "masked feature",
+			enabled: map[string]bool{"testext": true},
+			masked:  []string{"testext"},
+			features: []LastRunFeature{{Feature: "testext", Outcome: outcomeFailed, ErrorClass: "network",
+				At: "2026-11-05T11:00:00Z", Transfers: []LastRunTransfer{}}},
+		},
+		{
+			name:         "domain that cannot be loaded",
+			brokenDomain: true,
+			features: []LastRunFeature{{Feature: "testext", Outcome: outcomeFailed, ErrorClass: "network",
+				At: "2026-11-05T11:00:00Z", Transfers: []LastRunTransfer{}}},
+			want: []StaleFeature{{Feature: "testext", Outcome: outcomeFailed}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defDir := t.TempDir()
+			if tt.brokenDomain {
+				// An unclosed INI section makes the domain load fail.
+				if err := os.WriteFile(filepath.Join(defDir, "broken.feature"), []byte("[Feature\nEnabled=true\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				for name, enabled := range tt.enabled {
+					createFeatureFile(t, defDir, name, enabled)
+				}
+				for _, name := range tt.masked {
+					maskFeature(t, defDir, name)
+				}
+			}
+			path := filepath.Join(t.TempDir(), "record")
+			writeStatusRecord(t, path, LastRunRecord{
+				Format: lastRunFormat, Started: "2026-11-05T10:00:00Z", Finished: "2026-11-05T10:00:42Z",
+				Outcome: runFailed, Refresh: refreshNotRun, Features: tt.features,
+			})
+			client := NewClient(ClientConfig{
+				Definitions:    defDir,
+				SystemdManager: systemd.NewTestManager(t.TempDir(), &systemd.MockSystemctlRunner{}),
+				Paths:          RuntimePaths{LastRunPath: path, LockPath: filepath.Join(t.TempDir(), "lock")},
+			})
+			status, err := client.DaemonStatus(t.Context(), DaemonStatusOptions{})
+			if err != nil {
+				t.Fatalf("DaemonStatus() error = %v", err)
+			}
+			if !reflect.DeepEqual(status.StaleFeatures, tt.want) {
+				t.Fatalf("stale features = %+v, want %+v", status.StaleFeatures, tt.want)
+			}
+		})
+	}
+}

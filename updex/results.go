@@ -61,6 +61,11 @@ type DaemonStatusResult struct {
 	// LastUpdateError describes an unreadable or invalid last-run record.
 	// LastUpdate is nil when this is set; timer status remains available.
 	LastUpdateError string `json:"last_update_error,omitempty"`
+	// StaleFeatures lists the features of the last-run record that are enabled
+	// now and whose last successful run is older than LastOKWarnAge, or that
+	// never had one and failed or were skipped unreachable. Empty when nothing
+	// is stale; status never fails because of it.
+	StaleFeatures []StaleFeature `json:"stale_features,omitzero"`
 	// Masked reports that the timer file in use is a systemd mask: a symlink
 	// to /dev/null. A masked timer never fires, so Schedule is empty.
 	Masked bool `json:"masked,omitempty"`
@@ -70,6 +75,20 @@ type DaemonStatusResult struct {
 	// SuiteSwitchEnabled reports that systemd has updex-suite-switch.service
 	// enabled, so it runs at every boot.
 	SuiteSwitchEnabled bool `json:"suite_switch_enabled,omitempty"`
+}
+
+// StaleFeature is one feature of the last-run record that updex daemon status
+// reports as stale: a feature that keeps failing, so it never reaches a
+// successful run.
+type StaleFeature struct {
+	Feature string `json:"feature"`
+	// LastOK is the effective time of the feature's last successful run
+	// (updated, current, held_by_rollback or needs_image), RFC 3339 UTC whole
+	// seconds; empty when the record holds none.
+	LastOK string `json:"last_ok,omitempty"`
+	// Outcome is the feature's outcome in the record: failed, skipped_unreachable,
+	// or another outcome whose last successful run is too old.
+	Outcome string `json:"outcome"`
 }
 
 // CheckResult represents the result of a check operation for a single component.
