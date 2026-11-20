@@ -1481,7 +1481,7 @@ copy of frostyard/core's script: change it in core, then copy it, never here.
 The unit and race stages do not filter by test name,
 so every hermetic package test runs; the E2E suite also retains its dedicated
 workflow job. `make verify` is the non-mutating subset for read-only
-reviewers (such as Snowcat `pr-review` workers): `verify-static` plus the
+reviewers, including cross-review agents: `verify-static` plus the
 non-E2E tests, with nothing that formats or rewrites the checkout. The
 `Verify` CI job runs `make ci` itself (core ADR-0071 baseline row B12) rather
 than repeating the static steps.

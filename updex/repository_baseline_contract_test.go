@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -384,6 +385,19 @@ func TestRepositoryBaselineB14SecurityPolicy(t *testing.T) {
 	const want = "https://github.com/frostyard/updex/security"
 	if !strings.Contains(string(data), want) {
 		t.Errorf("row B14: %s does not name GitHub private vulnerability reporting (%s)", path, want)
+	}
+}
+
+// TestSecurityPolicyNamesNoFixedRelease guards against a fixed minor release
+// that drifts at each release (updex#534). The file must point to the releases
+// page instead.
+func TestSecurityPolicyNamesNoFixedRelease(t *testing.T) {
+	data, err := os.ReadFile(repositoryFile(t, "SECURITY.md"))
+	if err != nil {
+		t.Fatalf("read SECURITY.md: %v", err)
+	}
+	if regexp.MustCompile(`\bv[0-9]+\.[0-9]+`).Match(data) {
+		t.Error("SECURITY.md names a fixed minor release; point to the releases page instead")
 	}
 }
 

@@ -12,7 +12,7 @@ GOFMT := gofmt
 
 # Pinned golangci-lint release, read from mise.toml — the single source of
 # every tool pin (core ADR-0043): `mise install` provisions it locally, in CI
-# (jdx/mise-action), and on Snowcat workers, verified against mise.lock.
+# (jdx/mise-action), verified against mise.lock.
 # Bump it there in a dedicated commit; never edit this line. Compared against
 # `golangci-lint version --short`, which prints the bare "MAJOR.MINOR.PATCH".
 GOLANGCI_LINT_VERSION := $(strip $(shell sed -n 's/^golangci-lint = "\(.*\)"/\1/p' mise.toml))
@@ -23,8 +23,8 @@ GOLANGCI_LINT_VERSION := $(strip $(shell sed -n 's/^golangci-lint = "\(.*\)"/\1/
 SVU_VERSION := $(strip $(shell sed -n 's/^svu = "\(.*\)"/\1/p' mise.toml))
 SVU ?= svu
 # The Go release this module is built with, from go.mod's `go` line — the
-# only Go pin (core ADR-0043; actions/setup-go, mise and Snowcat workers read
-# the same line, and go.mod has no toolchain line). golangci-lint must be
+# only Go pin (core ADR-0043; actions/setup-go and mise read the same line,
+# and go.mod has no toolchain line). golangci-lint must be
 # built with a Go of at least this language version (MAJOR.MINOR), or its
 # embedded gofmt and typechecker disagree with the toolchain; a patch release
 # changes neither, so the patch is not compared. An empty GO_LANGUAGE (no

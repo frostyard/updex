@@ -36,7 +36,7 @@ func miseGolangciLintPin(t *testing.T) string {
 
 // TestRepositoryBaselineB11GoModIsTheOnlyGoPin pins baseline row B11 (core
 // ADR-0071) and core ADR-0043: go.mod's `go 1.<minor>.<patch>` line is the
-// only Go pin. actions/setup-go, mise and Snowcat workers read that line, so
+// only Go pin. actions/setup-go and mise read that line, so
 // a `toolchain` line would be a second pin that can drift from it.
 func TestRepositoryBaselineB11GoModIsTheOnlyGoPin(t *testing.T) {
 	data, err := os.ReadFile("../go.mod")

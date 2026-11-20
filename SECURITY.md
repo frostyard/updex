@@ -5,10 +5,10 @@ security problems privately, as described below.
 
 ## Supported versions
 
-Only the latest release of the `v2` series receives security fixes. Today that
-is `v2.2.x`; see the
-[releases page](https://github.com/frostyard/updex/releases) for the current
-one. Older releases do not receive fixes: update to the latest release.
+Only the latest release of the `v2` series receives security fixes. The latest
+release is the one marked "Latest" on the
+[releases page](https://github.com/frostyard/updex/releases). Older releases
+do not receive fixes: update to the latest release.
 
 The rolling `dev` prerelease is a nightly build. It is not supported.
 
