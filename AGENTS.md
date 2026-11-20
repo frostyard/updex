@@ -41,7 +41,7 @@ repo-specific guidance belongs in this file or `docs/`:
 ### Prerequisites
 
 - **Go 1.27.4** (`go.mod`'s `go 1.27.4` line is the only Go pin; CI's
-  `actions/setup-go`, `mise`, and Snowcat workers all read it, and `go.mod`
+  `actions/setup-go` and `mise` both read it, and `go.mod`
   has no `toolchain` line — baseline row B11, core ADR-0043)
 - `make`
 - Optional for the end-to-end compressed-image test:
