@@ -1817,10 +1817,17 @@ func TestCatalogAddCreatesComponentDirectoryWithDocumentedMode(t *testing.T) {
 // the parent directory fileSnapshot.restore recreates: rollback must not
 // leave a directory only root can read in place of a component directory
 // (issue #524).
+//
+// The fixtures are made under umask 0002, the default on a machine where
+// every user has a private group, and the parent is TrustedTempDir: a plain
+// t.TempDir is group-writable there, dirmode.MkdirAll then keeps the umask
+// mode by design, and the test failed on such a machine while CI passed
+// (updex T55).
 func TestFileSnapshotRestoreRecreatesParentWithDocumentedMode(t *testing.T) {
 	for _, tc := range umaskCases {
 		t.Run(tc.name, func(t *testing.T) {
-			base := t.TempDir()
+			testutil.Umask(t, 0o002)
+			base := testutil.TrustedTempDir(t)
 			dir := filepath.Join(base, "sysupdate.catalog-fedora.d")
 			if err := os.Mkdir(dir, 0o755); err != nil {
 				t.Fatal(err)
@@ -1865,7 +1872,9 @@ func TestFileSnapshotRestoreRecreatesParentWithDocumentedMode(t *testing.T) {
 // TestFilesystemEntrySnapshotRestoreRecreatesParentWithDocumentedMode pins the
 // same for the regular and the symlink entry kinds of
 // filesystemEntrySnapshot.restore, whose backups are restored into a parent
-// directory that a failed operation may have removed (issue #524).
+// directory that a failed operation may have removed (issue #524). Its
+// fixtures are made under umask 0002 in a TrustedTempDir, as in
+// TestFileSnapshotRestoreRecreatesParentWithDocumentedMode.
 func TestFilesystemEntrySnapshotRestoreRecreatesParentWithDocumentedMode(t *testing.T) {
 	for _, tc := range umaskCases {
 		for _, kind := range []struct {
@@ -1876,7 +1885,8 @@ func TestFilesystemEntrySnapshotRestoreRecreatesParentWithDocumentedMode(t *test
 			{name: "symlink", symlink: true},
 		} {
 			t.Run(tc.name+", "+kind.name, func(t *testing.T) {
-				base := t.TempDir()
+				testutil.Umask(t, 0o002)
+				base := testutil.TrustedTempDir(t)
 				dir := filepath.Join(base, "sysupdate.d")
 				if err := os.Mkdir(dir, 0o755); err != nil {
 					t.Fatal(err)
