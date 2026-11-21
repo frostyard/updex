@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-21",
+  "scope": "updex/catalog_test.go snapshot restore mode tests, internal/testutil TrustedTempDir",
+  "correction": "t.TempDir() creates its directory with mode 0777 under the caller's umask, so under umask 0002 it is group-writable, and dirmode.MkdirAll leaves a directory it creates there at the umask mode by design. A test that pins a dirmode.MkdirAll mode needs a 0755 parent (testutil.TrustedTempDir) or must set its umask before the first t.TempDir().",
+  "evidence": "updex T55: on main 94b82c62, make bump on a machine with umask 0002 failed the 3 umask 0077 snapshot restore subtests (sysupdate.d mode drwx------) while CI, under umask 0022 and 0077, was green",
+  "promoted_to": "updex/catalog_test.go TestFileSnapshotRestoreRecreatesParentWithDocumentedMode and TestFilesystemEntrySnapshotRestoreRecreatesParentWithDocumentedMode (fixtures under umask 0002), internal/testutil/umask_test.go TestTrustedTempDirIsNotGroupWritable, AGENTS.md"
+}

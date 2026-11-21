@@ -44,3 +44,21 @@ func TestUmaskAppliesAndIsRestored(t *testing.T) {
 		t.Errorf("umask after the test = %04o, want the previous %04o", mask, ambient)
 	}
 }
+
+// TrustedTempDir is 0755, not group-writable, also when the process umask
+// leaves t.TempDir group-writable (umask 0002).
+func TestTrustedTempDirIsNotGroupWritable(t *testing.T) {
+	Umask(t, 0o002)
+	if info, err := os.Lstat(t.TempDir()); err != nil {
+		t.Fatal(err)
+	} else if info.Mode().Perm() != 0o775 {
+		t.Fatalf("t.TempDir under umask 0002 has mode %04o, want 0775 (the condition TrustedTempDir exists for)", info.Mode().Perm())
+	}
+	info, err := os.Lstat(TrustedTempDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.IsDir() || info.Mode().Perm() != 0o755 {
+		t.Errorf("TrustedTempDir mode = %v, want a 0755 directory", info.Mode())
+	}
+}

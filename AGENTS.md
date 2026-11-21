@@ -1169,6 +1169,13 @@ Go 1.27. Use modern idioms: `any`, `slices`/`maps`/`cmp` packages, `t.Context()`
   directory tree, `Chmod` for a file — because a documented 0755 or 0644 must
   not depend on the process umask (updex#524). `make verify` runs the unit tests under umask 0077,
   with `-count=1` because the Go test cache does not key on the umask.
+- A test that pins the mode of a directory `dirmode.MkdirAll` creates makes
+  its parent with `testutil.TrustedTempDir`, not a bare `t.TempDir()`, or sets
+  its own umask before the first `t.TempDir()`: `t.TempDir()` follows the
+  caller's umask, so under umask 0002 it is group-writable, and
+  `dirmode.MkdirAll` by design does not chmod what it creates in such a parent.
+  CI runs only under 0022 and 0077, so a test that misses this passes in CI and
+  fails on a machine with user private groups (updex T55).
 - Run `make fmt` before running tests; for verbose output use `go test -v ./...`.
 
 ## Security
