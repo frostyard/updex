@@ -33,8 +33,8 @@ jobs:
 
       # mise.toml and mise.lock are the single source of every tool pin
       # (core ADR-0043): this installs exactly the locked golangci-lint,
-      # checksum-verified, the same way a developer's `mise install` and a
-      # Snowcat worker's target preparation do, so the three cannot drift.
+      # checksum-verified, the same way a developer's `mise install` does, so
+      # the two cannot drift.
       # Go still comes from actions/setup-go above (go.mod's `go` line).
       - name: Install pinned tools
         uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
@@ -90,6 +90,21 @@ jobs:
         uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
+
+      # The real compressed-EROFS test (imagecompat) needs mkfs.erofs and
+      # dump.erofs >= 1.8.5 and fails without them (core ADR-0043, updex#535).
+      - name: Install erofs-utils
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends erofs-utils
+          dump.erofs -V
+          # Fail here, before any test, when the runner's archive ships an
+          # erofs-utils older than imagecompat.ErofsUtilsMinVersion.
+          version="$(dpkg-query -W -f='${Version}' erofs-utils)"
+          if ! dpkg --compare-versions "$version" ge 1.8.5; then
+            echo "::error::erofs-utils $version is older than 1.8.5"
+            exit 1
+          fi
 
       - name: Download dependencies
         run: go mod download
@@ -152,6 +167,21 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # The real compressed-EROFS test (imagecompat) needs mkfs.erofs and
+      # dump.erofs >= 1.8.5 and fails without them (core ADR-0043, updex#535).
+      - name: Install erofs-utils
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends erofs-utils
+          dump.erofs -V
+          # Fail here, before any test, when the runner's archive ships an
+          # erofs-utils older than imagecompat.ErofsUtilsMinVersion.
+          version="$(dpkg-query -W -f='${Version}' erofs-utils)"
+          if ! dpkg --compare-versions "$version" ge 1.8.5; then
+            echo "::error::erofs-utils $version is older than 1.8.5"
+            exit 1
+          fi
+
       - name: Download dependencies
         run: go mod download
 
@@ -178,6 +208,21 @@ jobs:
         uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
+
+      # The real compressed-EROFS test (imagecompat) needs mkfs.erofs and
+      # dump.erofs >= 1.8.5 and fails without them (core ADR-0043, updex#535).
+      - name: Install erofs-utils
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends erofs-utils
+          dump.erofs -V
+          # Fail here, before any test, when the runner's archive ships an
+          # erofs-utils older than imagecompat.ErofsUtilsMinVersion.
+          version="$(dpkg-query -W -f='${Version}' erofs-utils)"
+          if ! dpkg --compare-versions "$version" ge 1.8.5; then
+            echo "::error::erofs-utils $version is older than 1.8.5"
+            exit 1
+          fi
 
       # mise.toml and mise.lock are the single source of every tool pin
       # (core ADR-0043). The gate needs golangci-lint and node.
@@ -239,36 +284,12 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build updex
-        run: make build
+      # The same targets make ci runs; verified inside a temporary root, no privileges needed.
+      - name: Self-test the units checker
+        run: make test-units-check
 
-      # The same script GoReleaser's before-hook runs, so this verifies the
-      # exact text the package ships.
-      - name: Generate the packaged units
-        run: ./scripts/units.sh
-
-      # The service's ExecStart is /usr/bin/updex. Installing the built binary
-      # there lets systemd-analyze check the shipped text as it is, instead of
-      # a copy whose ExecStart was rewritten.
-      - name: Install updex where the units expect it
-        run: sudo install -m 0755 build/updex /usr/bin/updex
-
-      # systemd-analyze verify exits 0 on an unknown directive (it only warns),
-      # so the step also fails on any output that names an updex unit.
-      - name: Verify the units with systemd-analyze
-        run: |
-          set -o pipefail
-          status=0
-          output="$(systemd-analyze verify units/updex-update.service units/updex-update.timer units/updex-suite-switch.service 2>&1)" || status=$?
-          printf '%s\n' "$output"
-          if [ "$status" -ne 0 ]; then
-            echo "::error::systemd-analyze verify failed with exit code $status"
-            exit 1
-          fi
-          if printf '%s\n' "$output" | grep -q 'updex-'; then
-            echo "::error::systemd-analyze verify reported a problem with an updex unit"
-            exit 1
-          fi
+      - name: Verify the packaged units
+        run: make units-check
 
   docs-gate:
     name: Docs integrity

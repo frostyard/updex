@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-22",
+  "scope": ".github/workflows/ci.yml and nightly-compliance.yml erofs-utils install step",
+  "correction": "A CI step that installs an unversioned distribution package for a tool with a minimum version checks that minimum in the step itself, because the runner image decides the version and a test that fails later hides the cause.",
+  "evidence": "frostyard/updex#549 cross-review at 329f979: the step printed dump.erofs -V but did not fail below 1.8.5 (Ubuntu 24.04 ships 1.7.1)",
+  "promoted_to": "updex/erofs_ci_contract_test.go TestErofsCIInstallsRequiredTools"
+}

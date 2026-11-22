@@ -383,36 +383,25 @@ func TestGoReleaserShipsUnitsDisabled(t *testing.T) {
 	}
 }
 
-// TestUnitsWorkflowChecks pins the CI checks on the units:
-//   - the Tests workflow's units job generates them with the hook script,
-//     installs the built binary at /usr/bin/updex (the service's ExecStart),
-//     and runs systemd-analyze verify on both files;
-//   - the snapshot workflow checks the amd64 .deb after GoReleaser ran.
+// TestUnitsWorkflowChecks pins the shared units targets in CI and the
+// snapshot workflow's amd64 .deb check after GoReleaser ran.
 func TestUnitsWorkflowChecks(t *testing.T) {
 	tests := readGoReleaserWorkflow(t, "../.github/workflows/ci.yml")
 	job, ok := tests.Jobs["units"]
 	if !ok {
 		t.Fatal("Tests workflow is missing the units job")
 	}
-	var generate, install, verify = -1, -1, -1
+	selfTest, verify := -1, -1
 	for i, step := range job.Steps {
-		switch {
-		case strings.Contains(step.Run, "./scripts/units.sh"):
-			generate = i
-		case strings.Contains(step.Run, "sudo install") && strings.Contains(step.Run, "/usr/bin/updex"):
-			install = i
-		case strings.Contains(step.Run, "systemd-analyze verify") &&
-			strings.Contains(step.Run, "units/updex-update.service") &&
-			strings.Contains(step.Run, "units/updex-update.timer") &&
-			strings.Contains(step.Run, "units/updex-suite-switch.service"):
+		if step.Run == "make test-units-check" {
+			selfTest = i
+		}
+		if step.Run == "make units-check" {
 			verify = i
-			if !strings.Contains(step.Run, "grep -q 'updex-'") {
-				t.Error("the verify step must fail on warnings that name an updex unit: systemd-analyze exits 0 for an unknown directive")
-			}
 		}
 	}
-	if generate < 0 || install < 0 || verify < 0 || generate >= verify || install >= verify {
-		t.Errorf("units job steps: generate=%d install=%d verify=%d, want all present and both before verify", generate, install, verify)
+	if selfTest < 0 || verify < 0 || selfTest >= verify {
+		t.Errorf("units job steps: self-test=%d verify=%d, want self-test before shared verification", selfTest, verify)
 	}
 
 	snapshot := readGoReleaserWorkflow(t, "../.github/workflows/snapshot.yml")
