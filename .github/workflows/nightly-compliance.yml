@@ -36,6 +36,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends erofs-utils
           dump.erofs -V
+          # Fail here, before any test, when the runner's archive ships an
+          # erofs-utils older than imagecompat.ErofsUtilsMinVersion.
+          version="$(dpkg-query -W -f='${Version}' erofs-utils)"
+          if ! dpkg --compare-versions "$version" ge 1.8.5; then
+            echo "::error::erofs-utils $version is older than 1.8.5"
+            exit 1
+          fi
 
       - name: Verify dependency content
         run: |

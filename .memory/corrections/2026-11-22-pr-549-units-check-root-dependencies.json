@@ -1,0 +1,7 @@
+{
+  "date": "2026-11-22",
+  "scope": "scripts/units-check.sh temporary root for systemd-analyze verify --root",
+  "correction": "A systemd-analyze verify --root check needs the default dependency units (sysinit.target and the other targets and slices) inside the root, because the Ubuntu 26.04 runner's systemd fails a start job with \"Unit sysinit.target not found\" where a newer local systemd passes.",
+  "evidence": "frostyard/updex#549 cross-review and CI at 329f979: Systemd units and Verify failed in test-units-check on the good fixture",
+  "promoted_to": "scripts/test-units-check.sh good-fixture case, run by make ci and the Systemd units job"
+}

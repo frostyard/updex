@@ -726,7 +726,8 @@ in the `config/` structs and parse functions. Always finish with
   real `mkfs.erofs -zlz4hc` and `dump.erofs` and requires erofs-utils >=
   1.8.5, failing with the install command otherwise (core ADR-0043). CI
   installs erofs-utils before tests in `unit-test`, `race-test`, and `verify`
-  in `ci.yml`, and `compliance` in `nightly-compliance.yml`.
+  in `ci.yml`, and `compliance` in `nightly-compliance.yml`; that step fails
+  when the installed package is older than 1.8.5 (`dpkg --compare-versions`).
 - **Packaging dependency.** The deb, rpm and apk packages declare
   `erofs-utils` >= 1.8.5 (`.goreleaser.yaml` `nfpms.dependencies` and per-format
   `overrides`, one syntax each); `updex/packaging_erofs_contract_test.go` pins

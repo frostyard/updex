@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/frostyard/updex/v2/imagecompat"
 )
 
 // TestErofsCIInstallsRequiredTools keeps the real compressed-image test in
@@ -34,6 +36,13 @@ func TestErofsCIInstallsRequiredTools(t *testing.T) {
 				}
 				if install < 0 || test < 0 || install >= test {
 					t.Errorf("%s job %s must install erofs-utils before its first test step: install=%d test=%d", workflow.path, name, install, test)
+					return
+				}
+				// The archive's erofs-utils may be older than the minimum (Ubuntu
+				// 24.04 ships 1.7.1): the step must check the version itself.
+				minimum := "dpkg --compare-versions \"$version\" ge " + imagecompat.ErofsUtilsMinVersion
+				if !strings.Contains(job.Steps[install].Run, minimum) {
+					t.Errorf("%s job %s: the erofs-utils step must fail below %s with %q", workflow.path, name, imagecompat.ErofsUtilsMinVersion, minimum)
 				}
 			})
 		}
