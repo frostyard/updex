@@ -1,4 +1,4 @@
-.PHONY: all build clean fmt lint lint-version-check svu-version-check bump-main-check test test-cover coverage-check test-coverage-check test-docs-check tidy check verify-static verify corrections-check corrections-base ci install help
+.PHONY: all build clean fmt lint lint-version-check svu-version-check bump-main-check test test-cover coverage-check test-coverage-check test-docs-check units-check test-units-check tidy check verify-static verify corrections-check corrections-base ci install help
 
 # Build variables
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -132,6 +132,14 @@ test-coverage-check:
 test-docs-check:
 	node scripts/test-check-docs.mjs
 
+## units-check: Verify generated systemd units without root (requires systemd-analyze)
+units-check: build
+	./scripts/units-check.sh build/updex
+
+## test-units-check: Exercise scripts/units-check.sh against unit fixtures
+test-units-check:
+	./scripts/test-units-check.sh
+
 ## corrections-check: Check the form of every record in .memory/corrections/ (no comparison)
 corrections-check:
 	node scripts/check-corrections.mjs
@@ -186,7 +194,7 @@ verify: verify-static
 	@echo "==> unit tests (umask 0077)"
 	umask 0077 && $(GO) test -count=1 $$($(GO) list ./... | grep -v '/tests/e2e$$')
 
-## ci: Run the credential-free CI gate (verify first, then docs integrity, corrections, coverage, race, and cross-build; the non-E2E tests run again with coverage)
+## ci: Run the credential-free CI gate (verify first, then docs integrity, corrections, coverage, systemd units, race, and cross-build; the non-E2E tests run again with coverage)
 ci: verify
 	@echo "==> docs-integrity checker self-test"
 	$(MAKE) test-docs-check
@@ -203,6 +211,9 @@ ci: verify
 	$(MAKE) coverage-check
 	@echo "==> end-to-end tests"
 	$(GO) test -v ./tests/e2e/...
+	@echo "==> systemd units"
+	$(MAKE) test-units-check
+	$(MAKE) units-check
 	@echo "==> race detector"
 	$(GO) test -race -short -v $$($(GO) list ./... | grep -v '/tests/e2e$$')
 	@echo "==> cross-architecture build"

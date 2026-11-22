@@ -73,12 +73,14 @@ privileges. Building and running the unit tests does not — the test suite uses
 make fmt          # Format code (run after every change)
 make build        # Build binary to build/updex
 make test         # Run all tests
+make units-check       # Build and verify the 3 systemd units without root
+make test-units-check  # Self-test the systemd units checker with fixtures
 make lint         # Run golangci-lint (.golangci.yml; fails if not installed)
 make svu-version-check  # Fail unless svu is the mise.toml pin (make bump runs it first)
 make bump-main-check   # Fail unless HEAD is main and equals origin/main (make bump runs it after svu-version-check and again before tagging)
 make check        # fmt + lint + test (mutating: fmt rewrites files)
 make verify       # Non-mutating, credential-free gate for read-only reviewers: tidy diff, vet, gofmt -l, exact-pin lint, non-E2E tests (run under umask 0077)
-make ci           # Credential-free gate matching CI's fail-fast order: make verify first, then docs integrity, corrections, coverage, E2E, race, cross-build
+make ci           # Credential-free gate matching CI's fail-fast order: make verify first, then docs integrity, corrections, coverage, E2E, systemd units, race, cross-build
 make corrections-check     # Check the form of every record in .memory/corrections/ (no comparison)
 make corrections-base BASE=<ref>  # Also compare the records with BASE: append-only, no record removed, renamed or changed
 make test-cover   # Tests with HTML coverage report
@@ -107,9 +109,9 @@ does not resolve to a commit fails; a `BASE` that resolves but holds no
 `scripts/check-corrections.mjs` (one that predates the gate) skips the
 comparison with a notice; and an empty `BASE` exits silently without a
 comparison, which is what a push or merge-group run gets), non-E2E unit tests with coverage, the separate
-black-box E2E suite, the
+black-box E2E suite, the systemd unit checker self-test and verification, the
 race tests, and Linux
-amd64/arm64 builds. It requires `golangci-lint` and node. `scripts/check-corrections.mjs`
+amd64/arm64 builds. It requires `golangci-lint`, node, and `systemd-analyze` (install systemd). `scripts/check-corrections.mjs`
 is a byte-identical copy of frostyard/core's script: change it in core, then
 copy it, never here. The lint
 step first runs `make lint-version-check`, which fails unless the installed
@@ -280,11 +282,13 @@ dependency, only `WantedBy=`, and the timer units do not name it), pins the
 `.goreleaser.yaml` hook order, the 3 `nfpms.contents` destinations and the
 absence of maintainer scripts, pins the CI steps below, and runs
 `scripts/check-deb-units.sh` against a fake `dpkg-deb`. The `units` job in
-`.github/workflows/ci.yml` builds updex, runs `scripts/units.sh`, installs
-the binary at `/usr/bin/updex` with `sudo install` (the service's `ExecStart`,
-so the shipped text is verified as it is) and runs `systemd-analyze verify` on
-the 3 files; because `systemd-analyze verify` exits 0 for an unknown directive,
-the step also fails on any output that names an updex unit. After GoReleaser
+`.github/workflows/ci.yml` runs `make test-units-check` and `make units-check`,
+the same targets `make ci` runs. The latter builds updex, generates the units
+with `scripts/units.sh`, and verifies the 3 files with `systemd-analyze verify`
+inside a temporary root containing `/usr/bin/updex`, without root privileges.
+Because verification exits 0 for an unknown directive, the checker also fails
+on any output line containing `updex-`. A missing `systemd-analyze` fails with
+installation guidance; it never skips the check. After GoReleaser
 publishes, `snapshot.yml` runs `scripts/check-deb-units.sh` on the amd64
 `.deb` in `dist/` (`dpkg-deb -c`), failing the nightly unless the 3 unit paths
 are listed as 0644 files.

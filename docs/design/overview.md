@@ -1195,8 +1195,11 @@ which supersedes [ADR-0007](../adr/0007-daemon-stages-never-activates.md).
   maintainer script). The hidden `updex-cli units --output-dir DIR` command writes
   them, `scripts/units.sh` runs it as a GoReleaser `before.hooks` entry (next to
   `completions.sh` and `manpages.sh`; output in the gitignored `units/`), and
-  `nfpms.contents` installs them with mode 0644. CI verifies them with
-  `systemd-analyze verify` (`units` job in `ci.yml`) and the nightly checks the
+  `nfpms.contents` installs them with mode 0644. Both `make ci` and the CI
+  `units` job run `make test-units-check` and `make units-check`, which requires
+  `systemd-analyze` and verifies the generated units inside a temporary root
+  containing `/usr/bin/updex`, without privileges. Non-zero status and output
+  containing `updex-` fail (including unknown-key warnings). The nightly checks the
   `.deb` listing (`scripts/check-deb-units.sh`, `snapshot.yml`).
 - **The units.** Service: the sandboxed `oneshot` (`SandboxDirectives`),
   `ExecStart=/usr/bin/updex features update --no-refresh`,

@@ -159,9 +159,15 @@ runs the hidden `updex-cli units --output-dir units` command. It renders
 `updex.DaemonUnits()` with `systemd.GenerateTimer`/`GenerateService`, the code
 that `updex daemon enable` uses, and `nfpms.contents` installs the two files.
 Do not edit the unit text anywhere else. `updex/units_hook_contract_test.go`
-fails when the packaged files and the generator differ, and CI runs
-`systemd-analyze verify` on them and, in the nightly snapshot, `dpkg-deb -c` on
-the `.deb` (`scripts/check-deb-units.sh`).
+fails when the packaged files and the generator differ. Both `make ci` and the
+CI `units` job run `make test-units-check` and `make units-check`. The latter
+builds updex and runs `scripts/units-check.sh`: it generates the 3 units and
+runs `systemd-analyze verify` in a temporary root containing the units and
+`/usr/bin/updex`, without privileges. Non-zero status or output containing
+`updex-` fails, including unknown-key warnings that exit 0. The gate requires
+`systemd-analyze` (install systemd); it never skips a missing tool. In the
+nightly snapshot, `dpkg-deb -c` checks the `.deb`
+(`scripts/check-deb-units.sh`).
 
 An image builder enables the timer itself, with a systemd preset line
 (`enable updex-update.timer`) that `systemctl preset-all` applies. Without one,
