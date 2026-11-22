@@ -41,6 +41,19 @@ if [ "$count" -ne 3 ]; then
 fi
 dest=$tmp/root/usr/lib/systemd/system
 mkdir -p "$dest" "$tmp/root/usr/bin"
+# The units keep systemd's default dependencies (sysinit.target, basic.target,
+# shutdown.target, system.slice, ...). systemd-analyze verify --root resolves
+# them inside the root, and some systemd releases fail with "Unit sysinit.target
+# not found" when the root has none, so the host's targets and slices go in too
+# (not its services: their absolute links point outside the root).
+host_units=/usr/lib/systemd/system
+if [ ! -f "$host_units/sysinit.target" ]; then
+    echo "units-check: $host_units/sysinit.target is missing; install systemd (Debian/Ubuntu: apt-get install systemd)" >&2
+    exit 1
+fi
+for path in "$host_units"/*.target "$host_units"/*.slice; do
+    if [ -e "$path" ] || [ -L "$path" ]; then cp -P "$path" "$dest/"; fi
+done
 for name in updex-update.service updex-update.timer updex-suite-switch.service; do
     cp "$units/$name" "$dest/$name"
 done
