@@ -29,6 +29,14 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # The real compressed-EROFS test (imagecompat) needs mkfs.erofs and
+      # dump.erofs >= 1.8.5 and fails without them (core ADR-0043, updex#535).
+      - name: Install erofs-utils
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends erofs-utils
+          dump.erofs -V
+
       - name: Verify dependency content
         run: |
           go mod download

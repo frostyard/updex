@@ -44,10 +44,12 @@ repo-specific guidance belongs in this file or `docs/`:
   `actions/setup-go` and `mise` both read it, and `go.mod`
   has no `toolchain` line — baseline row B11, core ADR-0043)
 - `make`
-- Optional for the end-to-end compressed-image test:
+- Required for `make verify`, `make ci`, and `go test ./...`:
   [`erofs-utils`](https://git.kernel.org/pub/scm/linux/kernel/git/xiang/erofs-utils.git)
-  >= 1.8.5 (`mkfs.erofs` and `dump.erofs`). The unit tests use a fake
-  `dump.erofs` runner and skip this test when the tools are absent.
+  >= 1.8.5 (`mkfs.erofs` and `dump.erofs`). The real compressed-image test
+  fails with installation guidance when the tools are absent or too old:
+  `apt-get install erofs-utils` (Debian/Ubuntu). Other unit tests use a fake
+  `dump.erofs` runner.
 - Optional: [`mise`](https://mise.jdx.dev/) to provision every other pinned
   tool: `mise install` reads [`mise.toml`](mise.toml) and verifies each
   download against [`mise.lock`](mise.lock) (core ADR-0043). Today that is
@@ -721,8 +723,10 @@ in the `config/` structs and parse functions. Always finish with
   on the tool's stderr is an error even with exit status 0, and the image path
   must still name the opened file after the read (`os.SameFile`). Tests use a
   fake runner (or a stand-in `dump.erofs` script); the end-to-end test runs
-  real `mkfs.erofs -zlz4hc` and `dump.erofs` when the host has erofs-utils >=
-  1.8.5 and skips otherwise.
+  real `mkfs.erofs -zlz4hc` and `dump.erofs` and requires erofs-utils >=
+  1.8.5, failing with the install command otherwise (core ADR-0043). CI
+  installs erofs-utils before tests in `unit-test`, `race-test`, and `verify`
+  in `ci.yml`, and `compliance` in `nightly-compliance.yml`.
 - **Packaging dependency.** The deb, rpm and apk packages declare
   `erofs-utils` >= 1.8.5 (`.goreleaser.yaml` `nfpms.dependencies` and per-format
   `overrides`, one syntax each); `updex/packaging_erofs_contract_test.go` pins

@@ -618,18 +618,18 @@ func TestReadExtensionReleaseCompressedMissingTool(t *testing.T) {
 }
 
 // TestReadExtensionReleaseRealCompressed builds real compressed EROFS images
-// with mkfs.erofs and reads them through the real dump.erofs. It skips when
-// the host has no erofs-utils >= 1.8.5.
+// with mkfs.erofs and reads them through the real dump.erofs. It fails when
+// the host lacks erofs-utils >= 1.8.5 (core ADR-0043, updex#535).
 func TestReadExtensionReleaseRealCompressed(t *testing.T) {
 	if _, err := exec.LookPath("mkfs.erofs"); err != nil {
-		t.Skip("mkfs.erofs is not installed")
+		t.Fatalf("mkfs.erofs is not installed; install erofs-utils >= %s (Debian/Ubuntu: apt-get install erofs-utils)", ErofsUtilsMinVersion)
 	}
 	version, err := DefaultErofsDumpRunner{}.Version(t.Context())
 	if err != nil {
-		t.Skipf("dump.erofs cannot run: %v", err)
+		t.Fatalf("dump.erofs cannot run: %v; install erofs-utils >= %s (Debian/Ubuntu: apt-get install erofs-utils)", err, ErofsUtilsMinVersion)
 	}
 	if !erofsVersionAtLeast(version, ErofsUtilsMinVersion) {
-		t.Skipf("erofs-utils %s is older than %s", version, ErofsUtilsMinVersion)
+		t.Fatalf("erofs-utils %s is too old; install erofs-utils >= %s (Debian/Ubuntu: apt-get install erofs-utils)", version, ErofsUtilsMinVersion)
 	}
 
 	src := filepath.Join(t.TempDir(), "src")
