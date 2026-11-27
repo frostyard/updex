@@ -10,9 +10,9 @@ LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main
 GO := go
 GOFMT := gofmt
 
-# Pinned golangci-lint release, read from mise.toml — the single source of
-# every tool pin (core ADR-0043): `mise install` provisions it locally, in CI
-# (jdx/mise-action), verified against mise.lock.
+# Pinned golangci-lint release, read from mise.toml (core ADR-0043).
+# `mise install` provisions it locally; CI uses jdx/mise-action. Both verify
+# it against mise.lock.
 # Bump it there in a dedicated commit; never edit this line. Compared against
 # `golangci-lint version --short`, which prints the bare "MAJOR.MINOR.PATCH".
 GOLANGCI_LINT_VERSION := $(strip $(shell sed -n 's/^golangci-lint = "\(.*\)"/\1/p' mise.toml))

@@ -50,9 +50,9 @@ repo-specific guidance belongs in this file or `docs/`:
   fails with installation guidance when the tools are absent or too old:
   `apt-get install erofs-utils` (Debian/Ubuntu). Other unit tests use a fake
   `dump.erofs` runner.
-- Optional: [`mise`](https://mise.jdx.dev/) to provision every other pinned
-  tool: `mise install` reads [`mise.toml`](mise.toml) and verifies each
-  download against [`mise.lock`](mise.lock) (core ADR-0043). Today that is
+- Optional: [`mise`](https://mise.jdx.dev/). Locally, `mise install` provisions
+  Go from `go.mod` and the tools pinned in [`mise.toml`](mise.toml), verifying
+  downloads against [`mise.lock`](mise.lock) (core ADR-0043). The other tools are
   [`golangci-lint`](https://golangci-lint.run/) for `make lint` — `make ci`
   requires the exact release `mise.toml` pins (`mise install` provisions it;
   `make lint-version-check` fails with that instruction when it is absent),
