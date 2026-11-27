@@ -223,13 +223,16 @@ set); everywhere else it is an error.
 
 ### Directory modes
 
-Every directory updex creates as root is mode `0755` whatever the process
-umask is: the lock directory, the rollback directory, the last-run directory,
-the component directory of `CatalogAdd` (`/etc/sysupdate.<component>.d`), the
-feature drop-in directory (`<name>.feature.d`), the sysext link directory
-(`/var/lib/extensions`) and the staging directory of a download
-(`/var/lib/extensions.d`). The per-user catalog list cache is private and is
-not covered. A read-only command run by another user must be able
+Missing system directories created in trusted parents have `0755` permission
+bits regardless of the process umask: the lock, rollback and last-run
+directories, the component directory of `CatalogAdd`
+(`/etc/sysupdate.<component>.d`), the parents recreated during catalog
+rollback, the feature drop-in directory (`<name>.feature.d`), the sysext link
+directory (`/var/lib/extensions`) and the staging directory of a download
+(`/var/lib/extensions.d`). The per-user catalog list cache requests `0755`
+subject to the process umask (`0700` under `0077`); it does not require
+cross-user access. See the [directory creation inventory](../design/overview.md#directory-modes).
+A read-only command run by another user must be able
 to read what a root-privileged run wrote, also when that run had a stricter
 umask than the default `0022` (updex#524, follow-up of PR #525). The modes come
 from `dirmode.MkdirAll` in `internal/dirmode`; an existing directory keeps its

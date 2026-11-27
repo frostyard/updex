@@ -1031,22 +1031,27 @@ service (`ProtectSystem=full`) can write `/run`.
 
 ### Directory modes
 
-Every directory updex creates as root is mode 0755 whatever the process umask
-is: the lock, rollback and last-run directories, the component directory of
-`CatalogAdd` (`/etc/sysupdate.<component>.d`), the feature drop-in directory
-(`<name>.feature.d`), the sysext link directory (`/var/lib/extensions`) and the
-staging directory of a download (`/var/lib/extensions.d`). The per-user catalog
-list cache (`catalog/cache.go`) is private and keeps `os.MkdirAll`. A read-only command
-run by another user (`features list`, `features check`, `components`) loads the
-domain with `collectConfigFiles` (`config/config.go`) and
-`applyFeatureDropIns` (`config/feature.go`) and lists the staging directory
-(`sysext/manager.go`): a 0700 or 0750 directory from a root run under umask
-0077 or 0027 made every one of them fail with `permission denied` (updex#524,
-follow-up of PR #525). The modes come from `dirmode.MkdirAll` in
-`internal/dirmode`, which is `mkdirat`/`openat`/`fchmod` through directory
-descriptors, chmods only in a trusted parent (see "Operation lock"), leaves
-an existing directory's mode alone, and keeps a setgid bit inherited from the
-parent.
+System directories used across accounts must remain traversable under a
+restrictive umask. A root run under umask `0077` or `0027` used to leave
+`0700` or `0750` directories that other users could not read when running
+`features list`, `features check`, or `components` (updex#524, PR #525).
+
+| Directory creation site | Permissions expectation |
+| --- | --- |
+| `updex/lock.go` (`acquireLock`), `updex/rollback.go` (`writeRollbackRecordBytes`), `updex/lastrun.go` (`storeLastRun`) | Create missing lock, rollback and last-run directories with `0755` permission bits in trusted parents. The lock file itself remains `0600`. |
+| `updex/catalog.go` (`CatalogAdd`, `fileSnapshot.restore`, `filesystemEntrySnapshot.restore` for both regular files and symlinks) | Create the component directory (`/etc/sysupdate.<component>.d`) and recreate missing parents during rollback with `0755` permission bits in trusted parents. Restoring a file's mode is separate from creating its parent. |
+| `updex/features.go` (`writeFeatureDropIn`), `download/download.go` (`Download`), `sysext/manager.go` (`linkImageAt`) | Create missing feature drop-in, download staging (`/var/lib/extensions.d`), and sysext link (`/var/lib/extensions`) directories with `0755` permission bits in trusted parents. |
+| `catalog/cache.go` (`saveListCache`) | The catalog list cache is per-user, not a shared system directory. `os.MkdirAll` requests `0755` subject to umask (`0700` under `0077`). No cross-user access is required; cached listings contain public data, so this is not a confidentiality guarantee. |
+| `cmd/updex/units.go` (`writeUnits`) | The output directory is build staging, not `/usr/lib/systemd/system`. `os.MkdirAll` requests `0755` subject to umask (`0700` under `0077`). The generator and packager use the same account. The generated and packaged **files** have explicit mode `0644`; the staging directory is not shipped. |
+| `scripts/units.sh`, `scripts/completions.sh`, `scripts/manpages.sh` | The release hooks create same-user build staging with `mkdir` subject to umask (`0700` under `0077`). Packaging consumes the files, not these directories. |
+| `scripts/units-check.sh` | The verifier uses a private `mktemp -d` tree (`0700` under `0077`) and `mkdir -p` subject to umask inside it. Nothing in that temporary root is installed. |
+
+The system directory callers use `dirmode.MkdirAll` in `internal/dirmode`.
+It uses `mkdirat`/`openat`/`fchmod` through directory descriptors and only
+chmods a new directory in a trusted parent (see "Operation lock"). In an
+untrusted parent the new directory keeps the umask-applied mode. Existing
+directories keep their modes, and new directories keep inherited setgid bits.
+The raw `os.MkdirAll` callers also leave existing directories alone.
 
 ### Reading a sysext's extension-release without mounting (`imagecompat/`)
 
