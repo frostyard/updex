@@ -250,6 +250,10 @@ the `goreleaser-nightly` group with boolean `cancel-in-progress: true`, the
 `.SH NAME` section of at least 1000 bytes, so a dependency bump that drops or
 renames the fang-injected hidden `man` subcommand fails the Unit Tests job on
 the pull request instead of GoReleaser at tag time (skipped under `-short`).
+The 4 `nfpms.contents` entries for the shell completions and the man page
+set `file_info.mode: 0644`, so the packaged modes do not follow the build
+umask (updex#553); `updex/packaging_modes_contract_test.go` pins exactly
+those 4 src/dst pairs and their mode.
 
 `scripts/units.sh` is the third GoReleaser `before.hooks` generator, after
 `completions.sh` and `manpages.sh`. It runs the hidden `updex-cli units
